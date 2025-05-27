@@ -15,7 +15,7 @@
 - [`Ollama`](https://ollama.com/) for local inference
 - [Hugging Face](https://huggingface.co/) account and access token (read)
 
-### Installation 📦
+### Manual installation 📦
 
 Clone the repository, create the virtual environment and install the dependencies:
 
@@ -53,7 +53,7 @@ uv run python -c "import nltk; nltk.download('stopwords')"
 uv run python nextext/utils/spacy_model_loader.py
 ```
 
-### Offline usage 🚫🌐
+#### Offline usage 🚫🌐
 
 In case Nextext is intended to run in a firewalled or offline environment, set the environment variable after completing the model downloads:
 
@@ -62,6 +62,19 @@ echo 'export HF_HUB_OFFLINE=1' >> .venv/bin/activate
 ```
 
 For Windows, add `$env:HF_HUB_OFFLINE = "1"` to `.venv/Scripts/Activate.ps1` above the line `# SIG # Begin`.
+
+### Docker installation 🐳
+
+Select whether to use the CPU or GPU (requires a CUDA compatible GPU and the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html) set up):
+
+```bash
+docker compose --profile cpu up
+docker compose --profile gpu up
+```
+
+Launch app: `http://localhost:8080/`
+
+> **Important:** The Docker installation requires that all models listed above are downloaded in advance and that Ollama is installed on your system.
 
 ## Usage 🚀
 

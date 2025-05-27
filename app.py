@@ -8,6 +8,10 @@ import altair as alt
 
 from nextext import pipeline as ve
 from nextext.utils import load_lang_maps
+from nextext.utils import setup_logging
+
+
+setup_logging()
 
 
 def _run_pipeline(tmp_file: Path, opts: dict) -> None:

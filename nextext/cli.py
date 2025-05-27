@@ -22,7 +22,7 @@ def parse_arguments(args_list: Optional[list] = None) -> argparse.Namespace:
         argparse.Namespace: Parsed arguments as a Namespace object.
     """
     parser = argparse.ArgumentParser(
-        description="Nextext automates natural language analysis.",
+        description="Nextext turns voice into structured insight.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
 

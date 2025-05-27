@@ -9,7 +9,7 @@ description = "Nextext turns voice into structured insight."
 authors = [
     { name = "nos-tromo" }
 ]
-requires-python = ">=3.12"
+requires-python = ">=3.11,<3.12"
 readme = { file = "README.md", content-type = "text/markdown" }
 dependencies = [
     "accelerate>=1.1.1",
@@ -49,9 +49,10 @@ dependencies = [
 Repository = "https://github.com/nos-tromo/Nextext.git"
 
 [tool.setuptools]
-package-dir = {"" = "src"}
-packages = ["nextext"]
 include-package-data = true
 
+[tool.setuptools.packages.find]
+where = ["."]
+  
 [project.scripts]
 nextext = "cli:main"

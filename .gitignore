@@ -10,7 +10,7 @@ env/
 gguf/
 output/
 uploads/
-nextext.egg-info/
+*.egg-info/
 
 # files
 *.code-workspace

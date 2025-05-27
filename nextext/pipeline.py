@@ -25,31 +25,40 @@ __all__ = [
 ]
 
 
-def get_api_key(token: str = "HF_HUB_TOKEN") -> str | None:
+def get_api_key(token: str = "API_KEY") -> str:
     """
-    Retrieve the API key from the environment or prompt the user to enter it.
+    Retrieve the API key from environment or prompt user. Works in both local and Docker environments.
 
     Args:
-        token (str, optional): The name of the environment variable to check for the API key. Defaults to "HF_HUB_TOKEN".
+        token (str): The environment variable to read the API key from.
 
     Returns:
         str: The API key.
+
+    Raises:
+        RuntimeError: If the key cannot be retrieved in a non-interactive (e.g. Docker) environment.
     """
-    try:
-        dotenv_path = find_dotenv()
+    dotenv_path = find_dotenv()
+    if dotenv_path:
         load_dotenv(dotenv_path)
-        api_key = os.getenv(token)
-        if not api_key:
-            api_key = getpass.getpass("Token not found. Please enter your API key: ")
-            if dotenv_path:
-                set_key(dotenv_path, token, api_key)
-            else:
-                with open(".env", "w") as env_file:
-                    env_file.write(f"{token}={api_key}\n")
+
+    api_key = os.getenv(token)
+    if api_key:
         return api_key
-    except FileNotFoundError as e:
-        logging.error(f"Error retrieving token: {e}", exc_info=True)
-        raise
+
+    if os.getenv("IS_DOCKER", "").lower() == "true":
+        raise RuntimeError(f"Missing API key. Please set {token} in your .env file or docker-compose environment.")
+
+    try:
+        api_key = getpass.getpass("Token not found. Please enter your API key: ")
+        if dotenv_path:
+            set_key(dotenv_path, token, api_key)
+        else:
+            with open(".env", "w") as env_file:
+                env_file.write(f"{token}={api_key}\n")
+        return api_key
+    except EOFError:
+        raise RuntimeError(f"API key prompt failed and environment variable {token} is not set.")
 
 
 def transcription_pipeline(

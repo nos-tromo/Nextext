@@ -1,26 +1,37 @@
 import logging
 import subprocess
 import time
+from typing import Optional
 
 import ollama
 import requests
 import torch
 
 
-def _is_ollama_running(url: str = "http://localhost:11434") -> bool:
+def _is_ollama_running(url: Optional[str] = None) -> bool:
     """
     Check if the ollama server is running.
 
     Args:
-        url (str, optional): The URL of the ollama server. Defaults to "http://localhost:11434".
+        url (str, optional): The URL of the ollama server. Defaults to None.
 
     Returns:
         bool: True if the server is running, False otherwise.
     """
+    if url is None:
+        # Try Docker-compatible first, fallback for outside Docker
+        for test_url in ["http://host.docker.internal:11434", "http://localhost:11434"]:
+            try:
+                response = requests.get(test_url)
+                if response.ok:
+                    return True
+            except requests.exceptions.RequestException:
+                continue
+        return False
     try:
-        requests.get(url)
-        return True
-    except requests.ConnectionError:
+        response = requests.get(url)
+        return response.ok
+    except requests.exceptions.RequestException:
         return False
 
 
