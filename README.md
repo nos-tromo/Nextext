@@ -1,21 +1,21 @@
-# Nextext
+# Nextext 🎙️
 
 **Nextext** is a modular toolkit for transcribing, translating, and analyzing natural language from audio and video files using state-of-the-art machine learning models. Designed for flexibility, it supports both a user-friendly Streamlit web interface and command-line operation. The results are compiled into structured output files featuring transcriptions, summaries, statistics, topic modeling, and sentiment analysis, making it ideal for comprehensive audio and text analysis workflows.
 
 > This is a personal project that is under heavy development. It could, and likely does, contain bugs, incomplete code,
 > or other unintended issues. As such, the software is provided as-is, without warranty of any kind.
 
-## Setup
+## Setup 🛠️
 
 > **Note:** This README describes setup and usage instructions for Linux and macOS environments. Windows users should follow the equivalent steps using the appropriate commands and paths for their system.
 
-### Prerequisites
+### Prerequisites 📋
 
 - [`uv`](https://github.com/astral-sh/uv) for Python version and dependency management
 - [`Ollama`](https://ollama.com/) for local inference
 - [Hugging Face](https://huggingface.co/) account and access token (read)
 
-### Installation
+### Installation 📦
 
 Clone the repository, create the virtual environment and install the dependencies:
 
@@ -27,11 +27,11 @@ uv sync
 
 To enable speaker diarization, accept the user agreement for the following models: [`pyannote/segmentation-3.0`](https://huggingface.co/pyannote/segmentation-3.0) and [`speaker-diarization-3.1`](https://huggingface.co/pyannote/speaker-diarization-3.1).
 
-### Model downloads
+### Model downloads 📥
 
 Nextext requires downloading some models:
 
-#### Hugging Face
+#### Hugging Face 🤗
 
 - [`openai/whisper-large-v3-turbo`](https://huggingface.co/openai/whisper-large-v3-turbo)
 - [`openai/whisper-large-v2`](https://huggingface.co/openai/whisper-large-v2)
@@ -39,12 +39,12 @@ Nextext requires downloading some models:
 - [`google/madlad400-3b-mt`](https://huggingface.co/google/madlad400-3b-mt)
 - [`textdetox/xlmr-large-toxicity-classifier`](https://huggingface.co/textdetox/xlmr-large-toxicity-classifier)
 
-#### Ollama
+#### Ollama 🦙
 
 - [`gemma3:4b-it-qat`](https://ollama.com/library/gemma3) or
 - [`gemma3:27b-it-qat`](https://ollama.com/library/gemma3)
 
-#### Other language tokenization models
+#### Other language tokenization models 🌐
 
 ```bash
 # nltk
@@ -53,7 +53,7 @@ uv run python -c "import nltk; nltk.download('stopwords')"
 uv run python nextext/utils/spacy_model_loader.py
 ```
 
-### Offline usage
+### Offline usage 🚫🌐
 
 In case Nextext is intended to run in a firewalled or offline environment, set the environment variable after completing the model downloads:
 
@@ -63,9 +63,9 @@ echo 'export HF_HUB_OFFLINE=1' >> .venv/bin/activate
 
 For Windows, add `$env:HF_HUB_OFFLINE = "1"` to `.venv/Scripts/Activate.ps1` above the line `# SIG # Begin`.
 
-## Usage
+## Usage 🚀
 
-### Streamlit
+### Streamlit 🌈
 
 To launch the Streamlit web interface, run the following command from the project root:
 
@@ -75,7 +75,7 @@ uv run streamlit run app.py
 
 This will start the app locally and provide a URL (typically `http://localhost:8501`) in your terminal. Open this URL in your browser to access the Nextext interface.
 
-### CLI
+### CLI 💻
 
 Running `uv run python -m nextext.cli [ARGS]` from the command line supports the following arguments:
 
@@ -103,7 +103,7 @@ for file in path/to/your/directory/*; do
 done
 ```
 
-## ...to be continued
+## ...to be continued ⏳
 
 - 🐳 Dockerize the application
 - 🛠️ Refactor proper logging and error handling
@@ -113,6 +113,6 @@ done
 - 📊 Add comprehensive report output
 - 👥 Implement multi-user access
 
-## Feedback
+## Feedback 💬
 
 I hope you find Nextext to be a valuable tool for analysis. If you have any feedback or suggestions on how to improve Nextext, please let me know.
