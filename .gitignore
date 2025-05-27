@@ -1,0 +1,25 @@
+# all hidden files and directories
+.*
+!.gitignore
+
+# directories
+__pycache__
+build/
+data/
+env/
+gguf/
+output/
+uploads/
+nextext.egg-info/
+
+# files
+*.code-workspace
+*.db
+*.gguf
+*.log
+*.mkv
+*.mp3
+*.mp4
+*.wav
+*.webm
+*.zip

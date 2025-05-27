@@ -1,0 +1,20 @@
+{
+    "CARDINAL": "Numerals that do not fall under another type.",
+    "DATE": "Absolute or relative dates or periods.",
+    "EVENT": "Named hurricanes, battles, wars, sports events, etc.",
+    "FAC": "Buildings, airports, highways, bridges, etc.",
+    "GPE": "Countries, cities, states.",
+    "LANGUAGE": "Any named language.",
+    "LAW": "Named documents made into laws.",
+    "LOC": "Non-GPE locations, mountain ranges, bodies of water.",
+    "MISC": "Miscellaneous entities that do not fit into the above categories.",
+    "MONEY": "Monetary values, including unit.",
+    "MOVEMENT": "Movements",
+    "NORP": "Nationalities or religious or political groups.",
+    "ORG": "Companies, agencies, institutions, etc.",
+    "PERSON": "People, including fictional.",
+    "PHONE": "Phone numbers",
+    "PRODUCT": "Objects, vehicles, foods, etc. (Not services.)",
+    "TIME": "Times smaller than a day.",
+    "WORK_OF_ART": "Titles of books, songs, etc."
+}
