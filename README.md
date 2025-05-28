@@ -50,7 +50,7 @@ Nextext requires downloading some models:
 # nltk
 uv run python -c "import nltk; nltk.download('stopwords')"
 # spaCy
-uv run python nextext/utils/spacy_model_loader.py
+uv run python -m nextext.utils.spacy_model_loader
 ```
 
 #### Offline usage 🚫🌐
