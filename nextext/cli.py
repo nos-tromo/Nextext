@@ -124,7 +124,7 @@ def parse_arguments(args_list: Optional[list] = None) -> argparse.Namespace:
     return args
 
 
-def main(args: argparse.Namespace) -> None:
+def main() -> None:
     """
     Run the Nextext pipeline for transcription, translation, and analysis.
     This function orchestrates the entire process, including transcription, translation,
@@ -132,15 +132,15 @@ def main(args: argparse.Namespace) -> None:
     It handles the command-line arguments and manages the flow of data through the various modules.
     It also sets up logging and error handling for the entire pipeline.
 
-    Args:
-        args (argparse.Namespace): Parsed command-line arguments containing file path, output directory, model and task information.
-
     Raises:
         ValueError: If an invalid task is specified.
     """
     try:
         logging.info("\n\nInitiating Nextext...\n")
 
+        # Parse command-line arguments
+        args = parse_arguments()
+        
         # Set up input/output directories and file paths
         file_processor = FileProcessor(args.file_path)
 
@@ -218,5 +218,4 @@ def main(args: argparse.Namespace) -> None:
 
 
 if __name__ == "__main__":
-    args = parse_arguments()
-    main(args)
+    main()
