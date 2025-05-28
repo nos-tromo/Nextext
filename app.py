@@ -32,8 +32,9 @@ def _run_pipeline(tmp_file: Path, opts: dict) -> None:
             speakers=opts["speakers"],
         )
 
-    if opts["task"] == "translate" and opts["trg_lang"] != "en":
-        df = ve.translation_pipeline(df, opts["trg_lang"])
+    with st.spinner("Translating… this might take a while ⏳"):
+        if opts["task"] == "translate" and opts["trg_lang"] != "en":
+            df = ve.translation_pipeline(df, opts["trg_lang"])
 
     result = {
         "transcript": df,
@@ -45,35 +46,39 @@ def _run_pipeline(tmp_file: Path, opts: dict) -> None:
         "wordcloud": None,
     }
 
-    if opts["words"]:
-        wc, ner, nouns, cloud = ve.wordlevel_pipeline(
-            df,
-            opts["trg_lang" if opts["task"] == "translate" else "src_lang"],
-        )
-        result["word_counts"] = wc
-        result["named_entities"] = ner
-        result["noun_sentiment"] = nouns
-        result["wordcloud"] = cloud
+    with st.spinner("Running word-level analysis… ⏳"):
+        if opts["words"]:
+            wc, ner, nouns, cloud = ve.wordlevel_pipeline(
+                df,
+                opts["trg_lang" if opts["task"] == "translate" else "src_lang"],
+            )
+            result["word_counts"] = wc
+            result["named_entities"] = ner
+            result["noun_sentiment"] = nouns
+            result["wordcloud"] = cloud
 
-    if opts["topics"]:
-        topics_output = ve.topics_pipeline(
-            df,
-            opts["trg_lang" if opts["task"] == "translate" else "src_lang"],
-        )
-        if topics_output is not None:
-            result["topics"] = topics_output
-        else:
-            result["topics"] = None, None
+    with st.spinner("Running topic modelling… ⏳"):
+        if opts["topics"]:
+            topics_output = ve.topics_pipeline(
+                df,
+                opts["trg_lang" if opts["task"] == "translate" else "src_lang"],
+            )
+            if topics_output is not None:
+                result["topics"] = topics_output
+            else:
+                result["topics"] = None, None
 
-    if opts["summarization"]:
-        result["summary"] = ve.summarization_pipeline(
-            " ".join(df["text"].astype(str).tolist()),
-            opts["trg_lang" if opts["task"] == "translate" else "src_lang"],
-        )
+    with st.spinner("Summarizing… ⏳"):
+        if opts["summarization"]:
+            result["summary"] = ve.summarization_pipeline(
+                " ".join(df["text"].astype(str).tolist()),
+                opts["trg_lang" if opts["task"] == "translate" else "src_lang"],
+            )
 
-    if opts["toxicity"]:
-        df = ve.toxicity_pipeline(df)
-        result["transcript"] = df  # updated with extra column
+    with st.spinner("Classifying toxicity… ⏳"):
+        if opts["toxicity"]:
+            df = ve.toxicity_pipeline(df)
+            result["transcript"] = df  # updated with extra column
 
     st.session_state["result"] = result
     st.success("Done! Select another tab to view results.")
