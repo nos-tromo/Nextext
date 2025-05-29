@@ -3,7 +3,7 @@ import logging
 from pathlib import Path
 from typing import Optional
 
-from nextext import pipeline as ve
+from nextext import pipeline as ne
 from nextext.modules import FileProcessor
 from nextext.utils import setup_logging
 
@@ -146,12 +146,12 @@ def main() -> None:
 
         # Transcribe and diarize the audio file
         if args.task in ["transcribe", "translate"]:
-            transcript_df = ve.transcription_pipeline(
+            transcript_df = ne.transcription_pipeline(
                 file_path=args.file_path,
                 src_lang=args.src_lang,
                 model_id=args.model_id,
                 task=args.task,
-                api_key=ve.get_api_key() or "",
+                api_key=ne.get_api_key() or "",
                 speakers=args.speakers,
             )
         else:
@@ -161,7 +161,7 @@ def main() -> None:
 
         # Machine translate the transcribed text
         if args.task == "translate" and args.trg_lang != "en":
-            transcript_df = ve.translation_pipeline(
+            transcript_df = ne.translation_pipeline(
                 df=transcript_df, trg_lang=args.trg_lang
             )
 
@@ -171,7 +171,7 @@ def main() -> None:
         # Calculate word statistics
         if args.words:
             word_counts, named_entities, noun_sentiment, wordcloud_fig = (
-                ve.wordlevel_pipeline(
+                ne.wordlevel_pipeline(
                     data=transcript_df,
                     language=transcript_lang,
                 )
@@ -187,7 +187,7 @@ def main() -> None:
 
         # Perform topic modeling
         if args.topics:
-            topic_df = ve.topics_pipeline(
+            topic_df = ne.topics_pipeline(
                 data=transcript_df,
                 language=transcript_lang,
             )
@@ -195,7 +195,7 @@ def main() -> None:
 
         # Summarize the transcribed text
         if args.summarize:
-            transcript_summary = ve.summarization_pipeline(
+            transcript_summary = ne.summarization_pipeline(
                 text=" ".join(transcript_df["text"].astype(str).tolist()),
                 prompt_lang=transcript_lang,
             )
@@ -203,7 +203,7 @@ def main() -> None:
 
         # Classify text for toxicity
         if args.toxicity:
-            transcript_df = ve.toxicity_pipeline(data=transcript_df)
+            transcript_df = ne.toxicity_pipeline(data=transcript_df)
 
         # Save final transcript
         file_processor.write_file_output(transcript_df, "transcript")

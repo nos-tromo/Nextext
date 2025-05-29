@@ -6,7 +6,7 @@ from pathlib import Path
 import altair as alt
 import streamlit as st
 
-from nextext import pipeline as ve
+from nextext import pipeline as ne
 from nextext.utils import load_lang_maps, setup_logging
 
 setup_logging()
@@ -21,18 +21,18 @@ def _run_pipeline(tmp_file: Path, opts: dict) -> None:
         opts (dict): Options for the pipeline.
     """
     with st.spinner("Transcribing… this might take a while ⏳"):
-        df = ve.transcription_pipeline(
+        df = ne.transcription_pipeline(
             file_path=tmp_file,
             src_lang=opts["src_lang"],
             model_id=opts["model_id"],
             task=opts["task"],
-            api_key=ve.get_api_key() or "",
+            api_key=ne.get_api_key() or "",
             speakers=opts["speakers"],
         )
 
     with st.spinner("Translating… this might take a while ⏳"):
         if opts["task"] == "translate" and opts["trg_lang"] != "en":
-            df = ve.translation_pipeline(df, opts["trg_lang"])
+            df = ne.translation_pipeline(df, opts["trg_lang"])
 
     result = {
         "transcript": df,
@@ -46,7 +46,7 @@ def _run_pipeline(tmp_file: Path, opts: dict) -> None:
 
     with st.spinner("Running word-level analysis… ⏳"):
         if opts["words"]:
-            wc, ner, nouns, cloud = ve.wordlevel_pipeline(
+            wc, ner, nouns, cloud = ne.wordlevel_pipeline(
                 df,
                 opts["trg_lang" if opts["task"] == "translate" else "src_lang"],
             )
@@ -57,7 +57,7 @@ def _run_pipeline(tmp_file: Path, opts: dict) -> None:
 
     with st.spinner("Running topic modelling… ⏳"):
         if opts["topics"]:
-            topics_output = ve.topics_pipeline(
+            topics_output = ne.topics_pipeline(
                 df,
                 opts["trg_lang" if opts["task"] == "translate" else "src_lang"],
             )
@@ -68,14 +68,14 @@ def _run_pipeline(tmp_file: Path, opts: dict) -> None:
 
     with st.spinner("Summarizing… ⏳"):
         if opts["summarization"]:
-            result["summary"] = ve.summarization_pipeline(
+            result["summary"] = ne.summarization_pipeline(
                 " ".join(df["text"].astype(str).tolist()),
                 opts["trg_lang" if opts["task"] == "translate" else "src_lang"],
             )
 
     with st.spinner("Classifying toxicity… ⏳"):
         if opts["toxicity"]:
-            df = ve.toxicity_pipeline(df)
+            df = ne.toxicity_pipeline(df)
             result["transcript"] = df  # updated with extra column
 
     st.session_state["result"] = result
