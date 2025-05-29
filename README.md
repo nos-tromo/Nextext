@@ -72,7 +72,7 @@ docker compose --profile cpu up
 docker compose --profile gpu up
 ```
 
-Launch app: `http://localhost:8080/`
+Launch the app: `http://localhost:8501/`
 
 > **Important:** The Docker installation requires that all models listed above are downloaded in advance and that Ollama is installed on your system.
 
