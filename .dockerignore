@@ -1,0 +1,25 @@
+# Python cache and virtual environments
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+
+# System/IDE files
+.DS_Store
+.vscode/
+.idea/
+*.code-workspace
+
+# Git and test files
+.git/
+.gitignore
+build/
+tests/
+
+# Config files
+.env
+*.log
+
+# Data and output directories
+data/
+output/

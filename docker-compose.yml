@@ -1,0 +1,50 @@
+services:
+  #############################
+  # GPU-based build
+  #############################
+  nextext:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      - ${HF_CACHE:-${USERPROFILE:-$HOME}/.cache/huggingface}:/root/.cache/huggingface
+      - ${APPDATA:-${HOME}}/nltk_data:/root/nltk_data
+    ports:
+      - "8501:8501"
+    environment:
+      # - HF_HUB_OFFLINE=1
+      - API_KEY=${API_KEY}
+      - USE_DEVICE=auto
+      - OLLAMA_HOST=http://host.docker.internal:11434
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              capabilities: [gpu]
+    profiles:
+      - gpu
+
+  #############################
+  # CPU-based build
+  #############################
+  nextext-cpu:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      - ${HF_CACHE:-${USERPROFILE:-$HOME}/.cache/huggingface}:/root/.cache/huggingface
+      - ${APPDATA:-${HOME}}/nltk_data:/root/nltk_data
+    ports:
+      - "8501:8501"
+    environment:
+      # - HF_HUB_OFFLINE=1
+      - API_KEY=${API_KEY}
+      - USE_DEVICE=cpu
+      - OLLAMA_HOST=http://host.docker.internal:11434
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    profiles:
+      - cpu
