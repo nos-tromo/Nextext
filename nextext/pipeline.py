@@ -46,7 +46,7 @@ def get_api_key(token: str = "API_KEY") -> str:
     if api_key:
         return api_key
 
-    if os.getenv("IS_DOCKER", "").lower() == "true":
+    if Path("/.dockerenv").exists():
         raise RuntimeError(f"Missing API key. Please set {token} in your .env file or docker-compose environment.")
 
     try:
