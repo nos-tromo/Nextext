@@ -1,5 +1,6 @@
 # all hidden files and directories
 .*
+!.dockerignore
 !.gitignore
 
 # directories
