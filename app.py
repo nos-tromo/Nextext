@@ -3,13 +3,11 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 
-import streamlit as st
 import altair as alt
+import streamlit as st
 
 from nextext import pipeline as ve
-from nextext.utils import load_lang_maps
-from nextext.utils import setup_logging
-
+from nextext.utils import load_lang_maps, setup_logging
 
 setup_logging()
 
@@ -122,7 +120,7 @@ def _start_page() -> None:
             index=lang_names.index("German"),
         )
         speakers = st.number_input("Max speakers", 1, 10, value=1, step=1)
-        
+
     src_lang = name2code[src_name]
     trg_lang = name2code[trg_name]
     run = st.button("▶️ Run", disabled=not uploaded)
@@ -195,7 +193,7 @@ def _main() -> None:
                 label="Download",
                 data=result["summary"],
                 file_name="summary.txt",
-                mime="text/plain"
+                mime="text/plain",
             )
 
     # ------------ Word‑level analysis tab -----------
@@ -232,17 +230,18 @@ def _main() -> None:
             st.warning("Topic modelling not requested.")
         else:
             st.subheader("🗂️ Topics")
-            for (title, topic) in result["topics"]:
+            for title, topic in result["topics"]:
                 st.subheader(title)
                 st.write(topic)
                 st.divider()
             st.download_button(
                 label="Download",
-                data="\n\n".join(f"{title}\n{topic}" for (title, topic) in result["topics"]),
+                data="\n\n".join(
+                    f"{title}\n{topic}" for (title, topic) in result["topics"]
+                ),
                 file_name="topics.txt",
-                mime="text/plain"
+                mime="text/plain",
             )
-
 
 
 if __name__ == "__main__":
