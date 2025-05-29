@@ -1,6 +1,8 @@
 import logging
+import os
 import subprocess
 import time
+from pathlib import Path
 from typing import Optional
 
 import ollama
@@ -19,15 +21,7 @@ def _is_ollama_running(url: Optional[str] = None) -> bool:
         bool: True if the server is running, False otherwise.
     """
     if url is None:
-        # Try Docker-compatible first, fallback for outside Docker
-        for test_url in ["http://host.docker.internal:11434", "http://localhost:11434"]:
-            try:
-                response = requests.get(test_url)
-                if response.ok:
-                    return True
-            except requests.exceptions.RequestException:
-                continue
-        return False
+        url = os.getenv("OLLAMA_HOST", "http://localhost:11434")
     try:
         response = requests.get(url)
         return response.ok
@@ -37,10 +31,14 @@ def _is_ollama_running(url: Optional[str] = None) -> bool:
 
 def _ensure_ollama_running() -> None:
     """
-    Ensure that the ollama server is running. If not, start it.
+    Ensure that the ollama server is running. If not, attempt to start it if outside Docker.
     """
     try:
         if not _is_ollama_running():
+            if Path("/.dockerenv").exists():
+                raise RuntimeError(
+                    "Ollama server is not running inside Docker. Please start it on the host."
+                )
             subprocess.Popen(["ollama", "serve"])
     except Exception as e:
         logging.error(f"Error starting ollama server: {e}")
@@ -77,6 +75,8 @@ def call_ollama(
 
     try:
         model = "gemma3:27b-it-qat" if torch.cuda.is_available() else model
+        ollama_base_url = os.getenv("OLLAMA_HOST", "http://localhost:11434")
+        os.environ["OLLAMA_HOST"] = ollama_base_url
         response = ollama.chat(
             model=model,
             messages=[{"role": "user", "content": prompt}],
