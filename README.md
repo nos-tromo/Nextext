@@ -118,7 +118,7 @@ done
 
 ## ...to be continued ⏳
 
-- 🐳 Dockerize the application
+- ~~🐳 Dockerize the application~~
 - 🛠️ Refactor proper logging and error handling
 - 🧪 Improve overall toxicity classification quality
 - 🎨 Polish Streamlit frontend
