@@ -297,9 +297,7 @@ class TopicModeling:
 
     def load_pipeline(
         self,
-        top_n_words: int = 10,
-        min_topic_size: int = 5,
-        nr_topics: str = "auto",
+        min_topic_size: int = 15,
         calculate_probabilities: bool = True,
         verbose: bool = True,
     ) -> None:
@@ -307,23 +305,41 @@ class TopicModeling:
         Load the complete pipeline for topic modeling.
 
         Args:
-            top_n_words (int, optional): _description_. Defaults to 10.
-            min_topic_size (int, optional): _description_. Defaults to 5.
-            nr_topics (str, optional): _description_. Defaults to "auto".
+            min_topic_size (int, optional): _description_. Defaults to 15.
             calculate_probabilities (bool, optional): _description_. Defaults to True.
             verbose (bool, optional): _description_. Defaults to True.
         """
         try:
-            umap_model = self.load_umap_model()
-            vectorizer_model = self.load_vectorizer_model()
-            representation_model = self.load_representation_model()
+            self.embedding_model = self._load_embedding_model()
+            umap_model = self._load_umap_model()
+            hdbscan_model = self._load_hdbscan_model()
+            vectorizer_model = self._load_vectorizer_model()
+            representation_model = self._load_representation_model()
+            if (
+                self.embedding_model is None
+                or umap_model is None
+                or hdbscan_model is None
+                or vectorizer_model is None
+                or representation_model is None
+            ):
+                self.logger.error(
+                    "Failed to load one or more models. Cannot initialize BERTopic."
+                )
+                return
+            if len(self.docs) < 5:
+                self.logger.warning(
+                    "Not enough documents for topic modeling. Skipping pipeline load."
+                )
+                return
+
+            # Initialize the BERTopic model with the loaded components
             self.topic_model = BERTopic(
                 language="multilingual",
-                top_n_words=top_n_words,
                 min_topic_size=min_topic_size,
-                nr_topics=len(self.docs) // 15,
                 calculate_probabilities=calculate_probabilities,
+                embedding_model=self.embedding_model,
                 umap_model=umap_model,
+                hdbscan_model=hdbscan_model,
                 vectorizer_model=vectorizer_model,
                 representation_model=representation_model,
                 verbose=verbose,
