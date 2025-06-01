@@ -3,16 +3,19 @@ import logging
 import os
 from pathlib import Path
 
-import matplotlib.pyplot as plt
+from matplotlib.figure import Figure
 import pandas as pd
 from dotenv import find_dotenv, load_dotenv, set_key
 
-from nextext.modules import call_ollama, text_summarization_prompt
-from nextext.modules import TopicModeling
-from nextext.modules import ToxClassifier
-from nextext.modules import WhisperTranscriber
-from nextext.modules import Translator
-from nextext.modules import WordCounter
+from nextext.modules import (
+    TopicModeling,
+    ToxClassifier,
+    Translator,
+    WhisperTranscriber,
+    WordCounter,
+    call_ollama_server,
+    text_summarization_prompt,
+)
 
 __all__ = [
     "get_api_key",
