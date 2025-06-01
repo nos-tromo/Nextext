@@ -152,8 +152,8 @@ def _main() -> None:
     """
     Main function to run the Streamlit app (tab‑based navigation).
     """
-    st.set_page_config(page_title="Voice", layout="wide")
-    st.title("Dashboard Report")
+    st.set_page_config(page_title="Nextext", layout="wide")
+    st.title("Nextext – Dashboard Report")
 
     # Top‑level tabs
     tab_params, tab_transcript, tab_summary, tab_words, tab_topics = st.tabs(
