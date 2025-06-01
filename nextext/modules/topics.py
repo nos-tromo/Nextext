@@ -400,7 +400,7 @@ class TopicModeling:
     def summarize_topics(
         self,
         language: str = "German",
-    ) -> list[tuple[str, str]] | None:
+    ) -> list[tuple[str, str]]:
         """
         Summarize the topics using zero-shot learning.
         NOTE: This method requires the ollama server to be running.
@@ -409,17 +409,15 @@ class TopicModeling:
             language (str): Language for the summary. Defaults to "German".
 
         Returns:
-            list[tuple[str, str]] | None: A list of tuples containing topic titles and summaries, or None if an error occurs.
+            list[tuple[str, str]]: A list of tuples containing topic titles and summaries.
         """
         try:
             topic_titles: list[str] = []
             topic_summaries: list[str] = []
 
-            if self.topic_df is None:
-                self.get_topic_list()
-            if self.topic_df is None:
+            if self.topic_df is None or self.topic_df.empty:
                 logging.error("Topic DataFrame is not available for summarization.")
-                return None
+                return []
 
             for keyword, doc in zip(
                 self.topic_df["Representation"], self.topic_df["Representative_Docs"]
@@ -430,7 +428,7 @@ class TopicModeling:
                     keywords=keyword,
                     docs=doc,
                 )
-                title = call_ollama(prompt=title_prompt)
+                title = call_ollama_server(prompt=title_prompt)
                 topic_titles.append(title if title is not None else "")
 
                 # Generate summary using the generated title
@@ -440,7 +438,7 @@ class TopicModeling:
                     keywords=keyword,
                     docs=doc,
                 )
-                summary = call_ollama(prompt=summary_prompt)
+                summary = call_ollama_server(prompt=summary_prompt)
                 topic_summaries.append(summary if summary is not None else "")
 
             return list(zip(topic_titles, topic_summaries))
