@@ -33,6 +33,7 @@ dependencies = [
     "python-dotenv>=1.0.1",
     "python-multipart>=0.0.20",
     "scikit-learn>=1.5.2",
+    "sentence-transformers>=4.1.0",
     "spacy>=3.8.4",
     "streamlit>=1.44.1",
     "torch>=2.5.1",
