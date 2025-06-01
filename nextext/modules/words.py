@@ -1,7 +1,6 @@
 import logging
 from collections import Counter, defaultdict
 from pathlib import Path
-from typing import Optional
 
 import arabic_reshaper
 import matplotlib.pyplot as plt
@@ -9,6 +8,7 @@ import pandas as pd
 import spacy
 from bidi.algorithm import get_display
 from camel_tools.tokenizers.word import simple_word_tokenize
+from matplotlib.figure import Figure
 from spacy.tokens import Doc
 from wordcloud import WordCloud
 
@@ -31,6 +31,8 @@ class WordCounter:
         spacy_entities (dict): Mapping of entity types for NER.
 
     Methods:
+        __init__(text: str, language: str, spacy_models_file: str = "spacy_models.json", spacy_entities_file: str = "spacy_entities.json", font_file: str = "Amiri-Regular.ttf") -> None:
+            Initializes the WordCounter object with text, language, and configuration files.
         _create_absolute_path(file: str, path: Path = Path("utils")) -> Path:
             Returns an absolute path for a given file and directory.
         _load_spacy_model(spacy_languages: dict[str, str], language: str) -> spacy.language.Language | None:
@@ -39,13 +41,13 @@ class WordCounter:
             Converts the input text to a spaCy Doc object.
         lemmatize_doc() -> None:
             Tokenizes and lemmatizes the text, populating tokenized_doc and tokenized_nouns.
-        count_words(n_words: Optional[int] = None) -> list[tuple[str, int]]:
-            Counts word frequencies and returns the most common words.
-        named_entity_recognition() -> list[tuple[tuple[str, str], int]] | None:
-            Performs named entity recognition on the text.
-        get_noun_adjectives(n_freq_nouns: int = 50, n_freq_adjs: int = 5) -> dict[str, list[str]]:
-            Finds the most frequent nouns and their associated adjectives.
-        create_wordcloud() -> plt.Figure:
+        count_words(n_words: int = 30, columns: list[str] = ["Word", "Frequency"]) -> pd.DataFrame:
+            Counts word frequencies and returns a DataFrame of the most common words.
+        named_entity_recognition(columns: list[str] = ["Category", "Entity", "Frequency"]) -> pd.DataFrame:
+            Performs named entity recognition on the text and returns a DataFrame.
+        get_noun_adjectives(n_freq_nouns: int = 50, n_freq_adjs: int = 5, columns: list[str] = ["Noun", "Adjective"]) -> pd.DataFrame:
+            Finds the most frequent nouns and their associated adjectives, returning a DataFrame.
+        create_wordcloud() -> Figure:
             Generates a word cloud visualization of word frequencies.
     """
 
@@ -79,7 +81,7 @@ class WordCounter:
         self.font_path = self._create_absolute_path(font_file)
 
         self.nlp = self._load_spacy_model(spacy_languages, language)
-        self.doc: Optional[spacy.tokens.Doc] = None
+        self.doc: Doc | None = None
         self.tokenized_doc: list | None = None
         self.tokenized_nouns: list | None = None
         self.word_counts: Counter | None = None
@@ -193,10 +195,10 @@ class WordCounter:
     ) -> pd.DataFrame:
         """
         Perform n-gram analysis and count word frequencies using Counter.
+
+        Args:
             n_words (int): Number of top words to return. Defaults to 30.
             columns (list[str]): Column names for the resulting DataFrame. Defaults to ["Word", "Frequency"].
-        Args:
-            n_words (int, optional): Number of top words to return. Defaults to None.
 
         Returns:
             pd.DataFrame: DataFrame of words and their counts, sorted by frequency.
@@ -218,17 +220,22 @@ class WordCounter:
             self.logger.error(f"Error counting word frequencies: {e}", exc_info=True)
             return pd.DataFrame(columns=columns).reset_index(drop=True)
 
-    def named_entity_recognition(self) -> list[tuple[tuple[str, str], int]] | None:
+    def named_entity_recognition(
+        self, columns: list[str] = ["Category", "Entity", "Frequency"]
+    ) -> pd.DataFrame:
         """
         Perform named entity recognition on the text.
 
+        Args:
+            columns (list[str]): Column names for the resulting DataFrame. Defaults to ["Category", "Entity", "Frequency"].
+
         Returns:
-            list[tuple[tuple[str, str], int]]: List of tuples containing named entities and their counts.
+            pd.DataFrame: DataFrame containing named entities and their counts.
         """
         try:
             if self.doc is None:
                 self.logger.error("spaCy doc is None. Please run text_to_doc() first.")
-                return None
+                return pd.DataFrame(columns=columns).reset_index(drop=True)
             ent_types = set(self.spacy_entities.keys())
             doc_ents = [
                 (ent.text, ent.label_)
@@ -236,28 +243,33 @@ class WordCounter:
                 if ent.label_ in ent_types and len(ent.text.strip()) >= 3
             ]
             entities_count = Counter(doc_ents)
-            return pd.DataFrame(
+            df = pd.DataFrame(
                 [
                     (label, text, count)
                     for (text, label), count in entities_count.items()
                 ],
-                columns=["Category", "Entity", "Frequency"],
+                columns=columns,
             ).reset_index(drop=True)
+            return df
         except Exception as e:
             self.logger.error(
                 f"Error performing named entity recognition: {e}", exc_info=True
             )
-            return None
+            return pd.DataFrame(columns=columns).reset_index(drop=True)
 
-    def get_noun_adjectives(
-        self, n_freq_nouns: int = 50, n_freq_adjs: int = 5
+    def get_noun_sentiment(
+        self,
+        n_freq_nouns: int = 50,
+        n_freq_adjs: int = 5,
+        columns: list[str] = ["Noun", "Adjective"],
     ) -> pd.DataFrame:
         """
         Get the most frequent nouns and their associated adjectives.
 
         Args:
-            n_freq_nouns (int, optional): Number of top nouns to consider. Defaults to 50.
-            n_freq_adjs (int, optional): Number of top adjectives to consider. Defaults to 5.
+            n_freq_nouns (int): Number of top nouns to consider. Defaults to 50.
+            n_freq_adjs (int): Number of top adjectives to consider. Defaults to 5.
+            columns (list[str]): Column names for the resulting DataFrame. Defaults to ["Noun", "Adjective"].
 
         Returns:
             pd.DataFrame: DataFrame containing nouns and their associated adjectives.
@@ -265,14 +277,14 @@ class WordCounter:
         try:
             if self.doc is None:
                 self.logger.error("spaCy doc is None. Please run text_to_doc() first.")
-                return pd.DataFrame(columns=["Noun", "Adjective"])
+                return pd.DataFrame(columns=columns).reset_index(drop=True)
 
             # Get top nouns
             top_nouns = [
                 word
                 for word, _ in Counter(self.tokenized_nouns).most_common(n_freq_nouns)
             ]
-            noun_adj_map = defaultdict(list)
+            noun_adj_map: dict[str, list[str]] = defaultdict(list)
 
             # Collect adjectives for each noun
             for token in self.doc:
@@ -287,19 +299,157 @@ class WordCounter:
                 adj_counts = Counter(adjs)
                 top_adjs = [adj for adj, _ in adj_counts.most_common(n_freq_adjs)]
                 adj_str = ", ".join(top_adjs)
-                data.append({"Noun": noun, "Adjective": adj_str})
+                data.append({columns[0]: noun, columns[1]: adj_str})
 
-            return pd.DataFrame(data, columns=["Noun", "Adjective"])
+            return pd.DataFrame(data, columns=columns).reset_index(drop=True)
         except Exception as e:
             self.logger.error(f"Error getting noun-adjective pairs: {e}", exc_info=True)
-            return pd.DataFrame(columns=["Noun", "Adjective"])
+            return pd.DataFrame(columns=columns).reset_index(drop=True)
 
-    def create_wordcloud(self) -> plt.Figure:
+    def get_noun_verbs(
+        self,
+        n_freq_nouns: int = 50,
+        n_freq_verbs: int = 5,
+        columns: list[str] = ["Noun", "Verb"],
+    ) -> pd.DataFrame:
+        """
+        Get the most frequent verbs associated with high‑frequency nouns.
+
+        The method scans the parsed document and, for each noun token,
+        looks at its syntactic *head*. If that head is a verb, the verb
+        lemma is collected.  After aggregating the counts we keep the
+        `n_freq_verbs` most common verbs for each of the `n_freq_nouns`
+        most common nouns and return them in a tidy DataFrame.
+
+        Args:
+            n_freq_nouns (int): Number of top nouns to consider. Defaults to 50.
+            n_freq_verbs (int): Number of top verbs to keep for each noun. Defaults to 5.
+            columns (list[str]): Column names for the resulting DataFrame. Defaults to ["Noun", "Verb"].
+
+        Returns:
+            pd.DataFrame: DataFrame containing nouns and their associated verbs.
+        """
+        try:
+            if self.doc is None:
+                self.logger.error("spaCy doc is None. Please run text_to_doc() first.")
+                return pd.DataFrame(columns=columns).reset_index(drop=True)
+
+            # Get top nouns by frequency in the tokenized doc
+            top_nouns = [
+                word
+                for word, _ in Counter(self.tokenized_nouns).most_common(n_freq_nouns)
+            ]
+            noun_verb_map: dict[str, list[str]] = defaultdict(list)
+
+            # Collect governing verbs for each noun
+            for token in self.doc:
+                if token.pos_ == "NOUN":
+                    noun_lemma = token.lemma_.lower()
+                    if noun_lemma in top_nouns:
+                        head = token.head
+                        if head.pos_ == "VERB":
+                            noun_verb_map[noun_lemma].append(head.lemma_.lower())
+
+            # Prepare DataFrame rows
+            data = []
+            for noun, verbs in noun_verb_map.items():
+                verb_counts = Counter(verbs)
+                top_verbs = [v for v, _ in verb_counts.most_common(n_freq_verbs)]
+                verb_str = ", ".join(top_verbs)
+                data.append({columns[0]: noun, columns[1]: verb_str})
+
+            return pd.DataFrame(data, columns=columns).reset_index(drop=True)
+        except Exception as e:
+            self.logger.error(f"Error getting noun‑verb pairs: {e}", exc_info=True)
+            return pd.DataFrame(columns=columns).reset_index(drop=True)
+
+    def get_noun_sentiment(
+        self,
+        n_freq_nouns: int = 50,
+        n_freq_verbs: int = 10,
+        n_freq_adjs: int = 10,
+        columns: list[str] = ["Noun", "Verb", "Adjective"],
+    ) -> pd.DataFrame:
+        """
+        Retrieve, for each high‑frequency noun, its most common governing verbs
+        *and* its most common modifying adjectives, returning a single tidy
+        DataFrame.
+
+        Args:
+            n_freq_nouns (int): How many top nouns to examine. Defaults to 50.
+            n_freq_verbs (int): How many top verbs to keep for each noun. Defaults to 5.
+            n_freq_adjs (int): How many top adjectives to keep for each noun. Defaults to 5.
+            columns (list[str]): Column names for the resulting DataFrame.
+                                 Defaults to ["Noun", "Verb", "Adjective"].
+
+        Returns:
+            pd.DataFrame: One row per noun with two comma‑separated columns listing
+                          verbs and adjectives.
+        """
+        try:
+            if self.doc is None:
+                self.logger.error("spaCy doc is None. Please run text_to_doc() first.")
+                return pd.DataFrame(columns=columns).reset_index(drop=True)
+
+            # Identify top‑frequency noun lemmas
+            top_nouns = {
+                noun for noun, _ in Counter(self.tokenized_nouns).most_common(n_freq_nouns)
+            }
+
+            noun_verb_map: dict[str, list[str]] = defaultdict(list)
+            noun_adj_map: dict[str, list[str]] = defaultdict(list)
+
+            # Single pass through doc to collect verbs *and* adjectives
+            for token in self.doc:
+                if token.pos_ == "NOUN":
+                    noun_lemma = token.lemma_.lower()
+                    if noun_lemma not in top_nouns:
+                        continue
+
+                    # Governing verb (head) ---------------------------------
+                    if token.head.pos_ == "VERB":
+                        noun_verb_map[noun_lemma].append(token.head.lemma_.lower())
+
+                    # Adjectival modifiers ---------------------------------
+                    for child in token.children:
+                        if child.pos_ == "ADJ":
+                            noun_adj_map[noun_lemma].append(child.lemma_.lower())
+
+                # Also capture pattern where adjective precedes noun (amod)
+                elif token.pos_ == "ADJ" and token.head.pos_ == "NOUN":
+                    noun_lemma = token.head.lemma_.lower()
+                    if noun_lemma in top_nouns:
+                        noun_adj_map[noun_lemma].append(token.lemma_.lower())
+
+            # Build output rows --------------------------------------------
+            rows = []
+            for noun in sorted(top_nouns):
+                verbs = noun_verb_map.get(noun, [])
+                adjs = noun_adj_map.get(noun, [])
+
+                top_verbs = [v for v, _ in Counter(verbs).most_common(n_freq_verbs)]
+                top_adjs = [a for a, _ in Counter(adjs).most_common(n_freq_adjs)]
+
+                rows.append(
+                    {
+                        columns[0]: noun,
+                        columns[1]: ", ".join(top_verbs),
+                        columns[2]: ", ".join(top_adjs),
+                    }
+                )
+
+            return pd.DataFrame(rows, columns=columns).reset_index(drop=True)
+
+        except Exception as e:
+            self.logger.error(f"Error combining noun‑verb‑adjective extraction: {e}", exc_info=True)
+            return pd.DataFrame(columns=columns).reset_index(drop=True)
+
+    def create_wordcloud(self) -> Figure:
         """
         Create a wordcloud of the most frequent words.
 
         Returns:
-            plt.Figure: A matplotlib figure containing a wordcloud of the most frequent words.
+            Figure: A matplotlib figure containing a wordcloud of the most frequent words.
         """
         try:
             # Create a string of words for the wordcloud
@@ -337,4 +487,8 @@ class WordCounter:
             return fig
         except Exception as e:
             self.logger.error(f"Error creating wordcloud: {e}", exc_info=True)
-            raise
+            # Return an empty black figure if wordcloud creation fails
+            fig = plt.figure(figsize=(20, 10), facecolor="k")
+            plt.axis("off")
+            plt.tight_layout(pad=0)
+            return fig
