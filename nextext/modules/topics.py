@@ -276,7 +276,7 @@ class TopicModeling:
             self.logger.error(f"Error loading vectorizer model: {e}")
             return None
 
-    def load_representation_model(self) -> PartOfSpeech | None:
+    def _load_representation_model(self) -> PartOfSpeech | None:
         """
         Load the representation model for BERTopic.
 
@@ -284,7 +284,13 @@ class TopicModeling:
             PartOfSpeech | None: The loaded representation model or None if an error occurs.
         """
         try:
-            return PartOfSpeech(self.nlp_name)
+            if self.nlp_name is not None:
+                return PartOfSpeech(self.nlp_name)
+            else:
+                self.logger.error(
+                    "spaCy model name is None. Cannot load PartOfSpeech representation model."
+                )
+                return None
         except Exception as e:
             self.logger.error(f"Error loading representation model: {e}")
             return None
