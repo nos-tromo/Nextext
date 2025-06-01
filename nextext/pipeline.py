@@ -117,7 +117,6 @@ def translation_pipeline(df: pd.DataFrame, trg_lang: str) -> pd.DataFrame:
 def summarization_pipeline(
     text: str,
     prompt_lang: str = "German",
-    trg_lang: str = "de",
 ) -> str | None:
     """
     Summarize the given text using a language model and translate the result.
