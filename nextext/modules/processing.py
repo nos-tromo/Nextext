@@ -1,29 +1,23 @@
 import logging
-from datetime import datetime
 from pathlib import Path
 
-import matplotlib.pyplot as plt
 import pandas as pd
+from matplotlib.figure import Figure
 
 
 class FileProcessor:
     """
-    FileProcessor is the central class for file processing within Nextext and is connected to all other classes through
-    inheritance.
+    FileProcessor is the central class for file processing within Nextext.
 
     Attributes:
-        file_start_timecode (Path): The start timecode for slicing input files.
-        file_end_timecode (Path): The end timecode for slicing input files.
+        logger (logging.Logger): Logger for the class.
+        filename (str): The name of the input file without extension.
+        output_path (Path): The output directory path.
 
     Methods:
-        _setup_directories(file_path: str, output_dir: str): Sets up necessary directories for file processing.
-        _get_seconds(time_str: str): Converts a time string "hh:mm:ss" to total seconds.
-        _trim_audio(file_start_timecode_seconds: int, audio: AudioSegment): Trims the audio segment based on the start and end timecodes.
-        _add_silence(spacermilli: int = 2000): Adds a padding of silence to the beginning and end of the processed audio file.
-        get_raw_time() -> datetime: Retrieves the current raw datetime.
-        audio_processing() -> tuple[int, str, int]: Processes the audio file, converts it to .wav, and adds silence padding.
-        hms(seconds: int) -> None | str: Converts seconds to a "HH:MM:SS" formatted string.
-        write_file_output(data: str | list | tuple | pd.DataFrame | plt.Figure, label: str, target_language: str = False) -> str | list | pd.DataFrame | plt.Figure:
+        _setup_directories(file_path: Path, output_dir: Path) -> tuple[str, Path]:
+            Sets up necessary directories for file processing.
+        write_file_output(data: str | list | tuple | pd.DataFrame | plt.Figure, label: str, target_language: str = "") -> str | list | pd.DataFrame | plt.Figure:
             Writes the provided data to an appropriate output file based on its type (text, list, DataFrame, or plot).
     """
 
@@ -70,25 +64,12 @@ class FileProcessor:
             self.logger.error(f"Error processing input file: {e}", exc_info=True)
             raise
 
-    def get_raw_time(self) -> datetime:
-        """
-        Get the current raw datetime.
-
-        Returns:
-            datetime: The current datetime.
-        """
-        try:
-            return datetime.now()
-        except Exception as e:
-            self.logger.error(f"Error getting raw time: {e}", exc_info=True)
-            raise
-
     def write_file_output(
         self,
-        data: str | list | tuple | pd.DataFrame | plt.Figure,
+        data: str | list | tuple | pd.DataFrame | Figure,
         label: str,
         target_language: str = "",
-    ) -> str | list | pd.DataFrame | plt.Figure:
+    ) -> str | list | tuple | pd.DataFrame | Figure | None:
         """
         Write the provided data to an appropriate output file based on its type (text, list, DataFrame, or plot).
 
@@ -98,10 +79,10 @@ class FileProcessor:
             target_language (str, optional): Optional language code to be appended to the file name. Defaults to "".
 
         Returns:
-            str | list | pd.DataFrame | plt.Figure: The data that was written, which can be a string, list, DataFrame, or Figure.
+            str | list | tuple | pd.DataFrame | plt.Figure | None: The data that was written, which can be a string, list, DataFrame, Figure or None if the data type is unsupported.
         """
         try:
-            if isinstance(data, str | list | tuple | pd.DataFrame | plt.Figure):
+            if isinstance(data, str | list | tuple | pd.DataFrame | Figure):
                 # Creating paths for file output
                 language_suffix = f"_{target_language}" if target_language else ""
                 output_file_path = (
@@ -128,7 +109,7 @@ class FileProcessor:
                         output_file_path_excel, engine="openpyxl"
                     ) as writer:
                         data.to_excel(writer, index=False, sheet_name="Sheet1")
-                elif isinstance(data, plt.Figure):
+                elif isinstance(data, Figure):
                     data.savefig(output_file_path_png)
 
                 # File saving notifications
