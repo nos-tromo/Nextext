@@ -66,10 +66,10 @@ class TopicModeling:
 
     def __init__(
         self,
-        rows: list[str],
-        lang_code: str,
+        data: str | list[str] | pd.DataFrame,
+        column: str | None = "text",
+        lang_code: str = "en",
         spacy_language_file: str = "spacy_models.json",
-        sentence_model: str = "sentence-transformers/paraphrase-multilingual-mpnet-base-v2",
     ) -> None:
         """
         Initialize the TopicModeling object.
