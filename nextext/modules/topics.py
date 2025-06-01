@@ -24,40 +24,44 @@ from .ollama_cfg import (
 
 class TopicModeling:
     """
-    TopicModeling is a class for performing topic modeling on text data using the BERTopic library.
-    It includes methods for loading models, fitting the topic model, and visualizing the results.
-    The class also handles language-specific processing using spaCy and supports zero-shot topic modeling.
-    The class is designed to be flexible and can be adapted for different languages and models.
+    TopicModeling provides an interface for topic modeling on text data using BERTopic.
+    It supports language-specific preprocessing, embedding, dimensionality reduction, clustering,
+    and topic representation, as well as zero-shot topic summarization via Ollama.
 
     Attributes:
-        rows (list[str]): List of text rows to be processed.
-        language (str): Language code for the text data.
-        sentence_model (str): Sentence transformer model name.
+        docs (list[str]): List of sentences to be processed.
+        language (str): Language name for the text data.
         device (str): Device for computation ('cuda', 'mps', or 'cpu').
-        n_min_clusters (int): Minimum number of clusters for HDBSCAN.
+        nlp_name (str | None): spaCy model name for the specified language.
         stop_words (list[str]): List of stop words for the specified language.
+        embedding_model (SentenceTransformer | None): Model for document embeddings.
         topic_model (BERTopic | None): BERTopic model instance.
-        nlp (spacy.language.Language | None): spaCy language model for the specified language.
-        zeroshot_topics (list[str] | None): List of zero-shot topics.
+        topic_df (pd.DataFrame | None): DataFrame containing topic information.
         logger (logging.Logger): Logger instance for logging messages.
 
     Methods:
-        _convert_to_language_name(language: str) -> str | None:
-            Converts the language code to its language name to be handled by the BERTopic object.
-        _load_spacy_model(language: str) -> str | None:
-            Loads the spaCy language model based on the provided language code.
-        load_umap_model(n_neighbors: int = 15, n_components: int = 5, min_dist: float = 0.0, metric: str = "cosine", random_state: int = 42) -> UMAP | None:
-            Loads the UMAP model with the specified parameters.
-        load_vectorizer_model(ngram_range: tuple = (1, 2), min_df: int = 2) -> CountVectorizer | None:
-            Loads the CountVectorizer model with the specified parameters.
-        load_representation_model() -> PartOfSpeech | None:
-            Loads the representation model for BERTopic.
-        load_pipeline(top_n_words: int = 10, calculate_probabilities: bool = True, verbose: bool = True, nr_topics: str = "auto") -> None:
-            Loads the complete pipeline for topic modeling.
-        fit_model() -> pd.DataFrame | None:
-            Fits the topic model to the data.
-        summarize_topics(language: str = "German") -> list[tuple[str, str]] | None:
-            Summarizes the topics using zero-shot learning.
+        _lang_code_to_name(lang_code: str) -> str | None:
+            Convert a language code to its full language name.
+        _load_spacy_model(spacy_languages: dict[str, str], language: str) -> str | None:
+            Load the spaCy model name for the given language.
+        _load_embedding_model(model: str = ...) -> SentenceTransformer | None:
+            Load a SentenceTransformer embedding model.
+        _load_umap_model(...) -> UMAP | None:
+            Load a UMAP dimensionality reduction model.
+        _load_hdbscan_model(...) -> HDBSCAN | None:
+            Load an HDBSCAN clustering model.
+        _load_vectorizer_model(ngram_range: tuple = (1, 2)) -> CountVectorizer | None:
+            Load a CountVectorizer for tokenization.
+        _load_representation_model() -> PartOfSpeech | None:
+            Load a BERTopic representation model.
+        load_pipeline(...) -> None:
+            Initialize and configure the BERTopic pipeline.
+        _embed_docs() -> np.ndarray | None:
+            Embed documents using the embedding model.
+        fit_topic_model() -> pd.DataFrame:
+            Fit the topic model and return topic information.
+        summarize_topics(language: str = "German") -> list[tuple[str, str]]:
+            Summarize topics using zero-shot learning via Ollama.
     """
 
     def __init__(
