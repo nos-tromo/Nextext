@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 import gc
 import logging
 from datetime import timedelta
@@ -9,6 +10,7 @@ import numpy as np
 import pandas as pd
 import torch
 import whisperx
+from whisperx.diarize import DiarizationPipeline
 
 
 class WhisperTranscriber:
@@ -138,7 +140,9 @@ class WhisperTranscriber:
             )
             raise
 
-    def _load_diarization_model(self, auth_token: str) -> whisperx.diarize.DiarizationPipeline:
+    def _load_diarization_model(
+        self, auth_token: str
+    ) -> DiarizationPipeline:
         """
         Load the WhisperX model for speaker diarization.
 
@@ -146,7 +150,7 @@ class WhisperTranscriber:
             auth_token (str): The Hugging Face token for accessing the diarization model.
 
         Returns:
-            whisperx.diarize.DiarizationPipeline: The loaded WhisperX model for speaker diarization.
+            DiarizationPipeline: The loaded WhisperX model for speaker diarization.
         """
         try:
             device = (
@@ -156,7 +160,7 @@ class WhisperTranscriber:
                 if torch.backends.mps.is_available()
                 else "cpu"
             )
-            model = whisperx.diarize.DiarizationPipeline(
+            model = DiarizationPipeline(
                 use_auth_token=auth_token, device=device
             )
             return model
