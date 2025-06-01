@@ -126,18 +126,23 @@ class TopicModeling:
         self.topic_model: BERTopic | None = None
         self.topic_df: pd.DataFrame | None = None
 
-    def _convert_to_language_name(self, language: str) -> str | None:
+    def _lang_code_to_name(self, lang_code: str) -> str | None:
         """
         Converts the language code to its language name to be handled by the BERTopic object.
 
         Args:
-            language (str): Language code to be converted.
+            lang_code (str): Language code to be converted.
 
         Returns:
             str | None: The language name as a string, or None if the conversion fails.
         """
         try:
-            return pycountry.languages.get(alpha_2=language.lower()).name.lower()
+            lang_obj = pycountry.languages.get(alpha_2=lang_code.lower())
+            if lang_obj and hasattr(lang_obj, "name"):
+                return lang_obj.name.lower()
+            else:
+                self.logger.error(f"Could not find language name for code: {lang_code}")
+                return None
         except Exception as e:
             self.logger.error(f"Error converting language: {e}.", exc_info=True)
             return None
