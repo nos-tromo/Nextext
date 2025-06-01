@@ -146,7 +146,7 @@ def summarization_pipeline(
 def wordlevel_pipeline(
     data: pd.DataFrame,
     language: str,
-) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, plt.Figure]:
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, Figure]:
     """
     Calculates word statistics, generates a histogram, and creates a word cloud from the provided text data.
 
