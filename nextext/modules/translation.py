@@ -180,7 +180,7 @@ class Translator:
                 )
             if self.src_lang == "ar":
                 sentences = sentence_tokenize(text)  # Use pyarabic for Arabic
-            # add sentence segmentation models for other languages here
+            # --------- add sentence segmentation models for other languages here --------- #
             else:
                 sentences = sent_tokenize(text)  # Use nltk for other languages
             if not sentences:
