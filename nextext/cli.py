@@ -191,7 +191,8 @@ def main() -> None:
                 data=transcript_df,
                 language=transcript_lang,
             )
-            file_processor.write_file_output(topic_df, "topics")
+            if topic_df is not None:
+                file_processor.write_file_output(topic_df, "topics")
 
         # Summarize the transcribed text
         if args.summarize:
@@ -199,7 +200,8 @@ def main() -> None:
                 text=" ".join(transcript_df["text"].astype(str).tolist()),
                 prompt_lang=transcript_lang,
             )
-            file_processor.write_file_output(transcript_summary, "summary")
+            if transcript_summary is not None:
+                file_processor.write_file_output(transcript_summary, "summary")
 
         # Classify text for toxicity
         if args.toxicity:
