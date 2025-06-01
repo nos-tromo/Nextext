@@ -9,6 +9,8 @@ import ollama
 import requests
 import torch
 
+from nextext.utils import load_lang_maps
+
 
 def _is_ollama_running(url: Optional[str] = None) -> bool:
     """
@@ -45,9 +47,43 @@ def _ensure_ollama_running() -> None:
         raise RuntimeError("Failed to start ollama server. Please start it manually.")
 
 
-def call_ollama(
+def _load_ollama_model(
+    filename: str = "ollama_models.json", fallback: str = "gemma3:4b-it-qat"
+) -> str | None:
+    """
+    Load the specified ollama model.
+
+    Args:
+        filename (str): The name of the JSON file containing model mappings. Defaults to "ollama_models.json".
+        fallback (str): The fallback model to use if no suitable model is found. Defaults to "gemma3:4b-it-qat".
+
+    Returns:
+        str | None: The name of the model if loaded successfully, None otherwise.
+    """
+    logger = logging.getLogger(__name__)
+
+    try:
+        models, _ = load_lang_maps(filename)
+        if not models:
+            logger.error(f"Model file '{filename}' not found or empty.")
+            return None
+        model = (
+            models.get("cuda")
+            if torch.cuda.is_available()
+            else models.get("mps")
+            if torch.backends.mps.is_available()
+            else models.get("cpu", fallback)
+        )
+        logger.info(f"Loaded Ollama model: {model}")
+        return model
+
+    except Exception as e:
+        logger.error(f"Error loading ollama model: {e}")
+        return None
+
+
+def call_ollama_server(
     prompt: str,
-    model: str = "gemma3:4b-it-qat",
     num_ctx: int = 32768,
     temperature: float = 0.2,
 ) -> str | None:
@@ -56,7 +92,6 @@ def call_ollama(
 
     Args:
         prompt (str): The prompt to send to the model.
-        model (str): The model to use for the request. Defaults to "gemma3:12b-it-qat".
         num_ctx (int): The number of context tokens to use. Defaults to 8192.
         temperature (float): The temperature for the model's response. Defaults to 0.2.
 
@@ -65,16 +100,20 @@ def call_ollama(
     """
     logger = logging.getLogger(__name__)
 
+    model = _load_ollama_model()
+    
+    if not model:
+        logger.error("Failed to load Ollama model.")
+        return ""
     if not _is_ollama_running():
         logger.warning("Ollama server not running, attempting to start...")
         _ensure_ollama_running()
         time.sleep(5)
         if not _is_ollama_running():
             logger.error("Failed to start Ollama server.")
-            return None
+            return ""
 
     try:
-        model = "gemma3:27b-it-qat" if torch.cuda.is_available() else model
         ollama_base_url = os.getenv("OLLAMA_HOST", "http://localhost:11434")
         os.environ["OLLAMA_HOST"] = ollama_base_url
         response = ollama.chat(
@@ -85,7 +124,7 @@ def call_ollama(
         return response["message"]["content"].strip()
     except Exception as e:
         logger.error(f"Error calling ollama server: {e}")
-        return None
+        return ""
 
 
 # System prompt
