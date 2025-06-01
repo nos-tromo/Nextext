@@ -5,6 +5,7 @@ from datetime import timedelta
 from pathlib import Path
 from typing import Any, Optional
 
+import numpy as np
 import pandas as pd
 import torch
 import whisperx
@@ -26,9 +27,9 @@ class WhisperTranscriber:
         model_a: Loaded WhisperX alignment model.
         metadata (dict): Metadata for the alignment model.
         diarize_model: Loaded WhisperX diarization model.
-        audio: Loaded audio tensor.
-        transcription_result: Result of transcription and alignment.
-        df (pd.DataFrame): DataFrame with diarization/transcription results.
+        audio (torch.Tensor): Loaded audio tensor.
+        transcription_result (Optional[dict[str, Any]]): Result of transcription and alignment.
+        df (Optional[pd.DataFrame]): DataFrame with diarization/transcription results.
 
     Methods:
         _load_transcription_model(model_id): Load WhisperX model for transcription and alignment.
@@ -164,7 +165,7 @@ class WhisperTranscriber:
             raise
 
     @staticmethod
-    def _load_audio(file: Path) -> torch.Tensor:
+    def _load_audio(file: Path) -> np.ndarray:
         """
         Load the audio file as a tensor using the WhisperX library.
 
@@ -172,7 +173,7 @@ class WhisperTranscriber:
             file (Path): The path to the audio file.
 
         Returns:
-            torch.Tensor: The loaded audio tensor.
+            np.ndarray: The loaded audio as a tensor.
         """
         try:
             return whisperx.load_audio(file=file, sr=16000)
