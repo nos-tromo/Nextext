@@ -21,8 +21,8 @@ class WhisperTranscriber:
         end_column (str): DataFrame column for segment end times.
         speaker_column (str): DataFrame column for speaker labels.
         text_column (str): DataFrame column for transcribed text.
-        task (str): Task type, e.g., "transcribe" or "translate".
-        transcription_device (torch.device): Device used for model inference.
+        task (str): Task type, "transcribe" or "translate".
+        transcription_device (str): Device used for model inference ("cuda", "cpu", or "mps").
         transcribe_model: Loaded WhisperX transcription model.
         model_a: Loaded WhisperX alignment model.
         metadata (dict): Metadata for the alignment model.
@@ -242,7 +242,6 @@ class WhisperTranscriber:
             pd.DataFrame: A DataFrame containing the diarization results with start and end times, speaker labels, and text.
         """
         try:
-            self.logger.info("Performing speaker diarization...")
             diarize_segments = self.diarize_model(self.audio, max_speakers=n_speakers)
             combined = whisperx.assign_word_speakers(
                 diarize_segments, self.transcription_result
