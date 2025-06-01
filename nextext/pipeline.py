@@ -191,7 +191,7 @@ def topics_pipeline(
         list[tuple[str, str] | None: List of topic titles and summaries, or None if no topics are found.
     """
     topic_modeling = TopicModeling(
-        rows=data["text"].astype(str).tolist(),
+        data=data["text"].astype(str).tolist(),
         lang_code=language,
     )
     topic_modeling.load_pipeline()
