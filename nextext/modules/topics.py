@@ -266,15 +266,12 @@ class TopicModeling:
 
         Args:
             ngram_range (tuple, optional): _description_. Defaults to (1, 2).
-            min_df (int, optional): _description_. Defaults to 2.
 
         Returns:
             CountVectorizer | None: The loaded CountVectorizer model or None if an error occurs.
         """
         try:
-            return CountVectorizer(
-                stop_words=self.stop_words, ngram_range=ngram_range, min_df=min_df
-            )
+            return CountVectorizer(stop_words=self.stop_words, ngram_range=ngram_range)
         except Exception as e:
             self.logger.error(f"Error loading vectorizer model: {e}")
             return None
