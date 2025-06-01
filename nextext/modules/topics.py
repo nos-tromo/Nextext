@@ -99,7 +99,14 @@ class TopicModeling:
             else "cpu"
         )
 
+        spacy_languages, _ = load_lang_maps(spacy_language_file)
+        self.nlp_name = self._load_spacy_model(spacy_languages, lang_code)
+        self.logger.info(
+            f"spaCy model '{self.nlp_name}' loaded for language '{lang_code}'."
+        )
+
         self.stop_words = stopwords.words(self.language, "english")
+        self.embedding_model: SentenceTransformer | None = None
         self.topic_model: BERTopic | None = None
         self.topic_df: pd.DataFrame | None = None
 
