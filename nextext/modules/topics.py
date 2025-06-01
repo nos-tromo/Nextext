@@ -168,8 +168,27 @@ class TopicModeling:
                 f"Failed to load the language model for language '{language}': {e}"
             )
             return None
-        
-    def load_umap_model(
+
+    def _load_embedding_model(
+        self, model: str = "sentence-transformers/paraphrase-multilingual-mpnet-base-v2"
+    ) -> SentenceTransformer | None:
+        """
+        Load the SentenceTransformer model for encoding documents.
+
+        Args:
+            model (str, optional): The name of the SentenceTransformer model to load.
+            Defaults to "sentence-transformers/paraphrase-multilingual-mpnet-base-v2".
+
+        Returns:
+            SentenceTransformer | None: The loaded SentenceTransformer model or None if an error occurs.
+        """
+        try:
+            return SentenceTransformer(model, device=self.device, cache_folder="models")
+        except Exception as e:
+            self.logger.error(f"Error loading sentence transformer model: {e}")
+            return None
+
+    def _load_umap_model(
         self,
         n_neighbors: int = 15,
         n_components: int = 2,
