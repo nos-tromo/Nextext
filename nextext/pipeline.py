@@ -211,5 +211,6 @@ def toxicity_pipeline(data: pd.DataFrame) -> pd.DataFrame:
     """
     classifier = ToxClassifier()
     result = classifier.classify_data(data["text"].astype(str).tolist())
-    data["toxicity"] = result
+    if len(result) > 0:
+        data["toxicity"] = result
     return data
