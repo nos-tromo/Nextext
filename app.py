@@ -203,11 +203,13 @@ def _main() -> None:
         else:
             st.subheader("🔠 Top Words")
             wc_df = result["word_counts"]
+            word_col = wc_df.columns[0]
+            freq_col = wc_df.columns[1]
             chart = (
                 alt.Chart(wc_df.reset_index())
-                .mark_bar()
-                .encode(
-                    x=alt.X("word:N", sort="-y", title="Word"),
+                    x=alt.X(f"{word_col}:N", sort="-y", title=word_col),
+                    y=alt.Y(f"{freq_col}:Q", title=freq_col),
+                    tooltip=[word_col, freq_col],
                     y=alt.Y("count:Q", title="Frequency"),
                     tooltip=["word", "count"],
                 )

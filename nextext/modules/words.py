@@ -188,10 +188,13 @@ class WordCounter:
             self.logger.error(f"Error tokenizing words: {e}", exc_info=True)
             raise
 
-    def count_words(self, n_words: Optional[int] = None) -> pd.DataFrame:
+    def count_words(
+        self, n_words: int = 30, columns: list[str] = ["Word", "Frequency"]
+    ) -> pd.DataFrame:
         """
         Perform n-gram analysis and count word frequencies using Counter.
-
+            n_words (int): Number of top words to return. Defaults to 30.
+            columns (list[str]): Column names for the resulting DataFrame. Defaults to ["Word", "Frequency"].
         Args:
             n_words (int, optional): Number of top words to return. Defaults to None.
 
@@ -203,18 +206,17 @@ class WordCounter:
                 self.logger.error(
                     "Tokenized document is None. Please run lemmatize_doc() first."
                 )
-                return pd.DataFrame(columns=["word", "count"]).set_index("word")
+                return pd.DataFrame(columns=columns).reset_index(drop=True)
             self.word_counts = Counter(token for token in self.tokenized_doc)
-            return (
-                pd.DataFrame(
-                    self.word_counts.most_common(n_words), columns=["word", "count"]
-                )
-                .sort_values("count", ascending=False)
-                .set_index("word")
+            df = (
+                pd.DataFrame(self.word_counts.most_common(n_words), columns=columns)
+                .sort_values(columns[1], ascending=False)
+                .reset_index(drop=True)
             )
+            return df
         except Exception as e:
             self.logger.error(f"Error counting word frequencies: {e}", exc_info=True)
-            return pd.DataFrame(columns=["word", "count"]).set_index("word")
+            return pd.DataFrame(columns=columns).reset_index(drop=True)
 
     def named_entity_recognition(self) -> list[tuple[tuple[str, str], int]] | None:
         """
