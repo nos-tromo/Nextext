@@ -20,16 +20,15 @@ class Translator:
         logger (logging.Logger): Logger for the Translator class.
         tokenizer (AutoTokenizer): Tokenizer for the translation model.
         model (AutoModelForSeq2SeqLM): The translation model.
-        device (torch.device): The device on which the model is loaded (CPU or GPU).
+        device (torch.device): The device on which the model is loaded (CPU, CUDA, or MPS).
         src_lang (str | None): The source language code detected from the input text.
-        
 
     Methods:
-        __init__(madlad_language_file: str): Initializes the Translator class.
-        _load_model(model_name: str, local_only: bool): Loads the translation model and tokenizer.
-        detect_language(text: str): Detects the language of a given text.
-        _model_inference(lang: str, text: str, verbose: bool): Uses the model for inference on a given text input.
-        translate(trg_lang: str, text: str): Translates text sentence-wise between any supported MADLAD languages.
+        __init__(madlad_language_file: str = "madlad_languages.json"): Initializes the Translator class.
+        _load_model(model_name: str = "google/madlad400-3b-mt", local_only: bool = True): Loads the translation model and tokenizer.
+        detect_language(text: str) -> dict[str, str]: Detects the language of a given text.
+        _model_inference(lang: str, text: str, verbose: bool = True) -> str: Uses the model for inference on a given text input.
+        translate(trg_lang: str, text: str) -> str: Translates text sentence-wise between any supported MADLAD languages.
     """
 
     def __init__(self, madlad_language_file: str = "madlad_languages.json") -> None:
