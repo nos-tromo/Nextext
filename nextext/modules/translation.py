@@ -45,10 +45,10 @@ class Translator:
         """
         self.logger = logging.getLogger(self.__class__.__name__)
         self.madlad_languages, _ = load_lang_maps(madlad_language_file)
-        result = self._load_model()
-        if result is None:
+        model = self._load_model()
+        if model is None:
             raise RuntimeError("Failed to load translation model.")
-        self.tokenizer, self.model, self.device = result
+        self.tokenizer, self.model, self.device = model
         self.src_lang: str | None = None
 
     def _load_model(
