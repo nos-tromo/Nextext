@@ -228,8 +228,38 @@ class TopicModeling:
             self.logger.error(f"Error loading UMAP model: {e}")
             return None
 
-    def load_vectorizer_model(
-        self, ngram_range: tuple = (1, 2), min_df: int = 2
+    def _load_hdbscan_model(
+        self,
+        min_cluster_size=10,
+        metric="euclidean",
+        cluster_selection_method="eom",
+        prediction_data=True,
+    ) -> HDBSCAN | None:
+        """
+        Load the HDBSCAN model with the specified parameters.
+
+        Args:
+            min_cluster_size (int, optional): _description_. Defaults to 10.
+            metric (str, optional): _description_. Defaults to "euclidean".
+            cluster_selection_method (str, optional): _description_. Defaults to "eom".
+            prediction_data (bool, optional): _description_. Defaults to True.
+
+        Returns:
+            HDBSCAN | None: The loaded HDBSCAN model or None if an error occurs.
+        """
+        try:
+            return HDBSCAN(
+                min_cluster_size=min_cluster_size,
+                metric=metric,
+                cluster_selection_method=cluster_selection_method,
+                prediction_data=prediction_data,
+            )
+        except Exception as e:
+            self.logger.error(f"Error loading HDBSCAN model: {e}")
+            return None
+
+    def _load_vectorizer_model(
+        self, ngram_range: tuple = (1, 2)
     ) -> CountVectorizer | None:
         """
         Load the CountVectorizer model with the specified parameters.
