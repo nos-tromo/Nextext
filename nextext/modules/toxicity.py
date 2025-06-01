@@ -2,7 +2,7 @@ import logging
 
 import torch
 from transformers import AutoModelForSequenceClassification, AutoTokenizer
-from transformers import pipeline as hf_pipeline
+from transformers.pipelines import pipeline as hf_pipeline
 from transformers.pipelines.base import Pipeline
 
 
@@ -13,11 +13,11 @@ class ToxClassifier:
     Attributes:
         model_id (str): The model ID for the pre-trained toxicity classifier.
         batch_size (int): The size of batches for processing the data.
-        classifier (pipeline): The classification pipeline.
+        classifier (Pipeline): The classification pipeline.
 
     Methods:
         _load_pipeline(): Loads the pre-trained model and tokenizer into a pipeline.
-        model_inference(): Performs inference on the text data and returns the results.
+        classify_data(data: list[str]) -> list[int]: Performs inference on the text data and returns the results.
     """
 
     def __init__(
@@ -41,7 +41,7 @@ class ToxClassifier:
         )
         self.classifier = self._load_pipeline()
 
-    def _load_pipeline(self) -> Pipeline:
+    def _load_pipeline(self) -> Pipeline | None:
         """
         Loads the pre-trained model and tokenizer into a pipeline for text classification.
 
@@ -74,23 +74,37 @@ class ToxClassifier:
             self.logger.error(f"Error initializing classification pipeline: {e}")
             return None
 
-    def classify_data(self, data: list[str]) -> list[int] | None:
+    def classify_data(
+        self, data: list[str], results: list[int] = []
+    ) -> list[int]:
         """
         Performs inference on the text data using the pre-trained model and returns the classification results.
 
         Args:
             data (list[str]): A list of text data to classify.
+            results (list[int]): A list to store the classification results. Defaults to an empty list.
 
         Returns:
-            list[int] | None: A list of classification results (1 for toxic, 0 for non-toxic) or None if an error occurred.
+            list[int]: A list of classification results (1 for toxic, 0 for non-toxic).
         """
         try:
             n_lines = len(data)
-            results = []
+            if n_lines == 0:
+                self.logger.warning("No data provided for classification.")
+                return []
+            if n_lines < self.batch_size:
+                self.logger.warning(
+                    f"Data size ({n_lines}) is smaller than batch size ({self.batch_size})."
+                )
+                self.batch_size = n_lines
 
             for start_idx in range(0, n_lines, self.batch_size):
                 end_idx = min(start_idx + self.batch_size, n_lines)
                 batch = data[start_idx:end_idx]
+
+                if self.classifier is None:
+                    self.logger.error("Classifier pipeline is not initialized.")
+                    return []
 
                 batch_results = self.classifier(batch)
 
@@ -113,7 +127,7 @@ class ToxClassifier:
                 self.logger.error(
                     "Mismatch between number of results and data entries."
                 )
-                return None
+                return []
 
             return results
 
@@ -121,4 +135,4 @@ class ToxClassifier:
             self.logger.error(
                 f"Error during classification inference: {e}", exc_info=True
             )
-            return None
+            return []
