@@ -1,20 +1,25 @@
 import logging
 
+import numpy as np
 import pandas as pd
 import pycountry
 import torch
 from bertopic import BERTopic
 from bertopic.representation import PartOfSpeech
+from hdbscan import HDBSCAN
 from nltk.corpus import stopwords
+from nltk.tokenize import sent_tokenize
+from sentence_transformers import SentenceTransformer
 from sklearn.feature_extraction.text import CountVectorizer
 from umap import UMAP
 
+from nextext.utils import load_lang_maps
+
 from .ollama_cfg import (
-    call_ollama,
+    call_ollama_server,
     topic_summaries_prompt,
     topic_titles_prompt,
 )
-from nextext.utils import load_lang_maps
 
 
 class TopicModeling:
