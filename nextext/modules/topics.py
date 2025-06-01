@@ -75,10 +75,10 @@ class TopicModeling:
         Initialize the TopicModeling object.
 
         Args:
-            rows (list[str]): List of text rows to be processed.
-            language (str): Language code for the text data.
-            spacy_language_path (Path): Path to the JSON file containing spaCy language models. Defaults to "utils/spacy_languages.json".
-            sentence_model (str, optional): Sentence transformer model name. Defaults to "thenlper/gte-small".
+            data (str | list[str] | pd.DataFrame): List of text rows to be processed.
+            column (str | None, optional): Column name in the DataFrame containing text data. Defaults to "text".
+            lang_code (str, optional): Language code for the text data. Defaults to "en".
+            spacy_language_file (str, optional): Path to the JSON file containing spaCy language model mappings. Defaults to "spacy_models.json".
         """
         self.logger = logging.getLogger(self.__class__.__name__)
 
