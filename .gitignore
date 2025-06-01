@@ -10,6 +10,7 @@ data/
 env/
 gguf/
 output/
+test/
 uploads/
 *.egg-info/
 
