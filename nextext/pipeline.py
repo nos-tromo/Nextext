@@ -160,7 +160,7 @@ def wordlevel_pipeline(
             - pd.DataFrame: DataFrame with word counts.
             - pd.DataFrame: DataFrame with named entities.
             - pd.DataFrame: DataFrame with noun sentiment.
-            - matplotlib.figure.Figure: Word cloud figure.
+            - Figure: Word cloud figure.
     """
     word_analysis = WordCounter(
         text=" ".join(data["text"].astype(str).tolist()),
@@ -169,9 +169,9 @@ def wordlevel_pipeline(
 
     word_analysis.text_to_doc()
     word_analysis.lemmatize_doc()
-    word_counts = word_analysis.count_words(n_words=30)
+    word_counts = word_analysis.count_words()
     named_entities = word_analysis.named_entity_recognition()
-    noun_sentiment = word_analysis.get_noun_adjectives()
+    noun_sentiment = word_analysis.get_noun_sentiment()
     wordcloud = word_analysis.create_wordcloud()
 
     return word_counts, named_entities, noun_sentiment, wordcloud
