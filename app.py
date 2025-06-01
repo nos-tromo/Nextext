@@ -243,6 +243,17 @@ def _main() -> None:
                 mime="text/plain",
             )
 
+    # ---------------- Footer -----------------------
+    st.markdown(
+        """
+        <hr style="margin-top:2rem;margin-bottom:1rem;">
+        <p style="text-align:center;">
+            🔗 <a href="https://github.com/nos-tromo/nextext" target="_blank">GitHub&nbsp;Repository</a>
+        </p>
+        """,
+        unsafe_allow_html=True,
+    )
+
 
 if __name__ == "__main__":
     _main()
