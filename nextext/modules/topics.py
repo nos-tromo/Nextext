@@ -82,15 +82,31 @@ class TopicModeling:
         """
         self.logger = logging.getLogger(self.__class__.__name__)
 
-        self.docs = rows
-        spacy_languages, _ = load_lang_maps(spacy_language_file)
-        self.language = self._convert_to_language_name(lang_code)
-        self.nlp_name = self._load_spacy_model(spacy_languages, lang_code)
-        self.logger.info(
-            f"spaCy model '{self.nlp_name}' loaded for language '{lang_code}'."
-        )
+        # Validate input data type and convert to a list of sentences
+        if isinstance(data, str):
+            self.logger.info("Input data is a string. Tokenizing sentences.")
+        elif isinstance(data, list):
+            self.logger.info("Input data is a list of strings. Tokenizing sentences.")
+            data = " ".join(data)
+        elif isinstance(data, pd.DataFrame):
+            self.logger.info(
+                f"Input data is a DataFrame. Extracting column '{column}' for processing."
+            )
+            data = " ".join(data[column].astype(str).tolist())
+        else:
+            self.logger.error(
+                "Input data must be a string, list of strings, or a DataFrame. Received: {type(data)}"
+            )
+            raise ValueError("Input data must be a string or a list of strings.")
 
-        self.sentence_model = sentence_model
+        self.language = self._lang_code_to_name(lang_code) or "english"
+        self.docs = sent_tokenize(data, self.language)
+        if not self.docs:
+            self.logger.error(
+                "Input data is empty. Cannot proceed with topic modeling."
+            )
+            raise ValueError("Input data is empty. Cannot proceed with topic modeling.")
+
         self.device = (
             "cuda"
             if torch.cuda.is_available()
