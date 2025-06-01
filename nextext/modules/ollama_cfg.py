@@ -151,8 +151,6 @@ Text to Summarize:
 "{text}"
 """
 
-text_summarization_prompt = system_prompt + "\n\n" + text_summarization
-
 # Topic summarization
 topic_titles = """
 You are an expert for topic modeling that is highly proficient in generating topic titles from raw text.
