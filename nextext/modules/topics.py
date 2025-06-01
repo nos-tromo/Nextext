@@ -347,7 +347,25 @@ class TopicModeling:
         except Exception as e:
             logging.error(f"Error loading topic modeling pipeline: {e}")
 
-    def fit_topic_model(self) -> pd.DataFrame | None:
+    def _embed_docs(self) -> np.ndarray | None:
+        """
+        Embed the documents using the SentenceTransformer model.
+
+        Returns:
+            list[list[float]]: A list of embeddings for each document.
+        """
+        if self.topic_model is None or self.embedding_model is None:
+            logging.error("Topic model or embedding model is not initialized.")
+            return None
+        try:
+            return self.embedding_model.encode(
+                self.docs, show_progress_bar=True, device=self.device
+            )
+        except Exception as e:
+            logging.error(f"Error embedding documents: {e}")
+            return None
+
+    def fit_topic_model(self) -> pd.DataFrame:
         """
         Fit the topic model to the data and retrieve the topic information.
 
