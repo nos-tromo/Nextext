@@ -124,8 +124,7 @@ def summarization_pipeline(
 
     Args:
         text (str): The text to summarize.
-        language (str): The language code of the text. Defaults to "German".
-        trg_lang (str): The target language code for the summary. Defaults to "de".
+        prompt_lang (str): The language code of the text. Defaults to "German".
 
     Returns:
         str | None: The summarized text or None if an error occurs.
@@ -138,7 +137,7 @@ def summarization_pipeline(
             text=text,
         )
 
-        return call_ollama(prompt=prompt)
+        return call_ollama_server(prompt=prompt)
 
     except Exception as e:
         logging.error(f"Error summarizing text: {e}")
