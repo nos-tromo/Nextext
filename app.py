@@ -173,6 +173,17 @@ def _main() -> None:
         for t in (tab_transcript, tab_summary, tab_words, tab_topics):
             with t:
                 st.info(msg)
+
+        # Footer
+        st.markdown(
+            """
+            <hr style="margin-top:2rem;margin-bottom:1rem;">
+            <p style="text-align:center;">
+                🔗 <a href="https://github.com/nos-tromo/Nextext" target="_blank">GitHub</a>
+            </p>
+            """,
+            unsafe_allow_html=True,
+        )
         return
 
     result = st.session_state["result"]
