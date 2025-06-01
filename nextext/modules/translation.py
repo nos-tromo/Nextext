@@ -112,7 +112,8 @@ class Translator:
         """
         try:
             self.src_lang = detect(text)
-            src_lang_name = pycountry.languages.get(alpha_2=self.src_lang).name
+            lang_obj = pycountry.languages.get(alpha_2=self.src_lang)
+            src_lang_name = lang_obj.name if lang_obj is not None else ""
             return {"name": src_lang_name, "code": self.src_lang or ""}
         except Exception as e:
             self.logger.error(f"Error detecting language: {e}")
