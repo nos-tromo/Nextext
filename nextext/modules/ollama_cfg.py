@@ -167,5 +167,7 @@ The topic contains the following documents: \n"{docs}"
 Based on the above information, create a short summary of the topic.
 """
 
+# Combine prompts with system prompt
+text_summarization_prompt = system_prompt + "\n\n" + text_summarization
 topic_titles_prompt = system_prompt + "\n\n" + topic_titles
 topic_summaries_prompt = system_prompt + "\n\n" + topic_summaries
