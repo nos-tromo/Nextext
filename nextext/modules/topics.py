@@ -370,21 +370,32 @@ class TopicModeling:
         Fit the topic model to the data and retrieve the topic information.
 
         Returns:
-            pd.DataFrame | None: A DataFrame containing the topics' representations or None if an error occurs.
+            pd.DataFrame: A DataFrame containing the topics' representations.
         """
         if len(self.docs) < 5:
             logging.warning("Not enough documents for topic modeling. Skipping fit.")
         try:
             if self.topic_model is not None:
-                self.topic_model.fit_transform(documents=self.docs)
+                # Ensure the embedding model is loaded
+                if self.embedding_model is None:
+                    self.embedding_model = self._load_embedding_model()
+                # Embed the documents
+                embeddings = self._embed_docs()
+                if embeddings is None:
+                    logging.error("Failed to embed documents. Cannot fit topic model.")
+                    return pd.DataFrame()
+                # Fit the topic model
+                self.topic_model.fit_transform(
+                    documents=self.docs, embeddings=embeddings
+                )
                 self.topic_df = self.topic_model.get_topic_info()
                 return self.topic_df
             else:
                 logging.error("Topic model is not initialized.")
-                return None
+                return pd.DataFrame()
         except ValueError as e:
             logging.error(f"Error fitting topic model: {e}")
-            return None
+            return pd.DataFrame()
 
     def summarize_topics(
         self,
