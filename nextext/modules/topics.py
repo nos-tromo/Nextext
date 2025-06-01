@@ -191,9 +191,9 @@ class TopicModeling:
     def _load_umap_model(
         self,
         n_neighbors: int = 15,
-        n_components: int = 2,
-        min_dist: float = 0.1,
-        metric: str = "euclidean",
+        n_components: int = 5,
+        min_dist: float = 0.0,
+        metric: str = "cosine",
         random_state: int = 42,
     ) -> UMAP | None:
         """
