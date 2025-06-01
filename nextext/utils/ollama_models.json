@@ -1,0 +1,5 @@
+{
+    "cuda": "gemma3:27b-it-qat", 
+    "mps": "gemma3:4b-it-qat", 
+    "cpu": "gemma3:12b-it-qat"
+}
