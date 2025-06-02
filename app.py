@@ -5,6 +5,7 @@ from pathlib import Path
 
 import altair as alt
 import streamlit as st
+import streamlit.components.v1 as components
 
 from nextext import pipeline as ne
 from nextext.utils import load_lang_maps, setup_logging
@@ -40,19 +41,21 @@ def _run_pipeline(tmp_file: Path, opts: dict) -> None:
         "topics": None,
         "word_counts": None,
         "noun_sentiment": None,
+        "noun_graph": None,
         "named_entities": None,
         "wordcloud": None,
     }
 
     with st.spinner("Running word-level analysis… ⏳"):
         if opts["words"]:
-            wc, ner, nouns, cloud = ne.wordlevel_pipeline(
+            wc, ner, nouns, graph, cloud = ne.wordlevel_pipeline(
                 df,
                 opts["trg_lang" if opts["task"] == "translate" else "src_lang"],
             )
             result["word_counts"] = wc
             result["named_entities"] = ner
             result["noun_sentiment"] = nouns
+            result["noun_graph"] = graph
             result["wordcloud"] = cloud
 
     with st.spinner("Running topic modelling… ⏳"):
@@ -233,6 +236,10 @@ def _main() -> None:
 
             st.subheader("🗣️ Noun Sentiment")
             st.dataframe(result["noun_sentiment"], hide_index=True)
+            if result["noun_graph"]:
+                components.html(result["noun_graph"], height=800, scrolling=False)
+            else:
+                st.info("No noun graph available.")
 
             st.subheader("☁️ Word Cloud")
             st.pyplot(result["wordcloud"])
