@@ -4,11 +4,13 @@ from pathlib import Path
 
 import arabic_reshaper
 import matplotlib.pyplot as plt
+import networkx as nx
 import pandas as pd
 import spacy
 from bidi.algorithm import get_display
 from camel_tools.tokenizers.word import simple_word_tokenize
 from matplotlib.figure import Figure
+from pyvis.network import Network
 from spacy.tokens import Doc
 from wordcloud import WordCloud
 
@@ -29,6 +31,7 @@ class WordCounter:
         tokenized_nouns (list[str] | None): List of lemmatized nouns from the text.
         word_counts (collections.Counter | None): Counter of word frequencies.
         spacy_entities (dict): Mapping of entity types for NER.
+        noun_df (pd.DataFrame | None): DataFrame of high-frequency nouns with associated verbs and adjectives.
 
     Methods:
         __init__(text: str, language: str, spacy_models_file: str = "spacy_models.json", spacy_entities_file: str = "spacy_entities.json", font_file: str = "Amiri-Regular.ttf") -> None:
@@ -47,6 +50,10 @@ class WordCounter:
             Performs named entity recognition on the text and returns a DataFrame.
         get_noun_adjectives(n_freq_nouns: int = 50, n_freq_adjs: int = 5, columns: list[str] = ["Noun", "Adjective"]) -> pd.DataFrame:
             Finds the most frequent nouns and their associated adjectives, returning a DataFrame.
+        construct_noun_sentiment_graph(columns: list[str] = ["Noun", "Verb", "Adjective"]) -> nx.Graph:
+            Constructs a semantic graph of nouns, verbs, and adjectives from the noun sentiment DataFrame.
+        create_interactive_graph() -> str:
+            Exports the noun-verb-adjective graph as an interactive HTML file.
         create_wordcloud() -> Figure:
             Generates a word cloud visualization of word frequencies.
     """
@@ -85,6 +92,7 @@ class WordCounter:
         self.tokenized_doc: list | None = None
         self.tokenized_nouns: list | None = None
         self.word_counts: Counter | None = None
+        self.noun_df: pd.DataFrame | None = None
 
     def _create_absolute_path(self, file: str, path: Path = Path("utils")) -> Path:
         """
@@ -332,12 +340,95 @@ class WordCounter:
                     }
                 )
 
-            return pd.DataFrame(rows, columns=columns).reset_index(drop=True)
+            self.noun_df = pd.DataFrame(rows, columns=columns).reset_index(drop=True)
+            return self.noun_df
 
         except Exception as e:
             self.logger.error(f"Error combining noun‑verb‑adjective extraction: {e}", exc_info=True)
             return pd.DataFrame(columns=columns).reset_index(drop=True)
 
+    def construct_noun_sentiment_graph(
+        self,
+        columns: list[str] = ["Noun", "Verb", "Adjective"],
+    ) -> nx.Graph:
+        """
+        Build a graph from the noun-verb-adjective DataFrame.
+
+        Args:
+            columns (list[str]): Column names for the DataFrame. Defaults to ["Noun", "Verb", "Adjective"].
+
+        Returns:
+            nx.Graph: The constructed semantic graph.
+        """
+        try:
+            if self.noun_df is None:
+                self.logger.error(
+                    "Noun DataFrame is None. Please run get_noun_adjectives() first."
+                )
+                return nx.Graph()
+
+            G = nx.Graph()
+            for _, row in self.noun_df.iterrows():
+                noun = row[columns[0]]
+                verbs = row[columns[1]].split(", ") if row[columns[1]] else []
+                adjs = row[columns[2]].split(", ") if row[columns[2]] else []
+
+                G.add_node(noun, type="noun")
+
+                for v in verbs:
+                    G.add_node(v, type="verb")
+                    G.add_edge(noun, v, relation="verb")
+
+                for a in adjs:
+                    G.add_node(a, type="adj")
+                    G.add_edge(noun, a, relation="adj")
+            return G
+        except Exception as e:
+            self.logger.error(
+                f"Error building noun-verb-adjective graph: {e}", exc_info=True
+            )
+            return nx.Graph()
+
+    def create_interactive_graph(self) -> str:
+        """
+        Export the noun-verb-adjective graph as an interactive HTML file.
+
+        Returns:
+            str: HTML string of the interactive graph.
+        """
+        try:
+            G = self.construct_noun_sentiment_graph()
+            if G.number_of_nodes() == 0:
+                self.logger.warning("Graph is empty. No nodes to visualize.")
+                return "<p>No data to visualize.</p>"
+
+            net = Network(notebook=False, bgcolor="#000000", font_color="white")
+            for node, attr in G.nodes(data=True):
+                net.add_node(
+                    node,
+                    label=node,
+                    color={"noun": "#4f81bd", "verb": "#9bbb59", "adj": "#c0504d"}.get(
+                        attr["type"], "#dddddd"
+                    ),
+                )
+
+            for u, v, d in G.edges(data=True):
+                net.add_edge(u, v, title=d["relation"])
+
+            # Remove annoying white padding around the graph (more precise)
+            html = net.generate_html()
+            html = html.replace(
+                "<body>",
+                """<body style="margin:0;padding:0;background-color:#222222;height:100vh;">""",
+            ).replace(
+                '<div id="mynetwork"',
+                '<div id="mynetwork" style="height:100vh;width:100%;background-color:#222222;border:none;"',
+            )
+            return html
+        except Exception as e:
+            self.logger.error(f"Error exporting interactive graph: {e}", exc_info=True)
+            return "<p>Error generating graph visualization.</p>"
+    
     def create_wordcloud(self) -> Figure:
         """
         Create a wordcloud of the most frequent words.
