@@ -9,6 +9,7 @@ build/
 data/
 env/
 gguf/
+lib/
 models/
 output/
 test/
@@ -19,6 +20,7 @@ uploads/
 *.code-workspace
 *.db
 *.gguf
+*.html
 *.log
 *.mkv
 *.mp3
