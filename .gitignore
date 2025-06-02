@@ -9,6 +9,7 @@ build/
 data/
 env/
 gguf/
+models/
 output/
 test/
 uploads/
