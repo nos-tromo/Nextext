@@ -170,7 +170,7 @@ def main() -> None:
 
         # Calculate word statistics
         if args.words:
-            word_counts, named_entities, noun_sentiment, wordcloud_fig = (
+            word_counts, named_entities, noun_sentiment, noun_graph, wordcloud_fig = (
                 ne.wordlevel_pipeline(
                     data=transcript_df,
                     language=transcript_lang,
