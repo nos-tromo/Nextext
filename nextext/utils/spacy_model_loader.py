@@ -8,7 +8,7 @@ from .lang_utils import load_lang_maps
 logger = logging.getLogger(__name__)
 
 
-def download_model(model_name: str) -> None:
+def download_model(model_id: str) -> None:
     """
     Download a spaCy model using subprocess.
 
@@ -17,12 +17,12 @@ def download_model(model_name: str) -> None:
     """    
     try:
         subprocess.run(
-            [sys.executable, "-m", "spacy", "download", model_name], check=True
+            [sys.executable, "-m", "spacy", "download", model_id], check=True
         )
     except subprocess.CalledProcessError as e:
-        logger.error(f"⚠️ Failed to download {model_name}: {e}")
+        logger.error(f"⚠️ Failed to download {model_id}: {e}")
     except Exception as e:
-        logger.error(f"💥 Unexpected error with {model_name}: {e}")
+        logger.error(f"💥 Unexpected error with {model_id}: {e}")
 
 
 def main() -> None:
