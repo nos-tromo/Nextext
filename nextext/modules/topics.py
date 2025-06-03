@@ -211,12 +211,14 @@ class TopicModeling:
         """
         try:
             doc_count = len(self.docs)
-            adjusted_components = min(n_components, max(1, doc_count - 1))
+            adjusted_components = max(2, min(n_components, doc_count - 2))
+
             if adjusted_components >= doc_count:
                 self.logger.warning(
-                    f"Too few documents ({doc_count}) for UMAP dimensionality reduction. Skipping topic modeling."
+                    f"Too few documents ({doc_count}) for UMAP. Skipping topic modeling."
                 )
                 return None
+
             return UMAP(
                 n_neighbors=n_neighbors,
                 n_components=adjusted_components,
