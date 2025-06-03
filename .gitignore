@@ -24,6 +24,7 @@ uploads/
 *.mkv
 *.mp3
 *.mp4
+*.sh
 *.wav
 *.webm
 *.zip
