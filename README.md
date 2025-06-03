@@ -88,6 +88,17 @@ uv run streamlit run app.py
 
 This will start the app locally and provide a URL (typically `http://localhost:8501`) in your terminal. Open this URL in your browser to access the Nextext interface.
 
+#### Increasing file upload size limit 📂
+
+By default, Streamlit limits the maximum file upload size to 200MB. To increase this limit, modify the `config.toml` file located in the Streamlit configuration directory. Add or update the following line under the `[server]` section:
+
+```toml
+[server]
+maxUploadSize = 1024  # Set this value to the required limit in megabytes
+```
+
+This example sets the limit to 1024MB (1GB). Restart the Streamlit app after making this change for the new limit to take effect.
+
 ### CLI 💻
 
 Running `uv run python -m nextext.cli [ARGS]` from the command line supports the following arguments:
