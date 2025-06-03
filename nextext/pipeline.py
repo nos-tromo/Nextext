@@ -173,9 +173,6 @@ def wordlevel_pipeline(
     named_entities = word_analysis.named_entity_recognition()
     noun_sentiment = word_analysis.get_noun_sentiment()
     noun_graph = word_analysis.create_interactive_graph()
-    logging.info(type(noun_graph))
-    logging.info(len(noun_graph))
-    logging.info(noun_graph)
     wordcloud = word_analysis.create_wordcloud()
 
     return word_counts, named_entities, noun_sentiment, noun_graph, wordcloud
