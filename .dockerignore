@@ -14,6 +14,8 @@ __pycache__/
 .git/
 .gitignore
 build/
+lib/
+models/
 tests/
 
 # Config files
