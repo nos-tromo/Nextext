@@ -41,10 +41,15 @@ Nextext requires downloading some models:
 
 #### Ollama 🦙
 
-- [`gemma3:4b-it-qat`](https://ollama.com/library/gemma3) or
+The following models are recommended and tested for this application (select depending on your hardware setup):
+
+- [`gemma3:4b-it-qat`](https://ollama.com/library/gemma3)
+- [`gemma3:12b-it-qat`](https://ollama.com/library/gemma3)
 - [`gemma3:27b-it-qat`](https://ollama.com/library/gemma3)
 
-#### Other language tokenization models 🌐
+To configure the app's default models, edit the selector located at `nextext/utils/ollama_models.json`.
+
+#### Other language and tokenization models 🌐
 
 ```bash
 # nltk
@@ -135,6 +140,7 @@ done
 - 🎨 Polish Streamlit frontend
 - 🤖 Integrate LLM chatbot into UI
 - 📊 Add comprehensive report output
+- 🚫 Fix offline usage
 - 👥 Implement multi-user access
 
 ## Feedback 💬
