@@ -15,11 +15,10 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 
 COPY . .
 
-RUN uv venv --python=/usr/bin/python3.11 && \
-    uv pip install . && \
-    uv sync --frozen --no-cache
-
-RUN uv run python -m nextext.utils.spacy_model_loader
+RUN uv venv --python=/usr/bin/python3.11 \
+    && uv pip install . \
+    && uv sync --frozen --no-cache \
+    && uv run python -m nextext.utils.spacy_model_loader
 
 EXPOSE 8501
 
