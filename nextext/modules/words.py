@@ -94,7 +94,9 @@ class WordCounter:
         self.word_counts: Counter | None = None
         self.noun_df: pd.DataFrame | None = None
 
-    def _create_absolute_path(self, file: str, path: Path = Path("utils")) -> Path:
+    def _create_absolute_path(
+        self, file: str, path: Path = Path("utils") / "fonts"
+    ) -> Path:
         """
         Create an absolute path from a relative path.
 
@@ -273,7 +275,7 @@ class WordCounter:
         columns: list[str] = ["Noun", "Verb", "Adjective"],
     ) -> pd.DataFrame:
         """
-        Retrieve, for each high‑frequency noun, its most common governing verbs
+        Retrieve, for each high-frequency noun, its most common governing verbs
         *and* its most common modifying adjectives, returning a single tidy
         DataFrame.
 
@@ -285,7 +287,7 @@ class WordCounter:
                                  Defaults to ["Noun", "Verb", "Adjective"].
 
         Returns:
-            pd.DataFrame: One row per noun with two comma‑separated columns listing
+            pd.DataFrame: One row per noun with two comma-separated columns listing
                           verbs and adjectives.
         """
         try:
@@ -295,7 +297,8 @@ class WordCounter:
 
             # Identify top‑frequency noun lemmas
             top_nouns = {
-                noun for noun, _ in Counter(self.tokenized_nouns).most_common(n_freq_nouns)
+                noun
+                for noun, _ in Counter(self.tokenized_nouns).most_common(n_freq_nouns)
             }
 
             noun_verb_map: dict[str, list[str]] = defaultdict(list)
@@ -344,7 +347,9 @@ class WordCounter:
             return self.noun_df
 
         except Exception as e:
-            self.logger.error(f"Error combining noun‑verb‑adjective extraction: {e}", exc_info=True)
+            self.logger.error(
+                f"Error combining noun‑verb‑adjective extraction: {e}", exc_info=True
+            )
             return pd.DataFrame(columns=columns).reset_index(drop=True)
 
     def construct_noun_sentiment_graph(
@@ -428,7 +433,7 @@ class WordCounter:
         except Exception as e:
             self.logger.error(f"Error exporting interactive graph: {e}", exc_info=True)
             return "<p>Error generating graph visualization.</p>"
-    
+
     def create_wordcloud(self) -> Figure:
         """
         Create a wordcloud of the most frequent words.
