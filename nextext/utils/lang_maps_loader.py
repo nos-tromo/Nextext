@@ -7,12 +7,14 @@ from pathlib import Path
 @lru_cache
 def load_lang_maps(
     file: str = "whisper_languages.json",
+    mappings_dir: str = "mappings",
 ) -> tuple[dict[str, str], dict[str, str]]:
     """
     Load language maps from a JSON file.
 
     Args:
         file (str): Description of the file to load.
+        mappings_dir (str): Directory where the mappings files are located.
 
     Returns:
         tuple[dict[str, str], dict[str, str]]: Key to value and value to key mappings.
@@ -20,7 +22,7 @@ def load_lang_maps(
     logger = logging.getLogger(__name__)
 
     try:
-        _JSON_PATH = Path(__file__).with_name(file)
+        _JSON_PATH = Path(__file__).parent / mappings_dir / file
         logger.info(f"Attempting to load language map from '{_JSON_PATH}'")
         with open(_JSON_PATH, "r", encoding="utf-8") as f:
             code2name = json.load(f)

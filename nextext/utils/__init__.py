@@ -1,4 +1,4 @@
-from .lang_utils import load_lang_maps
+from .lang_maps_loader import load_lang_maps
 from .logging_cfg import setup_logging
 from .spacy_model_loader import download_model
 

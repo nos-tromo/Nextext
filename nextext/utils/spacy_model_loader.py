@@ -2,7 +2,7 @@ import logging
 import subprocess
 import sys
 
-from .lang_utils import load_lang_maps
+from .lang_maps_loader import load_lang_maps
 
 
 logger = logging.getLogger(__name__)
