@@ -95,7 +95,7 @@ This will start the app locally and provide a URL (typically `http://localhost:8
 
 #### Increasing file upload size limit 📂
 
-By default, Streamlit limits the maximum file upload size to 200MB. To increase this limit, modify the `config.toml` file located in the Streamlit configuration directory. Add or update the following line under the `[server]` section:
+By default, Streamlit limits the maximum file upload size to 200MB. To increase this limit, modify `~/.streamlit/config.toml` (you might have to create `config.toml` first). Add or update the following line under the `[server]` section:
 
 ```toml
 [server]
