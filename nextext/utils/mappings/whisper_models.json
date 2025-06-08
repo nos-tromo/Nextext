@@ -1,0 +1,10 @@
+{
+    "default_transcribe": "turbo",
+    "default_translate": "large-v2",
+    "large-v3": "large-v3",
+    "large-v2": "large-v2",
+    "medium": "medium",
+    "small": "small",
+    "base": "base",
+    "tiny": "tiny"
+}
