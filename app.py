@@ -8,7 +8,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 from nextext import pipeline as ne
-from nextext.utils import load_lang_maps, setup_logging
+from nextext.utils import load_mappings, setup_logging
 
 setup_logging()
 
@@ -95,7 +95,7 @@ def _start_page() -> None:
         "Audio / video file", type=["wav", "mp3", "m4a", "mp4", "mkv", "webm"]
     )
 
-    code2name, name2code = load_lang_maps()
+    code2name, name2code = load_mappings()
     lang_names = sorted(code2name.values())
 
     task = st.radio("Task", ["transcribe", "translate"], horizontal=True)

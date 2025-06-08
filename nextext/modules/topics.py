@@ -13,7 +13,7 @@ from sentence_transformers import SentenceTransformer
 from sklearn.feature_extraction.text import CountVectorizer
 from umap import UMAP
 
-from nextext.utils import load_lang_maps
+from nextext.utils import load_mappings
 
 from .ollama_cfg import (
     call_ollama_server,
@@ -115,7 +115,7 @@ class TopicModeling:
             else "cpu"
         )
 
-        spacy_languages, _ = load_lang_maps(spacy_language_file)
+        spacy_languages, _ = load_mappings(spacy_language_file)
         self.nlp_name = self._load_spacy_model(spacy_languages, lang_code)
         self.logger.info(
             f"spaCy model '{self.nlp_name}' loaded for language '{lang_code}'."

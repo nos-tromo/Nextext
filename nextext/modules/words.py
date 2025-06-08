@@ -14,7 +14,7 @@ from pyvis.network import Network
 from spacy.tokens import Doc
 from wordcloud import WordCloud
 
-from nextext.utils import load_lang_maps
+from nextext.utils import load_mappings
 
 
 class WordCounter:
@@ -82,8 +82,8 @@ class WordCounter:
         self.language = language
 
         # Paths to the JSON files containing spaCy language models and entity types
-        spacy_languages, _ = load_lang_maps(spacy_models_file)
-        self.spacy_entities, _ = load_lang_maps(spacy_entities_file)
+        spacy_languages, _ = load_mappings(spacy_models_file)
+        self.spacy_entities, _ = load_mappings(spacy_entities_file)
         # Path to the font used for word cloud rendering
         self.font_path = self._create_absolute_path(font_file)
 

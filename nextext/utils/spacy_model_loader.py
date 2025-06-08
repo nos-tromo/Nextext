@@ -2,7 +2,7 @@ import logging
 import subprocess
 import sys
 
-from .lang_maps_loader import load_lang_maps
+from .mappings_loader import load_mappings
 
 
 logger = logging.getLogger(__name__)
@@ -29,7 +29,7 @@ def main() -> None:
     """
     Main function to download all small spaCy models.
     """    
-    models, _ = load_lang_maps("spacy_models.json")
+    models, _ = load_mappings("spacy_models.json")
     for model_id in models.values():
         download_model(model_id)
     logger.info("\n✅ All small models downloaded successfully.")
