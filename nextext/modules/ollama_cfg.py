@@ -63,7 +63,7 @@ def _load_ollama_model(
     logger = logging.getLogger(__name__)
 
     try:
-        models, _ = load_mappings(filename)
+        models = load_mappings(filename)
         if not models:
             logger.error(f"Model file '{filename}' not found or empty.")
             return None

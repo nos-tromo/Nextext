@@ -115,7 +115,7 @@ class TopicModeling:
             else "cpu"
         )
 
-        spacy_languages, _ = load_mappings(spacy_language_file)
+        spacy_languages = load_mappings(spacy_language_file)
         self.nlp_name = self._load_spacy_model(spacy_languages, lang_code)
         self.logger.info(
             f"spaCy model '{self.nlp_name}' loaded for language '{lang_code}'."

@@ -29,7 +29,7 @@ def main() -> None:
     """
     Main function to download all small spaCy models.
     """    
-    models, _ = load_mappings("spacy_models.json")
+    models = load_mappings("spacy_models.json")
     for model_id in models.values():
         download_model(model_id)
     logger.info("\n✅ All small models downloaded successfully.")

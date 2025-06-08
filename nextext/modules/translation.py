@@ -43,7 +43,7 @@ class Translator:
             madlad_language_file (str): Path to the MADLAD language mapping file.
         """
         self.logger = logging.getLogger(self.__class__.__name__)
-        self.madlad_languages, _ = load_mappings(madlad_language_file)
+        self.madlad_languages = load_mappings(madlad_language_file)
         model = self._load_model()
         if model is None:
             raise RuntimeError("Failed to load translation model.")
