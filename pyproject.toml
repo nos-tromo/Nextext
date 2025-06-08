@@ -47,6 +47,9 @@ dependencies = [
     "wordcloud>=1.9.4",
 ]
 
+[project.scripts]
+nextext = "cli:main"
+
 [project.urls]
 Repository = "https://github.com/nos-tromo/Nextext.git"
 
@@ -56,5 +59,3 @@ include-package-data = true
 [tool.setuptools.packages.find]
 where = ["."]
   
-[project.scripts]
-nextext = "cli:main"
