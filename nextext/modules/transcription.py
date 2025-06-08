@@ -77,7 +77,6 @@ class WhisperTranscriber:
         """
         self.logger = logging.getLogger(self.__class__.__name__)
 
-        self.language = language
         self.start_column = start_column
         self.end_column = end_column
         self.speaker_column = speaker_column
@@ -85,11 +84,31 @@ class WhisperTranscriber:
         self.task = task
 
         self.transcription_device = "cuda" if torch.cuda.is_available() else "cpu"
+        self.audio = self._load_audio(file_path)
+
+        # Detect language if set to "detect", otherwise use specified language
+        if language == "detect":
+            self.logger.info(
+                "Language set to 'detect'; running detection before loading model."
+            )
+            self.language = self._detect_language()
+        else:
+            self.logger.info(f"Using specified language: {language}")
+            whisper_languages = load_mappings(whisper_language_file)
+            self.language = (
+                language
+                if language in whisper_languages.keys()
+                else self._detect_language()
+                if self._detect_language() in whisper_languages.keys()
+                else "en"
+            )
+        self.logger.info(f"Using language: {self.language}")
+
+        # Load the transcription and alignment models
         self.transcribe_model, self.model_a, self.metadata = (
             self._load_transcription_model(model_id, whisper_model_file)
         )
         self.diarize_model = self._load_diarization_model(auth_token)
-        self.audio = self._load_audio(file_path)
 
         self.transcription_result: Optional[dict[str, Any]] = None
         self.df: pd.DataFrame | None = None
