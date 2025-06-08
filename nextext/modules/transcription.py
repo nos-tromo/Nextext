@@ -36,9 +36,10 @@ class WhisperTranscriber:
         df (Optional[pd.DataFrame]): DataFrame with diarization/transcription results.
 
     Methods:
+        _load_audio(file): Load audio file as tensor.
+        _detect_language(duration_sec, sample_rate): Detect spoken language in the audio.
         _load_transcription_model(model_id): Load WhisperX model for transcription and alignment.
         _load_diarization_model(auth_token): Load WhisperX diarization pipeline.
-        _load_audio(file): Load audio file as tensor.
         transcription(batch_size): Run transcription and alignment.
         _seconds_to_time(seconds): Convert seconds to HH:MM:SS string.
         diarization(n_speakers): Perform speaker diarization and return DataFrame.
