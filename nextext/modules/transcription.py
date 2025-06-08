@@ -130,7 +130,7 @@ class WhisperTranscriber:
             dict[str, Any]: Metadata about the loaded model.
         """
         try:
-            model_config, _ = load_mappings(whisper_model_file)
+            model_config = load_mappings(whisper_model_file)
             config_key = (
                 f"{model_id}_{self.task}" if model_id == "default" else model_id
             )
