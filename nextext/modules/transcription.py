@@ -110,6 +110,7 @@ class WhisperTranscriber:
         )
         self.diarize_model = self._load_diarization_model(auth_token)
 
+        # Initialize attributes for transcription results and DataFrame
         self.transcription_result: Optional[dict[str, Any]] = None
         self.df: pd.DataFrame | None = None
 
