@@ -177,8 +177,7 @@ class WhisperTranscriber:
                 if torch.backends.mps.is_available()
                 else "cpu"
             )
-            model = DiarizationPipeline(use_auth_token=auth_token, device=device)
-            return model
+            return DiarizationPipeline(use_auth_token=auth_token, device=device)
         except Exception as e:
             self.logger.error(f"Error setting up diarization model: {e}", exc_info=True)
             raise
