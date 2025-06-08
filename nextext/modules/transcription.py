@@ -56,6 +56,7 @@ class WhisperTranscriber:
         end_column: str = "end",
         speaker_column: str = "speaker",
         text_column: str = "text",
+        whisper_language_file: str = "whisper_languages.json",
         whisper_model_file: str = "whisper_models.json",
     ) -> None:
         """
@@ -72,6 +73,7 @@ class WhisperTranscriber:
             speaker_column (str): The text column with the speaker information. Defaults to "speaker".
             text_column (str): The text column where the result is stored. Defaults to "text".
             whisper_language_file (str): Path to the Whisper language mapping file.
+            whisper_model_file (str): Path to the Whisper model configuration file.
         """
         self.logger = logging.getLogger(self.__class__.__name__)
 
