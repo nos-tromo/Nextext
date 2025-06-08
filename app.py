@@ -95,14 +95,17 @@ def _start_page() -> None:
         "Audio / video file", type=["wav", "mp3", "m4a", "mp4", "mkv", "webm"]
     )
 
-    code2name, name2code = load_mappings()
-    lang_names = sorted(code2name.values())
+    # Load source language mappings from Whisper and target language mappings from Madlad
+    src_lang_maps = load_mappings(file="whisper_languages.json")
+    src_lang_names = sorted(src_lang_maps.values())
+    trg_lang_maps = load_mappings(file="madlad_languages.json")
+    trg_lang_names = sorted(trg_lang_maps.values())
 
     task = st.radio("Task", ["transcribe", "translate"], horizontal=True)
     col1, col2 = st.columns(2)
     with col1:
-        src_name = st.selectbox(
-            "Source language", lang_names, index=lang_names.index("German")
+        src_lang_name = st.selectbox(
+            "Source language", src_lang_names, index=src_lang_names.index("Detect language")
         )
         model_id = st.selectbox(
             "Whisper model",
@@ -117,21 +120,38 @@ def _start_page() -> None:
             summarization = st.checkbox("Summarisation")
             toxicity = st.checkbox("Toxicity")
     with col2:
-        trg_name = st.selectbox(
+        trg_lang_name = st.selectbox(
             "Target language (for translate task)",
-            lang_names,
-            index=lang_names.index("German"),
+            trg_lang_names,
+            index=trg_lang_names.index("German"),
         )
         speakers = st.number_input("Max speakers", 1, 10, value=1, step=1)
 
-    src_lang = name2code[src_name]
-    trg_lang = name2code[trg_name]
+    def kv_to_vk(mappings: dict[str, str]) -> dict[str, str]:
+        """
+        Convert a dictionary from key-value to value-key mapping.
+
+        Args:
+            mappings (dict[str, str]): A dictionary with keys as language codes and values as language names.
+
+        Returns:
+            dict[str, str]: A dictionary with keys as language names and values as language codes.
+        """
+        try:
+            return {v: k for k, v in mappings.items()}
+        except Exception as e:
+            st.error(f"Error converting mappings: {e}")
+            return {}
+
+    src_lang_code = kv_to_vk(src_lang_maps).get(src_lang_name, "English")
+    trg_lang_code = kv_to_vk(trg_lang_maps).get(trg_lang_name, "English")
+
     run = st.button("▶️ Run", disabled=not uploaded)
 
     # Persist options for the run
     st.session_state["opts"] = dict(
-        src_lang=src_lang,
-        trg_lang=trg_lang,
+        src_lang=src_lang_code,
+        trg_lang=trg_lang_code,
         model_id=model_id,
         task=task,
         speakers=speakers,
