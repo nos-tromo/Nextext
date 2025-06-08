@@ -12,6 +12,8 @@ import torch
 import whisperx
 from whisperx.diarize import DiarizationPipeline
 
+from nextext.utils import load_mappings
+
 
 class WhisperTranscriber:
     """
@@ -53,6 +55,7 @@ class WhisperTranscriber:
         end_column: str = "end",
         speaker_column: str = "speaker",
         text_column: str = "text",
+        whisper_model_file: str = "whisper_models.json",
     ) -> None:
         """
         Initialize the WhisperTranscriber object.
@@ -67,6 +70,7 @@ class WhisperTranscriber:
             end_column(str): The text column with the ending timestamp. Defaults to "end".
             speaker_column (str): The text column with the speaker information. Defaults to "speaker".
             text_column (str): The text column where the result is stored. Defaults to "text".
+            whisper_language_file (str): Path to the Whisper language mapping file.
         """
         self.logger = logging.getLogger(self.__class__.__name__)
 
@@ -79,7 +83,7 @@ class WhisperTranscriber:
 
         self.transcription_device = "cuda" if torch.cuda.is_available() else "cpu"
         self.transcribe_model, self.model_a, self.metadata = (
-            self._load_transcription_model(model_id)
+            self._load_transcription_model(model_id, whisper_model_file)
         )
         self.diarize_model = self._load_diarization_model(auth_token)
         self.audio = self._load_audio(file_path)
@@ -88,13 +92,14 @@ class WhisperTranscriber:
         self.df: pd.DataFrame | None = None
 
     def _load_transcription_model(
-        self, model_id: str
+        self, model_id: str, whisper_model_file: str = "whisper_models.json"
     ) -> tuple[Any, Any, dict[str, Any]]:
         """
         Load the Whisper model for transcription.
 
         Args:
             model_id (str): The size of the Whisper model (tiny, base, small, medium, large, turbo).
+            whisper_model_file (str): Path to the Whisper model configuration file.
 
         Returns:
             Any: The loaded Whisper model for transcription.
@@ -102,16 +107,7 @@ class WhisperTranscriber:
             dict[str, Any]: Metadata about the loaded model.
         """
         try:
-            model_config = {
-                "default_transcribe": "turbo",
-                "default_translate": "large-v2",
-                "large-v3": "large-v3",
-                "large-v2": "large-v2",
-                "medium": "medium",
-                "small": "small",
-                "base": "base",
-                "tiny": "tiny",
-            }
+            model_config, _ = load_mappings(whisper_model_file)
             config_key = (
                 f"{model_id}_{self.task}" if model_id == "default" else model_id
             )
@@ -140,9 +136,7 @@ class WhisperTranscriber:
             )
             raise
 
-    def _load_diarization_model(
-        self, auth_token: str
-    ) -> DiarizationPipeline:
+    def _load_diarization_model(self, auth_token: str) -> DiarizationPipeline:
         """
         Load the WhisperX model for speaker diarization.
 
@@ -160,9 +154,7 @@ class WhisperTranscriber:
                 if torch.backends.mps.is_available()
                 else "cpu"
             )
-            model = DiarizationPipeline(
-                use_auth_token=auth_token, device=device
-            )
+            model = DiarizationPipeline(use_auth_token=auth_token, device=device)
             return model
         except Exception as e:
             self.logger.error(f"Error setting up diarization model: {e}", exc_info=True)
