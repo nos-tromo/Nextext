@@ -115,7 +115,7 @@ class WhisperTranscriber:
         self.df: pd.DataFrame | None = None
 
     def _load_transcription_model(
-        self, model_id: str, whisper_model_file: str = "whisper_models.json"
+        self, model_id: str, whisper_model_file: str
     ) -> tuple[Any, Any, dict[str, Any]]:
         """
         Load the Whisper model for transcription.
