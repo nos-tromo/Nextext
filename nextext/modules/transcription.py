@@ -114,6 +114,63 @@ class WhisperTranscriber:
         self.transcription_result: Optional[dict[str, Any]] = None
         self.df: pd.DataFrame | None = None
 
+    @staticmethod
+    def _load_audio(file: Path, sample_rate: int = 16000) -> np.ndarray:
+        """
+        Load the audio file as a tensor using the WhisperX library.
+
+        Args:
+            file (Path): The path to the audio file.
+            sample_rate (int): Sample rate for the audio processing. Defaults to 16000.
+
+        Returns:
+            np.ndarray: The loaded audio as a tensor.
+        """
+        try:
+            return whisperx.load_audio(file=file, sr=sample_rate)
+        except Exception as e:
+            logging.error(f"Error loading audio file '{file}': {e}", exc_info=True)
+            raise
+
+    def _detect_language(
+        self, duration_sec: float = 30.0, sample_rate: int = 16000
+    ) -> str:
+        """
+        Detect the spoken language in the audio file using WhisperX.
+        This method processes only the first `duration_sec` seconds of audio.
+
+        Args:
+            duration_sec (float): Number of seconds from the start of the audio to use for detection.
+            sample_rate (int): Sample rate for the audio processing. Defaults to 16000.
+
+        Returns:
+            str: Detected language code (e.g., "en", "de").
+        """
+        try:
+            sample_frames = int(duration_sec * sample_rate)
+            clipped_audio = self.audio[:sample_frames]
+
+            # Load a temporary model instance with language=None to trigger auto-detection
+            self.logger.info("Detecting language using WhisperX...")
+            temp_model = whisperx.load_model(
+                whisper_arch="small",
+                device=self.transcription_device,
+                compute_type="float16" if torch.cuda.is_available() else "int8",
+                language=None,
+            )
+            result = temp_model.transcribe(clipped_audio)
+
+            detected_lang = result.get("language")
+            if not detected_lang:
+                raise RuntimeError("Language detection failed.")
+
+            self.logger.info(f"Detected language: {detected_lang}")
+            return detected_lang
+
+        except Exception as e:
+            self.logger.error(f"Error detecting language: {e}", exc_info=True)
+            raise
+
     def _load_transcription_model(
         self, model_id: str, whisper_model_file: str
     ) -> tuple[Any, Any, dict[str, Any]]:
@@ -180,23 +237,6 @@ class WhisperTranscriber:
             return DiarizationPipeline(use_auth_token=auth_token, device=device)
         except Exception as e:
             self.logger.error(f"Error setting up diarization model: {e}", exc_info=True)
-            raise
-
-    @staticmethod
-    def _load_audio(file: Path) -> np.ndarray:
-        """
-        Load the audio file as a tensor using the WhisperX library.
-
-        Args:
-            file (Path): The path to the audio file.
-
-        Returns:
-            np.ndarray: The loaded audio as a tensor.
-        """
-        try:
-            return whisperx.load_audio(file=file, sr=16000)
-        except Exception as e:
-            logging.error(f"Error loading audio file '{file}': {e}", exc_info=True)
             raise
 
     def transcription(self, batch_size: int = 16) -> None:
