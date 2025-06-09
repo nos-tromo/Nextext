@@ -7,20 +7,29 @@ from nextext import pipeline as ne
 from nextext.modules import FileProcessor
 from nextext.utils import setup_logging
 
-
 setup_logging()
 
 
 def parse_arguments(args_list: Optional[list] = None) -> argparse.Namespace:
     """
-    Nextext pipelines ML models to transcribe, translate, and analyze natural language from audio/video.
+    Parse command-line arguments for the Nextext CLI.
+    This function sets up the argument parser with various options for file processing,
+    language settings, model selection, and analysis features.
+    It returns the parsed arguments as an `argparse.Namespace` object.
+    This function allows users to specify the audio file to be processed, the source and target languages,
+    the model size for Whisper, the task to perform (transcription or translation),
+    and various analysis options such as word statistics, topic modeling, summarization, and toxicity analysis.
+    It also supports a full analysis mode that combines multiple analysis features into one command.
+    It is designed to be flexible and user-friendly, providing default values for most options
+    while allowing users to customize their processing pipeline as needed.
 
     Args:
-        args_list (list, optional): A list of arguments from the GUI to simulate command line input. Defaults to None.
+        args_list (Optional[list], optional): Drop-in list of arguments to parse.
+        If None, uses `sys.argv` to parse command-line arguments. Defaults to None.
 
     Returns:
-        argparse.Namespace: Parsed arguments as a Namespace object.
-    """
+        argparse.Namespace: Parsed command-line arguments as a namespace object.
+    """    
     parser = argparse.ArgumentParser(
         description="Nextext turns voice into structured insight.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -131,9 +140,6 @@ def main() -> None:
     word statistics, and topic modeling.
     It handles the command-line arguments and manages the flow of data through the various modules.
     It also sets up logging and error handling for the entire pipeline.
-
-    Raises:
-        ValueError: If an invalid task is specified.
     """
     try:
         logging.info("\n\nInitiating Nextext...\n")
