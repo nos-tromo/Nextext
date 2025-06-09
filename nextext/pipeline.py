@@ -3,9 +3,9 @@ import logging
 import os
 from pathlib import Path
 
-from matplotlib.figure import Figure
 import pandas as pd
 from dotenv import find_dotenv, load_dotenv, set_key
+from matplotlib.figure import Figure
 
 from nextext.modules import (
     TopicModeling,
