@@ -146,13 +146,13 @@ def main() -> None:
 
         # Parse command-line arguments
         args = parse_arguments()
-        
+
         # Set up input/output directories and file paths
         file_processor = FileProcessor(args.file_path)
 
         # Transcribe and diarize the audio file
         if args.task in ["transcribe", "translate"]:
-            transcript_df = ne.transcription_pipeline(
+            transcript_df, updated_src_lang = ne.transcription_pipeline(
                 file_path=args.file_path,
                 src_lang=args.src_lang,
                 model_id=args.model_id,
@@ -160,6 +160,7 @@ def main() -> None:
                 api_key=ne.get_api_key() or "",
                 speakers=args.speakers,
             )
+            args.src_lang = updated_src_lang  # Update source language if detected
         else:
             raise ValueError(
                 "Invalid task. Please specify 'transcribe' or 'translate'."
