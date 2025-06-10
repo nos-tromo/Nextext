@@ -48,8 +48,8 @@ def parse_arguments(args_list: Optional[list] = None) -> argparse.Namespace:
         "--src-lang",
         dest="src_lang",
         type=str,
-        default="detect",
-        help="Specify the language code (ISO 639-1) of the source audio (default: 'detect').",
+        default=None,
+        help="Specify the language code (ISO 639-1) of the source audio (default: None).",
     )
     parser.add_argument(
         "-tl",
