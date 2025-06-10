@@ -8,7 +8,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 from nextext import pipeline as ne
-from nextext.utils import load_mappings, setup_logging
+from nextext.utils import kv_to_vk, load_and_sort_mappings, setup_logging
 
 setup_logging()
 
