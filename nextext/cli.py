@@ -172,7 +172,7 @@ def main() -> None:
                 df=transcript_df, trg_lang=args.trg_lang
             )
 
-        # Streamline further data processing
+        # Streamline language for further processing
         transcript_lang = args.src_lang if args.task == "transcribe" else args.trg_lang
 
         # Calculate word statistics
