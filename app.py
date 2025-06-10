@@ -21,6 +21,7 @@ def _run_pipeline(tmp_file: Path, opts: dict) -> None:
         tmp_file (Path): Path to the temporary file.
         opts (dict): Options for the pipeline.
     """
+    # Transcription
     with st.spinner("Transcribing… this might take a while ⏳"):
         df = ne.transcription_pipeline(
             file_path=tmp_file,
@@ -31,10 +32,12 @@ def _run_pipeline(tmp_file: Path, opts: dict) -> None:
             speakers=opts["speakers"],
         )
 
+    # Translation
     with st.spinner("Translating… this might take a while ⏳"):
         if opts["task"] == "translate" and opts["trg_lang"] != "en":
             df = ne.translation_pipeline(df, opts["trg_lang"])
 
+    # Store the DataFrame and default values in session state
     result = {
         "transcript": df,
         "summary": None,
@@ -46,6 +49,7 @@ def _run_pipeline(tmp_file: Path, opts: dict) -> None:
         "wordcloud": None,
     }
 
+    # Word-level analysis
     with st.spinner("Running word-level analysis… ⏳"):
         if opts["words"]:
             wc, ner, nouns, graph, cloud = ne.wordlevel_pipeline(
@@ -58,6 +62,7 @@ def _run_pipeline(tmp_file: Path, opts: dict) -> None:
             result["noun_graph"] = graph
             result["wordcloud"] = cloud
 
+    # Topic modelling
     with st.spinner("Running topic modelling… ⏳"):
         if opts["topics"]:
             topics_output = ne.topics_pipeline(
@@ -69,6 +74,7 @@ def _run_pipeline(tmp_file: Path, opts: dict) -> None:
             else:
                 result["topics"] = None, None
 
+    # Summarization
     with st.spinner("Summarizing… ⏳"):
         if opts["summarization"]:
             result["summary"] = ne.summarization_pipeline(
@@ -76,6 +82,7 @@ def _run_pipeline(tmp_file: Path, opts: dict) -> None:
                 opts["trg_lang" if opts["task"] == "translate" else "src_lang"],
             )
 
+    # Toxicity classification
     with st.spinner("Classifying toxicity… ⏳"):
         if opts["toxicity"]:
             df = ne.toxicity_pipeline(df)
