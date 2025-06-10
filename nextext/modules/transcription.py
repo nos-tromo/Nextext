@@ -86,15 +86,9 @@ class WhisperTranscriber:
         self.transcription_device = "cuda" if torch.cuda.is_available() else "cpu"
         self.audio = self._load_audio(file_path)
 
-        # Detect language if set to "detect", otherwise use specified language
+        # Select or detect language
         whisper_languages = load_mappings(whisper_language_file)
-        self.language = (
-            language
-            if language in whisper_languages.keys()
-            else self._detect_language()
-            if language not in whisper_languages.keys()
-            else "en"
-        )
+        self.language = language if language in whisper_languages.keys() else self._detect_language() or "en"
         self.logger.info(f"Using language: {self.language}")
 
         # Load the transcription and alignment models
