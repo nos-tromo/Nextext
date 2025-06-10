@@ -29,7 +29,7 @@ def parse_arguments(args_list: Optional[list] = None) -> argparse.Namespace:
 
     Returns:
         argparse.Namespace: Parsed command-line arguments as a namespace object.
-    """    
+    """
     parser = argparse.ArgumentParser(
         description="Nextext turns voice into structured insight.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
