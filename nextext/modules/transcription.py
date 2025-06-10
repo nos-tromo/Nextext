@@ -87,14 +87,19 @@ class WhisperTranscriber:
         self.audio = self._load_audio(file_path)
 
         # Detect language if set to "detect", otherwise use specified language
+        whisper_languages = load_mappings(whisper_language_file)
         if language == "detect":
             self.logger.info(
                 "Language set to 'detect'; running detection before loading model."
             )
-            self.language = self._detect_language()
+            detected_language = self._detect_language()
+            self.language = (
+                detected_language
+                if detected_language in whisper_languages.keys()
+                else "en"
+            )
         else:
             self.logger.info(f"Using specified language: {language}")
-            whisper_languages = load_mappings(whisper_language_file)
             self.language = (
                 language
                 if language in whisper_languages.keys()
@@ -134,7 +139,7 @@ class WhisperTranscriber:
 
     def _detect_language(
         self, duration_sec: float = 30.0, sample_rate: int = 16000
-    ) -> str:
+    ) -> str | None:
         """
         Detect the spoken language in the audio file using WhisperX.
         This method processes only the first `duration_sec` seconds of audio.
@@ -144,7 +149,7 @@ class WhisperTranscriber:
             sample_rate (int): Sample rate for the audio processing. Defaults to 16000.
 
         Returns:
-            str: Detected language code (e.g., "en", "de").
+            str: Detected language code (e.g., "en", "de"), or None if detection fails.
         """
         try:
             sample_frames = int(duration_sec * sample_rate)
@@ -169,7 +174,7 @@ class WhisperTranscriber:
 
         except Exception as e:
             self.logger.error(f"Error detecting language: {e}", exc_info=True)
-            raise
+            return None
 
     def _load_transcription_model(
         self, model_id: str, whisper_model_file: str
