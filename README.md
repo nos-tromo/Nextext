@@ -112,7 +112,7 @@ Running `uv run python -m nextext.cli [ARGS]` from the command line supports the
 ```bash
 -h, --help            show this help message and exit
 -f, --file            Specify the file path and name of the audio file to be transcribed.
--sl, --src-lang       Specify the language code (ISO 639-1) of the source audio (default: 'detect').
+-sl, --src-lang       Specify the language code (ISO 639-1) of the source audio (default: None).
 -tl, --trg-lang       Specify the language code (ISO 639-1) of the target language (default: 'de').
 -m, --model           Specify the model size for Whisper (default: 'default' = 'turbo').
 -t, --task            Specify the task to perform: 'transcribe' (default), or 'translate'.
