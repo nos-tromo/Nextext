@@ -71,7 +71,7 @@ def transcription_pipeline(
     task: str,
     api_key: str,
     speakers: int,
-) -> pd.DataFrame:
+) -> tuple[pd.DataFrame, str]:
     """
     Transcribe and diarize the audio file using WhisperX.
 
@@ -85,6 +85,7 @@ def transcription_pipeline(
 
     Returns:
         pd.DataFrame: DataFrame containing the transcribed text and speaker diarization.
+        str: Detected source language code.
     """
     transcriber = WhisperTranscriber(
         file_path=file_path,
@@ -94,7 +95,9 @@ def transcription_pipeline(
         auth_token=api_key,
     )
     transcriber.transcription()
-    return transcriber.diarization(speakers)
+    df = transcriber.diarization(speakers)
+    updated_src_lang = transcriber.language
+    return df, updated_src_lang
 
 
 def translation_pipeline(df: pd.DataFrame, trg_lang: str) -> pd.DataFrame:
