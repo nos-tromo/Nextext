@@ -48,8 +48,8 @@ class WhisperTranscriber:
     def __init__(
         self,
         file_path: Path,
-        language: str,
         auth_token: str,
+        language: str | None = None,
         model_id: str = "default",
         task: str = "transcribe",
         start_column: str = "start",
@@ -64,8 +64,8 @@ class WhisperTranscriber:
 
         Args:
             file_path (str): The path to the input file.
-            language (str): The source language of the file.
             auth_token (str): The Hugging Face token for accessing the diarization model.
+            language (str, optional): The source language of the file. Defaults to None, which triggers language detection.
             model_id (str, optional): The size of the Whisper model. Defaults to "default".
             task (str): Indicates whether the task is transcription or translation. Defaults to "transcribe".
             start_column (str): The text column with the starting timestamp. Defaults to "start".
