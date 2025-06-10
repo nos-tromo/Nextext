@@ -23,7 +23,7 @@ def _run_pipeline(tmp_file: Path, opts: dict) -> None:
     """
     # Transcription
     with st.spinner("Transcribing… this might take a while ⏳"):
-        df = ne.transcription_pipeline(
+        df, updated_src_lang = ne.transcription_pipeline(
             file_path=tmp_file,
             src_lang=opts["src_lang"],
             model_id=opts["model_id"],
@@ -31,6 +31,9 @@ def _run_pipeline(tmp_file: Path, opts: dict) -> None:
             api_key=ne.get_api_key() or "",
             speakers=opts["speakers"],
         )
+        # Update the source language in the session state
+        opts["src_lang"] = updated_src_lang
+        st.session_state["opts"] = opts
 
     # Translation
     with st.spinner("Translating… this might take a while ⏳"):
