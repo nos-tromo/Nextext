@@ -134,23 +134,7 @@ def _start_page() -> None:
         )
         speakers = st.number_input("Max speakers", 1, 10, value=1, step=1)
 
-    def kv_to_vk(mappings: dict[str, str]) -> dict[str, str]:
-        """
-        Convert a dictionary from key-value to value-key mapping.
-
-        Args:
-            mappings (dict[str, str]): A dictionary with keys as language codes and values as language names.
-
-        Returns:
-            dict[str, str]: A dictionary with keys as language names and values as language codes.
-        """
-        try:
-            return {v: k for k, v in mappings.items()}
-        except Exception as e:
-            st.error(f"Error converting mappings: {e}")
-            return {}
-
-    src_lang_code = kv_to_vk(src_lang_maps).get(src_lang_name, "English")
+    src_lang_code = kv_to_vk(src_lang_maps).get(src_lang_name)
     trg_lang_code = kv_to_vk(trg_lang_maps).get(trg_lang_name, "English")
 
     run = st.button("▶️ Run", disabled=not uploaded)
