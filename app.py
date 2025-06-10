@@ -106,11 +106,10 @@ def _start_page() -> None:
     )
 
     # Load source language mappings from Whisper and target language mappings from Madlad
-    src_lang_maps = load_mappings(file="whisper_languages.json")
-    src_lang_names = sorted(src_lang_maps.values())
-    trg_lang_maps = load_mappings(file="madlad_languages.json")
-    trg_lang_names = sorted(trg_lang_maps.values())
+    src_lang_maps, src_lang_names = load_and_sort_mappings("whisper_languages.json")
+    trg_lang_maps, trg_lang_names = load_and_sort_mappings("madlad_languages.json")
 
+    # Create GUI columns and widgets
     task = st.radio("Task", ["transcribe", "translate"], horizontal=True)
     col1, col2 = st.columns(2)
     with col1:
