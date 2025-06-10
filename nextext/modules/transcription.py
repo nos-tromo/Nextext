@@ -88,25 +88,13 @@ class WhisperTranscriber:
 
         # Detect language if set to "detect", otherwise use specified language
         whisper_languages = load_mappings(whisper_language_file)
-        if language == "detect":
-            self.logger.info(
-                "Language set to 'detect'; running detection before loading model."
-            )
-            detected_language = self._detect_language()
-            self.language = (
-                detected_language
-                if detected_language in whisper_languages.keys()
-                else "en"
-            )
-        else:
-            self.logger.info(f"Using specified language: {language}")
-            self.language = (
-                language
-                if language in whisper_languages.keys()
-                else self._detect_language()
-                if self._detect_language() in whisper_languages.keys()
-                else "en"
-            )
+        self.language = (
+            language
+            if language in whisper_languages.keys()
+            else self._detect_language()
+            if language not in whisper_languages.keys()
+            else "en"
+        )
         self.logger.info(f"Using language: {self.language}")
 
         # Load the transcription and alignment models
