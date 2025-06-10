@@ -114,7 +114,9 @@ def _start_page() -> None:
     col1, col2 = st.columns(2)
     with col1:
         src_lang_name = st.selectbox(
-            "Source language", src_lang_names, index=src_lang_names.index("Detect language")
+            "Source language",
+            ["Detect language"] + src_lang_names,
+            index=0,
         )
         model_id = st.selectbox(
             "Whisper model",
