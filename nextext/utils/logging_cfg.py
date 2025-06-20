@@ -6,26 +6,44 @@ import yaml
 __all__ = ["setup_logging"]
 
 
-def setup_logging(path: str | Path | None = None) -> None:
+def setup_logging(
+    log_dir: str = ".log",
+    cfg_dir: str = "logging",
+    cfg_file: str = "logging.yaml",
+) -> None:
     """
-    Setup logging configuration.
+    Set up logging configuration for the application.
 
     Args:
-        path (str | Path | None, optional): Path to a YAML file with logging configuration.
-        If None, uses the default configuration. Defaults to None.
+        log_dir (str): Directory where log files will be stored. Defaults to ".log".
+        cfg_dir (str): Directory where the logging configuration file is located. Defaults to "logging".
+        cfg_file (str): Name of the logging configuration file. Defaults to "logging.yaml".
+
+    Raises:
+        FileNotFoundError: If the logging configuration file does not exist.
+        yaml.YAMLError: If there is an error parsing the YAML configuration file.
+        Exception: For any other exceptions that occur during setup.
     """
+    log_path = Path(log_dir)
+
     try:
-        if path:
-            cfg = yaml.safe_load(Path(path).read_text())
-        else:
-            cfg = yaml.safe_load(_DEFAULT_YAML)
-            logging.config.dictConfig(cfg)
-            logging.info("Logging setup successfully with configuration: %s", path or "default")
-            logging.debug("Logging configuration: %s", cfg)
-            logging.getLogger("nextext").info("Nextext logging initialized.")
+        log_path.mkdir(parents=True, exist_ok=True)
+
+        cfg_path = Path(__file__).parent / cfg_dir / cfg_file
+        if not cfg_path.exists():
+            raise FileNotFoundError(
+                f"Logging configuration file not found: {cfg_path}"
+            )
+
+        cfg = yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
+        logging.config.dictConfig(cfg)
+
+        logging.info(f"Logging configuration loaded from {cfg_path}")
+        logging.debug(f"Logging configuration: {cfg}")
+        logging.getLogger("nextext").info("Nextext logging initialized.")
     except yaml.YAMLError as e:
         logging.basicConfig(level=logging.INFO)
-        logging.error(f"Error loading logging configuration from {path}: {e}")
+        logging.error(f"Error loading logging configuration from {log_path}: {e}")
     except Exception as e:
         logging.basicConfig(level=logging.INFO)
         logging.error(f"Error setting up logging: {e}")
