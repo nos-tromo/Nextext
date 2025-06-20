@@ -27,110 +27,117 @@ def parse_arguments(args_list: Optional[list] = None) -> argparse.Namespace:
         args_list (Optional[list], optional): Drop-in list of arguments to parse.
         If None, uses `sys.argv` to parse command-line arguments. Defaults to None.
 
+    Raises:
+        argparse.ArgumentError: If there is an error in argument parsing.
+
     Returns:
         argparse.Namespace: Parsed command-line arguments as a namespace object.
     """
-    parser = argparse.ArgumentParser(
-        description="Nextext turns voice into structured insight.",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
+    try:
+        parser = argparse.ArgumentParser(
+            description="Audio transcription and analysis.",
+            formatter_class=argparse.RawDescriptionHelpFormatter,
+        )
 
-    parser.add_argument(
-        "-f",
-        "--file",
-        dest="file_path",
-        type=Path,
-        required=True,
-        help="Specify the file path and name of the audio file to be transcribed.",
-    )
-    parser.add_argument(
-        "-sl",
-        "--src-lang",
-        dest="src_lang",
-        type=str,
-        default=None,
-        help="Specify the language code (ISO 639-1) of the source audio (default: None).",
-    )
-    parser.add_argument(
-        "-tl",
-        "--trg-lang",
-        dest="trg_lang",
-        type=str,
-        default="de",
-        help="Specify the language code (ISO 639-1) of the target language (default: 'de').",
-    )
-    parser.add_argument(
-        "-m",
-        "--model",
-        dest="model_id",
-        type=str,
-        default="default",
-        help="Specify the model size for Whisper (default: 'default' = 'turbo').",
-    )
-    parser.add_argument(
-        "-t",
-        "--task",
-        dest="task",
-        type=str,
-        default="transcribe",
-        help="Specify the task to perform: 'transcribe' (default), or 'translate'.",
-    )
-    parser.add_argument(
-        "-s",
-        "--speakers",
-        dest="speakers",
-        type=int,
-        default=1,
-        help="Specify the maximum number of speakers for diarization (default: 1).",
-    )
-    parser.add_argument(
-        "-w",
-        "--words",
-        dest="words",
-        action="store_true",
-        help="Show most frequently used words (default: False).",
-    )
-    parser.add_argument(
-        "-tm",
-        "--topics",
-        dest="topics",
-        action="store_true",
-        help="Enable topic modeling analysis (default: False).",
-    )
-    parser.add_argument(
-        "-sum",
-        "--summarize",
-        dest="summarize",
-        action="store_true",
-        help="Additional text and topic summarization (default: False).",
-    )
-    parser.add_argument(
-        "-tox",
-        "--toxicity",
-        dest="toxicity",
-        action="store_true",
-        help="Enable toxicity analysis (default: False).",
-    )
-    parser.add_argument(
-        "-F",
-        "--full-analysis",
-        dest="full_analysis",
-        action="store_true",
-        help="Enable full analysis, equivalent to using -w -tm -sum -tox (default: False).",
-    )
+        parser.add_argument(
+            "-f",
+            "--file",
+            dest="file_path",
+            type=Path,
+            required=True,
+            help="Specify the file path and name of the audio file to be transcribed.",
+        )
+        parser.add_argument(
+            "-sl",
+            "--src-lang",
+            dest="src_lang",
+            type=str,
+            default=None,
+            help="Specify the language code (ISO 639-1) of the source audio (default: None).",
+        )
+        parser.add_argument(
+            "-tl",
+            "--trg-lang",
+            dest="trg_lang",
+            type=str,
+            default="de",
+            help="Specify the language code (ISO 639-1) of the target language (default: 'de').",
+        )
+        parser.add_argument(
+            "-m",
+            "--model",
+            dest="model_id",
+            type=str,
+            default="default",
+            help="Specify the model size for Whisper (default: 'default' = 'turbo').",
+        )
+        parser.add_argument(
+            "-t",
+            "--task",
+            dest="task",
+            type=str,
+            default="transcribe",
+            help="Specify the task to perform: 'transcribe' (default), or 'translate'.",
+        )
+        parser.add_argument(
+            "-s",
+            "--speakers",
+            dest="speakers",
+            type=int,
+            default=1,
+            help="Specify the maximum number of speakers for diarization (default: 1).",
+        )
+        parser.add_argument(
+            "-w",
+            "--words",
+            dest="words",
+            action="store_true",
+            help="Show most frequently used words (default: False).",
+        )
+        parser.add_argument(
+            "-tm",
+            "--topics",
+            dest="topics",
+            action="store_true",
+            help="Enable topic modeling analysis (default: False).",
+        )
+        parser.add_argument(
+            "-sum",
+            "--summarize",
+            dest="summarize",
+            action="store_true",
+            help="Additional text and topic summarization (default: False).",
+        )
+        parser.add_argument(
+            "-tox",
+            "--toxicity",
+            dest="toxicity",
+            action="store_true",
+            help="Enable toxicity analysis (default: False).",
+        )
+        parser.add_argument(
+            "-F",
+            "--full-analysis",
+            dest="full_analysis",
+            action="store_true",
+            help="Enable full analysis, equivalent to using -w -tm -sum -tox (default: False).",
+        )
 
-    if args_list:
-        args = parser.parse_args(args_list)
-    else:
-        args = parser.parse_args()
+        if args_list:
+            args = parser.parse_args(args_list)
+        else:
+            args = parser.parse_args()
 
-    if args.full_analysis:
-        args.words = True
-        args.topics = True
-        args.summarize = True
-        args.toxicity = True
+        if args.full_analysis:
+            args.words = True
+            args.topics = True
+            args.summarize = True
+            args.toxicity = True
 
-    return args
+        return args
+    except argparse.ArgumentError as e:
+        logging.error(f"Argument parsing error: {e}")
+        raise
 
 
 def main() -> None:
