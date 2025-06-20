@@ -3,33 +3,6 @@ from pathlib import Path
 
 import yaml
 
-
-_DEFAULT_YAML = """
-version: 1
-disable_existing_loggers: False
-
-formatters:
-    simple:
-        format: "%(asctime)s | %(levelname)-8s | %(name)s | %(message)s"
-
-handlers:
-    console:
-        class: logging.StreamHandler
-        formatter: simple
-        level: INFO
-    file:
-        class: logging.handlers.RotatingFileHandler
-        filename: ".log/nextext.log"
-        maxBytes: 5_000_000   # 5 MB
-        backupCount: 3
-        formatter: simple
-        level: DEBUG
-
-root:
-    level: INFO
-    handlers: [console, file]
-"""
-
 __all__ = ["setup_logging"]
 
 
