@@ -12,7 +12,7 @@ handlers:
         level: INFO
     file:
         class: logging.handlers.RotatingFileHandler
-        filename: ".log/tubescriber.log"
+        filename: ".log/nextext.log"
         maxBytes: 5_000_000   # 5 MB
         backupCount: 3
         formatter: simple
