@@ -54,7 +54,7 @@ To configure the app's default models, edit the selector located at `nextext/uti
 
 ```bash
 # nltk
-uv run python -c "import nltk; nltk.download('stopwords')"
+uv run python -c "import nltk; nltk.download('punkt_tab', 'stopwords')"
 # spaCy
 uv run python -m nextext.utils.spacy_model_loader
 ```
