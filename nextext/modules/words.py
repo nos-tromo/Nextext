@@ -15,7 +15,7 @@ from spacy.language import Language
 from spacy.tokens import Doc
 from wordcloud import WordCloud
 
-from nextext.utils import load_mappings
+from nextext.utils import load_font_file, load_mappings
 
 
 class WordCounter:
@@ -37,8 +37,6 @@ class WordCounter:
     Methods:
         __init__(text: str, language: str, spacy_models_file: str = "spacy_models.json", spacy_entities_file: str = "spacy_entities.json", font_file: str = "Amiri-Regular.ttf") -> None:
             Initializes the WordCounter object with text, language, and configuration files.
-        _create_absolute_path(file: str, path: Path = Path("utils")) -> Path:
-            Returns an absolute path for a given file and directory.
         _load_spacy_model(spacy_languages: dict[str, str], language: str) -> Language | None:
             Loads the spaCy model for the specified language code.
         text_to_doc() -> None:
@@ -82,33 +80,19 @@ class WordCounter:
         self.text = text
         self.language = language
 
-        # Paths to the JSON files containing spaCy language models and entity types
+        # Load spaCy models and entity mappings
         spacy_languages = load_mappings(spacy_models_file)
         self.spacy_entities = load_mappings(spacy_entities_file)
-        # Path to the font used for word cloud rendering
-        self.font_path = self._create_absolute_path(font_file)
-
         self.nlp = self._load_spacy_model(spacy_languages, language)
+
+        # Set the font path for word cloud generation
+        self.font_path = load_font_file(font_file)
+
         self.doc: Doc | None = None
         self.tokenized_doc: list | None = None
         self.tokenized_nouns: list | None = None
         self.word_counts: Counter | None = None
         self.noun_df: pd.DataFrame | None = None
-
-    def _create_absolute_path(
-        self, file: str, path: Path = Path("utils") / "fonts"
-    ) -> Path:
-        """
-        Create an absolute path from a relative path.
-
-        Args:
-            path (Path): The relative or absolute path to be converted.
-
-        Returns:
-            Path: The absolute path.
-        """
-        root = Path(__file__).resolve().parent.parent
-        return path if path.is_absolute() else root / path / file
 
     def _load_spacy_model(
         self, spacy_languages: dict[str, str], language: str
@@ -127,7 +111,7 @@ class WordCounter:
             if language == "ar":
                 nlp = spacy.blank("ar")
 
-                def camel_tokenizer(text: str) -> Doc:
+                def camel_tokenizer(text: str, nlp=nlp) -> Doc:
                     words = simple_word_tokenize(text)
                     return Doc(nlp.vocab, words=words)
 
