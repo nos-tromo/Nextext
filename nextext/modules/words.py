@@ -11,6 +11,7 @@ from bidi.algorithm import get_display
 from camel_tools.tokenizers.word import simple_word_tokenize
 from matplotlib.figure import Figure
 from pyvis.network import Network
+from spacy.language import Language
 from spacy.tokens import Doc
 from wordcloud import WordCloud
 
@@ -25,7 +26,7 @@ class WordCounter:
         text (str): The text to analyze.
         language (str): The language code of the text.
         font_path (Path): Path to the font used for word cloud rendering.
-        nlp (spacy.language.Language | None): Loaded spaCy language model.
+        nlp (Language | None): Loaded spaCy language model.
         doc (spacy.tokens.Doc | None): spaCy Doc object for the text.
         tokenized_doc (list[str] | None): List of lemmatized, filtered tokens.
         tokenized_nouns (list[str] | None): List of lemmatized nouns from the text.
@@ -38,7 +39,7 @@ class WordCounter:
             Initializes the WordCounter object with text, language, and configuration files.
         _create_absolute_path(file: str, path: Path = Path("utils")) -> Path:
             Returns an absolute path for a given file and directory.
-        _load_spacy_model(spacy_languages: dict[str, str], language: str) -> spacy.language.Language | None:
+        _load_spacy_model(spacy_languages: dict[str, str], language: str) -> Language | None:
             Loads the spaCy model for the specified language code.
         text_to_doc() -> None:
             Converts the input text to a spaCy Doc object.
@@ -111,7 +112,7 @@ class WordCounter:
 
     def _load_spacy_model(
         self, spacy_languages: dict[str, str], language: str
-    ) -> spacy.language.Language | None:
+    ) -> Language | None:
         """
         Load the spaCy model for the specified language.
 
@@ -120,7 +121,7 @@ class WordCounter:
             language (str): The language code for the text.
 
         Returns:
-            spacy.language.Language | None: The loaded spaCy model or None if loading fails.
+            Language | None: The loaded spaCy model or None if loading fails.
         """
         try:
             if language == "ar":
