@@ -33,11 +33,12 @@ Nextext requires downloading some models:
 
 #### Hugging Face 🤗
 
+- [`google/madlad400-3b-mt`](https://huggingface.co/google/madlad400-3b-mt)
 - [`openai/whisper-large-v3-turbo`](https://huggingface.co/openai/whisper-large-v3-turbo)
 - [`openai/whisper-large-v2`](https://huggingface.co/openai/whisper-large-v2)
 - [`openai/whisper-small`](https://huggingface.co/openai/whisper-small)
 - [`pyannote/speaker-diarization-3.1`](https://huggingface.co/pyannote/speaker-diarization-3.1)
-- [`google/madlad400-3b-mt`](https://huggingface.co/google/madlad400-3b-mt)
+- [`sentence-transformers/paraphrase-multilingual-mpnet-base-v2`](https://huggingface.co/sentence-transformers/paraphrase-multilingual-mpnet-base-v2)
 - [`textdetox/xlmr-large-toxicity-classifier`](https://huggingface.co/textdetox/xlmr-large-toxicity-classifier)
 
 #### Ollama 🦙
@@ -54,7 +55,7 @@ To configure the app's default models, edit the selector located at `nextext/uti
 
 ```bash
 # nltk
-uv run python -c "import nltk; nltk.download('stopwords')"
+uv run python -c "import nltk; nltk.download('punkt_tab'); nltk.download('stopwords')"
 # spaCy
 uv run python -m nextext.utils.spacy_model_loader
 ```

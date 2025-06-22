@@ -142,7 +142,7 @@ You are an expert summarizer. Create a concise and coherent summary of the follo
 
 Instructions:
 1. Content Coverage: Ensure that the summary includes all main ideas and important details from the original text.
-2. Brevity: The summary should be concise, ideally between 100 to 200 words unless specified otherwise.
+2. Brevity: The summary should be no longer than 15 sentences.
 3. Clarity: Use clear and straightforward language. All your outputs must be in {language} language.
 4. No Additional Information: Do not include personal opinions, interpretations, or external information.
 5. No Extraneous Information: Do not include any Markdown code blocks, additional formatting, or extraneous information.
