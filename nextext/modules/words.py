@@ -1,6 +1,5 @@
 import logging
 from collections import Counter, defaultdict
-from pathlib import Path
 
 import arabic_reshaper
 import matplotlib.pyplot as plt
