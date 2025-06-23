@@ -66,15 +66,15 @@ class WordCounter:
         font_file: str = "Amiri-Regular.ttf",
     ) -> None:
         """
-        Initialize the WordCount object.
+        Initializes the WordCounter with text, language, and configuration files.
 
         Args:
-            text (str): The transcript text to analyse.
-            language (str): The language of the text.
-            spacy_language_path (str): Path to the JSON file containing spaCy language models. Defaults to "utils/spacy_languages.json".
-            spacy_entities_path (str): Path to the JSON file containing spaCy entity types. Defaults to "utils/spacy_entities.json".
-            font_file (str): Path to the font used to write the word cloud. Defaults to "static/fonts/Amiri-Regular.ttf".
-        """
+            text (str): The text to analyze.
+            language (str): Language code of the text (e.g., "en", "ar").
+            spacy_models_file (str, optional): Path to the JSON file containing spaCy model mappings. Defaults to "spacy_models.json".
+            spacy_entities_file (str, optional): Path to the JSON file containing spaCy entity mappings. Defaults to "spacy_entities.json".
+            font_file (str, optional): Path to the font file for word cloud generation. Defaults to "Amiri-Regular.ttf".
+        """        
         self.logger = logging.getLogger(self.__class__.__name__)
 
         self.text = text
