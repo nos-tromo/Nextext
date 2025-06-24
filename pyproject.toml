@@ -49,7 +49,9 @@ dependencies = [
 ]
 
 [project.scripts]
-nextext = "cli:main"
+nextext = "nextext.app:cli"
+nextext-cli = "nextext.cli:main"
+load-tokenizers = "nextext.utils.tokenizer_loader:main"
 
 [project.urls]
 Repository = "https://github.com/nos-tromo/Nextext.git"
