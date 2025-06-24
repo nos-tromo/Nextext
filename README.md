@@ -54,10 +54,7 @@ To configure the app's default models, edit the selector located at `nextext/uti
 #### Other language and tokenization models 🌐
 
 ```bash
-# nltk
-uv run python -c "import nltk; nltk.download('punkt_tab'); nltk.download('stopwords')"
-# spaCy
-uv run python -m nextext.utils.spacy_model_loader
+uv run load-tokenizers
 ```
 
 #### Offline usage 🚫🌐
@@ -67,8 +64,6 @@ In case Nextext is intended to run in a firewalled or offline environment, set t
 ```bash
 echo 'export HF_HUB_OFFLINE=1' >> .venv/bin/activate
 ```
-
-For Windows, add `$env:HF_HUB_OFFLINE = "1"` to `.venv/Scripts/Activate.ps1` above the line `# SIG # Begin`.
 
 ### Docker installation 🐳
 
@@ -90,7 +85,7 @@ Launch the app: `http://localhost:8501/`
 To launch the Streamlit web interface, run the following command from the project root:
 
 ```bash
-uv run streamlit run app.py
+uv run nextext
 ```
 
 This will start the app locally and provide a URL (typically `http://localhost:8501`) in your terminal. Open this URL in your browser to access the Nextext interface.
@@ -108,7 +103,7 @@ This example sets the limit to 1024MB (1GB). Restart the Streamlit app after mak
 
 ### CLI 💻
 
-Running `uv run python -m nextext.cli [ARGS]` from the command line supports the following arguments:
+Running `uv run nextext-cli [ARGS]` from the command line supports the following arguments:
 
 ```bash
 -h, --help            show this help message and exit
@@ -130,7 +125,7 @@ In CLI mode, you can let Nextext iterate over a directory to batch process files
 
 ```bash
 for file in path/to/your/directory/*; do
-    uv run python -m nextext.cli -f $file [ARGS]
+    uv run nextext-cli -f $file [ARGS]
 done
 ```
 
