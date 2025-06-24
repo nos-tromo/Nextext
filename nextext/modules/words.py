@@ -253,9 +253,9 @@ class WordCounter:
 
     def get_noun_sentiment(
         self,
-        n_freq_nouns: int | None = None,
-        n_freq_verbs: int | None = None,
-        n_freq_adjs: int | None = None,
+        n_freq_nouns: int | None = 100,
+        n_freq_verbs: int | None = 50,
+        n_freq_adjs: int | None = 50,
         columns: list[str] = ["Noun", "Verb", "Adjective"],
     ) -> pd.DataFrame:
         """
@@ -264,9 +264,9 @@ class WordCounter:
         DataFrame.
 
         Args:
-            n_freq_nouns (int | None): How many top nouns to keep. Defaults to None (all nouns).
-            n_freq_verbs (int | None): How many top verbs to keep per noun. Defaults to None (all verbs).
-            n_freq_adjs (int | None): How many top adjectives to keep per noun. Defaults to None (all adjectives).
+            n_freq_nouns (int | None): How many top nouns to keep. Defaults to 100 (all nouns).
+            n_freq_verbs (int | None): How many top verbs to keep per noun. Defaults to 50 (all verbs).
+            n_freq_adjs (int | None): How many top adjectives to keep per noun. Defaults to 50 (all adjectives).
             columns (list[str]): Column names for the resulting DataFrame.
                                  Defaults to ["Noun", "Verb", "Adjective"].
 
