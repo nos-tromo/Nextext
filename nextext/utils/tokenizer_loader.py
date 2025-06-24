@@ -2,13 +2,18 @@ import logging
 import subprocess
 import sys
 
-from .mappings_loader import load_mappings
+import nltk
 
+from .mappings_loader import load_mappings
 
 logger = logging.getLogger(__name__)
 
 
-def download_model(model_id: str) -> None:
+nltk.download('punkt_tab', quiet=True)
+nltk.download('stopwords', quiet=True)
+
+
+def download_spacy_model(model_id: str) -> None:
     """
     Download a spaCy model using subprocess.
 
@@ -31,7 +36,7 @@ def main() -> None:
     """    
     models = load_mappings("spacy_models.json")
     for model_id in models.values():
-        download_model(model_id)
+        download_spacy_model(model_id)
     logger.info("\n✅ All small models downloaded successfully.")
 
 
