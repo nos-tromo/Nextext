@@ -52,11 +52,17 @@ class Translator:
             RuntimeError: If the model cannot be loaded from local cache or downloaded.
         """
         self.logger = logging.getLogger(self.__class__.__name__)
-        self.madlad_languages = load_mappings(madlad_language_file)
-        model = self._load_model()
-        if model is None:
-            raise RuntimeError("Failed to load translation model.")
-        self.tokenizer, self.model, self.device = model
+        self.languages = load_mappings(madlad_language_file)
+        models = load_mappings(madlad_models_file)
+        if torch.cuda.is_available():
+            model_id = models.get("cuda")
+        elif torch.backends.mps.is_available():
+            model_id = models.get("mps")
+        else:
+            model_id = models.get("cpu")
+        if model_id is None:
+            model_id = fallback_model
+        self.tokenizer, self.model, self.device = self._load_model(model_id=model_id)
         self.src_lang: str | None = None
 
     def _load_model(
