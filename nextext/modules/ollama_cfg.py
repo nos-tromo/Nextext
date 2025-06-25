@@ -57,6 +57,9 @@ def _load_ollama_model(
         filename (str): The name of the JSON file containing model mappings. Defaults to "ollama_models.json".
         fallback (str): The fallback model to use if no suitable model is found. Defaults to "gemma3:4b-it-qat".
 
+    Raises:
+        RuntimeError: If the model file is not found or empty, or if there is an error loading the model.
+    
     Returns:
         str | None: The name of the model if loaded successfully, None otherwise.
     """
@@ -66,7 +69,9 @@ def _load_ollama_model(
         models = load_mappings(filename)
         if not models:
             logger.error(f"Model file '{filename}' not found or empty.")
-            return None
+            raise RuntimeError(
+                f"Model file '{filename}' not found or empty. Please check the file."
+            )
         model = (
             models.get("cuda")
             if torch.cuda.is_available()
@@ -79,7 +84,9 @@ def _load_ollama_model(
 
     except Exception as e:
         logger.error(f"Error loading ollama model: {e}")
-        return None
+        raise RuntimeError(
+            f"Failed to load ollama model from '{filename}'. Please check the file or your configuration."
+        )
 
 
 def call_ollama_server(
