@@ -38,11 +38,10 @@ class Translator:
         fallback_model: str = "google/madlad400-3b-mt",
     ) -> None:
         """
-        Initialize the Translator class.
-        Loads the MADLAD language mapping file and initializes the translation model.
-        Sets up the logger and loads the model.
-        The model is loaded from local cache if available, otherwise it is downloaded from the Hugging Face Hub.
-        The model is set to run on GPU if available, otherwise it falls back to CPU.
+        Initialize the Translator class. Loads the MADLAD language mapping file and initializes the
+        translation model. Sets up the logger and loads the model. The model is loaded from local cache
+        if available, otherwise it is downloaded from the Hugging Face Hub. The model is set to run on
+        GPU if available, otherwise it falls back to CPU.
 
         Args:
             madlad_language_file (str): Path to the MADLAD language mapping file.
