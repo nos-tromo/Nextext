@@ -188,6 +188,10 @@ class Translator:
             target_lang (str): Target language code.
             text (str): Text to translate.
 
+        Raises:
+            ValueError: If the input text is empty or the target language is not supported.
+            RuntimeError: If the translation fails due to an error in the pipeline.
+
         Returns:
             str: Final translated output.
         """
