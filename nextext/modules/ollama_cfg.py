@@ -91,7 +91,7 @@ def _load_ollama_model(
 
 def call_ollama_server(
     prompt: str,
-    num_ctx: int = 32768,
+    num_ctx: int = 131072,
     temperature: float = 0.2,
 ) -> str | None:
     """
