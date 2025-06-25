@@ -66,19 +66,22 @@ class Translator:
         self.src_lang: str | None = None
 
     def _load_model(
-        self, model_name: str = "google/madlad400-3b-mt", local_only: bool = True
-    ) -> tuple[Any, Any, torch.device] | None:
+        self, model_id: str, local_only: bool = True
+    ) -> tuple[Any, Any, torch.device]:
         """
         Loads the translation model and tokenizer.
 
         Tries to load from local cache first. If not found, downloads from Hugging Face Hub.
 
         Args:
-            model_name (str): The name of the pretrained model.
+            model_id (str): The name of the pretrained model.
             local_only (bool): Whether to restrict loading to local files only.
 
+        Raises:
+            RuntimeError: If the model cannot be loaded from local cache or downloaded.
+
         Returns:
-            tuple: (tokenizer, model, device) if successful.
+            tuple: A tuple containing the tokenizer, model, and device.
         """
         try:
             device = torch.device(
@@ -94,25 +97,27 @@ class Translator:
 
             try:
                 tokenizer = AutoTokenizer.from_pretrained(
-                    model_name, local_files_only=True
+                    model_id, local_files_only=True
                 )
                 model = AutoModelForSeq2SeqLM.from_pretrained(
-                    model_name, torch_dtype=torch_dtype, local_files_only=local_only
+                    model_id, torch_dtype=torch_dtype, local_files_only=local_only
                 ).to(device)
                 self.logger.info("✅ Loaded model from local cache.")
             except FileNotFoundError:
                 self.logger.info(
                     "⬇️ Model not in local cache — downloading from Hugging Face..."
                 )
-                tokenizer = AutoTokenizer.from_pretrained(model_name)
+                tokenizer = AutoTokenizer.from_pretrained(model_id)
                 model = AutoModelForSeq2SeqLM.from_pretrained(
-                    model_name, torch_dtype=torch_dtype
+                    model_id, torch_dtype=torch_dtype
                 ).to(device)
 
             return tokenizer, model, device
         except Exception as e:
-            self.logger.error(f"Error while loading model: {e}")
-            raise
+            self.logger.error(f"Error loading model: {e}")
+            raise RuntimeError(
+                "Failed to load translation model. Please check the model name or your internet connection."
+            ) from e
 
     def detect_language(self, text: str) -> dict[str, str]:
         """
