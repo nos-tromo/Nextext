@@ -198,7 +198,7 @@ class Translator:
         try:
             if not text:
                 raise ValueError("Input text cannot be empty.")
-            if trg_lang not in self.madlad_languages:
+            if trg_lang not in self.languages:
                 raise ValueError(
                     f"Target language '{trg_lang}' is not supported by the translation model."
                 )
