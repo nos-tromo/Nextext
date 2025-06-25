@@ -45,6 +45,11 @@ class Translator:
 
         Args:
             madlad_language_file (str): Path to the MADLAD language mapping file.
+            madlad_models_file (str): Path to the MADLAD models mapping file.
+            fallback_model (str): Fallback model name if no suitable model is found.
+
+        Raises:
+            RuntimeError: If the model cannot be loaded from local cache or downloaded.
         """
         self.logger = logging.getLogger(self.__class__.__name__)
         self.madlad_languages = load_mappings(madlad_language_file)
