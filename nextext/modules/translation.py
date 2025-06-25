@@ -31,7 +31,12 @@ class Translator:
         translate(trg_lang: str, text: str) -> str: Translates text sentence-wise between any supported MADLAD languages.
     """
 
-    def __init__(self, madlad_language_file: str = "madlad_languages.json") -> None:
+    def __init__(
+        self,
+        madlad_language_file: str = "madlad_languages.json",
+        madlad_models_file: str = "madlad_models.json",
+        fallback_model: str = "google/madlad400-3b-mt",
+    ) -> None:
         """
         Initialize the Translator class.
         Loads the MADLAD language mapping file and initializes the translation model.
