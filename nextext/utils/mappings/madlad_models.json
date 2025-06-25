@@ -1,0 +1,5 @@
+{
+    "cuda": "google/madlad400-10b-mt", 
+    "mps": "google/madlad400-3b-mt", 
+    "cpu": "google/madlad400-3b-mt"
+}
