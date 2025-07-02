@@ -7,14 +7,14 @@ from pathlib import Path
 @lru_cache
 def load_mappings(
     file: str,
-    mappings_dir: str = "mappings",
+    subdir: str = "mappings",
 ) -> dict[str, str]:
     """
     Load mappings from a JSON file.
 
     Args:
         file (str): Description of the file to load.
-        mappings_dir (str): Directory where the mappings files are located. Defaults to "mappings".
+        subdir (str): Directory where the mappings files are located. Defaults to "mappings".
 
     Returns:
         dict[str, str]: Key to value mapping of the JSON input.
@@ -22,7 +22,7 @@ def load_mappings(
     logger = logging.getLogger(__name__)
 
     try:
-        _JSON_PATH = Path(__file__).parent / mappings_dir / file
+        _JSON_PATH = Path(__file__).parent / subdir / file
         logger.info(f"Attempting to load mappings from '{_JSON_PATH}'")
         with open(_JSON_PATH, "r", encoding="utf-8") as f:
             code2name = json.load(f)
