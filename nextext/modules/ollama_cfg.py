@@ -1,54 +1,18 @@
 import logging
 import os
-import subprocess
-import time
-from pathlib import Path
-from typing import Optional
 
 import ollama
 import requests
 import torch
+from requests.exceptions import RequestException
 
 from nextext.utils import load_mappings
 
-
-def _is_ollama_running(url: Optional[str] = None) -> bool:
-    """
-    Check if the ollama server is running.
-
-    Args:
-        url (str, optional): The URL of the ollama server. Defaults to None.
-
-    Returns:
-        bool: True if the server is running, False otherwise.
-    """
-    if url is None:
-        url = os.getenv("OLLAMA_HOST", "http://localhost:11434")
-    try:
-        response = requests.get(url)
-        return response.ok
-    except requests.exceptions.RequestException:
-        return False
-
-
-def _ensure_ollama_running() -> None:
-    """
-    Ensure that the ollama server is running. If not, attempt to start it if outside Docker.
-    """
-    try:
-        if not _is_ollama_running():
-            if Path("/.dockerenv").exists():
-                raise RuntimeError(
-                    "Ollama server is not running inside Docker. Please start it on the host."
-                )
-            subprocess.Popen(["ollama", "serve"])
-    except Exception as e:
-        logging.error(f"Error starting ollama server: {e}")
-        raise RuntimeError("Failed to start ollama server. Please start it manually.")
+OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
 
 
 def _load_ollama_model(
-    filename: str = "ollama_models.json", fallback: str = "gemma3:4b-it-qat"
+    filename: str = "ollama_models.json", fallback: str = "gemma3n:e4b"
 ) -> str | None:
     """
     Load the specified ollama model.
@@ -57,11 +21,11 @@ def _load_ollama_model(
         filename (str): The name of the JSON file containing model mappings. Defaults to "ollama_models.json".
         fallback (str): The fallback model to use if no suitable model is found. Defaults to "gemma3:4b-it-qat".
 
-    Raises:
-        RuntimeError: If the model file is not found or empty, or if there is an error loading the model.
-    
     Returns:
         str | None: The name of the model if loaded successfully, None otherwise.
+
+    Raises:
+        RuntimeError: If the model file is not found or empty, or if there is an error loading the model.
     """
     logger = logging.getLogger(__name__)
 
@@ -89,40 +53,61 @@ def _load_ollama_model(
         )
 
 
+def _get_ollama_health(url: str = OLLAMA_HOST) -> bool:
+    """
+    Perform a health check by querying Ollama's /api/tags endpoint.
+
+    Args:
+        url (str, optional): The base URL of the Ollama server. Defaults to environment variable or localhost.
+
+    Returns:
+        bool: True if the Ollama server responds with model tags, False otherwise.
+
+    Raises:
+        RequestException: If there is an error connecting to the Ollama server.
+    """
+    try:
+        response = requests.get(f"{url}/api/tags", timeout=5)
+        return response.status_code == 200 and "models" in response.json()
+    except RequestException:
+        return False
+
+
 def call_ollama_server(
     prompt: str,
     num_ctx: int = 131072,
     temperature: float = 0.2,
-) -> str | None:
+) -> str:
     """
     Call the ollama server with the given model and prompt.
 
     Args:
         prompt (str): The prompt to send to the model.
-        num_ctx (int): The number of context tokens to use. Defaults to 8192.
+        num_ctx (int): The number of context tokens to use. Defaults to 131072.
         temperature (float): The temperature for the model's response. Defaults to 0.2.
 
     Returns:
-        str | None: The response from the model, or None if an error occurred.
+        str: The response from the ollama server, or an empty string if an error occurs.
+
+    Raises:
+        RuntimeError: If the ollama model cannot be loaded or if the server is not running
     """
     logger = logging.getLogger(__name__)
 
     model = _load_ollama_model()
-    
+
     if not model:
         logger.error("Failed to load Ollama model.")
         return ""
-    if not _is_ollama_running():
-        logger.warning("Ollama server not running, attempting to start...")
-        _ensure_ollama_running()
-        time.sleep(5)
-        if not _is_ollama_running():
-            logger.error("Failed to start Ollama server.")
-            return ""
+    if not _get_ollama_health():
+        logger.error(
+            "Ollama server is not healthy. Please ensure it is running and accessible."
+        )
+        return ""
 
     try:
-        ollama_base_url = os.getenv("OLLAMA_HOST", "http://localhost:11434")
-        os.environ["OLLAMA_HOST"] = ollama_base_url
+        # Ensure environment variable is set for ollama library
+        os.environ["OLLAMA_HOST"] = OLLAMA_HOST
         response = ollama.chat(
             model=model,
             messages=[{"role": "user", "content": prompt}],
