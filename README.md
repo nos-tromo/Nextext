@@ -45,9 +45,9 @@ Nextext requires downloading some models:
 
 The following models are recommended and tested for this application (select depending on your hardware setup):
 
-- [`gemma3:4b-it-qat`](https://ollama.com/library/gemma3)
-- [`gemma3:12b-it-qat`](https://ollama.com/library/gemma3)
 - [`gemma3:27b-it-qat`](https://ollama.com/library/gemma3)
+- [`gemma3:12b-it-qat`](https://ollama.com/library/gemma3)
+- [`gemma3n:e4b`](https://ollama.com/library/gemma3n)
 
 To configure the app's default models, edit the selector located at `nextext/utils/ollama_models.json`.
 
