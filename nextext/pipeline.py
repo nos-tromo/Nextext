@@ -37,7 +37,9 @@ def get_api_key(token: str = "API_KEY") -> str:
         return api_key
 
     if Path("/.dockerenv").exists():
-        raise RuntimeError(f"Missing API key. Please set {token} in your .env file or docker-compose environment.")
+        raise RuntimeError(
+            f"Missing API key. Please set {token} in your .env file or docker-compose environment."
+        )
 
     try:
         api_key = getpass.getpass("Token not found. Please enter your API key: ")
@@ -48,7 +50,9 @@ def get_api_key(token: str = "API_KEY") -> str:
                 env_file.write(f"{token}={api_key}\n")
         return api_key
     except EOFError:
-        raise RuntimeError(f"API key prompt failed and environment variable {token} is not set.")
+        raise RuntimeError(
+            f"API key prompt failed and environment variable {token} is not set."
+        )
 
 
 def transcription_pipeline(
