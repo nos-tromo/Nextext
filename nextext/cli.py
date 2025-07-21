@@ -3,9 +3,17 @@ import logging
 from pathlib import Path
 from typing import Optional
 
-from nextext import pipeline as ne
-from nextext.modules import FileProcessor
-from nextext.utils import setup_logging
+from nextext.modules.processing import FileProcessor
+from nextext.pipeline import (
+    get_api_key,
+    summarization_pipeline,
+    topics_pipeline,
+    toxicity_pipeline,
+    transcription_pipeline,
+    translation_pipeline,
+    wordlevel_pipeline,
+)
+from nextext.utils.logging_cfg_loader import setup_logging
 
 setup_logging()
 
@@ -159,12 +167,12 @@ def main() -> None:
 
         # Transcribe and diarize the audio file
         if args.task in ["transcribe", "translate"]:
-            transcript_df, updated_src_lang = ne.transcription_pipeline(
+            transcript_df, updated_src_lang = transcription_pipeline(
                 file_path=args.file_path,
                 src_lang=args.src_lang,
                 model_id=args.model_id,
                 task=args.task,
-                api_key=ne.get_api_key() or "",
+                api_key=get_api_key() or "",
                 speakers=args.speakers,
             )
             args.src_lang = updated_src_lang  # Update source language if detected
@@ -175,7 +183,7 @@ def main() -> None:
 
         # Machine translate the transcribed text
         if args.task == "translate" and args.trg_lang != "en":
-            transcript_df = ne.translation_pipeline(
+            transcript_df = translation_pipeline(
                 df=transcript_df, trg_lang=args.trg_lang
             )
 
@@ -185,7 +193,7 @@ def main() -> None:
         # Calculate word statistics
         if args.words:
             word_counts, named_entities, noun_sentiment, noun_graph, wordcloud_fig = (
-                ne.wordlevel_pipeline(
+                wordlevel_pipeline(
                     data=transcript_df,
                     language=transcript_lang,
                 )
@@ -201,7 +209,7 @@ def main() -> None:
 
         # Perform topic modeling
         if args.topics:
-            topic_df = ne.topics_pipeline(
+            topic_df = topics_pipeline(
                 data=transcript_df,
                 language=transcript_lang,
             )
@@ -210,7 +218,7 @@ def main() -> None:
 
         # Summarize the transcribed text
         if args.summarize:
-            transcript_summary = ne.summarization_pipeline(
+            transcript_summary = summarization_pipeline(
                 text=" ".join(transcript_df["text"].astype(str).tolist()),
                 prompt_lang=transcript_lang,
             )
@@ -219,7 +227,7 @@ def main() -> None:
 
         # Classify text for toxicity
         if args.toxicity:
-            transcript_df = ne.toxicity_pipeline(data=transcript_df)
+            transcript_df = toxicity_pipeline(data=transcript_df)
 
         # Save final transcript
         file_processor.write_file_output(transcript_df, "transcript")

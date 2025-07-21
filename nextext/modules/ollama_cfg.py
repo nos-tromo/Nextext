@@ -6,7 +6,7 @@ import requests
 import torch
 from requests.exceptions import RequestException
 
-from nextext.utils import load_mappings
+from nextext.utils.mappings_loader import load_mappings
 
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
 

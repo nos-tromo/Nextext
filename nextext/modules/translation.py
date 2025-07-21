@@ -8,7 +8,7 @@ from nltk import sent_tokenize
 from pyarabic.araby import sentence_tokenize
 from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
 
-from nextext.utils import load_mappings
+from nextext.utils.mappings_loader import load_mappings
 
 
 class Translator:

@@ -14,8 +14,17 @@ import streamlit as st
 import streamlit.components.v1 as components
 from streamlit.web import cli as st_cli
 
-from nextext import pipeline as ne
-from nextext.utils import kv_to_vk, load_and_sort_mappings, setup_logging
+from nextext.pipeline import (
+    get_api_key,
+    summarization_pipeline,
+    topics_pipeline,
+    toxicity_pipeline,
+    transcription_pipeline,
+    translation_pipeline,
+    wordlevel_pipeline,
+)
+from nextext.utils.logging_cfg_loader import setup_logging
+from nextext.utils.mappings_loader import kv_to_vk, load_and_sort_mappings
 
 setup_logging()
 
@@ -30,12 +39,12 @@ def _run_pipeline(tmp_file: Path, opts: dict) -> None:
     """
     # Transcription
     with st.spinner("Transcribing… this might take a while ⏳"):
-        df, updated_src_lang = ne.transcription_pipeline(
+        df, updated_src_lang = transcription_pipeline(
             file_path=tmp_file,
             src_lang=opts["src_lang"],
             model_id=opts["model_id"],
             task=opts["task"],
-            api_key=ne.get_api_key() or "",
+            api_key=get_api_key() or "",
             speakers=opts["speakers"],
         )
         # Update the source language in the session state
@@ -45,7 +54,7 @@ def _run_pipeline(tmp_file: Path, opts: dict) -> None:
     # Translation
     with st.spinner("Translating… this might take a while ⏳"):
         if opts["task"] == "translate" and opts["trg_lang"] != "en":
-            df = ne.translation_pipeline(df, opts["trg_lang"])
+            df = translation_pipeline(df, opts["trg_lang"])
 
     # Store the DataFrame and default values in session state
     result = {
@@ -62,7 +71,7 @@ def _run_pipeline(tmp_file: Path, opts: dict) -> None:
     # Word-level analysis
     with st.spinner("Running word-level analysis… ⏳"):
         if opts["words"]:
-            wc, ner, nouns, graph, cloud = ne.wordlevel_pipeline(
+            wc, ner, nouns, graph, cloud = wordlevel_pipeline(
                 df,
                 opts["trg_lang" if opts["task"] == "translate" else "src_lang"],
             )
@@ -75,7 +84,7 @@ def _run_pipeline(tmp_file: Path, opts: dict) -> None:
     # Topic modelling
     with st.spinner("Running topic modelling… ⏳"):
         if opts["topics"]:
-            topics_output = ne.topics_pipeline(
+            topics_output = topics_pipeline(
                 df,
                 opts["trg_lang" if opts["task"] == "translate" else "src_lang"],
             )
@@ -87,7 +96,7 @@ def _run_pipeline(tmp_file: Path, opts: dict) -> None:
     # Summarization
     with st.spinner("Summarizing… ⏳"):
         if opts["summarization"]:
-            result["summary"] = ne.summarization_pipeline(
+            result["summary"] = summarization_pipeline(
                 " ".join(df["text"].astype(str).tolist()),
                 opts["trg_lang" if opts["task"] == "translate" else "src_lang"],
             )
@@ -95,7 +104,7 @@ def _run_pipeline(tmp_file: Path, opts: dict) -> None:
     # Toxicity classification
     with st.spinner("Classifying toxicity… ⏳"):
         if opts["toxicity"]:
-            df = ne.toxicity_pipeline(df)
+            df = toxicity_pipeline(df)
             result["transcript"] = df  # updated with extra column
 
     st.session_state["result"] = result

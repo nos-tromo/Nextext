@@ -12,7 +12,7 @@ import torch
 import whisperx
 from whisperx.diarize import DiarizationPipeline
 
-from nextext.utils import load_mappings
+from nextext.utils.mappings_loader import load_mappings
 
 
 class WhisperTranscriber:

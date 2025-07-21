@@ -14,7 +14,8 @@ from spacy.language import Language
 from spacy.tokens import Doc
 from wordcloud import WordCloud
 
-from nextext.utils import load_font_file, load_mappings
+from nextext.utils.font_loader import load_font_file
+from nextext.utils.mappings_loader import load_mappings
 
 
 class WordCounter:

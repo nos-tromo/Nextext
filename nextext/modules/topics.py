@@ -13,13 +13,12 @@ from sentence_transformers import SentenceTransformer
 from sklearn.feature_extraction.text import CountVectorizer
 from umap import UMAP
 
-from nextext.utils import load_mappings
-
-from .ollama_cfg import (
+from nextext.modules.ollama_cfg import (
     call_ollama_server,
     topic_summaries_prompt,
     topic_titles_prompt,
 )
+from nextext.utils.mappings_loader import load_mappings
 
 
 class TopicModeling:
