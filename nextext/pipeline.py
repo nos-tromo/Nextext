@@ -93,7 +93,8 @@ def transcription_pipeline(
 
 def translation_pipeline(df: pd.DataFrame, trg_lang: str) -> pd.DataFrame:
     """
-    Translate the transcribed text using a machine translation model.
+    Translate the transcribed text using a machine translation model. Translation is performed 
+    only if the target language is different from the detected source language.
 
     Args:
         df (pd.DataFrame): DataFrame containing the transcribed text.
@@ -103,7 +104,9 @@ def translation_pipeline(df: pd.DataFrame, trg_lang: str) -> pd.DataFrame:
         pd.DataFrame: DataFrame with the translated text.
     """
     translator = Translator()
-    translator.detect_language(" ".join(df["text"].astype(str).tolist()))
+    detected_lang = translator.detect_language(" ".join(df["text"].astype(str).tolist()))
+    if detected_lang.get("code") == trg_lang:
+        return df
     df["text"] = df["text"].apply(lambda text: translator.translate(trg_lang, text))
     return df
 
