@@ -9,8 +9,8 @@ from nextext.utils.mappings_loader import load_mappings
 logger = logging.getLogger(__name__)
 
 
-nltk.download('punkt_tab', quiet=True)
-nltk.download('stopwords', quiet=True)
+nltk.download("punkt_tab", quiet=True)
+nltk.download("stopwords", quiet=True)
 
 
 def _download_spacy_model(model_id: str) -> None:
@@ -19,7 +19,7 @@ def _download_spacy_model(model_id: str) -> None:
 
     Args:
         model_id (str): The name of the spaCy model to download.
-    """    
+    """
     try:
         subprocess.run(
             [sys.executable, "-m", "spacy", "download", model_id], check=True

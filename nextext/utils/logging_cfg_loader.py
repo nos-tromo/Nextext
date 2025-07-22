@@ -3,8 +3,6 @@ from pathlib import Path
 
 import yaml
 
-__all__ = ["setup_logging"]
-
 
 def setup_logging(
     log_dir: str = ".log",
