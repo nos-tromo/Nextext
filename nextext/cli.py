@@ -169,11 +169,12 @@ def main() -> None:
         if args.task in ["transcribe", "translate"]:
             transcript_df, updated_src_lang = transcription_pipeline(
                 file_path=args.file_path,
+                api_key=get_api_key() or "",
+                trg_lang=args.trg_lang,
                 src_lang=args.src_lang,
                 model_id=args.model_id,
                 task=args.task,
-                api_key=get_api_key() or "",
-                speakers=args.speakers,
+                n_speakers=args.speakers,
             )
             args.src_lang = updated_src_lang  # Update source language if detected
         else:
