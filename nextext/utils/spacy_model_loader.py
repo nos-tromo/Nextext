@@ -19,6 +19,9 @@ def _download_spacy_model(model_id: str) -> None:
 
     Args:
         model_id (str): The name of the spaCy model to download.
+
+    Raises:
+        subprocess.CalledProcessError: If the subprocess command fails.
     """
     try:
         subprocess.run(

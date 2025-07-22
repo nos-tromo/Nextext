@@ -12,12 +12,11 @@ def load_font_file(file: str, utils: Path = Path("utils") / "fonts") -> Path:
         file (str): The name of the font file to load.
         utils (Path, optional): The directory where the font file is located. Defaults to "utils/fonts".
 
-    Raises:
-        FileNotFoundError: If the specified font file does not exist in the given path.
-        Exception: If any other error occurs while loading the font file.
-
     Returns:
         The path to the font file, converted to an absolute path if it was not already.
+
+    Raises:
+        FileNotFoundError: If the specified font file does not exist in the given path.
     """
     font_path = None
 

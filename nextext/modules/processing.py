@@ -34,6 +34,9 @@ class FileProcessor:
         Args:
             file_path (Path | None, optional): The path to the input file.
             output_dir (Path, optional): The directory to save the output files. Defaults to "output".
+
+        Raises:
+            ValueError: If file_path or output_dir is None.
         """
         if file_path is None or output_dir is None:
             raise ValueError("file_path and output_dir must not be None")

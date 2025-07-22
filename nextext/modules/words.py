@@ -427,6 +427,9 @@ class WordCounter:
 
         Returns:
             Figure: A matplotlib figure containing a wordcloud of the most frequent words.
+
+        Raises:
+            ValueError: If word counts are not available.
         """
         try:
             # Create a string of words for the wordcloud

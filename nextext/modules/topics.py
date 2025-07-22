@@ -80,6 +80,10 @@ class TopicModeling:
             column (str | None, optional): Column name in the DataFrame containing text data. Defaults to "text".
             lang_code (str, optional): Language code for the text data. Defaults to "en".
             spacy_language_file (str, optional): Path to the JSON file containing spaCy language model mappings. Defaults to "spacy_models.json".
+
+        Raises:
+            ValueError: If data is not a string, list of strings, or a DataFrame.
+            ValueError: If the input data is empty.
         """
         # Validate input data type and convert to a list of sentences
         if isinstance(data, str):
@@ -381,6 +385,9 @@ class TopicModeling:
 
         Returns:
             pd.DataFrame: A DataFrame containing the topics' representations.
+
+        Raises:
+            ValueError: If the topic model is not initialized or if there are not enough documents.
         """
         if len(self.docs) < 5:
             logging.warning("Not enough documents for topic modeling. Skipping fit.")
