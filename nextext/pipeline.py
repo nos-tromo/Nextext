@@ -123,7 +123,7 @@ def translation_pipeline(df: pd.DataFrame, trg_lang: str) -> pd.DataFrame:
 def summarization_pipeline(
     text: str,
     prompt_lang: str = "German",
-) -> str | None:
+) -> str:
     """
     Summarize the given text using a language model and translate the result.
 
@@ -132,21 +132,15 @@ def summarization_pipeline(
         prompt_lang (str): The language code of the text. Defaults to "German".
 
     Returns:
-        str | None: The summarized text or None if an error occurs.
+        str: The summarized text or None if an error occurs.
     """
-    try:
-        if not text:
-            raise ValueError("Text cannot be empty.")
-        prompt = text_summarization_prompt.format(
-            language=prompt_lang,
-            text=text,
-        )
-
-        return call_ollama_server(prompt=prompt)
-
-    except Exception as e:
-        logging.error("Error summarizing text: %s", e)
-        return None
+    if not text:
+        raise ValueError("Text cannot be empty.")
+    prompt = text_summarization_prompt.format(
+        language=prompt_lang,
+        text=text,
+    )
+    return call_ollama_server(prompt=prompt)
 
 
 def wordlevel_pipeline(
