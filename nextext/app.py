@@ -310,8 +310,8 @@ def main() -> None:
 # ---- Streamlit CLI wrapper ----------------------------------------------- #
 def cli() -> None:
     """
-    CLI entry point for the Streamlit app. This function is used to run the app from the command 
-    line. It sets up the command line arguments as if the user typed them. For example: `streamlit 
+    CLI entry point for the Streamlit app. This function is used to run the app from the command
+    line. It sets up the command line arguments as if the user typed them. For example: `streamlit
     run app.py <any extra args>`.
     """
     sys.argv = ["streamlit", "run", __file__] + sys.argv[1:]
