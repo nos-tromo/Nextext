@@ -9,6 +9,7 @@ __pycache__/
 .vscode/
 .idea/
 *.code-workspace
+*.ipynb
 
 # Git and test files
 .git/
@@ -22,6 +23,22 @@ tests/
 .env
 *.log
 
+# data files
+*.db
+*.gguf
+*.html
+*.mkv
+*.mp3
+*.mp4
+*.m4a
+*.ogg
+*.sh
+*.wav
+*.webm
+*.zip
+
+
 # Data and output directories
 data/
 output/
+prototypes
