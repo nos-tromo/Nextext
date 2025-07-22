@@ -10,6 +10,8 @@ from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
 
 from nextext.utils.mappings_loader import load_mappings
 
+logger = logging.getLogger(__name__)
+
 
 class Translator:
     """
@@ -51,7 +53,6 @@ class Translator:
         Raises:
             RuntimeError: If the model cannot be loaded from local cache or downloaded.
         """
-        self.logger = logging.getLogger(self.__class__.__name__)
         self.languages = load_mappings(madlad_language_file)
         models = load_mappings(madlad_models_file)
         if torch.cuda.is_available():
@@ -102,9 +103,9 @@ class Translator:
                 model = AutoModelForSeq2SeqLM.from_pretrained(
                     model_id, torch_dtype=torch_dtype, local_files_only=local_only
                 ).to(device)
-                self.logger.info("✅ Loaded model from local cache.")
+                logger.info("✅ Loaded model from local cache.")
             except FileNotFoundError:
-                self.logger.info(
+                logger.info(
                     "⬇️ Model not in local cache — downloading from Hugging Face..."
                 )
                 tokenizer = AutoTokenizer.from_pretrained(model_id)
@@ -114,7 +115,7 @@ class Translator:
 
             return tokenizer, model, device
         except Exception as e:
-            self.logger.error("Error loading model: %s", e)
+            logger.error("Error loading model: %s", e)
             raise RuntimeError(
                 "Failed to load translation model. Please check the model name or your internet connection."
             ) from e
@@ -135,7 +136,7 @@ class Translator:
             src_lang_name = lang_obj.name if lang_obj is not None else ""
             return {"name": src_lang_name, "code": self.src_lang or ""}
         except Exception as e:
-            self.logger.error("Error detecting language: %s", e)
+            logger.error("Error detecting language: %s", e)
             return {"name": "", "code": "", "flag": ""}
 
     def _model_inference(self, lang: str, text: str, verbose: bool = True) -> str:
@@ -161,7 +162,7 @@ class Translator:
 
             if input_len >= max_model_len:
                 if verbose:
-                    self.logger.warning(
+                    logger.warning(
                         "⚠️ Input length (%d tokens) hits or exceeds max context window (%d). Output may be truncated or degraded.",
                         input_len,
                         max_model_len,
@@ -179,7 +180,7 @@ class Translator:
             )
             return self.tokenizer.batch_decode(outputs, skip_special_tokens=True)[0]
         except Exception as e:
-            self.logger.error("Error during model inference: %s", e)
+            logger.error("Error during model inference: %s", e)
             return ""
 
     def translate(self, trg_lang: str, text: str) -> str:
@@ -219,5 +220,5 @@ class Translator:
                 ]
             )
         except Exception as e:
-            self.logger.error("Error during translation pipeline: %s", e)
+            logger.error("Error during translation pipeline: %s", e)
             raise RuntimeError("Translation failed") from e

@@ -17,6 +17,8 @@ from nextext.utils.logging_cfg_loader import setup_logging
 
 setup_logging()
 
+logger = logging.getLogger(__name__)
+
 
 def parse_arguments(args_list: Optional[list] = None) -> argparse.Namespace:
     """
@@ -144,7 +146,7 @@ def parse_arguments(args_list: Optional[list] = None) -> argparse.Namespace:
 
         return args
     except argparse.ArgumentError as e:
-        logging.error("Argument parsing error: %s", e)
+        logger.error("Argument parsing error: %s", e)
         raise
 
 
@@ -157,7 +159,7 @@ def main() -> None:
     It also sets up logging and error handling for the entire pipeline.
     """
     try:
-        logging.info("\n\nInitiating Nextext...\n")
+        logger.info("\n\nInitiating Nextext...\n")
 
         # Parse command-line arguments
         args = parse_arguments()
@@ -233,12 +235,12 @@ def main() -> None:
         # Save final transcript
         file_processor.write_file_output(transcript_df, "transcript")
 
-        logging.info(
+        logger.info(
             "The end of our elaborate plans, the end of everything that stands."
         )
 
     except Exception as e:
-        logging.exception("An unexpected error occurred: %s", e)
+        logger.exception("An unexpected error occurred: %s", e)
         raise
 
 

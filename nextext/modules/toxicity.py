@@ -5,6 +5,8 @@ from transformers import AutoModelForSequenceClassification, AutoTokenizer
 from transformers.pipelines import pipeline as hf_pipeline
 from transformers.pipelines.base import Pipeline
 
+logger = logging.getLogger(__name__)
+
 
 class ToxClassifier:
     """
@@ -30,7 +32,6 @@ class ToxClassifier:
         Args:
             model_id (str, optional): The model ID for the pre-trained toxicity classifier. Defaults to "textdetox/xlmr-large-toxicity-classifier".
         """
-        self.logger = logging.getLogger(__name__)
         self.model_id = model_id
         self.batch_size = (
             128
@@ -71,7 +72,7 @@ class ToxClassifier:
                 truncation=True,
             )
         except Exception as e:
-            self.logger.error("Error initializing classification pipeline: %s", e)
+            logger.error("Error initializing classification pipeline: %s", e)
             return None
 
     def classify_data(self, data: list[str], results: list[int] = []) -> list[int]:
@@ -88,10 +89,10 @@ class ToxClassifier:
         try:
             n_lines = len(data)
             if n_lines == 0:
-                self.logger.warning("No data provided for classification.")
+                logger.warning("No data provided for classification.")
                 return []
             if n_lines < self.batch_size:
-                self.logger.warning(
+                logger.warning(
                     "Data size (%d) is smaller than batch size (%d).",
                     n_lines,
                     self.batch_size,
@@ -103,18 +104,18 @@ class ToxClassifier:
                 batch = data[start_idx:end_idx]
 
                 if self.classifier is None:
-                    self.logger.error("Classifier pipeline is not initialized.")
+                    logger.error("Classifier pipeline is not initialized.")
                     return []
 
                 batch_results = self.classifier(batch)
 
                 if not batch_results:
-                    self.logger.warning("Classifier returned an empty list!")
+                    logger.warning("Classifier returned an empty list!")
                     continue
 
                 for result in batch_results:
                     if not isinstance(result, dict):
-                        self.logger.warning(
+                        logger.warning(
                             "Unexpected classifier output type: %s. Expected a dictionary.",
                             type(result),
                         )
@@ -125,7 +126,7 @@ class ToxClassifier:
                     results.append(score)
 
             if len(results) != len(data):
-                self.logger.error(
+                logger.error(
                     "Mismatch between number of results and data entries."
                 )
                 return []
@@ -133,7 +134,7 @@ class ToxClassifier:
             return results
 
         except Exception as e:
-            self.logger.error(
+            logger.error(
                 "Error during classification inference: %s", e, exc_info=True
             )
             return []

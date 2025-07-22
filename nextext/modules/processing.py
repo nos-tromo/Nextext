@@ -4,6 +4,8 @@ from pathlib import Path
 import pandas as pd
 from matplotlib.figure import Figure
 
+logger = logging.getLogger(__name__)
+
 
 class FileProcessor:
     """
@@ -33,7 +35,6 @@ class FileProcessor:
             file_path (Path | None, optional): The path to the input file.
             output_dir (Path, optional): The directory to save the output files. Defaults to "output".
         """
-        self.logger = logging.getLogger(self.__class__.__name__)
         if file_path is None or output_dir is None:
             raise ValueError("file_path and output_dir must not be None")
         self.filename, self.output_path = self._setup_directories(file_path, output_dir)
@@ -54,15 +55,15 @@ class FileProcessor:
             output_path = output_dir / filename
             if not output_path.exists():
                 output_path.mkdir(parents=True, exist_ok=True)
-                self.logger.info(
+                logger.info(
                     "Output directory %s does not exist. Creating a new one.",
                     output_path,
                 )
             else:
-                self.logger.info("Output directory %s already exists.", output_path)
+                logger.info("Output directory %s already exists.", output_path)
             return filename, output_path
         except Exception as e:
-            self.logger.error("Error processing input file: %s", e, exc_info=True)
+            logger.error("Error processing input file: %s", e, exc_info=True)
             raise
 
     def write_file_output(
@@ -115,16 +116,16 @@ class FileProcessor:
 
                 # File saving notifications
                 if output_file_path_csv.exists():
-                    self.logger.info("Saved output: %s", output_file_path_csv)
+                    logger.info("Saved output: %s", output_file_path_csv)
                 if output_file_path_txt.exists():
-                    self.logger.info("Saved output: %s", output_file_path_txt)
+                    logger.info("Saved output: %s", output_file_path_txt)
                 if output_file_path_excel.exists():
-                    self.logger.info("Saved output: %s", output_file_path_excel)
+                    logger.info("Saved output: %s", output_file_path_excel)
                 if output_file_path_png.exists():
-                    self.logger.info("Saved output: %s", output_file_path_png)
+                    logger.info("Saved output: %s", output_file_path_png)
 
             else:
-                self.logger.error(
+                logger.error(
                     "Data type not supported for writing output: %s",
                     type(data),
                     exc_info=True,
@@ -132,5 +133,5 @@ class FileProcessor:
 
             return data
         except Exception as e:
-            self.logger.error("Error creating output: %s", e, exc_info=True)
+            logger.error("Error creating output: %s", e, exc_info=True)
             raise

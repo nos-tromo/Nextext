@@ -17,6 +17,8 @@ from wordcloud import WordCloud
 from nextext.utils.font_loader import load_font_file
 from nextext.utils.mappings_loader import load_mappings
 
+logger = logging.getLogger(__name__)
+
 
 class WordCounter:
     """
@@ -75,8 +77,6 @@ class WordCounter:
             spacy_entities_file (str, optional): Path to the JSON file containing spaCy entity mappings. Defaults to "spacy_entities.json".
             font_file (str, optional): Path to the font file for word cloud generation. Defaults to "Amiri-Regular.ttf".
         """
-        self.logger = logging.getLogger(self.__class__.__name__)
-
         self.text = text
         self.language = language
 
@@ -122,7 +122,7 @@ class WordCounter:
             try:
                 return spacy.load(model_name)
             except Exception as e:
-                self.logger.warning(
+                logger.warning(
                     "Primary spaCy model '%s' failed. Falling back to 'xx_sent_ud_sm': %s",
                     model_name,
                     e,
@@ -130,7 +130,7 @@ class WordCounter:
                 return spacy.load("xx_sent_ud_sm")
 
         except Exception as e:
-            self.logger.error(
+            logger.error(
                 "Failed to load any language model for language '%s': %s", language, e
             )
             return None
@@ -143,12 +143,12 @@ class WordCounter:
             if self.nlp is not None:
                 self.doc = self.nlp(self.text)
             else:
-                self.logger.error(
+                logger.error(
                     "spaCy language model is not loaded. Cannot process text."
                 )
                 self.doc = None
         except Exception as e:
-            self.logger.error("Unable to convert text to spaCy doc: %s", e)
+            logger.error("Unable to convert text to spaCy doc: %s", e)
 
     def lemmatize_doc(self) -> None:
         """
@@ -159,7 +159,7 @@ class WordCounter:
         """
         try:
             if self.doc is None:
-                self.logger.error("spaCy doc is None. Please run text_to_doc() first.")
+                logger.error("spaCy doc is None. Please run text_to_doc() first.")
                 self.tokenized_doc = []
                 self.tokenized_nouns = []
                 return
@@ -184,7 +184,7 @@ class WordCounter:
                     )
                 ]
         except Exception as e:
-            self.logger.error("Error tokenizing words: %s", e, exc_info=True)
+            logger.error("Error tokenizing words: %s", e, exc_info=True)
             raise
 
     def count_words(
@@ -202,7 +202,7 @@ class WordCounter:
         """
         try:
             if self.tokenized_doc is None:
-                self.logger.error(
+                logger.error(
                     "Tokenized document is None. Please run lemmatize_doc() first."
                 )
                 return pd.DataFrame(columns=columns).reset_index(drop=True)
@@ -214,7 +214,7 @@ class WordCounter:
             )
             return df
         except Exception as e:
-            self.logger.error("Error counting word frequencies: %s", e, exc_info=True)
+            logger.error("Error counting word frequencies: %s", e, exc_info=True)
             return pd.DataFrame(columns=columns).reset_index(drop=True)
 
     def named_entity_recognition(
@@ -231,7 +231,7 @@ class WordCounter:
         """
         try:
             if self.doc is None:
-                self.logger.error("spaCy doc is None. Please run text_to_doc() first.")
+                logger.error("spaCy doc is None. Please run text_to_doc() first.")
                 return pd.DataFrame(columns=columns).reset_index(drop=True)
             ent_types = set(self.spacy_entities.keys())
             doc_ents = [
@@ -249,7 +249,7 @@ class WordCounter:
             ).reset_index(drop=True)
             return df
         except Exception as e:
-            self.logger.error(
+            logger.error(
                 "Error performing named entity recognition: %s", e, exc_info=True
             )
             return pd.DataFrame(columns=columns).reset_index(drop=True)
@@ -279,7 +279,7 @@ class WordCounter:
         """
         try:
             if self.doc is None:
-                self.logger.error("spaCy doc is None. Please run text_to_doc() first.")
+                logger.error("spaCy doc is None. Please run text_to_doc() first.")
                 return pd.DataFrame(columns=columns).reset_index(drop=True)
 
             # Identify top‑frequency noun lemmas
@@ -334,7 +334,7 @@ class WordCounter:
             return self.noun_df
 
         except Exception as e:
-            self.logger.error(
+            logger.error(
                 "Error combining noun‑verb‑adjective extraction: %s", e, exc_info=True
             )
             return pd.DataFrame(columns=columns).reset_index(drop=True)
@@ -354,7 +354,7 @@ class WordCounter:
         """
         try:
             if self.noun_df is None:
-                self.logger.error(
+                logger.error(
                     "Noun DataFrame is None. Please run get_noun_adjectives() first."
                 )
                 return nx.Graph()
@@ -376,7 +376,7 @@ class WordCounter:
                     G.add_edge(noun, a, relation="adj")
             return G
         except Exception as e:
-            self.logger.error(
+            logger.error(
                 "Error building noun-verb-adjective graph: %s", e, exc_info=True
             )
             return nx.Graph()
@@ -391,7 +391,7 @@ class WordCounter:
         try:
             G = self.construct_noun_sentiment_graph()
             if G.number_of_nodes() == 0:
-                self.logger.warning("Graph is empty. No nodes to visualize.")
+                logger.warning("Graph is empty. No nodes to visualize.")
                 return "<p>No data to visualize.</p>"
 
             net = Network(notebook=False, bgcolor="#000000", font_color="white")
@@ -418,7 +418,7 @@ class WordCounter:
             )
             return html
         except Exception as e:
-            self.logger.error("Error exporting interactive graph: %s", e, exc_info=True)
+            logger.error("Error exporting interactive graph: %s", e, exc_info=True)
             return "<p>Error generating graph visualization.</p>"
 
     def create_wordcloud(self) -> Figure:
@@ -431,7 +431,7 @@ class WordCounter:
         try:
             # Create a string of words for the wordcloud
             if self.word_counts is None:
-                self.logger.error(
+                logger.error(
                     "Word counts are not available. Please run count_words() first."
                 )
                 raise ValueError(
@@ -463,7 +463,7 @@ class WordCounter:
             plt.tight_layout(pad=0)
             return fig
         except Exception as e:
-            self.logger.error("Error creating wordcloud: %s", e, exc_info=True)
+            logger.error("Error creating wordcloud: %s", e, exc_info=True)
             # Return an empty black figure if wordcloud creation fails
             fig = plt.figure(figsize=(20, 10), facecolor="k")
             plt.axis("off")

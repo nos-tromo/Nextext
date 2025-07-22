@@ -8,6 +8,8 @@ from requests.exceptions import RequestException
 
 from nextext.utils.mappings_loader import load_mappings
 
+logger = logging.getLogger(__name__)
+
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
 
 
@@ -27,8 +29,6 @@ def _load_ollama_model(
     Raises:
         RuntimeError: If the model file is not found or empty, or if there is an error loading the model.
     """
-    logger = logging.getLogger(__name__)
-
     try:
         models = load_mappings(filename)
         if not models:
@@ -92,8 +92,6 @@ def call_ollama_server(
     Raises:
         RuntimeError: If the ollama model cannot be loaded or if the server is not running
     """
-    logger = logging.getLogger(__name__)
-
     model = _load_ollama_model()
 
     if not model:

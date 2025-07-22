@@ -28,6 +28,8 @@ from nextext.utils.mappings_loader import kv_to_vk, load_and_sort_mappings
 
 setup_logging()
 
+logger = logging.getLogger(__name__)
+
 
 def _run_pipeline(tmp_file: Path, opts: dict) -> None:
     """

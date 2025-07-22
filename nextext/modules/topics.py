@@ -20,6 +20,8 @@ from nextext.modules.ollama_cfg import (
 )
 from nextext.utils.mappings_loader import load_mappings
 
+logger = logging.getLogger(__name__)
+
 
 class TopicModeling:
     """
@@ -79,22 +81,20 @@ class TopicModeling:
             lang_code (str, optional): Language code for the text data. Defaults to "en".
             spacy_language_file (str, optional): Path to the JSON file containing spaCy language model mappings. Defaults to "spacy_models.json".
         """
-        self.logger = logging.getLogger(self.__class__.__name__)
-
         # Validate input data type and convert to a list of sentences
         if isinstance(data, str):
-            self.logger.info("Input data is a string. Tokenizing sentences.")
+            logger.info("Input data is a string. Tokenizing sentences.")
         elif isinstance(data, list):
-            self.logger.info("Input data is a list of strings. Tokenizing sentences.")
+            logger.info("Input data is a list of strings. Tokenizing sentences.")
             data = " ".join(data)
         elif isinstance(data, pd.DataFrame):
-            self.logger.info(
+            logger.info(
                 "Input data is a DataFrame. Extracting column '%s' for processing.",
                 column,
             )
             data = " ".join(data[column].astype(str).tolist())
         else:
-            self.logger.error(
+            logger.error(
                 "Input data must be a string, list of strings, or a DataFrame. Received: %s",
                 type(data),
             )
@@ -103,7 +103,7 @@ class TopicModeling:
         self.language = self._lang_code_to_name(lang_code) or "english"
         self.docs = sent_tokenize(data, self.language)
         if not self.docs:
-            self.logger.error(
+            logger.error(
                 "Input data is empty. Cannot proceed with topic modeling."
             )
             raise ValueError("Input data is empty. Cannot proceed with topic modeling.")
@@ -118,7 +118,7 @@ class TopicModeling:
 
         spacy_languages = load_mappings(spacy_language_file)
         self.nlp_name = self._load_spacy_model(spacy_languages, lang_code)
-        self.logger.info(
+        logger.info(
             "spaCy model '%s' loaded for language '%s'.",
             self.nlp_name,
             lang_code,
@@ -144,12 +144,12 @@ class TopicModeling:
             if lang_obj and hasattr(lang_obj, "name"):
                 return lang_obj.name.lower()
             else:
-                self.logger.error(
+                logger.error(
                     "Could not find language name for code: %s", lang_code
                 )
                 return None
         except Exception as e:
-            self.logger.error("Error converting language: %s.", e, exc_info=True)
+            logger.error("Error converting language: %s.", e, exc_info=True)
             return None
 
     def _load_spacy_model(
@@ -169,7 +169,7 @@ class TopicModeling:
         try:
             return spacy_languages.get(language, "xx")
         except Exception as e:
-            self.logger.error(
+            logger.error(
                 "Failed to load the language model for language '%s': %s",
                 language,
                 e,
@@ -192,7 +192,7 @@ class TopicModeling:
         try:
             return SentenceTransformer(model, device=self.device, cache_folder="models")
         except Exception as e:
-            self.logger.error("Error loading sentence transformer model: %s", e)
+            logger.error("Error loading sentence transformer model: %s", e)
             return None
 
     def _load_umap_model(
@@ -221,7 +221,7 @@ class TopicModeling:
             adjusted_components = max(2, min(n_components, doc_count - 2))
 
             if adjusted_components >= doc_count:
-                self.logger.warning(
+                logger.warning(
                     "Too few documents (%d) for UMAP. Skipping topic modeling.",
                     doc_count,
                 )
@@ -235,7 +235,7 @@ class TopicModeling:
                 random_state=random_state,
             )
         except Exception as e:
-            self.logger.error("Error loading UMAP model: %s", e)
+            logger.error("Error loading UMAP model: %s", e)
             return None
 
     def _load_hdbscan_model(
@@ -265,7 +265,7 @@ class TopicModeling:
                 prediction_data=prediction_data,
             )
         except Exception as e:
-            self.logger.error("Error loading HDBSCAN model: %s", e)
+            logger.error("Error loading HDBSCAN model: %s", e)
             return None
 
     def _load_vectorizer_model(
@@ -283,7 +283,7 @@ class TopicModeling:
         try:
             return CountVectorizer(stop_words=self.stop_words, ngram_range=ngram_range)
         except Exception as e:
-            self.logger.error("Error loading vectorizer model: %s", e)
+            logger.error("Error loading vectorizer model: %s", e)
             return None
 
     def _load_representation_model(self) -> PartOfSpeech | None:
@@ -297,12 +297,12 @@ class TopicModeling:
             if self.nlp_name is not None:
                 return PartOfSpeech(self.nlp_name)
             else:
-                self.logger.error(
+                logger.error(
                     "spaCy model name is None. Cannot load PartOfSpeech representation model."
                 )
                 return None
         except Exception as e:
-            self.logger.error("Error loading representation model: %s", e)
+            logger.error("Error loading representation model: %s", e)
             return None
 
     def load_pipeline(
@@ -332,12 +332,12 @@ class TopicModeling:
                 or vectorizer_model is None
                 or representation_model is None
             ):
-                self.logger.error(
+                logger.error(
                     "Failed to load one or more models. Cannot initialize BERTopic."
                 )
                 return
             if len(self.docs) < 5:
-                self.logger.warning(
+                logger.warning(
                     "Not enough documents for topic modeling. Skipping pipeline load."
                 )
                 return

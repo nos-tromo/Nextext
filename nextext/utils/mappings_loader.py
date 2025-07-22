@@ -3,6 +3,8 @@ import logging
 from functools import lru_cache
 from pathlib import Path
 
+logger = logging.getLogger(__name__)
+
 
 @lru_cache
 def load_mappings(
@@ -47,8 +49,6 @@ def load_and_sort_mappings(file: str) -> tuple[dict[str, str], list[str]]:
         tuple[dict[str, str], list[str]]: A tuple containing a dictionary of language mappings
         and a sorted list of language names.
     """
-    logger = logging.getLogger(__name__)
-    
     try:
         maps = load_mappings(file)
         names = sorted(maps.values())
@@ -68,8 +68,6 @@ def kv_to_vk(mappings: dict[str, str]) -> dict[str, str]:
     Returns:
         dict[str, str]: A dictionary with keys as language names and values as language codes.
     """
-    logger = logging.getLogger(__name__)
-    
     try:
         return {v: k for k, v in mappings.items()}
     except Exception as e:
