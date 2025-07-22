@@ -71,12 +71,10 @@ class ToxClassifier:
                 truncation=True,
             )
         except Exception as e:
-            self.logger.error(f"Error initializing classification pipeline: {e}")
+            self.logger.error("Error initializing classification pipeline: %s", e)
             return None
 
-    def classify_data(
-        self, data: list[str], results: list[int] = []
-    ) -> list[int]:
+    def classify_data(self, data: list[str], results: list[int] = []) -> list[int]:
         """
         Performs inference on the text data using the pre-trained model and returns the classification results.
 
@@ -94,7 +92,9 @@ class ToxClassifier:
                 return []
             if n_lines < self.batch_size:
                 self.logger.warning(
-                    f"Data size ({n_lines}) is smaller than batch size ({self.batch_size})."
+                    "Data size (%d) is smaller than batch size (%d).",
+                    n_lines,
+                    self.batch_size,
                 )
                 self.batch_size = n_lines
 
@@ -115,7 +115,8 @@ class ToxClassifier:
                 for result in batch_results:
                     if not isinstance(result, dict):
                         self.logger.warning(
-                            f"Unexpected classifier output type: {type(result)}. Expected a dictionary."
+                            "Unexpected classifier output type: %s. Expected a dictionary.",
+                            type(result),
                         )
                         continue  # Skip invalid results
 
@@ -133,6 +134,6 @@ class ToxClassifier:
 
         except Exception as e:
             self.logger.error(
-                f"Error during classification inference: {e}", exc_info=True
+                "Error during classification inference: %s", e, exc_info=True
             )
             return []

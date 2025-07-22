@@ -38,12 +38,12 @@ def setup_logging(
         cfg = yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
         logging.config.dictConfig(cfg)
 
-        logging.info(f"Logging configuration loaded from {cfg_path}")
-        logging.debug(f"Logging configuration: {cfg}")
+        logging.info("Logging configuration loaded from %s", cfg_path)
+        logging.debug("Logging configuration: %r", cfg)
         logging.getLogger("nextext").info("Nextext logging initialized.")
     except yaml.YAMLError as e:
         logging.basicConfig(level=logging.INFO)
-        logging.error(f"Error loading logging configuration from {log_path}: {e}")
+        logging.error("Error loading logging configuration from %s: %s", log_path, e)
     except Exception as e:
         logging.basicConfig(level=logging.INFO)
-        logging.error(f"Error setting up logging: {e}")
+        logging.error("Error setting up logging: %s", e)

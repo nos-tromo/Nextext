@@ -74,7 +74,7 @@ class WordCounter:
             spacy_models_file (str, optional): Path to the JSON file containing spaCy model mappings. Defaults to "spacy_models.json".
             spacy_entities_file (str, optional): Path to the JSON file containing spaCy entity mappings. Defaults to "spacy_entities.json".
             font_file (str, optional): Path to the font file for word cloud generation. Defaults to "Amiri-Regular.ttf".
-        """        
+        """
         self.logger = logging.getLogger(self.__class__.__name__)
 
         self.text = text
@@ -123,13 +123,15 @@ class WordCounter:
                 return spacy.load(model_name)
             except Exception as e:
                 self.logger.warning(
-                    f"Primary spaCy model '{model_name}' failed. Falling back to 'xx_sent_ud_sm': {e}"
+                    "Primary spaCy model '%s' failed. Falling back to 'xx_sent_ud_sm': %s",
+                    model_name,
+                    e,
                 )
                 return spacy.load("xx_sent_ud_sm")
 
         except Exception as e:
             self.logger.error(
-                f"Failed to load any language model for language '{language}': {e}"
+                "Failed to load any language model for language '%s': %s", language, e
             )
             return None
 
@@ -146,7 +148,7 @@ class WordCounter:
                 )
                 self.doc = None
         except Exception as e:
-            self.logger.error(f"Unable to convert text to spaCy doc: {e}")
+            self.logger.error("Unable to convert text to spaCy doc: %s", e)
 
     def lemmatize_doc(self) -> None:
         """
@@ -182,7 +184,7 @@ class WordCounter:
                     )
                 ]
         except Exception as e:
-            self.logger.error(f"Error tokenizing words: {e}", exc_info=True)
+            self.logger.error("Error tokenizing words: %s", e, exc_info=True)
             raise
 
     def count_words(
@@ -212,7 +214,7 @@ class WordCounter:
             )
             return df
         except Exception as e:
-            self.logger.error(f"Error counting word frequencies: {e}", exc_info=True)
+            self.logger.error("Error counting word frequencies: %s", e, exc_info=True)
             return pd.DataFrame(columns=columns).reset_index(drop=True)
 
     def named_entity_recognition(
@@ -248,7 +250,7 @@ class WordCounter:
             return df
         except Exception as e:
             self.logger.error(
-                f"Error performing named entity recognition: {e}", exc_info=True
+                "Error performing named entity recognition: %s", e, exc_info=True
             )
             return pd.DataFrame(columns=columns).reset_index(drop=True)
 
@@ -333,7 +335,7 @@ class WordCounter:
 
         except Exception as e:
             self.logger.error(
-                f"Error combining noun‑verb‑adjective extraction: {e}", exc_info=True
+                "Error combining noun‑verb‑adjective extraction: %s", e, exc_info=True
             )
             return pd.DataFrame(columns=columns).reset_index(drop=True)
 
@@ -375,7 +377,7 @@ class WordCounter:
             return G
         except Exception as e:
             self.logger.error(
-                f"Error building noun-verb-adjective graph: {e}", exc_info=True
+                "Error building noun-verb-adjective graph: %s", e, exc_info=True
             )
             return nx.Graph()
 
@@ -416,7 +418,7 @@ class WordCounter:
             )
             return html
         except Exception as e:
-            self.logger.error(f"Error exporting interactive graph: {e}", exc_info=True)
+            self.logger.error("Error exporting interactive graph: %s", e, exc_info=True)
             return "<p>Error generating graph visualization.</p>"
 
     def create_wordcloud(self) -> Figure:
@@ -461,7 +463,7 @@ class WordCounter:
             plt.tight_layout(pad=0)
             return fig
         except Exception as e:
-            self.logger.error(f"Error creating wordcloud: {e}", exc_info=True)
+            self.logger.error("Error creating wordcloud: %s", e, exc_info=True)
             # Return an empty black figure if wordcloud creation fails
             fig = plt.figure(figsize=(20, 10), facecolor="k")
             plt.axis("off")

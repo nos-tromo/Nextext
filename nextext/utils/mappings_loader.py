@@ -23,16 +23,16 @@ def load_mappings(
 
     try:
         _JSON_PATH = Path(__file__).parent / subdir / file
-        logger.info(f"Attempting to load mappings from '{_JSON_PATH}'")
+        logger.info("Attempting to load mappings from '%s'", _JSON_PATH)
         with open(_JSON_PATH, "r", encoding="utf-8") as f:
             code2name = json.load(f)
-        logger.info(f"Successfully loaded mappings with {len(code2name)} entries")
+        logger.info("Successfully loaded mappings with %d entries", len(code2name))
         return code2name
     except FileNotFoundError as e:
-        logger.error(f"File '{file}' not found in utils/ directory.")
+        logger.error("File '%s' not found in utils/ directory.", file)
         raise FileNotFoundError(f"File '{file}' not found in utils/ directory.") from e
     except json.JSONDecodeError as e:
-        logger.error(f"Error decoding JSON from file '{file}': {e}")
+        logger.error("Error decoding JSON from file '%s': %s", file, e)
         raise ValueError(f"Error decoding JSON from file '{file}': {e}") from e
 
 
@@ -54,7 +54,7 @@ def load_and_sort_mappings(file: str) -> tuple[dict[str, str], list[str]]:
         names = sorted(maps.values())
         return maps, names
     except Exception as e:
-        logger.error(f"Error loading language mappings: {e}")
+        logger.error("Error loading language mappings: %s", e)
         return {}, []
 
 
@@ -73,5 +73,5 @@ def kv_to_vk(mappings: dict[str, str]) -> dict[str, str]:
     try:
         return {v: k for k, v in mappings.items()}
     except Exception as e:
-        logger.error(f"Error converting mappings: {e}")
+        logger.error("Error converting mappings: %s", e)
         return {}

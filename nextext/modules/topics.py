@@ -89,12 +89,14 @@ class TopicModeling:
             data = " ".join(data)
         elif isinstance(data, pd.DataFrame):
             self.logger.info(
-                f"Input data is a DataFrame. Extracting column '{column}' for processing."
+                "Input data is a DataFrame. Extracting column '%s' for processing.",
+                column,
             )
             data = " ".join(data[column].astype(str).tolist())
         else:
             self.logger.error(
-                "Input data must be a string, list of strings, or a DataFrame. Received: {type(data)}"
+                "Input data must be a string, list of strings, or a DataFrame. Received: %s",
+                type(data),
             )
             raise ValueError("Input data must be a string or a list of strings.")
 
@@ -117,7 +119,9 @@ class TopicModeling:
         spacy_languages = load_mappings(spacy_language_file)
         self.nlp_name = self._load_spacy_model(spacy_languages, lang_code)
         self.logger.info(
-            f"spaCy model '{self.nlp_name}' loaded for language '{lang_code}'."
+            "spaCy model '%s' loaded for language '%s'.",
+            self.nlp_name,
+            lang_code,
         )
 
         self.stop_words = stopwords.words(self.language, "english")
@@ -140,10 +144,12 @@ class TopicModeling:
             if lang_obj and hasattr(lang_obj, "name"):
                 return lang_obj.name.lower()
             else:
-                self.logger.error(f"Could not find language name for code: {lang_code}")
+                self.logger.error(
+                    "Could not find language name for code: %s", lang_code
+                )
                 return None
         except Exception as e:
-            self.logger.error(f"Error converting language: {e}.", exc_info=True)
+            self.logger.error("Error converting language: %s.", e, exc_info=True)
             return None
 
     def _load_spacy_model(
@@ -164,7 +170,9 @@ class TopicModeling:
             return spacy_languages.get(language, "xx")
         except Exception as e:
             self.logger.error(
-                f"Failed to load the language model for language '{language}': {e}"
+                "Failed to load the language model for language '%s': %s",
+                language,
+                e,
             )
             return None
 
@@ -184,7 +192,7 @@ class TopicModeling:
         try:
             return SentenceTransformer(model, device=self.device, cache_folder="models")
         except Exception as e:
-            self.logger.error(f"Error loading sentence transformer model: {e}")
+            self.logger.error("Error loading sentence transformer model: %s", e)
             return None
 
     def _load_umap_model(
@@ -214,7 +222,8 @@ class TopicModeling:
 
             if adjusted_components >= doc_count:
                 self.logger.warning(
-                    f"Too few documents ({doc_count}) for UMAP. Skipping topic modeling."
+                    "Too few documents (%d) for UMAP. Skipping topic modeling.",
+                    doc_count,
                 )
                 return None
 
@@ -226,7 +235,7 @@ class TopicModeling:
                 random_state=random_state,
             )
         except Exception as e:
-            self.logger.error(f"Error loading UMAP model: {e}")
+            self.logger.error("Error loading UMAP model: %s", e)
             return None
 
     def _load_hdbscan_model(
@@ -256,7 +265,7 @@ class TopicModeling:
                 prediction_data=prediction_data,
             )
         except Exception as e:
-            self.logger.error(f"Error loading HDBSCAN model: {e}")
+            self.logger.error("Error loading HDBSCAN model: %s", e)
             return None
 
     def _load_vectorizer_model(
@@ -274,7 +283,7 @@ class TopicModeling:
         try:
             return CountVectorizer(stop_words=self.stop_words, ngram_range=ngram_range)
         except Exception as e:
-            self.logger.error(f"Error loading vectorizer model: {e}")
+            self.logger.error("Error loading vectorizer model: %s", e)
             return None
 
     def _load_representation_model(self) -> PartOfSpeech | None:
@@ -293,7 +302,7 @@ class TopicModeling:
                 )
                 return None
         except Exception as e:
-            self.logger.error(f"Error loading representation model: {e}")
+            self.logger.error("Error loading representation model: %s", e)
             return None
 
     def load_pipeline(
@@ -346,7 +355,7 @@ class TopicModeling:
                 verbose=verbose,
             )
         except Exception as e:
-            logging.error(f"Error loading topic modeling pipeline: {e}")
+            logging.error("Error loading topic modeling pipeline: %s", e)
 
     def _embed_docs(self) -> np.ndarray | None:
         """
@@ -363,7 +372,7 @@ class TopicModeling:
                 self.docs, show_progress_bar=True, device=self.device
             )
         except Exception as e:
-            logging.error(f"Error embedding documents: {e}")
+            logging.error("Error embedding documents: %s", e)
             return None
 
     def fit_topic_model(self) -> pd.DataFrame:
@@ -395,7 +404,7 @@ class TopicModeling:
                 logging.error("Topic model is not initialized.")
                 return pd.DataFrame()
         except ValueError as e:
-            logging.error(f"Error fitting topic model: {e}")
+            logging.error("Error fitting topic model: %s", e)
             return pd.DataFrame()
 
     def summarize_topics(
@@ -444,5 +453,5 @@ class TopicModeling:
 
             return list(zip(topic_titles, topic_summaries))
         except Exception as e:
-            logging.error(f"Error summarizing topics: {e}")
+            logging.error("Error summarizing topics: %s", e)
             return []

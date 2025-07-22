@@ -22,11 +22,11 @@ def load_font_file(file: str, utils: Path = Path("utils") / "fonts") -> Path:
     try:
         root = Path(__file__).resolve().parent.parent
         font_path = root / utils / file
-        logging.info(f"Loaded font file '{file}' from path '{font_path}'")
+        logging.info("Loaded font file '%s' from path '%s'", file, font_path)
         return font_path
     except FileNotFoundError:
-        logging.error(f"Font file '{file}' not found in {font_path}.")
+        logging.error("Font file '%s' not found in %s.", file, font_path)
         raise FileNotFoundError(f"Font file '{file}' not found in {font_path}.")
     except Exception as e:
-        logging.error(f"An error occurred while loading the font file '{file}': {e}")
+        logging.error("An error occurred while loading the font file '%s': %s", file, e)
         raise e

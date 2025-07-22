@@ -32,7 +32,7 @@ def _load_ollama_model(
     try:
         models = load_mappings(filename)
         if not models:
-            logger.error(f"Model file '{filename}' not found or empty.")
+            logger.error("Model file '%s' not found or empty.", filename)
             raise RuntimeError(
                 f"Model file '{filename}' not found or empty. Please check the file."
             )
@@ -43,11 +43,11 @@ def _load_ollama_model(
             if torch.backends.mps.is_available()
             else models.get("cpu", fallback)
         )
-        logger.info(f"Loaded Ollama model: {model}")
+        logger.info("Loaded Ollama model: %s", model)
         return model
 
     except Exception as e:
-        logger.error(f"Error loading ollama model: {e}")
+        logger.error("Error loading ollama model: %s", e)
         raise RuntimeError(
             f"Failed to load ollama model from '{filename}'. Please check the file or your configuration."
         )
@@ -115,7 +115,7 @@ def call_ollama_server(
         )
         return response["message"]["content"].strip()
     except Exception as e:
-        logger.error(f"Error calling ollama server: {e}")
+        logger.error("Error calling ollama server: %s", e)
         return ""
 
 

@@ -114,7 +114,7 @@ class Translator:
 
             return tokenizer, model, device
         except Exception as e:
-            self.logger.error(f"Error loading model: {e}")
+            self.logger.error("Error loading model: %s", e)
             raise RuntimeError(
                 "Failed to load translation model. Please check the model name or your internet connection."
             ) from e
@@ -135,7 +135,7 @@ class Translator:
             src_lang_name = lang_obj.name if lang_obj is not None else ""
             return {"name": src_lang_name, "code": self.src_lang or ""}
         except Exception as e:
-            self.logger.error(f"Error detecting language: {e}")
+            self.logger.error("Error detecting language: %s", e)
             return {"name": "", "code": "", "flag": ""}
 
     def _model_inference(self, lang: str, text: str, verbose: bool = True) -> str:
@@ -162,7 +162,9 @@ class Translator:
             if input_len >= max_model_len:
                 if verbose:
                     self.logger.warning(
-                        f"⚠️ Input length ({input_len} tokens) hits or exceeds max context window ({max_model_len}). Output may be truncated or degraded."
+                        "⚠️ Input length (%d tokens) hits or exceeds max context window (%d). Output may be truncated or degraded.",
+                        input_len,
+                        max_model_len,
                     )
                     adjusted_max_length = input_len
                 else:
@@ -177,7 +179,7 @@ class Translator:
             )
             return self.tokenizer.batch_decode(outputs, skip_special_tokens=True)[0]
         except Exception as e:
-            self.logger.error(f"Error during model inference: {e}")
+            self.logger.error("Error during model inference: %s", e)
             return ""
 
     def translate(self, trg_lang: str, text: str) -> str:
@@ -217,5 +219,5 @@ class Translator:
                 ]
             )
         except Exception as e:
-            self.logger.error(f"Error during translation pipeline: {e}")
+            self.logger.error("Error during translation pipeline: %s", e)
             raise RuntimeError("Translation failed") from e

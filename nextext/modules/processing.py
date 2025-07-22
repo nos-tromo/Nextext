@@ -55,13 +55,14 @@ class FileProcessor:
             if not output_path.exists():
                 output_path.mkdir(parents=True, exist_ok=True)
                 self.logger.info(
-                    f"Output directory {output_path} does not exist. Creating a new one."
+                    "Output directory %s does not exist. Creating a new one.",
+                    output_path,
                 )
             else:
-                self.logger.info(f"Output directory {output_path} already exists.")
+                self.logger.info("Output directory %s already exists.", output_path)
             return filename, output_path
         except Exception as e:
-            self.logger.error(f"Error processing input file: {e}", exc_info=True)
+            self.logger.error("Error processing input file: %s", e, exc_info=True)
             raise
 
     def write_file_output(
@@ -114,21 +115,22 @@ class FileProcessor:
 
                 # File saving notifications
                 if output_file_path_csv.exists():
-                    self.logger.info(f"Saved output: {output_file_path_csv}")
+                    self.logger.info("Saved output: %s", output_file_path_csv)
                 if output_file_path_txt.exists():
-                    self.logger.info(f"Saved output: {output_file_path_txt}")
+                    self.logger.info("Saved output: %s", output_file_path_txt)
                 if output_file_path_excel.exists():
-                    self.logger.info(f"Saved output: {output_file_path_excel}")
+                    self.logger.info("Saved output: %s", output_file_path_excel)
                 if output_file_path_png.exists():
-                    self.logger.info(f"Saved output: {output_file_path_png}")
+                    self.logger.info("Saved output: %s", output_file_path_png)
 
             else:
                 self.logger.error(
-                    f"Data type not supported for writing output: {type(data)}",
+                    "Data type not supported for writing output: %s",
+                    type(data),
                     exc_info=True,
                 )
 
             return data
         except Exception as e:
-            self.logger.error(f"Error creating output: {e}", exc_info=True)
+            self.logger.error("Error creating output: %s", e, exc_info=True)
             raise

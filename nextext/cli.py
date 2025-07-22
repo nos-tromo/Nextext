@@ -144,7 +144,7 @@ def parse_arguments(args_list: Optional[list] = None) -> argparse.Namespace:
 
         return args
     except argparse.ArgumentError as e:
-        logging.error(f"Argument parsing error: {e}")
+        logging.error("Argument parsing error: %s", e)
         raise
 
 
@@ -238,7 +238,7 @@ def main() -> None:
         )
 
     except Exception as e:
-        logging.exception(f"An unexpected error occurred: {e}")
+        logging.exception("An unexpected error occurred: %s", e)
         raise
 
 

@@ -143,7 +143,7 @@ def summarization_pipeline(
         return call_ollama_server(prompt=prompt)
 
     except Exception as e:
-        logging.error(f"Error summarizing text: {e}")
+        logging.error("Error summarizing text: %s", e)
         return None
 
 

@@ -94,13 +94,9 @@ class WhisperTranscriber:
         # Select or detect language
         whisper_languages = load_mappings(whisper_language_file)
         det_lang = self._detect_language() or "en"
-        self.src_lang = (
-            src_lang
-            if src_lang in whisper_languages.keys()
-            else det_lang
-        )
+        self.src_lang = src_lang if src_lang in whisper_languages.keys() else det_lang
         self.task = "transcribe" if det_lang == trg_lang else task
-        logger.info(f"Using language: {self.src_lang} for task: {self.task}")
+        logger.info("Using language: %s for task: %s", self.src_lang, self.task)
 
         # Load the transcription and alignment models
         self.transcribe_model, self.align_model, self.align_metadata = (
@@ -127,7 +123,7 @@ class WhisperTranscriber:
         try:
             return whisperx.load_audio(file=file, sr=sample_rate)
         except Exception as e:
-            logging.error(f"Error loading audio file '{file}': {e}", exc_info=True)
+            logging.error("Error loading audio file '%s': %s", file, e, exc_info=True)
             raise
 
     def _detect_language(
@@ -165,11 +161,11 @@ class WhisperTranscriber:
             if not detected_lang:
                 raise RuntimeError("Language detection failed.")
 
-            logger.info(f"Detected language: {detected_lang}")
+            logger.info("Detected language: %s", detected_lang)
             return detected_lang
 
         except Exception as e:
-            logger.error(f"Error detecting language: {e}", exc_info=True)
+            logger.error("Error detecting language: %s", e, exc_info=True)
             return None
 
     def _load_transcription_model(
@@ -198,7 +194,9 @@ class WhisperTranscriber:
             )
             mapped_model_id = model_config.get(config_key)
             logger.info(
-                f"Loading Whisper model '{mapped_model_id}' for task '{self.task}'..."
+                "Loading Whisper model '%s' for task '%s'...",
+                mapped_model_id,
+                self.task,
             )
 
             if mapped_model_id is None:
@@ -217,12 +215,13 @@ class WhisperTranscriber:
                 )
             except Exception as align_exc:
                 logger.warning(
-                    f"Alignment model could not be loaded: {align_exc}. Continuing without alignment."
+                    "Alignment model could not be loaded: %s. Continuing without alignment.",
+                    align_exc,
                 )
                 align_model, align_metadata = None, None
             return transcribe_model, align_model, align_metadata
         except Exception as e:
-            logger.error(f"Error setting up model '{model_id}': {e}", exc_info=True)
+            logger.error("Error setting up model '%s': %s", model_id, e, exc_info=True)
             raise RuntimeError(
                 f"Failed to load Whisper model '{model_id}' for task '{self.task}'."
             ) from e
@@ -247,7 +246,7 @@ class WhisperTranscriber:
             )
             return DiarizationPipeline(use_auth_token=auth_token, device=device)
         except Exception as e:
-            logger.error(f"Error setting up diarization model: {e}", exc_info=True)
+            logger.error("Error setting up diarization model: %s", e, exc_info=True)
             raise
 
     def transcription(self, batch_size: int = 16) -> None:
@@ -272,11 +271,13 @@ class WhisperTranscriber:
                 )
             else:
                 logger.info(
-                    f"Skipping forced alignment for task '{self.task}' and language '{self.src_lang}'."
+                    "Skipping forced alignment for task '%s' and language '%s'.",
+                    self.task,
+                    self.src_lang,
                 )
                 self.transcription_result = {"segments": result["segments"]}
         except Exception as e:
-            logger.error(f"Error during transcription: {e}", exc_info=True)
+            logger.error("Error during transcription: %s", e, exc_info=True)
             raise
         finally:
             del self.transcribe_model
@@ -300,7 +301,7 @@ class WhisperTranscriber:
         try:
             return str(timedelta(seconds=round(seconds)))
         except Exception as e:
-            logging.error(f"Error converting seconds to time: {e}", exc_info=True)
+            logging.error("Error converting seconds to time: %s", e, exc_info=True)
             raise
 
     def diarization(self) -> None:
@@ -319,7 +320,7 @@ class WhisperTranscriber:
                 diarize_segments, self.transcription_result
             )
         except Exception as e:
-            logger.error(f"Error during diarization: {e}", exc_info=True)
+            logger.error("Error during diarization: %s", e, exc_info=True)
             raise
         finally:
             del self.diarize_model
@@ -375,7 +376,7 @@ class WhisperTranscriber:
             return self.df
 
         except Exception as e:
-            logger.error(f"Error generating transcript output: {e}", exc_info=True)
+            logger.error("Error generating transcript output: %s", e, exc_info=True)
             raise ValueError(
                 "Failed to generate transcript output. Ensure transcription was successful."
             ) from e
