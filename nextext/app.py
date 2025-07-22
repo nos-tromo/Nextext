@@ -45,7 +45,7 @@ def _run_pipeline(tmp_file: Path, opts: dict) -> None:
             model_id=opts["model_id"],
             task=opts["task"],
             api_key=get_api_key() or "",
-            speakers=opts["speakers"],
+            n_speakers=opts["speakers"],
         )
         # Update the source language in the session state
         opts["src_lang"] = updated_src_lang
