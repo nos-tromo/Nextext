@@ -57,22 +57,24 @@ def get_api_key(token: str = "API_KEY") -> str:
 
 def transcription_pipeline(
     file_path: Path,
+    api_key: str,
+    trg_lang: str,
     src_lang: str,
     model_id: str,
     task: str,
-    api_key: str,
-    speakers: int,
+    n_speakers: int,
 ) -> tuple[pd.DataFrame, str]:
     """
     Transcribe and diarize the audio file using WhisperX.
 
     Args:
         file_path (Path): Path to the audio file.
+        api_key (str): API key for authentication.
+        trg_lang (str): Target language code for translation check.
         src_lang (str): Source language code.
         model_id (str): Model ID for WhisperX.
         task (str): Task to perform (transcribe or translate).
-        api_key (str): API key for authentication.
-        speakers (int): Number of speakers for diarization.
+        n_speakers (int): Number of speakers for diarization.
 
     Returns:
         pd.DataFrame: DataFrame containing the transcribed text and speaker diarization.
@@ -80,14 +82,19 @@ def transcription_pipeline(
     """
     transcriber = WhisperTranscriber(
         file_path=file_path,
-        language=src_lang,
+        auth_token=api_key,
+        trg_lang=trg_lang,
+        src_lang=src_lang,
         model_id=model_id,
         task=task,
-        auth_token=api_key,
+        n_speakers=n_speakers,
     )
     transcriber.transcription()
-    df = transcriber.diarization(speakers)
-    updated_src_lang = transcriber.language
+    if n_speakers > 1:
+        transcriber.diarization()
+    df = transcriber.transcript_output()
+    updated_src_lang = transcriber.src_lang
+    updated_src_lang = updated_src_lang if updated_src_lang else src_lang
     return df, updated_src_lang
 
 
