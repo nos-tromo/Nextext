@@ -21,8 +21,6 @@ def load_mappings(
     Returns:
         dict[str, str]: Key to value mapping of the JSON input.
     """
-    logger = logging.getLogger(__name__)
-
     try:
         _JSON_PATH = Path(__file__).parent / subdir / file
         logger.info("Attempting to load mappings from '%s'", _JSON_PATH)
