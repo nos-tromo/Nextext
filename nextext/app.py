@@ -41,6 +41,7 @@ def _run_pipeline(tmp_file: Path, opts: dict) -> None:
     with st.spinner("Transcribing… this might take a while ⏳"):
         df, updated_src_lang = transcription_pipeline(
             file_path=tmp_file,
+            trg_lang=opts["trg_lang"],
             src_lang=opts["src_lang"],
             model_id=opts["model_id"],
             task=opts["task"],
