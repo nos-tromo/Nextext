@@ -3,14 +3,18 @@ import logging
 import numpy as np
 import pandas as pd
 import pycountry
+import spacy
 import torch
 from bertopic import BERTopic
 from bertopic.representation import PartOfSpeech
+from camel_tools.tokenizers.word import simple_word_tokenize
 from hdbscan import HDBSCAN
 from nltk.corpus import stopwords
 from nltk.tokenize import sent_tokenize
 from sentence_transformers import SentenceTransformer
 from sklearn.feature_extraction.text import CountVectorizer
+from spacy.language import Language
+from spacy.tokens import Doc
 from umap import UMAP
 
 from nextext.modules.ollama_cfg import (
@@ -19,6 +23,7 @@ from nextext.modules.ollama_cfg import (
     topic_titles_prompt,
 )
 from nextext.utils.mappings_loader import load_mappings
+from nextext.utils.spacy_model_loader import download_spacy_model
 
 logger = logging.getLogger(__name__)
 
@@ -107,9 +112,7 @@ class TopicModeling:
         self.language = self._lang_code_to_name(lang_code) or "english"
         self.docs = sent_tokenize(data, self.language)
         if not self.docs:
-            logger.error(
-                "Input data is empty. Cannot proceed with topic modeling."
-            )
+            logger.error("Input data is empty. Cannot proceed with topic modeling.")
             raise ValueError("Input data is empty. Cannot proceed with topic modeling.")
 
         self.device = (
@@ -121,11 +124,9 @@ class TopicModeling:
         )
 
         spacy_languages = load_mappings(spacy_language_file)
-        self.nlp_name = self._load_spacy_model(spacy_languages, lang_code)
+        self.nlp = self._load_spacy_model(lang_code, spacy_languages)
         logger.info(
-            "spaCy model '%s' loaded for language '%s'.",
-            self.nlp_name,
-            lang_code,
+            "Loaded spaCy model for language '%s': %s", lang_code, self.nlp
         )
 
         self.stop_words = stopwords.words(self.language, "english")
@@ -148,35 +149,54 @@ class TopicModeling:
             if lang_obj and hasattr(lang_obj, "name"):
                 return lang_obj.name.lower()
             else:
-                logger.error(
-                    "Could not find language name for code: %s", lang_code
-                )
+                logger.error("Could not find language name for code: %s", lang_code)
                 return None
         except Exception as e:
             logger.error("Error converting language: %s.", e, exc_info=True)
             return None
 
     def _load_spacy_model(
-        self, spacy_languages: dict[str, str], language: str
-    ) -> str | None:
+        self, language: str, spacy_languages: dict[str, str]
+    ) -> Language | None:
         """
-        Load the spaCy language model based on the provided language code. Falls back to a multilingual model if the
-        specific model isn't available.
+        Load the spaCy model for the specified language code.
 
         Args:
-            spacy_languages (dict[str, str]): Dictionary mapping language codes to spaCy model names.
-            language (str): Language code.
+            language (str): Language code for which to load the spaCy model.
+            spacy_languages (dict[str, str]): Mapping of language codes to spaCy model names.
 
         Returns:
-            str | None: The name of the loaded spaCy model, or None if an error occurs.
+            Language | None: Loaded spaCy model or None if loading fails.
         """
         try:
-            return spacy_languages.get(language, "xx")
+            if language == "ar":
+                nlp = spacy.blank("ar")
+                nlp.tokenizer = lambda text, nlp=nlp: Doc(
+                    nlp.vocab, words=simple_word_tokenize(text)
+                )
+                return nlp
+            # Add other language-specific handling if needed
+            model_id = None
+            if language in spacy_languages.keys():
+                model_id = spacy_languages.get(language)
+            if model_id is None:
+                logger.warning(
+                    "Language '%s' not found in spaCy mappings. Using multilingual model.",
+                    language,
+                )
+                model_id = spacy_languages.get("xx")
+            if model_id is not None:
+                download_spacy_model(model_id)
+                return spacy.load(model_id)
+            else:
+                logger.error(
+                    "No valid spaCy model id found for language '%s'.",
+                    language,
+                )
+                return None
         except Exception as e:
-            logger.error(
-                "Failed to load the language model for language '%s': %s",
-                language,
-                e,
+            logger.warning(
+                "Failed to load the language model for language '%s': %s", language, e
             )
             return None
 
@@ -298,8 +318,8 @@ class TopicModeling:
             PartOfSpeech | None: The loaded representation model or None if an error occurs.
         """
         try:
-            if self.nlp_name is not None:
-                return PartOfSpeech(self.nlp_name)
+            if self.nlp is not None:
+                return PartOfSpeech(self.nlp)
             else:
                 logger.error(
                     "spaCy model name is None. Cannot load PartOfSpeech representation model."

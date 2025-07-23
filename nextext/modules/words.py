@@ -16,6 +16,7 @@ from wordcloud import WordCloud
 
 from nextext.utils.font_loader import load_font_file
 from nextext.utils.mappings_loader import load_mappings
+from nextext.utils.spacy_model_loader import download_spacy_model
 
 logger = logging.getLogger(__name__)
 
@@ -83,7 +84,8 @@ class WordCounter:
         # Load spaCy models and entity mappings
         spacy_languages = load_mappings(spacy_models_file)
         self.spacy_entities = load_mappings(spacy_entities_file)
-        self.nlp = self._load_spacy_model(spacy_languages, language)
+        self.nlp = self._load_spacy_model(language, spacy_languages)
+        logger.info("Loaded spaCy model for language '%s': %s", language, self.nlp)
 
         # Set the font path for word cloud generation
         self.font_path = load_font_file(font_file)
@@ -95,43 +97,47 @@ class WordCounter:
         self.noun_df: pd.DataFrame | None = None
 
     def _load_spacy_model(
-        self, spacy_languages: dict[str, str], language: str
+        self, language: str, spacy_languages: dict[str, str]
     ) -> Language | None:
         """
-        Load the spaCy model for the specified language.
+        Load the spaCy model for the specified language code.
 
         Args:
+            language (str): Language code for which to load the spaCy model.
             spacy_languages (dict[str, str]): Mapping of language codes to spaCy model names.
-            language (str): The language code for the text.
 
         Returns:
-            Language | None: The loaded spaCy model or None if loading fails.
+            Language | None: Loaded spaCy model or None if loading fails.
         """
         try:
             if language == "ar":
                 nlp = spacy.blank("ar")
-
-                def camel_tokenizer(text: str, nlp=nlp) -> Doc:
-                    words = simple_word_tokenize(text)
-                    return Doc(nlp.vocab, words=words)
-
-                nlp.tokenizer = camel_tokenizer
-                return nlp
-
-            model_name = spacy_languages.get(language, "xx")
-            try:
-                return spacy.load(model_name)
-            except Exception as e:
-                logger.warning(
-                    "Primary spaCy model '%s' failed. Falling back to 'xx_sent_ud_sm': %s",
-                    model_name,
-                    e,
+                nlp.tokenizer = lambda text, nlp=nlp: Doc(
+                    nlp.vocab, words=simple_word_tokenize(text)
                 )
-                return spacy.load("xx_sent_ud_sm")
-
+                return nlp
+            # Add other language-specific handling if needed
+            model_id = None
+            if language in spacy_languages.keys():
+                model_id = spacy_languages.get(language)
+            if model_id is None:
+                logger.warning(
+                    "Language '%s' not found in spaCy mappings. Using multilingual model.",
+                    language,
+                )
+                model_id = spacy_languages.get("xx")
+            if model_id is not None:
+                download_spacy_model(model_id)
+                return spacy.load(model_id)
+            else:
+                logger.error(
+                    "No valid spaCy model id found for language '%s'.",
+                    language,
+                )
+                return None
         except Exception as e:
-            logger.error(
-                "Failed to load any language model for language '%s': %s", language, e
+            logger.warning(
+                "Failed to load the language model for language '%s': %s", language, e
             )
             return None
 
@@ -143,9 +149,7 @@ class WordCounter:
             if self.nlp is not None:
                 self.doc = self.nlp(self.text)
             else:
-                logger.error(
-                    "spaCy language model is not loaded. Cannot process text."
-                )
+                logger.error("spaCy language model is not loaded. Cannot process text.")
                 self.doc = None
         except Exception as e:
             logger.error("Unable to convert text to spaCy doc: %s", e)
