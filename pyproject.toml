@@ -51,7 +51,7 @@ dependencies = [
 [project.scripts]
 nextext = "nextext.app:cli"
 nextext-cli = "nextext.cli:main"
-load-spacy-models = "nextext.utils.spacy_model_loader:main"
+load-spacy = "nextext.utils.spacy_model_loader:main"
 
 [project.urls]
 Repository = "https://github.com/nos-tromo/Nextext.git"
