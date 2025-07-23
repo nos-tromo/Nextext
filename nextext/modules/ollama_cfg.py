@@ -99,7 +99,7 @@ def call_ollama_server(
         return ""
     if not _get_ollama_health():
         logger.error(
-            "Ollama server is not healthy. Please ensure it is running and accessible."
+            "Ollama server does not respond. Please ensure it is running and accessible."
         )
         return ""
 
