@@ -13,7 +13,7 @@ nltk.download("punkt_tab", quiet=True)
 nltk.download("stopwords", quiet=True)
 
 
-def _download_spacy_model(model_id: str) -> None:
+def download_spacy_model(model_id: str) -> None:
     """
     Download a spaCy model using subprocess.
 
@@ -46,7 +46,7 @@ def main() -> None:
 
         # Download each model
         for model_id in models.values():
-            _download_spacy_model(model_id)
+            download_spacy_model(model_id)
 
         logger.info("\n✅ All small models downloaded successfully.")
 
