@@ -96,7 +96,7 @@ class WhisperTranscriber:
         det_lang = self._detect_language() or "en"
         self.src_lang = src_lang if src_lang in whisper_languages.keys() else det_lang
         self.task = "transcribe" if det_lang == trg_lang else task
-        logger.info("Using language: %s for task: %s", self.src_lang, self.task)
+        logger.info("Using language '%s' for task '%s'", self.src_lang, self.task)
 
         # Load the transcription and alignment models
         self.transcribe_model, self.align_model, self.align_metadata = (
