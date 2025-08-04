@@ -1,8 +1,10 @@
 # Python cache and virtual environments
-__pycache__/
+**/__pycache__/
 *.py[cod]
 *.egg-info/
+.mypy_cache/
 .venv/
+.env
 
 # System/IDE files
 .DS_Store
@@ -13,20 +15,22 @@ __pycache__/
 
 # Git and test files
 .git/
+.log/
 .gitignore
+test/
 build/
+legacy/
 lib/
 models/
-tests/
 
-# Config files
-.env
-*.log
-
-# data files
+# Data and output files
+data/
+output/
+prototypes/
 *.db
 *.gguf
 *.html
+*.log
 *.mkv
 *.mp3
 *.mp4
@@ -36,9 +40,3 @@ tests/
 *.wav
 *.webm
 *.zip
-
-
-# Data and output directories
-data/
-output/
-prototypes
