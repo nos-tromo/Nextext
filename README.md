@@ -11,9 +11,12 @@
 
 ### Prerequisites 📋
 
-- [`uv`](https://github.com/astral-sh/uv) for Python version and dependency management
-- [`Ollama`](https://ollama.com/) for local inference
 - [Hugging Face](https://huggingface.co/) account and access token (read)
+
+Without Docker usage:
+
+- [`uv`](https://github.com/astral-sh/uv) for Python version and dependency management
+- [Ollama](https://ollama.com/) for local inference
 
 ### Manual installation 📦
 
@@ -27,9 +30,22 @@ uv sync
 
 To enable speaker diarization, accept the user agreement for the following models: [`pyannote/segmentation-3.0`](https://huggingface.co/pyannote/segmentation-3.0) and [`speaker-diarization-3.1`](https://huggingface.co/pyannote/speaker-diarization-3.1).
 
+### Docker installation 🐳
+
+The Docker setup will install Nextext from `docker-compose.yml` and, with that, pull the latest Ollama image. All inference is ran with Nextext and Ollama chained in a shared network.
+
+Select whether to install the CPU or GPU variant (requires a CUDA compatible GPU and the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html) set up):
+
+```bash
+docker compose up
+docker compose up --build --gpus all
+```
+
+Launch the app: `http://localhost:8501/`
+
 ### Model downloads 📥
 
-Transcription models will be downloaded upon first usage. Some models should be downloaded beforehand:
+Transcription and alignment models used by [WhisperX](https://github.com/m-bain/whisperX/) will be downloaded upon first usage. Some models should be downloaded beforehand:
 
 #### Hugging Face 🤗
 
@@ -60,19 +76,6 @@ In case Nextext is intended to run in a firewalled or offline environment, set t
 ```bash
 echo 'export HF_HUB_OFFLINE=1' >> .venv/bin/activate
 ```
-
-### Docker installation 🐳
-
-Select whether to use the CPU or GPU (requires a CUDA compatible GPU and the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html) set up):
-
-```bash
-docker compose up
-docker compose up --build --gpus all
-```
-
-Launch the app: `http://localhost:8501/`
-
-> **Important:** The Docker installation requires that all models listed above are downloaded in advance and that Ollama is installed on your system.
 
 ## Usage 🚀
 
