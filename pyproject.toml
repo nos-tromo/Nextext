@@ -39,6 +39,7 @@ dependencies = [
     "sentence-transformers>=4.1.0",
     "spacy>=3.8.4",
     "streamlit>=1.44.1",
+    "textual>=4.0.0",
     "torch>=2.5.1",
     "torchvision>=0.20.1",
     "transformers>=4.46.2",
@@ -49,9 +50,9 @@ dependencies = [
 ]
 
 [project.scripts]
+load-spacy-models = "nextext.utils.spacy_model_loader:main"
 nextext = "nextext.app:cli"
 nextext-cli = "nextext.cli:main"
-load-spacy = "nextext.utils.spacy_model_loader:main"
 
 [project.urls]
 Repository = "https://github.com/nos-tromo/Nextext.git"
