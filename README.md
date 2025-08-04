@@ -36,9 +36,11 @@ The Docker setup will install Nextext from `docker-compose.yml` and, with that, 
 
 Select whether to install the CPU or GPU variant (requires a CUDA compatible GPU and the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html) set up):
 
+Clone the repository and run either for CPU or GPU usage:
+
 ```bash
-docker compose up
-docker compose up --build --gpus all
+docker compose up  # CPU
+docker compose up --build --gpus all  # GPU
 ```
 
 Launch the app: `http://localhost:8501/`
