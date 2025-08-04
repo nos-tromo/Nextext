@@ -4,20 +4,22 @@
 !.gitignore
 
 # directories
-__pycache__
+*.egg-info/
+__pycache__/
 build/
 data/
 env/
+legacy/
 lib/
 models/
 output/
 prototypes/
 test/
 uploads/
-*.egg-info/
 
 # files
 *.code-workspace
+*.csv
 *.db
 *.gguf
 *.html
@@ -31,4 +33,5 @@ uploads/
 *.sh
 *.wav
 *.webm
+*.xlsx
 *.zip
