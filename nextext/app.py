@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import logging
 
 logging.getLogger("streamlit.watcher.local_sources_watcher").setLevel(logging.ERROR)
