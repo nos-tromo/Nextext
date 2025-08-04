@@ -17,11 +17,11 @@
 
 ### Manual installation 📦
 
-Clone the repository, create the virtual environment and install the dependencies:
+Clone the repository and install the dependencies:
 
 ```bash
-uv venv
-uv pip install .
+git clone https://github.com/nos-tromo/Nextext.git
+cd Nextext
 uv sync
 ```
 
@@ -29,15 +29,11 @@ To enable speaker diarization, accept the user agreement for the following model
 
 ### Model downloads 📥
 
-Nextext requires downloading some models:
+Transcription models will be downloaded upon first usage. Some models should be downloaded beforehand:
 
 #### Hugging Face 🤗
 
 - [`google/madlad400-3b-mt`](https://huggingface.co/google/madlad400-3b-mt)
-- [`openai/whisper-large-v3-turbo`](https://huggingface.co/openai/whisper-large-v3-turbo)
-- [`openai/whisper-large-v2`](https://huggingface.co/openai/whisper-large-v2)
-- [`openai/whisper-small`](https://huggingface.co/openai/whisper-small)
-- [`pyannote/speaker-diarization-3.1`](https://huggingface.co/pyannote/speaker-diarization-3.1)
 - [`sentence-transformers/paraphrase-multilingual-mpnet-base-v2`](https://huggingface.co/sentence-transformers/paraphrase-multilingual-mpnet-base-v2)
 - [`textdetox/xlmr-large-toxicity-classifier`](https://huggingface.co/textdetox/xlmr-large-toxicity-classifier)
 
@@ -49,7 +45,7 @@ The following models are recommended and tested for this application (select dep
 - [`gemma3:12b-it-qat`](https://ollama.com/library/gemma3)
 - [`gemma3n:e4b`](https://ollama.com/library/gemma3n)
 
-To configure the app's default models, edit the selector located at `nextext/utils/ollama_models.json`.
+To configure the app's default models, edit the selector located at `nextext/utils/mappings/ollama_models.json`.
 
 #### Other language and tokenization models 🌐
 
@@ -70,8 +66,8 @@ echo 'export HF_HUB_OFFLINE=1' >> .venv/bin/activate
 Select whether to use the CPU or GPU (requires a CUDA compatible GPU and the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html) set up):
 
 ```bash
-docker compose --profile cpu up
-docker compose --profile gpu up
+docker compose up
+docker compose up --build --gpus all
 ```
 
 Launch the app: `http://localhost:8501/`
