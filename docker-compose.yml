@@ -1,6 +1,6 @@
 services:
   #############################
-  # GPU-based build
+  # Nextext
   #############################
   nextext:
     build:
@@ -12,39 +12,21 @@ services:
     ports:
       - "8501:8501"
     environment:
-      # - HF_HUB_OFFLINE=1
       - API_KEY=${API_KEY}
+      - OLLAMA_HOST=http://ollama:11434
+      - STREAMLIT_BROWSER_GATHER_USAGE_STATS=false
+      - STREAMLIT_SERVER_MAX_UPLOAD_SIZE=8192
       - USE_DEVICE=auto
-      - OLLAMA_HOST=http://host.docker.internal:11434
+      - UV_TORCH_BACKEND=auto
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              capabilities: [gpu]
-    profiles:
-      - gpu
 
   #############################
-  # CPU-based build
+  # Ollama
   #############################
-  nextext-cpu:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    volumes:
-      - ${HF_CACHE:-${USERPROFILE:-$HOME}/.cache/huggingface}:/root/.cache/huggingface
-      - ${APPDATA:-${HOME}}/nltk_data:/root/nltk_data
+  ollama:
+    image: ollama/ollama:latest
     ports:
-      - "8501:8501"
-    environment:
-      # - HF_HUB_OFFLINE=1
-      - API_KEY=${API_KEY}
-      - USE_DEVICE=cpu
-      - OLLAMA_HOST=http://host.docker.internal:11434
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    profiles:
-      - cpu
+      - "11434:11434"
+    volumes:
+      - ${HOME}/.ollama:/root/.ollama
