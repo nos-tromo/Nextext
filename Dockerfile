@@ -6,20 +6,21 @@ RUN apt-get update && apt-get install -y \
     python3.11 python3.11-dev git curl ca-certificates \
     build-essential cmake ffmpeg \
     libboost-all-dev libeigen3-dev \
-    && rm -rf /var/lib/apt/lists/*
+ && rm -rf /var/lib/apt/lists/*
 
 RUN update-alternatives --install /usr/bin/python python /usr/bin/python3.11 1
 
-ENV PATH="/root/.local/bin:$PATH"
+ENV PATH="/root/.local/bin:$PATH" \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONIOENCODING=utf-8 \
+    PYTHONUNBUFFERED=1
+    
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 
 COPY . .
 
-RUN uv venv --python=/usr/bin/python3.11 \
-    && uv pip install . \
-    && uv sync --frozen --no-cache \
-    && uv run python -m nextext.utils.spacy_model_loader
+RUN uv sync --frozen --no-cache --no-dev && uv run load-spacy-models
 
 EXPOSE 8501
 
-CMD ["uv", "run", "streamlit", "run", "app.py"]
+CMD ["uv", "run", "nextext"]
