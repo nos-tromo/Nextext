@@ -1,5 +1,4 @@
 import getpass
-import logging
 import os
 from pathlib import Path
 
@@ -7,9 +6,9 @@ import pandas as pd
 from dotenv import find_dotenv, load_dotenv, set_key
 from matplotlib.figure import Figure
 
-from nextext.modules.ollama_cfg import call_ollama_server, text_summarization_prompt
+from nextext.modules.ollama_cfg import OllamaPipeline
 from nextext.modules.topics import TopicModeling
-from nextext.modules.toxicity import ToxClassifier
+from nextext.modules.hatespeech import HateSpeechDetector
 from nextext.modules.transcription import WhisperTranscriber
 from nextext.modules.translation import Translator
 from nextext.modules.words import WordCounter
@@ -122,25 +121,22 @@ def translation_pipeline(df: pd.DataFrame, trg_lang: str) -> pd.DataFrame:
 
 def summarization_pipeline(
     text: str,
-    prompt_lang: str = "German",
+    ollama_pipeline: OllamaPipeline,
 ) -> str:
     """
     Summarize the given text using a language model and translate the result.
 
     Args:
         text (str): The text to summarize.
-        prompt_lang (str): The language code of the text. Defaults to "German".
+        ollama_pipeline (OllamaPipeline): An instance of the OllamaPipeline class for language model interactions.
 
     Returns:
         str: The summarized text or None if an error occurs.
     """
     if not text:
         raise ValueError("Text cannot be empty.")
-    prompt = text_summarization_prompt.format(
-        language=prompt_lang,
-        text=text,
-    )
-    return call_ollama_server(prompt=prompt)
+    prompt = ollama_pipeline.load_prompt("summary").format(text=text)
+    return ollama_pipeline.call_ollama_server(prompt=prompt)
 
 
 def wordlevel_pipeline(
@@ -181,6 +177,7 @@ def wordlevel_pipeline(
 def topics_pipeline(
     data: pd.DataFrame,
     language: str,
+    ollama_pipeline: OllamaPipeline,
 ) -> list[tuple[str, str]] | None:
     """
     Perform topic modeling analysis.
@@ -188,6 +185,7 @@ def topics_pipeline(
     Args:
         data (pd.DataFrame): DataFrame with the data to analyze.
         language (str): Language of the text data.
+        ollama_pipeline (OllamaPipeline): An instance of the OllamaPipeline class for language model interactions.
 
     Returns:
         list[tuple[str, str] | None: List of topic titles and summaries, or None if no topics are found.
@@ -198,21 +196,24 @@ def topics_pipeline(
     )
     topic_modeling.load_pipeline()
     topic_modeling.fit_topic_model()
-    return topic_modeling.summarize_topics()
+    return topic_modeling.summarize_topics(ollama_pipeline=ollama_pipeline)
 
 
-def toxicity_pipeline(data: pd.DataFrame) -> pd.DataFrame:
+def hatespeech_pipeline(
+    ollama_pipeline: OllamaPipeline, df: pd.DataFrame
+) -> pd.DataFrame:
     """
     Perform toxicity analysis on the text data.
 
     Args:
-        data (pd.DataFrame): DataFrame containing the text data to analyze.
+        ollama_pipeline (OllamaPipeline): An instance of the OllamaPipeline class for language model interactions.
+        df (pd.DataFrame): DataFrame containing the text data to analyze.
 
     Returns:
         pd.DataFrame: DataFrame with an additional column for toxicity scores.
     """
-    classifier = ToxClassifier()
-    result = classifier.classify_data(data["text"].astype(str).tolist())
+    classifier = HateSpeechDetector(ollama_pipeline=ollama_pipeline)
+    result = classifier.process(df["text"].astype(str).tolist())
     if len(result) > 0:
-        data["toxicity"] = result
-    return data
+        df["hate_speech"] = result
+    return df
