@@ -39,21 +39,20 @@ Select whether to install the CPU or GPU variant (requires a CUDA compatible GPU
 Clone the repository and run either for CPU or GPU usage:
 
 ```bash
-docker compose up  # CPU
-docker compose up --build --gpus all  # GPU
+docker compose --profile cpu up  # CPU
+docker compose --profile gpu up  # GPU
 ```
 
 Launch the app: `http://localhost:8501/`
 
 ### Model downloads 📥
 
-Transcription and alignment models used by [WhisperX](https://github.com/m-bain/whisperX/) will be downloaded upon first usage. Some models should be downloaded beforehand:
+Transcription and alignment models used by [WhisperX](https://github.com/m-bain/whisperX/) will be downloaded upon first usage. Some models can be downloaded beforehand:
 
 #### Hugging Face 🤗
 
 - [`google/madlad400-3b-mt`](https://huggingface.co/google/madlad400-3b-mt)
 - [`sentence-transformers/paraphrase-multilingual-mpnet-base-v2`](https://huggingface.co/sentence-transformers/paraphrase-multilingual-mpnet-base-v2)
-- [`textdetox/xlmr-large-toxicity-classifier`](https://huggingface.co/textdetox/xlmr-large-toxicity-classifier)
 
 #### Ollama 🦙
 
@@ -68,7 +67,7 @@ To configure the app's default models, edit the selector located at `nextext/uti
 #### Other language and tokenization models 🌐
 
 ```bash
-uv run load-tokenizers
+uv run load-spacy-models
 ```
 
 #### Offline usage 🚫🌐
