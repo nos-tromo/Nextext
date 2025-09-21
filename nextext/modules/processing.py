@@ -53,21 +53,17 @@ class FileProcessor:
         Returns:
             tuple[str, Path]: A tuple containing the filename (without extension) and the output directory path.
         """
-        try:
-            filename = file_path.stem  # File name without extension
-            output_path = output_dir / filename
-            if not output_path.exists():
-                output_path.mkdir(parents=True, exist_ok=True)
-                logger.info(
-                    "Output directory %s does not exist. Creating a new one.",
-                    output_path,
-                )
-            else:
-                logger.info("Output directory %s already exists.", output_path)
-            return filename, output_path
-        except Exception as e:
-            logger.error("Error processing input file: %s", e, exc_info=True)
-            raise
+        filename = file_path.stem  # File name without extension
+        output_path = output_dir / filename
+        if not output_path.exists():
+            output_path.mkdir(parents=True, exist_ok=True)
+            logger.info(
+                "Output directory %s does not exist. Creating a new one.",
+                output_path,
+            )
+        else:
+            logger.info("Output directory %s already exists.", output_path)
+        return filename, output_path
 
     def write_file_output(
         self,
@@ -86,55 +82,51 @@ class FileProcessor:
         Returns:
             str | list | tuple | pd.DataFrame | plt.Figure | None: The data that was written, which can be a string, list, DataFrame, Figure or None if the data type is unsupported.
         """
-        try:
-            if isinstance(data, str | list | tuple | pd.DataFrame | Figure):
-                # Creating paths for file output
-                language_suffix = f"_{target_language}" if target_language else ""
-                output_file_path = (
-                    self.output_path / f"{self.filename}_{label}{language_suffix}"
-                )
-                output_file_path_csv = output_file_path.with_suffix(".csv")
-                output_file_path_txt = output_file_path.with_suffix(".txt")
-                output_file_path_excel = output_file_path.with_suffix(".xlsx")
-                output_file_path_png = output_file_path.with_suffix(".png")
+        if isinstance(data, (str, list, tuple, pd.DataFrame, Figure)):
+            # Creating paths for file output
+            language_suffix = f"_{target_language}" if target_language else ""
+            output_file_path = (
+                self.output_path / f"{self.filename}_{label}{language_suffix}"
+            )
+            output_file_path_csv = output_file_path.with_suffix(".csv")
+            output_file_path_txt = output_file_path.with_suffix(".txt")
+            output_file_path_excel = output_file_path.with_suffix(".xlsx")
+            output_file_path_png = output_file_path.with_suffix(".png")
 
-                # String file operations
-                if isinstance(data, str):
-                    with open(f"{output_file_path_txt}", "w", encoding="utf-8") as f:
-                        f.write(data)
-                # List/tuple file operations
-                elif isinstance(data, list | tuple):
-                    with open(f"{output_file_path_txt}", "w", encoding="utf-8") as f:
-                        for item in data:
-                            f.write(f"{item}\n")
-                # DataFrame file operations
-                elif isinstance(data, pd.DataFrame):
-                    data.to_csv(output_file_path_csv, index=False, encoding="utf-8")
-                    with pd.ExcelWriter(
-                        output_file_path_excel, engine="openpyxl"
-                    ) as writer:
-                        data.to_excel(writer, index=False, sheet_name="Sheet1")
-                elif isinstance(data, Figure):
-                    data.savefig(output_file_path_png)
+            # String file operations
+            if isinstance(data, str):
+                with open(f"{output_file_path_txt}", "w", encoding="utf-8") as f:
+                    f.write(data)
+            # List/tuple file operations
+            elif isinstance(data, (list, tuple)):
+                with open(f"{output_file_path_txt}", "w", encoding="utf-8") as f:
+                    for item in data:
+                        f.write(f"{item}\n")
+            # DataFrame file operations
+            elif isinstance(data, pd.DataFrame):
+                data.to_csv(output_file_path_csv, index=False, encoding="utf-8")
+                with pd.ExcelWriter(
+                    output_file_path_excel, engine="openpyxl"
+                ) as writer:
+                    data.to_excel(writer, index=False, sheet_name="Sheet1")
+            elif isinstance(data, Figure):
+                data.savefig(output_file_path_png)
 
-                # File saving notifications
-                if output_file_path_csv.exists():
-                    logger.info("Saved output: %s", output_file_path_csv)
-                if output_file_path_txt.exists():
-                    logger.info("Saved output: %s", output_file_path_txt)
-                if output_file_path_excel.exists():
-                    logger.info("Saved output: %s", output_file_path_excel)
-                if output_file_path_png.exists():
-                    logger.info("Saved output: %s", output_file_path_png)
+            # File saving notifications
+            if output_file_path_csv.exists():
+                logger.info("Saved output: %s", output_file_path_csv)
+            if output_file_path_txt.exists():
+                logger.info("Saved output: %s", output_file_path_txt)
+            if output_file_path_excel.exists():
+                logger.info("Saved output: %s", output_file_path_excel)
+            if output_file_path_png.exists():
+                logger.info("Saved output: %s", output_file_path_png)
 
-            else:
-                logger.error(
-                    "Data type not supported for writing output: %s",
-                    type(data),
-                    exc_info=True,
-                )
+        else:
+            logger.error(
+                "Data type not supported for writing output: %s",
+                type(data),
+                exc_info=True,
+            )
 
-            return data
-        except Exception as e:
-            logger.error("Error creating output: %s", e, exc_info=True)
-            raise
+        return data
