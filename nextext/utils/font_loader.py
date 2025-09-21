@@ -18,16 +18,7 @@ def load_font_file(file: str, utils: Path = Path("utils") / "fonts") -> Path:
     Raises:
         FileNotFoundError: If the specified font file does not exist in the given path.
     """
-    font_path = None
-
-    try:
-        root = Path(__file__).resolve().parent.parent
-        font_path = root / utils / file
-        logger.info("Loaded font file '%s' from path '%s'", file, font_path)
-        return font_path
-    except FileNotFoundError:
-        logger.error("Font file '%s' not found in %s.", file, font_path)
-        raise FileNotFoundError(f"Font file '{file}' not found in {font_path}.")
-    except Exception as e:
-        logger.error("An error occurred while loading the font file '%s': %s", file, e)
-        raise e
+    root = Path(__file__).resolve().parent.parent
+    font_path = root / utils / file
+    logger.info("Loaded font file '%s' from path '%s'", file, font_path)
+    return font_path
