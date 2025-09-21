@@ -1,114 +1,165 @@
 import logging
 import os
+from dataclasses import dataclass, field
+from pathlib import Path
 
 import ollama
 import requests
 import torch
-from requests.exceptions import RequestException
 
 from nextext.utils.mappings_loader import load_mappings
 
 logger = logging.getLogger(__name__)
 
-OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
+OLLAMA_HOST: str = os.getenv("OLLAMA_HOST", "http://localhost:11434")
+PROMPT_DIR: Path = Path(__file__).parent.parent / "utils" / "prompts"
 
 
-def _load_ollama_model(
-    filename: str = "ollama_models.json", fallback: str = "gemma3n:e4b"
-) -> str | None:
-    """
-    Load the specified ollama model.
+@dataclass
+class OllamaPipeline:
+    ollama_host: str = field(default=OLLAMA_HOST, init=False)
+    model_file: str = "ollama_models.json"
+    _ollama_model: str | None = field(default=None, init=False)
+    fallback_model: str = "qwen3:8b"
+    prompt_dir: Path = field(default=PROMPT_DIR, init=False)
+    out_language: str = "German"
 
-    Args:
-        filename (str): The name of the JSON file containing model mappings. Defaults to "ollama_models.json".
-        fallback (str): The fallback model to use if no suitable model is found. Defaults to "gemma3:4b-it-qat".
+    def __post_init__(self):
+        """
+        Post-initialization to set up the Ollama host and load the system prompt.
+        """
+        logger.info("Ollama host set to: %s", self.ollama_host)
+        self.sys_prompt = self.load_prompt().format(language=self.out_language)
 
-    Returns:
-        str | None: The name of the model if loaded successfully, None otherwise.
+    def _get_ollama_health(self) -> bool:
+        """
+        Perform a health check by querying Ollama's /api/tags endpoint.
 
-    Raises:
-        RuntimeError: If the model file is not found or empty, or if there is an error loading the model.
-    """
-    try:
-        models = load_mappings(filename)
-        if not models:
-            logger.error("Model file '%s' not found or empty.", filename)
-            raise RuntimeError(
-                f"Model file '{filename}' not found or empty. Please check the file."
-            )
-        model = (
-            models.get("cuda")
-            if torch.cuda.is_available()
-            else models.get("mps")
-            if torch.backends.mps.is_available()
-            else models.get("cpu", fallback)
-        )
-        logger.info("Loaded Ollama model: %s", model)
-        return model
-
-    except Exception as e:
-        logger.error("Error loading ollama model: %s", e)
-        raise RuntimeError(
-            f"Failed to load ollama model from '{filename}'. Please check the file or your configuration."
-        )
-
-
-def _get_ollama_health(url: str = OLLAMA_HOST) -> bool:
-    """
-    Perform a health check by querying Ollama's /api/tags endpoint.
-
-    Args:
-        url (str, optional): The base URL of the Ollama server. Defaults to environment variable or localhost.
-
-    Returns:
-        bool: True if the Ollama server responds with model tags, False otherwise.
-
-    Raises:
-        RequestException: If there is an error connecting to the Ollama server.
-    """
-    try:
-        response = requests.get(f"{url}/api/tags", timeout=5)
+        Returns:
+            bool: True if the Ollama server responds with model tags, False otherwise.
+        """
+        response = requests.get(f"{self.ollama_host}/api/tags", timeout=5)
         return response.status_code == 200 and "models" in response.json()
-    except RequestException:
-        return False
 
+    @property
+    def ollama_model(self) -> str:
+        """
+        Load and return the appropriate Ollama model based on system capabilities.
 
-def call_ollama_server(
-    prompt: str,
-    num_ctx: int = 131072,
-    temperature: float = 0.2,
-) -> str:
-    """
-    Call the ollama server with the given model and prompt.
+        Raises:
+            RuntimeError: If the model cannot be determined.
 
-    Args:
-        prompt (str): The prompt to send to the model.
-        num_ctx (int): The number of context tokens to use. Defaults to 131072.
-        temperature (float): The temperature for the model's response. Defaults to 0.2.
+        Returns:
+            str: The name of the Ollama model to use.
+        """
+        if self._ollama_model is None:
+            models = load_mappings(self.model_file)
+            if not models:
+                raise RuntimeError(
+                    f"Model file '{self.model_file}' not found or empty. Please check the file."
+                )
+            self._ollama_model = (
+                models.get("cuda")
+                if torch.cuda.is_available()
+                else models.get("mps")
+                if torch.backends.mps.is_available()
+                else models.get("cpu", self.fallback_model)
+            )
+            logger.info("Loaded Ollama model: %s", self._ollama_model)
 
-    Returns:
-        str: The response from the ollama server, or an empty string if an error occurs.
+        if self._ollama_model is None:
+            self._ollama_model = self.fallback_model
+            logger.warning(
+                "Could not determine Ollama model from system capabilities. Falling back to '%s'.",
+                self.fallback_model,
+            )
 
-    Raises:
-        RuntimeError: If the ollama model cannot be loaded or if the server is not running
-    """
-    model = _load_ollama_model()
+        return self._ollama_model
 
-    if not model:
-        logger.error("Failed to load Ollama model.")
-        return ""
-    if not _get_ollama_health():
-        logger.error(
-            "Ollama server does not respond. Please ensure it is running and accessible."
-        )
-        return ""
+    def load_prompt(self, keyword: str = "system") -> str:
+        """
+        Load a prompt from the prompts directory based on the given keyword.
 
-    try:
+        Args:
+            keyword (str, optional): The keyword to identify the prompt file. Defaults to "system".
+
+        Returns:
+            str: The content of the prompt file.
+
+        Raises:
+            FileNotFoundError: If the prompt file for the given keyword does not exist.
+        """
+        prompt_path = self.prompt_dir / f"{keyword}.txt"
+        if not prompt_path.is_file():
+            raise FileNotFoundError(f"Prompt file for keyword '{keyword}' not found.")
+        with open(prompt_path, "r", encoding="utf-8") as f:
+            logger.info("Loaded prompt from '%s'", prompt_path)
+            return f.read()
+
+    def call_ollama_server(
+        self,
+        prompt: str,
+        think: bool = False,
+        num_ctx: int = 32768,
+        temperature: float = 0.1,
+        seed: int = 42,
+        stop: list[str] | None = None,
+        num_predict: int | None = None,
+        top_k: int | None = None,
+        top_p: float | None = None,
+    ) -> str:
+        """
+        Call the ollama server with the given model and prompt.
+
+        Args:
+            prompt (str): The prompt to send to the model.
+            think (bool): Whether to enable "think" mode for the model. Defaults to False.
+            num_ctx (int): The number of context tokens to use. Defaults to 32768.
+            temperature (float): The temperature for the model's response. Defaults to 0.1.
+            seed (int): The random seed for the model's response. Defaults to 42.
+            stop (list[str]): A list of stop sequences for the model's response. Defaults to None.
+            num_predict (int | None): The number of tokens to predict. Defaults to None.
+            top_k (int | None): The top_k parameter for the model's response. Defaults to None.
+            top_p (float | None): The top_p parameter for the model's response. Defaults to None.
+
+        Returns:
+            str: The response from the ollama server, or an empty string if an error occurs.
+
+        Raises:
+            RuntimeError: If the Ollama model cannot be loaded or the server is unreachable.
+        """
+        if not self._get_ollama_health():
+            logger.error(
+                "Ollama server does not respond. Please ensure it is running and accessible."
+            )
+            raise RuntimeError(
+                "Ollama server is not reachable. Please check your configuration."
+            )
+
         # Ensure environment variable is set for ollama library
-        os.environ["OLLAMA_HOST"] = OLLAMA_HOST
+        os.environ["OLLAMA_HOST"] = self.ollama_host
         response = ollama.chat(
-            model=model,
-            messages=[{"role": "user", "content": prompt}],
-            options={"num_ctx": num_ctx, "temperature": temperature},
+            model=self.ollama_model,
+            think=think,
+            messages=[
+                {
+                    "role": "system",
+                    "content": self.sys_prompt,
+                },
+                {"role": "user", "content": prompt},
+            ],
+            options={
+                **(
+                    {"num_ctx": num_ctx}
+                    if isinstance(num_ctx, int) and num_ctx > 0
+                    else {}
+                ),
+                "temperature": temperature,
+                "seed": seed,
+                "stop": stop,
+                "num_predict": num_predict,
+                "top_k": top_k,
+                "top_p": top_p,
+            },
         )
         return response["message"]["content"].strip()
