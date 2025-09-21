@@ -118,11 +118,7 @@ class WhisperTranscriber:
         Returns:
             np.ndarray: The loaded audio as a tensor.
         """
-        try:
-            return whisperx.load_audio(file=file, sr=sample_rate)
-        except Exception as e:
-            logging.error("Error loading audio file '%s': %s", file, e, exc_info=True)
-            raise
+        return whisperx.load_audio(file=file, sr=sample_rate)
 
     def _detect_language(
         self, duration_sec: float = 30.0, sample_rate: int = 16000
@@ -141,30 +137,25 @@ class WhisperTranscriber:
         Raises:
             RuntimeError: If language detection fails or the audio is too short.
         """
-        try:
-            sample_frames = int(duration_sec * sample_rate)
-            clipped_audio = self.audio[:sample_frames]
+        sample_frames = int(duration_sec * sample_rate)
+        clipped_audio = self.audio[:sample_frames]
 
-            # Load a temporary model instance with language=None to trigger auto-detection
-            logger.info("Detecting language using WhisperX...")
-            temp_model = whisperx.load_model(
-                whisper_arch="small",
-                device=self.transcription_device,
-                compute_type="float16" if torch.cuda.is_available() else "int8",
-                language=None,
-            )
-            result = temp_model.transcribe(clipped_audio)
+        # Load a temporary model instance with language=None to trigger auto-detection
+        logger.info("Detecting language using WhisperX...")
+        temp_model = whisperx.load_model(
+            whisper_arch="small",
+            device=self.transcription_device,
+            compute_type="float16" if torch.cuda.is_available() else "int8",
+            language=None,
+        )
+        result = temp_model.transcribe(clipped_audio)
 
-            detected_lang = result.get("language")
-            if not detected_lang:
-                raise RuntimeError("Language detection failed.")
+        detected_lang = result.get("language")
+        if not detected_lang:
+            raise RuntimeError("Language detection failed.")
 
-            logger.info("Detected language: %s", detected_lang)
-            return detected_lang
-
-        except Exception as e:
-            logger.error("Error detecting language: %s", e, exc_info=True)
-            return None
+        logger.info("Detected language: %s", detected_lang)
+        return detected_lang
 
     def _load_transcription_model(
         self, model_id: str, whisper_model_file: str
@@ -182,47 +173,38 @@ class WhisperTranscriber:
             dict[str, Any] or None: Metadata about the loaded model, or None if unavailable.
 
         Raises:
-            ValueError: If the model configuration is invalid or cannot be loaded.
-            RuntimeError: If the model cannot be loaded due to an error.
+            ValueError: If the model configuration is invalid.
         """
+        model_config = load_mappings(whisper_model_file)
+        config_key = f"{model_id}_{self.task}" if model_id == "default" else model_id
+        mapped_model_id = model_config.get(config_key)
+        logger.info(
+            "Loading Whisper model '%s' for task '%s'...",
+            mapped_model_id,
+            self.task,
+        )
+
+        if mapped_model_id is None:
+            raise ValueError(f"Invalid model configuration for key '{config_key}'.")
+
+        dtype = "float16" if torch.cuda.is_available() else "int8"
+        transcribe_model = whisperx.load_model(
+            whisper_arch=mapped_model_id,
+            device=self.transcription_device,
+            compute_type=dtype,
+            language=None if self.task == "translate" else self.src_lang,
+        )
         try:
-            model_config = load_mappings(whisper_model_file)
-            config_key = (
-                f"{model_id}_{self.task}" if model_id == "default" else model_id
+            align_model, align_metadata = whisperx.load_align_model(
+                language_code=self.src_lang, device=self.transcription_device
             )
-            mapped_model_id = model_config.get(config_key)
-            logger.info(
-                "Loading Whisper model '%s' for task '%s'...",
-                mapped_model_id,
-                self.task,
+        except Exception as align_exc:
+            logger.warning(
+                "Alignment model could not be loaded: %s. Continuing without alignment.",
+                align_exc,
             )
-
-            if mapped_model_id is None:
-                raise ValueError(f"Invalid model configuration for key '{config_key}'.")
-
-            dtype = "float16" if torch.cuda.is_available() else "int8"
-            transcribe_model = whisperx.load_model(
-                whisper_arch=mapped_model_id,
-                device=self.transcription_device,
-                compute_type=dtype,
-                language=None if self.task == "translate" else self.src_lang,
-            )
-            try:
-                align_model, align_metadata = whisperx.load_align_model(
-                    language_code=self.src_lang, device=self.transcription_device
-                )
-            except Exception as align_exc:
-                logger.warning(
-                    "Alignment model could not be loaded: %s. Continuing without alignment.",
-                    align_exc,
-                )
-                align_model, align_metadata = None, None
-            return transcribe_model, align_model, align_metadata
-        except Exception as e:
-            logger.error("Error setting up model '%s': %s", model_id, e, exc_info=True)
-            raise RuntimeError(
-                f"Failed to load Whisper model '{model_id}' for task '{self.task}'."
-            ) from e
+            align_model, align_metadata = None, None
+        return transcribe_model, align_model, align_metadata
 
     def _load_diarization_model(self, auth_token: str) -> DiarizationPipeline:
         """
@@ -234,18 +216,14 @@ class WhisperTranscriber:
         Returns:
             DiarizationPipeline: The loaded WhisperX model for speaker diarization.
         """
-        try:
-            device = (
-                "cuda"
-                if torch.cuda.is_available()
-                else "mps"
-                if torch.backends.mps.is_available()
-                else "cpu"
-            )
-            return DiarizationPipeline(use_auth_token=auth_token, device=device)
-        except Exception as e:
-            logger.error("Error setting up diarization model: %s", e, exc_info=True)
-            raise
+        device = (
+            "cuda"
+            if torch.cuda.is_available()
+            else "mps"
+            if torch.backends.mps.is_available()
+            else "cpu"
+        )
+        return DiarizationPipeline(use_auth_token=auth_token, device=device)
 
     def transcription(self, batch_size: int = 16) -> None:
         """
@@ -296,11 +274,7 @@ class WhisperTranscriber:
         Returns:
             str: The string representation of time in the format HH:MM:SS.
         """
-        try:
-            return str(timedelta(seconds=round(seconds)))
-        except Exception as e:
-            logging.error("Error converting seconds to time: %s", e, exc_info=True)
-            raise
+        return str(timedelta(seconds=round(seconds)))
 
     def diarization(self) -> None:
         """
@@ -328,6 +302,57 @@ class WhisperTranscriber:
             gc.collect()
             logger.info("Resources cleaned up.")
 
+    @staticmethod
+    def _ends_with_punctuation(text: str) -> bool:
+        """
+        Check if the given text ends with a sentence-ending punctuation mark.
+
+        Args:
+            text (str): The text string to check.
+
+        Returns:
+            bool: True if the text ends with ".", "!", or "?", otherwise False.
+        """
+        return text.strip().endswith((".", "!", "?"))
+
+    def _merge_transcriptions_by_sentence(self, data: pd.DataFrame) -> pd.DataFrame:
+        """
+        Merge transcriptions by sentences based on punctuation.
+
+        Args:
+            data (pd.DataFrame): The original DataFrame containing transcription data.
+
+        Returns:
+            pd.DataFrame: A new DataFrame with merged sentences and adjusted timestamps.
+        """
+        new_rows = []
+        current_row = {
+            self.start_column: None,
+            self.end_column: None,
+            self.text_column: "",
+        }
+
+        for _, row in data.iterrows():
+            if current_row.get(self.start_column) is None:
+                current_row[self.start_column] = row.get(self.start_column)
+
+            if row[self.text_column]:
+                current_row[self.text_column] += row[self.text_column].strip() + " "
+
+            if self._ends_with_punctuation(row[self.text_column]):
+                current_row[self.end_column] = row.get(self.end_column)
+                new_rows.append(current_row)
+                current_row = {
+                    self.start_column: None,
+                    self.end_column: None,
+                    self.text_column: "",
+                }
+
+        merged_df = pd.DataFrame(new_rows)
+        merged_df[self.text_column] = merged_df[self.text_column].str.strip()
+        logger.info("Transcriptions successfully merged by sentence.")
+        return merged_df
+
     def transcript_output(self) -> pd.DataFrame:
         """
         Get the transcription result as a DataFrame.
@@ -338,43 +363,36 @@ class WhisperTranscriber:
         Raises:
             ValueError: If the transcription result is not available or if the transcription has not been run yet.
         """
-        try:
-            if (
-                self.transcription_result is None
-                or "segments" not in self.transcription_result
-            ):
-                raise ValueError(
-                    "Transcription result is not available. Run transcription first."
-                )
-
-            segments = []
-            has_speaker = any(
-                "speaker" in item for item in self.transcription_result["segments"]
-            )
-            for item in self.transcription_result["segments"]:
-                row = [
-                    self._seconds_to_time(item["start"]),
-                    self._seconds_to_time(item["end"]),
-                ]
-                if has_speaker:
-                    row.append(item.get("speaker", "Unknown"))
-                row.append(item["text"])
-                segments.append(row)
-
-            # Build columns list dynamically
-            columns = [self.start_column, self.end_column]
-            if has_speaker:
-                columns.append(self.speaker_column)
-            columns.append(self.text_column)
-
-            df = pd.DataFrame(segments, columns=columns)
-            if self.n_speakers <= 1 and has_speaker:
-                df.drop(self.speaker_column, axis=1, inplace=True)
-            self.df = df
-            return self.df
-
-        except Exception as e:
-            logger.error("Error generating transcript output: %s", e, exc_info=True)
+        if (
+            self.transcription_result is None
+            or "segments" not in self.transcription_result
+        ):
             raise ValueError(
-                "Failed to generate transcript output. Ensure transcription was successful."
-            ) from e
+                "Transcription result is not available. Run transcription first."
+            )
+
+        segments = []
+        has_speaker = any(
+            "speaker" in item for item in self.transcription_result["segments"]
+        )
+        for item in self.transcription_result["segments"]:
+            row = [
+                self._seconds_to_time(item["start"]),
+                self._seconds_to_time(item["end"]),
+            ]
+            if has_speaker:
+                row.append(item.get("speaker", "Unknown"))
+            row.append(item["text"])
+            segments.append(row)
+
+        # Build columns list dynamically
+        columns = [self.start_column, self.end_column]
+        if has_speaker:
+            columns.append(self.speaker_column)
+        columns.append(self.text_column)
+
+        df = pd.DataFrame(segments, columns=columns)
+        if self.n_speakers <= 1 and has_speaker:
+            df.drop(self.speaker_column, axis=1, inplace=True)
+        self.df = self._merge_transcriptions_by_sentence(df)
+        return self.df
