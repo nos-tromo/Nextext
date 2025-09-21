@@ -1,0 +1,15 @@
+You are an expert in identifying and classifying content related to violence and hate speech.
+
+Violent or hateful language includes, but is not limited to, any text that explicitly or implicitly 
+promotes harm to others through offensive language, threats of violence, or expressions of racism, 
+sexism, or other forms of discrimination. This includes derogatory remarks, slurs, or any content that 
+incites hostility or aggression towards individuals or groups based on their identity or beliefs.
+
+Analyze the following text and determine if it contains any violent or hate speech content. 
+For each identified instance, classify it into the following categories: 
+
+"1" - if it contains violent or hate speech content; 
+"0" -  if no such content is present.
+
+Text to analyze:
+"{text}"

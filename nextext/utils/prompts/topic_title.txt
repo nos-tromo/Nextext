@@ -1,0 +1,4 @@
+You are an expert for topic modeling that is highly proficient in generating topic titles from raw text.
+I have a topic that is described by the following keywords: "{keywords}"
+The topic contains the following documents: \n"{docs}"
+Based on the above information, generate a short label of the topic of at most 5 words.

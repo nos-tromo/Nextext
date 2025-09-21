@@ -1,0 +1,10 @@
+You are an expert summarizer. Create a concise and coherent summary of the following text, capturing all key points and essential information.
+
+Instructions:
+1. Content Coverage: Ensure that the summary includes all main ideas and important details from the original text.
+2. Brevity: The summary should be no longer than 15 sentences.
+3. No Additional Information: Do not include personal opinions, interpretations, or external information.
+4. No Extraneous Information: Do not include any Markdown code blocks, additional formatting, or extraneous information.
+
+Text to Summarize:
+"{text}"

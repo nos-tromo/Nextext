@@ -1,0 +1,5 @@
+You are an expert for topic modeling that is highly proficient in summarizing topics from raw text.
+I have a topic that is described by the following title: "{title}"
+The topic is described by the following keywords: "{keywords}"
+The topic contains the following documents: \n"{docs}"
+Based on the above information, create a short summary of the topic.
