@@ -12,20 +12,20 @@ import streamlit as st
 import streamlit.components.v1 as components
 from streamlit.web import cli as st_cli
 
+from nextext.modules.ollama_cfg import OllamaPipeline
 from nextext.pipeline import (
     get_api_key,
+    hatespeech_pipeline,
     summarization_pipeline,
     topics_pipeline,
-    toxicity_pipeline,
     transcription_pipeline,
     translation_pipeline,
     wordlevel_pipeline,
 )
-from nextext.utils.logging_cfg_loader import setup_logging
+from nextext.utils.logging_cfg import setup_logging
 from nextext.utils.mappings_loader import kv_to_vk, load_and_sort_mappings
 
 setup_logging()
-
 logger = logging.getLogger(__name__)
 
 
@@ -82,12 +82,20 @@ def _run_pipeline(tmp_file: Path, opts: dict) -> None:
             result["noun_graph"] = graph
             result["wordcloud"] = cloud
 
+    # Ollanma pipeline setup
+    ollama_pipeline = OllamaPipeline()
+    if not ollama_pipeline._get_ollama_health():
+        raise ConnectionError(
+            "Ollama server is not reachable. Please ensure it is running and accessible."
+        )
+    
     # Topic modelling
     with st.spinner("Running topic modelling… ⏳"):
         if opts["topics"]:
             topics_output = topics_pipeline(
-                df,
-                opts["trg_lang" if opts["task"] == "translate" else "src_lang"],
+                data=df,
+                language=opts["trg_lang" if opts["task"] == "translate" else "src_lang"],
+                ollama_pipeline=ollama_pipeline,
             )
             if topics_output is not None:
                 result["topics"] = topics_output
@@ -99,13 +107,13 @@ def _run_pipeline(tmp_file: Path, opts: dict) -> None:
         if opts["summarization"]:
             result["summary"] = summarization_pipeline(
                 " ".join(df["text"].astype(str).tolist()),
-                opts["trg_lang" if opts["task"] == "translate" else "src_lang"],
+                ollama_pipeline=ollama_pipeline,
             )
 
-    # Toxicity classification
-    with st.spinner("Classifying toxicity… ⏳"):
-        if opts["toxicity"]:
-            df = toxicity_pipeline(df)
+    # Hate speech classification
+    with st.spinner("Classifying hate speech… ⏳"):
+        if opts["hatespeech"]:
+            df = hatespeech_pipeline(ollama_pipeline=ollama_pipeline, df=df)
             result["transcript"] = df  # updated with extra column
 
     st.session_state["result"] = result
@@ -146,7 +154,7 @@ def _start_page() -> None:
             topics = st.checkbox("Topic modelling")
         with col4:
             summarization = st.checkbox("Summarisation")
-            toxicity = st.checkbox("Toxicity")
+            hatespeech = st.checkbox("Hate Speech")
     with col2:
         trg_lang_name = st.selectbox(
             "Target language (for translate task)",
@@ -170,7 +178,7 @@ def _start_page() -> None:
         words=words,
         topics=topics,
         summarization=summarization,
-        toxicity=toxicity,
+        hatespeech=hatespeech,
     )
 
     if run and uploaded is not None:
