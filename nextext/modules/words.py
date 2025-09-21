@@ -109,35 +109,29 @@ class WordCounter:
         Returns:
             Language | None: Loaded spaCy model or None if loading fails.
         """
-        try:
-            if language == "ar":
-                nlp = spacy.blank("ar")
-                nlp.tokenizer = lambda text, nlp=nlp: Doc(
-                    nlp.vocab, words=simple_word_tokenize(text)
-                )
-                return nlp
-            # Add other language-specific handling if needed
-            model_id = None
-            if language in spacy_languages.keys():
-                model_id = spacy_languages.get(language)
-            if model_id is None:
-                logger.warning(
-                    "Language '%s' not found in spaCy mappings. Using multilingual model.",
-                    language,
-                )
-                model_id = spacy_languages.get("xx")
-            if model_id is not None:
-                download_spacy_model(model_id)
-                return spacy.load(model_id)
-            else:
-                logger.error(
-                    "No valid spaCy model id found for language '%s'.",
-                    language,
-                )
-                return None
-        except Exception as e:
+        if language == "ar":
+            nlp = spacy.blank("ar")
+            nlp.tokenizer = lambda text, nlp=nlp: Doc(
+                nlp.vocab, words=simple_word_tokenize(text)
+            )
+            return nlp
+        # Add other language-specific handling if needed
+        model_id = None
+        if language in spacy_languages.keys():
+            model_id = spacy_languages.get(language)
+        if model_id is None:
             logger.warning(
-                "Failed to load the language model for language '%s': %s", language, e
+                "Language '%s' not found in spaCy mappings. Using multilingual model.",
+                language,
+            )
+            model_id = spacy_languages.get("xx")
+        if model_id is not None:
+            download_spacy_model(model_id)
+            return spacy.load(model_id)
+        else:
+            logger.error(
+                "No valid spaCy model id found for language '%s'.",
+                language,
             )
             return None
 
@@ -145,14 +139,11 @@ class WordCounter:
         """
         Convert the text to a spaCy doc object.
         """
-        try:
-            if self.nlp is not None:
-                self.doc = self.nlp(self.text)
-            else:
-                logger.error("spaCy language model is not loaded. Cannot process text.")
-                self.doc = None
-        except Exception as e:
-            logger.error("Unable to convert text to spaCy doc: %s", e)
+        if self.nlp is not None:
+            self.doc = self.nlp(self.text)
+        else:
+            logger.error("spaCy language model is not loaded. Cannot process text.")
+            self.doc = None
 
     def lemmatize_doc(self) -> None:
         """
@@ -161,35 +152,27 @@ class WordCounter:
         Returns:
             list[str]: List of tokenized and lemmatized words.
         """
-        try:
-            if self.doc is None:
-                logger.error("spaCy doc is None. Please run text_to_doc() first.")
-                self.tokenized_doc = []
-                self.tokenized_nouns = []
-                return
+        if self.doc is None:
+            logger.error("spaCy doc is None. Please run text_to_doc() first.")
+            self.tokenized_doc = []
+            self.tokenized_nouns = []
+            return
 
-            if self.language == "ar":
-                # No lemmatization or POS tagging for Arabic
-                self.tokenized_doc = [
-                    token.text for token in self.doc if token.is_alpha
-                ]
-                self.tokenized_nouns = []  # Can't extract nouns without POS
-            else:
-                self.tokenized_doc = [
-                    token.lemma_.lower()
-                    for token in self.doc
-                    if token.is_alpha and not token.is_stop
-                ]
-                self.tokenized_nouns = [
-                    token
-                    for token in self.tokenized_doc
-                    if any(
-                        t.lemma_.lower() == token and t.pos_ == "NOUN" for t in self.doc
-                    )
-                ]
-        except Exception as e:
-            logger.error("Error tokenizing words: %s", e, exc_info=True)
-            raise
+        if self.language == "ar":
+            # No lemmatization or POS tagging for Arabic
+            self.tokenized_doc = [token.text for token in self.doc if token.is_alpha]
+            self.tokenized_nouns = []  # Can't extract nouns without POS
+        else:
+            self.tokenized_doc = [
+                token.lemma_.lower()
+                for token in self.doc
+                if token.is_alpha and not token.is_stop
+            ]
+            self.tokenized_nouns = [
+                token
+                for token in self.tokenized_doc
+                if any(t.lemma_.lower() == token and t.pos_ == "NOUN" for t in self.doc)
+            ]
 
     def count_words(
         self, n_words: int = 30, columns: list[str] = ["Word", "Frequency"]
@@ -204,22 +187,18 @@ class WordCounter:
         Returns:
             pd.DataFrame: DataFrame of words and their counts, sorted by frequency.
         """
-        try:
-            if self.tokenized_doc is None:
-                logger.error(
-                    "Tokenized document is None. Please run lemmatize_doc() first."
-                )
-                return pd.DataFrame(columns=columns).reset_index(drop=True)
-            self.word_counts = Counter(token for token in self.tokenized_doc)
-            df = (
-                pd.DataFrame(self.word_counts.most_common(n_words), columns=columns)
-                .sort_values(columns[1], ascending=False)
-                .reset_index(drop=True)
+        if self.tokenized_doc is None:
+            logger.error(
+                "Tokenized document is None. Please run lemmatize_doc() first."
             )
-            return df
-        except Exception as e:
-            logger.error("Error counting word frequencies: %s", e, exc_info=True)
             return pd.DataFrame(columns=columns).reset_index(drop=True)
+        self.word_counts = Counter(token for token in self.tokenized_doc)
+        df = (
+            pd.DataFrame(self.word_counts.most_common(n_words), columns=columns)
+            .sort_values(columns[1], ascending=False)
+            .reset_index(drop=True)
+        )
+        return df
 
     def named_entity_recognition(
         self, columns: list[str] = ["Category", "Entity", "Frequency"]
@@ -233,30 +212,21 @@ class WordCounter:
         Returns:
             pd.DataFrame: DataFrame containing named entities and their counts.
         """
-        try:
-            if self.doc is None:
-                logger.error("spaCy doc is None. Please run text_to_doc() first.")
-                return pd.DataFrame(columns=columns).reset_index(drop=True)
-            ent_types = set(self.spacy_entities.keys())
-            doc_ents = [
-                (ent.text, ent.label_)
-                for ent in self.doc.ents
-                if ent.label_ in ent_types and len(ent.text.strip()) >= 3
-            ]
-            entities_count = Counter(doc_ents)
-            df = pd.DataFrame(
-                [
-                    (label, text, count)
-                    for (text, label), count in entities_count.items()
-                ],
-                columns=columns,
-            ).reset_index(drop=True)
-            return df
-        except Exception as e:
-            logger.error(
-                "Error performing named entity recognition: %s", e, exc_info=True
-            )
+        if self.doc is None:
+            logger.error("spaCy doc is None. Please run text_to_doc() first.")
             return pd.DataFrame(columns=columns).reset_index(drop=True)
+        ent_types = set(self.spacy_entities.keys())
+        doc_ents = [
+            (ent.text, ent.label_)
+            for ent in self.doc.ents
+            if ent.label_ in ent_types and len(ent.text.strip()) >= 3
+        ]
+        entities_count = Counter(doc_ents)
+        df = pd.DataFrame(
+            [(label, text, count) for (text, label), count in entities_count.items()],
+            columns=columns,
+        ).reset_index(drop=True)
+        return df
 
     def get_noun_sentiment(
         self,
@@ -281,67 +251,59 @@ class WordCounter:
             pd.DataFrame: One row per noun with two comma-separated columns listing
                           verbs and adjectives.
         """
-        try:
-            if self.doc is None:
-                logger.error("spaCy doc is None. Please run text_to_doc() first.")
-                return pd.DataFrame(columns=columns).reset_index(drop=True)
-
-            # Identify top‑frequency noun lemmas
-            top_nouns = {
-                noun
-                for noun, _ in Counter(self.tokenized_nouns).most_common(n_freq_nouns)
-            }
-
-            noun_verb_map: dict[str, list[str]] = defaultdict(list)
-            noun_adj_map: dict[str, list[str]] = defaultdict(list)
-
-            # Single pass through doc to collect verbs *and* adjectives
-            for token in self.doc:
-                if token.pos_ == "NOUN":
-                    noun_lemma = token.lemma_.lower()
-                    if noun_lemma not in top_nouns:
-                        continue
-
-                    # Governing verb (head) ---------------------------------
-                    if token.head.pos_ == "VERB":
-                        noun_verb_map[noun_lemma].append(token.head.lemma_.lower())
-
-                    # Adjectival modifiers ---------------------------------
-                    for child in token.children:
-                        if child.pos_ == "ADJ":
-                            noun_adj_map[noun_lemma].append(child.lemma_.lower())
-
-                # Also capture pattern where adjective precedes noun (amod)
-                elif token.pos_ == "ADJ" and token.head.pos_ == "NOUN":
-                    noun_lemma = token.head.lemma_.lower()
-                    if noun_lemma in top_nouns:
-                        noun_adj_map[noun_lemma].append(token.lemma_.lower())
-
-            # Build output rows --------------------------------------------
-            rows = []
-            for noun in sorted(top_nouns):
-                verbs = noun_verb_map.get(noun, [])
-                adjs = noun_adj_map.get(noun, [])
-
-                top_verbs = [v for v, _ in Counter(verbs).most_common(n_freq_verbs)]
-                top_adjs = [a for a, _ in Counter(adjs).most_common(n_freq_adjs)]
-
-                rows.append(
-                    {
-                        columns[0]: noun,
-                        columns[1]: ", ".join(top_verbs),
-                        columns[2]: ", ".join(top_adjs),
-                    }
-                )
-
-            self.noun_df = pd.DataFrame(rows, columns=columns).reset_index(drop=True)
-            return self.noun_df
-
-        except Exception as e:
-            logger.error(
-                "Error combining noun‑verb‑adjective extraction: %s", e, exc_info=True
-            )
+        if self.doc is None:
+            logger.error("spaCy doc is None. Please run text_to_doc() first.")
             return pd.DataFrame(columns=columns).reset_index(drop=True)
+
+        # Identify top‑frequency noun lemmas
+        top_nouns = {
+            noun for noun, _ in Counter(self.tokenized_nouns).most_common(n_freq_nouns)
+        }
+
+        noun_verb_map: dict[str, list[str]] = defaultdict(list)
+        noun_adj_map: dict[str, list[str]] = defaultdict(list)
+
+        # Single pass through doc to collect verbs *and* adjectives
+        for token in self.doc:
+            if token.pos_ == "NOUN":
+                noun_lemma = token.lemma_.lower()
+                if noun_lemma not in top_nouns:
+                    continue
+
+                # Governing verb (head) ---------------------------------
+                if token.head.pos_ == "VERB":
+                    noun_verb_map[noun_lemma].append(token.head.lemma_.lower())
+
+                # Adjectival modifiers ---------------------------------
+                for child in token.children:
+                    if child.pos_ == "ADJ":
+                        noun_adj_map[noun_lemma].append(child.lemma_.lower())
+
+            # Also capture pattern where adjective precedes noun (amod)
+            elif token.pos_ == "ADJ" and token.head.pos_ == "NOUN":
+                noun_lemma = token.head.lemma_.lower()
+                if noun_lemma in top_nouns:
+                    noun_adj_map[noun_lemma].append(token.lemma_.lower())
+
+        # Build output rows --------------------------------------------
+        rows = []
+        for noun in sorted(top_nouns):
+            verbs = noun_verb_map.get(noun, [])
+            adjs = noun_adj_map.get(noun, [])
+
+            top_verbs = [v for v, _ in Counter(verbs).most_common(n_freq_verbs)]
+            top_adjs = [a for a, _ in Counter(adjs).most_common(n_freq_adjs)]
+
+            rows.append(
+                {
+                    columns[0]: noun,
+                    columns[1]: ", ".join(top_verbs),
+                    columns[2]: ", ".join(top_adjs),
+                }
+            )
+
+        self.noun_df = pd.DataFrame(rows, columns=columns).reset_index(drop=True)
+        return self.noun_df
 
     def construct_noun_sentiment_graph(
         self,
@@ -356,34 +318,28 @@ class WordCounter:
         Returns:
             nx.Graph: The constructed semantic graph.
         """
-        try:
-            if self.noun_df is None:
-                logger.error(
-                    "Noun DataFrame is None. Please run get_noun_adjectives() first."
-                )
-                return nx.Graph()
-
-            G = nx.Graph()
-            for _, row in self.noun_df.iterrows():
-                noun = row[columns[0]]
-                verbs = row[columns[1]].split(", ") if row[columns[1]] else []
-                adjs = row[columns[2]].split(", ") if row[columns[2]] else []
-
-                G.add_node(noun, type="noun")
-
-                for v in verbs:
-                    G.add_node(v, type="verb")
-                    G.add_edge(noun, v, relation="verb")
-
-                for a in adjs:
-                    G.add_node(a, type="adj")
-                    G.add_edge(noun, a, relation="adj")
-            return G
-        except Exception as e:
+        if self.noun_df is None:
             logger.error(
-                "Error building noun-verb-adjective graph: %s", e, exc_info=True
+                "Noun DataFrame is None. Please run get_noun_adjectives() first."
             )
             return nx.Graph()
+
+        G = nx.Graph()
+        for _, row in self.noun_df.iterrows():
+            noun = row[columns[0]]
+            verbs = row[columns[1]].split(", ") if row[columns[1]] else []
+            adjs = row[columns[2]].split(", ") if row[columns[2]] else []
+
+            G.add_node(noun, type="noun")
+
+            for v in verbs:
+                G.add_node(v, type="verb")
+                G.add_edge(noun, v, relation="verb")
+
+            for a in adjs:
+                G.add_node(a, type="adj")
+                G.add_edge(noun, a, relation="adj")
+        return G
 
     def create_interactive_graph(self) -> str:
         """
@@ -392,38 +348,34 @@ class WordCounter:
         Returns:
             str: HTML string of the interactive graph.
         """
-        try:
-            G = self.construct_noun_sentiment_graph()
-            if G.number_of_nodes() == 0:
-                logger.warning("Graph is empty. No nodes to visualize.")
-                return "<p>No data to visualize.</p>"
+        G = self.construct_noun_sentiment_graph()
+        if G.number_of_nodes() == 0:
+            logger.warning("Graph is empty. No nodes to visualize.")
+            return "<p>No data to visualize.</p>"
 
-            net = Network(notebook=False, bgcolor="#000000", font_color="white")
-            for node, attr in G.nodes(data=True):
-                net.add_node(
-                    node,
-                    label=node,
-                    color={"noun": "#4f81bd", "verb": "#9bbb59", "adj": "#c0504d"}.get(
-                        attr["type"], "#dddddd"
-                    ),
-                )
-
-            for u, v, d in G.edges(data=True):
-                net.add_edge(u, v, title=d["relation"])
-
-            # Remove annoying white padding around the graph (more precise)
-            html = net.generate_html()
-            html = html.replace(
-                "<body>",
-                """<body style="margin:0;padding:0;background-color:#222222;height:100vh;">""",
-            ).replace(
-                '<div id="mynetwork"',
-                '<div id="mynetwork" style="height:100vh;width:100%;background-color:#222222;border:none;"',
+        net = Network(notebook=False, bgcolor="#000000", font_color="white")
+        for node, attr in G.nodes(data=True):
+            net.add_node(
+                node,
+                label=node,
+                color={"noun": "#4f81bd", "verb": "#9bbb59", "adj": "#c0504d"}.get(
+                    attr["type"], "#dddddd"
+                ),
             )
-            return html
-        except Exception as e:
-            logger.error("Error exporting interactive graph: %s", e, exc_info=True)
-            return "<p>Error generating graph visualization.</p>"
+
+        for u, v, d in G.edges(data=True):
+            net.add_edge(u, v, title=d["relation"])
+
+        # Remove annoying white padding around the graph (more precise)
+        html = net.generate_html()
+        html = html.replace(
+            "<body>",
+            """<body style="margin:0;padding:0;background-color:#222222;height:100vh;">""",
+        ).replace(
+            '<div id="mynetwork"',
+            '<div id="mynetwork" style="height:100vh;width:100%;background-color:#222222;border:none;"',
+        )
+        return html
 
     def create_wordcloud(self) -> Figure:
         """
@@ -435,44 +387,36 @@ class WordCounter:
         Raises:
             ValueError: If word counts are not available.
         """
-        try:
-            # Create a string of words for the wordcloud
-            if self.word_counts is None:
-                logger.error(
-                    "Word counts are not available. Please run count_words() first."
-                )
-                raise ValueError(
-                    "Word counts are not available. Please run count_words() first."
-                )
-            text = " ".join(
-                [
-                    str(word)
-                    for word, count in self.word_counts.items()
-                    for _ in range(count)
-                ]
+        # Create a string of words for the wordcloud
+        if self.word_counts is None:
+            logger.error(
+                "Word counts are not available. Please run count_words() first."
             )
-            if self.language == "ar":
-                text = arabic_reshaper.reshape(text)
-                text = get_display(text)
+            raise ValueError(
+                "Word counts are not available. Please run count_words() first."
+            )
+        text = " ".join(
+            [
+                str(word)
+                for word, count in self.word_counts.items()
+                for _ in range(count)
+            ]
+        )
+        if self.language == "ar":
+            text = arabic_reshaper.reshape(text)
+            text = get_display(text)
 
-            # Generate the word cloud
-            wc = WordCloud(
-                font_path=self.font_path if self.language == "ar" else None,
-                background_color="black",
-                width=2000,
-                height=1000,
-                collocations=False,
-            ).generate(text)
+        # Generate the word cloud
+        wc = WordCloud(
+            font_path=self.font_path if self.language == "ar" else None,
+            background_color="black",
+            width=2000,
+            height=1000,
+            collocations=False,
+        ).generate(text)
 
-            fig = plt.figure(figsize=(20, 10), facecolor="k")
-            plt.imshow(wc, interpolation="bilinear")
-            plt.axis("off")
-            plt.tight_layout(pad=0)
-            return fig
-        except Exception as e:
-            logger.error("Error creating wordcloud: %s", e, exc_info=True)
-            # Return an empty black figure if wordcloud creation fails
-            fig = plt.figure(figsize=(20, 10), facecolor="k")
-            plt.axis("off")
-            plt.tight_layout(pad=0)
-            return fig
+        fig = plt.figure(figsize=(20, 10), facecolor="k")
+        plt.imshow(wc, interpolation="bilinear")
+        plt.axis("off")
+        plt.tight_layout(pad=0)
+        return fig
