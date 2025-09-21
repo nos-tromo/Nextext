@@ -17,11 +17,7 @@ from spacy.language import Language
 from spacy.tokens import Doc
 from umap import UMAP
 
-from nextext.modules.ollama_cfg import (
-    call_ollama_server,
-    topic_summaries_prompt,
-    topic_titles_prompt,
-)
+from nextext.modules.ollama_cfg import OllamaPipeline
 from nextext.utils.mappings_loader import load_mappings
 from nextext.utils.spacy_model_loader import download_spacy_model
 
@@ -125,9 +121,7 @@ class TopicModeling:
 
         spacy_languages = load_mappings(spacy_language_file)
         self.nlp = self._load_spacy_model(lang_code, spacy_languages)
-        logger.info(
-            "Loaded spaCy model for language '%s': %s", lang_code, self.nlp
-        )
+        logger.info("Loaded spaCy model for language '%s': %s", lang_code, self.nlp)
 
         self.stop_words = stopwords.words(self.language, "english")
         self.embedding_model: SentenceTransformer | None = None
@@ -411,32 +405,28 @@ class TopicModeling:
         """
         if len(self.docs) < 5:
             logging.warning("Not enough documents for topic modeling. Skipping fit.")
-        try:
-            if self.topic_model is not None:
-                # Ensure the embedding model is loaded
-                if self.embedding_model is None:
-                    self.embedding_model = self._load_embedding_model()
-                # Embed the documents
-                embeddings = self._embed_docs()
-                if embeddings is None:
-                    logging.error("Failed to embed documents. Cannot fit topic model.")
-                    return pd.DataFrame()
-                # Fit the topic model
-                self.topic_model.fit_transform(
-                    documents=self.docs, embeddings=embeddings
-                )
-                self.topic_df = self.topic_model.get_topic_info()
-                return self.topic_df
-            else:
-                logging.error("Topic model is not initialized.")
+        if self.topic_model is not None:
+            # Ensure the embedding model is loaded
+            if self.embedding_model is None:
+                self.embedding_model = self._load_embedding_model()
+            # Embed the documents
+            embeddings = self._embed_docs()
+            if embeddings is None:
+                logging.error("Failed to embed documents. Cannot fit topic model.")
                 return pd.DataFrame()
-        except ValueError as e:
-            logging.error("Error fitting topic model: %s", e)
+            # Fit the topic model
+            self.topic_model.fit_transform(
+                documents=self.docs, embeddings=embeddings
+            )
+            self.topic_df = self.topic_model.get_topic_info()
+            return self.topic_df
+        else:
+            logging.error("Topic model is not initialized.")
             return pd.DataFrame()
 
     def summarize_topics(
         self,
-        language: str = "German",
+        ollama_pipeline: OllamaPipeline,
     ) -> list[tuple[str, str]]:
         """
         Summarize the topics using zero-shot learning.
@@ -448,37 +438,31 @@ class TopicModeling:
         Returns:
             list[tuple[str, str]]: A list of tuples containing topic titles and summaries.
         """
-        try:
-            topic_titles: list[str] = []
-            topic_summaries: list[str] = []
+        topic_titles: list[str] = []
+        topic_summaries: list[str] = []
 
-            if self.topic_df is None or self.topic_df.empty:
-                logging.error("Topic DataFrame is not available for summarization.")
-                return []
-
-            for keyword, doc in zip(
-                self.topic_df["Representation"], self.topic_df["Representative_Docs"]
-            ):
-                # Generate title
-                title_prompt = topic_titles_prompt.format(
-                    language=language,
-                    keywords=keyword,
-                    docs=doc,
-                )
-                title = call_ollama_server(prompt=title_prompt)
-                topic_titles.append(title if title is not None else "")
-
-                # Generate summary using the generated title
-                summary_prompt = topic_summaries_prompt.format(
-                    language=language,
-                    title=title,
-                    keywords=keyword,
-                    docs=doc,
-                )
-                summary = call_ollama_server(prompt=summary_prompt)
-                topic_summaries.append(summary if summary is not None else "")
-
-            return list(zip(topic_titles, topic_summaries))
-        except Exception as e:
-            logging.error("Error summarizing topics: %s", e)
+        if self.topic_df is None or self.topic_df.empty:
+            logging.error("Topic DataFrame is not available for summarization.")
             return []
+
+        for keyword, doc in zip(
+            self.topic_df["Representation"], self.topic_df["Representative_Docs"]
+        ):
+            # Generate title
+            title_prompt = ollama_pipeline.load_prompt("topic_title").format(
+                keywords=keyword,
+                docs=doc,
+            )
+            title = ollama_pipeline.call_ollama_server(prompt=title_prompt)
+            topic_titles.append(title if title is not None else "")
+
+            # Generate summary using the generated title
+            summary_prompt = ollama_pipeline.load_prompt("topic_summary").format(
+                title=title if title is not None else "",
+                keywords=keyword,
+                docs=doc,
+            )
+            summary = ollama_pipeline.call_ollama_server(prompt=summary_prompt)
+            topic_summaries.append(summary if summary is not None else "")
+
+        return list(zip(topic_titles, topic_summaries))
