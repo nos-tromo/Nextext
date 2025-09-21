@@ -78,47 +78,36 @@ class Translator:
             model_id (str): The name of the pretrained model.
             local_only (bool): Whether to restrict loading to local files only.
 
-        Raises:
-            RuntimeError: If the model cannot be loaded from local cache or downloaded.
-
         Returns:
             tuple: A tuple containing the tokenizer, model, and device.
+
+        Raises:
+            FileNotFoundError: If the model is not found in local cache and local_only is True.
+            RuntimeError: If the model cannot be loaded due to an error.
         """
+        device = torch.device(
+            "cuda"
+            if torch.cuda.is_available()
+            else "mps"
+            if torch.backends.mps.is_available()
+            else "cpu"
+        )
+        torch_dtype = torch.float16 if device.type in ["cuda", "mps"] else torch.float32
+
         try:
-            device = torch.device(
-                "cuda"
-                if torch.cuda.is_available()
-                else "mps"
-                if torch.backends.mps.is_available()
-                else "cpu"
-            )
-            torch_dtype = (
-                torch.float16 if device.type in ["cuda", "mps"] else torch.float32
-            )
+            tokenizer = AutoTokenizer.from_pretrained(model_id, local_files_only=True)
+            model = AutoModelForSeq2SeqLM.from_pretrained(
+                model_id, torch_dtype=torch_dtype, local_files_only=local_only
+            ).to(device)
+            logger.info("✅ Loaded model from local cache.")
+        except FileNotFoundError:
+            logger.info("⬇️ Model not in local cache — downloading from Hugging Face...")
+            tokenizer = AutoTokenizer.from_pretrained(model_id)
+            model = AutoModelForSeq2SeqLM.from_pretrained(
+                model_id, torch_dtype=torch_dtype
+            ).to(device)
 
-            try:
-                tokenizer = AutoTokenizer.from_pretrained(
-                    model_id, local_files_only=True
-                )
-                model = AutoModelForSeq2SeqLM.from_pretrained(
-                    model_id, torch_dtype=torch_dtype, local_files_only=local_only
-                ).to(device)
-                logger.info("✅ Loaded model from local cache.")
-            except FileNotFoundError:
-                logger.info(
-                    "⬇️ Model not in local cache — downloading from Hugging Face..."
-                )
-                tokenizer = AutoTokenizer.from_pretrained(model_id)
-                model = AutoModelForSeq2SeqLM.from_pretrained(
-                    model_id, torch_dtype=torch_dtype
-                ).to(device)
-
-            return tokenizer, model, device
-        except Exception as e:
-            logger.error("Error loading model: %s", e)
-            raise RuntimeError(
-                "Failed to load translation model. Please check the model name or your internet connection."
-            ) from e
+        return tokenizer, model, device
 
     def detect_language(self, text: str) -> dict[str, str]:
         """
@@ -130,14 +119,10 @@ class Translator:
         Returns:
             dict: A dictionary containing the detected language name and code.
         """
-        try:
-            self.src_lang = detect(text)
-            lang_obj = pycountry.languages.get(alpha_2=self.src_lang)
-            src_lang_name = lang_obj.name if lang_obj is not None else ""
-            return {"name": src_lang_name, "code": self.src_lang or ""}
-        except Exception as e:
-            logger.error("Error detecting language: %s", e)
-            return {"name": "", "code": "", "flag": ""}
+        self.src_lang = detect(text)
+        lang_obj = pycountry.languages.get(alpha_2=self.src_lang)
+        src_lang_name = lang_obj.name if lang_obj is not None else ""
+        return {"name": src_lang_name, "code": self.src_lang or ""}
 
     def _model_inference(self, lang: str, text: str, verbose: bool = True) -> str:
         """
@@ -151,37 +136,33 @@ class Translator:
         Returns:
             str: The translated text.
         """
-        try:
-            prompt = f"<2{lang}> {text}"
-            inputs = self.tokenizer(prompt, return_tensors="pt").to(self.device)
+        prompt = f"<2{lang}> {text}"
+        inputs = self.tokenizer(prompt, return_tensors="pt").to(self.device)
 
-            max_model_len = 256
-            input_ids = inputs.get("input_ids")
-            input_len = input_ids.shape[1]
-            adjusted_max_length = max_model_len
+        max_model_len = 256
+        input_ids = inputs.get("input_ids")
+        input_len = input_ids.shape[1]
+        adjusted_max_length = max_model_len
 
-            if input_len >= max_model_len:
-                if verbose:
-                    logger.warning(
-                        "⚠️ Input length (%d tokens) hits or exceeds max context window (%d). Output may be truncated or degraded.",
-                        input_len,
-                        max_model_len,
-                    )
-                    adjusted_max_length = input_len
-                else:
-                    adjusted_max_length = max_model_len
+        if input_len >= max_model_len:
+            if verbose:
+                logger.warning(
+                    "⚠️ Input length (%d tokens) hits or exceeds max context window (%d). Output may be truncated or degraded.",
+                    input_len,
+                    max_model_len,
+                )
+                adjusted_max_length = input_len
+            else:
+                adjusted_max_length = max_model_len
 
-            outputs = self.model.generate(
-                **inputs,
-                max_length=adjusted_max_length,
-                num_beams=4,
-                early_stopping=True,
-                no_repeat_ngram_size=3,
-            )
-            return self.tokenizer.batch_decode(outputs, skip_special_tokens=True)[0]
-        except Exception as e:
-            logger.error("Error during model inference: %s", e)
-            return ""
+        outputs = self.model.generate(
+            **inputs,
+            max_length=adjusted_max_length,
+            num_beams=4,
+            early_stopping=True,
+            no_repeat_ngram_size=3,
+        )
+        return self.tokenizer.batch_decode(outputs, skip_special_tokens=True)[0]
 
     def translate(self, trg_lang: str, text: str) -> str:
         """
@@ -191,34 +172,30 @@ class Translator:
             target_lang (str): Target language code.
             text (str): Text to translate.
 
-        Raises:
-            ValueError: If the input text is empty or the target language is not supported.
-            RuntimeError: If the translation fails due to an error in the pipeline.
-
         Returns:
             str: Final translated output.
+
+        Raises:
+            ValueError: If the input text is empty.
+            ValueError: If the target language is not supported.
         """
-        try:
-            if not text:
-                raise ValueError("Input text cannot be empty.")
-            if trg_lang not in self.languages:
-                raise ValueError(
-                    f"Target language '{trg_lang}' is not supported by the translation model."
-                )
-            if self.src_lang == "ar":
-                sentences = sentence_tokenize(text)  # Use pyarabic for Arabic
-            # --------- Add sentence segmentation models for other languages here --------- #
-            else:
-                sentences = sent_tokenize(text)  # Use nltk for other languages
-            if not sentences:
-                raise ValueError("No sentences found in the input text.")
-            return " ".join(
-                [
-                    self._model_inference(trg_lang, sentence)
-                    for sentence in sentences
-                    if len(sentence) > 0
-                ]
+        if not text:
+            raise ValueError("Input text cannot be empty.")
+        if trg_lang not in self.languages:
+            raise ValueError(
+                f"Target language '{trg_lang}' is not supported by the translation model."
             )
-        except Exception as e:
-            logger.error("Error during translation pipeline: %s", e)
-            raise RuntimeError("Translation failed") from e
+        if self.src_lang == "ar":
+            sentences = sentence_tokenize(text)  # Use pyarabic for Arabic
+        # --------- Add sentence segmentation models for other languages here --------- #
+        else:
+            sentences = sent_tokenize(text)  # Use nltk for other languages
+        if not sentences:
+            raise ValueError("No sentences found in the input text.")
+        return " ".join(
+            [
+                self._model_inference(trg_lang, sentence)
+                for sentence in sentences
+                if len(sentence) > 0
+            ]
+        )
