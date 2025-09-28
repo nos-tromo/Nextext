@@ -25,7 +25,7 @@ def load_mappings(
     logger.info("Attempting to load mappings from '%s'", _JSON_PATH)
     with open(_JSON_PATH, "r", encoding="utf-8") as f:
         code2name = json.load(f)
-    logger.info("Successfully loaded mappings from file: %d", file)
+    logger.info("Successfully loaded mappings from file: %s", file)
     return code2name
 
 
