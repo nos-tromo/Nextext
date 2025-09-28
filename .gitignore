@@ -14,7 +14,7 @@ lib/
 models/
 output/
 prototypes/
-test/
+tests/
 uploads/
 
 # files
