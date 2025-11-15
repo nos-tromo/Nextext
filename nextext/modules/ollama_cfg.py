@@ -15,6 +15,10 @@ PROMPT_DIR: Path = Path(__file__).parent.parent / "utils" / "prompts"
 
 @dataclass
 class OllamaPipeline:
+    """
+    Ollama pipeline for processing text with various models.
+    """
+
     ollama_host: str = field(default=OLLAMA_HOST, init=False)
     model_file: str = "ollama_models.json"
     _ollama_model: str | None = field(default=None, init=False)
