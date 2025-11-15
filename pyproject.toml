@@ -19,6 +19,7 @@ dependencies = [
     "huggingface-hub>=0.26.2",
     "langdetect>=1.0.9",
     "llvmlite>=0.41.0",
+    "loguru>=0.7.3",
     "matplotlib>=3.9.2",
     "networkx>=3.4.2",
     "nltk>=3.9.1",
