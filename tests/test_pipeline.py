@@ -1,14 +1,21 @@
 from pathlib import Path
 
+import pandas as pd
 import pytest
 
 from nextext import pipeline
 
-pd = pytest.importorskip("pandas")
+pytest.importorskip("pandas")
 
 
 @pytest.fixture
 def disable_docker_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    Disable Docker environment detection by mocking the Path.exists method.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): The monkeypatch fixture for modifying behavior.
+    """
     original_exists = Path.exists
 
     def fake_exists(path: Path) -> bool:  # type: ignore[override]
@@ -21,6 +28,12 @@ def disable_docker_env(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.fixture
 def enable_docker_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    Enable Docker environment detection by mocking the Path.exists method.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): The monkeypatch fixture for modifying behavior.
+    """
     original_exists = Path.exists
 
     def fake_exists(path: Path) -> bool:  # type: ignore[override]
@@ -32,6 +45,12 @@ def enable_docker_env(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_get_api_key_from_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    Test getting API key from environment variables.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): The monkeypatch fixture for modifying behavior.
+    """
     monkeypatch.setattr(pipeline, "find_dotenv", lambda: "")
     monkeypatch.setattr(pipeline, "load_dotenv", lambda path: None)
     monkeypatch.setenv("API_TOKEN", "secret")
@@ -42,6 +61,14 @@ def test_get_api_key_from_environment(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_get_api_key_prompts_and_saves(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, disable_docker_env: None
 ) -> None:
+    """
+    Test getting API key from environment variables. If not found, prompts the user and saves it to a .env file.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): The monkeypatch fixture for modifying behavior.
+        tmp_path (Path): The temporary path fixture for creating temporary files.
+        disable_docker_env (None): The fixture to disable Docker environment detection.
+    """
     dotenv_path = tmp_path / ".env"
     saved: dict[str, str] = {}
 
@@ -50,6 +77,14 @@ def test_get_api_key_prompts_and_saves(
     monkeypatch.setattr(pipeline.getpass, "getpass", lambda prompt: "prompted-key")
 
     def fake_set_key(path: str, token: str, value: str) -> None:
+        """
+        Fake implementation of setting a key in the .env file.
+
+        Args:
+            path (str): The path to the .env file.
+            token (str): The environment variable name.
+            value (str): The value to set for the environment variable.
+        """
         saved["path"] = path
         saved["token"] = token
         saved["value"] = value
@@ -70,6 +105,16 @@ def test_get_api_key_prompts_and_saves(
 def test_get_api_key_docker_environment_raises(
     monkeypatch: pytest.MonkeyPatch, enable_docker_env: None
 ) -> None:
+    """
+    Test getting API key from environment variables in a Docker environment. Raises RuntimeError if not found.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): The monkeypatch fixture for modifying behavior.
+        enable_docker_env (None): The fixture to enable Docker environment detection.
+
+    Raises:
+        RuntimeError: If the API key is not found in the environment variables.
+    """
     monkeypatch.setattr(pipeline, "find_dotenv", lambda: "")
     monkeypatch.setattr(pipeline, "load_dotenv", lambda path: None)
     monkeypatch.delenv("API_KEY", raising=False)
@@ -81,6 +126,13 @@ def test_get_api_key_docker_environment_raises(
 def test_transcription_pipeline_invokes_transcriber(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """
+    Test the transcription pipeline to ensure it invokes the transcriber correctly.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): The monkeypatch fixture for modifying behavior.
+    """
+
     class DummyTranscriber:
         instance: "DummyTranscriber"
 
@@ -140,6 +192,13 @@ def test_transcription_pipeline_invokes_transcriber(
 def test_transcription_pipeline_falls_back_to_original_language(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """
+    Test the transcription pipeline to ensure it falls back to the original language.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): The monkeypatch fixture for modifying behavior.
+    """
+
     class DummyTranscriber:
         def __init__(self, *args, **kwargs) -> None:
             self.src_lang = None
@@ -172,6 +231,16 @@ def test_transcription_pipeline_falls_back_to_original_language(
 def test_translation_pipeline_returns_input_when_language_matches(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """
+    Test the translation pipeline to ensure it returns the input when the language matches.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): The monkeypatch fixture for modifying behavior.
+
+    Raises:
+        AssertionError: If the translation is attempted when languages match.
+    """
+
     class DummyTranslator:
         def __init__(self) -> None:
             pass
@@ -193,6 +262,13 @@ def test_translation_pipeline_returns_input_when_language_matches(
 def test_translation_pipeline_translates_each_row(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """
+    Test the translation pipeline to ensure it translates each row correctly.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): The monkeypatch fixture for modifying behavior.
+    """
+
     class DummyTranslator:
         def __init__(self) -> None:
             self.calls: list[tuple[str, str]] = []
@@ -215,6 +291,13 @@ def test_translation_pipeline_translates_each_row(
 
 
 def test_summarization_pipeline_formats_prompt(monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    Test the summarization pipeline to ensure it formats the prompt correctly.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): The monkeypatch fixture for modifying behavior.
+    """
+
     class DummyPipeline:
         def __init__(self) -> None:
             self.prompts: list[str] = []
@@ -229,7 +312,7 @@ def test_summarization_pipeline_formats_prompt(monkeypatch: pytest.MonkeyPatch) 
 
     ollama_pipeline = DummyPipeline()
 
-    result = pipeline.summarization_pipeline("Important content", ollama_pipeline)
+    result = pipeline.summarization_pipeline("Important content", ollama_pipeline)  # type: ignore[arg-type]
 
     assert result == "summary result"
     assert ollama_pipeline.prompts == ["Summarize: Important content"]
@@ -238,11 +321,27 @@ def test_summarization_pipeline_formats_prompt(monkeypatch: pytest.MonkeyPatch) 
 def test_summarization_pipeline_rejects_empty_text(
     ollama_pipeline: None = None,
 ) -> None:
+    """
+    Test the summarization pipeline to ensure it rejects empty text.
+
+    Args:
+        ollama_pipeline (None, optional): The Ollama pipeline instance. Defaults to None.
+
+    Raises:
+        ValueError: If the input text is empty.
+    """
     with pytest.raises(ValueError):
-        pipeline.summarization_pipeline("", object())
+        pipeline.summarization_pipeline("", object())  # type: ignore[arg-type]
 
 
 def test_wordlevel_pipeline_invokes_all_steps(monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    Test the word-level pipeline to ensure all steps are invoked.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): The monkeypatch fixture for modifying behavior.
+    """
+
     class DummyWordCounter:
         def __init__(self, text: str, language: str) -> None:
             self.text = text
@@ -287,6 +386,13 @@ def test_wordlevel_pipeline_invokes_all_steps(monkeypatch: pytest.MonkeyPatch) -
 
 
 def test_topics_pipeline_runs_all_stages(monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    Test the topics pipeline to ensure all stages are invoked.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): The monkeypatch fixture for modifying behavior.
+    """
+
     class DummyTopicModeling:
         instance: "DummyTopicModeling"
 
@@ -312,7 +418,7 @@ def test_topics_pipeline_runs_all_stages(monkeypatch: pytest.MonkeyPatch) -> Non
     monkeypatch.setattr(pipeline, "TopicModeling", DummyTopicModeling)
     df = pd.DataFrame({"text": ["text one", "text two"]})
 
-    result = pipeline.topics_pipeline(df, "en", "ollama")
+    result = pipeline.topics_pipeline(df, "en", "ollama")  # type: ignore[arg-type]
 
     assert result == [("Topic", "Summary")]
     instance = DummyTopicModeling.instance
@@ -321,6 +427,13 @@ def test_topics_pipeline_runs_all_stages(monkeypatch: pytest.MonkeyPatch) -> Non
 
 
 def test_hatespeech_pipeline_appends_results(monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    Test the hate speech pipeline to ensure it appends results.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): The monkeypatch fixture for modifying behavior.
+    """
+
     class DummyDetector:
         def __init__(self, ollama_pipeline) -> None:
             self.ollama = ollama_pipeline
@@ -331,7 +444,7 @@ def test_hatespeech_pipeline_appends_results(monkeypatch: pytest.MonkeyPatch) ->
     monkeypatch.setattr(pipeline, "HateSpeechDetector", DummyDetector)
     df = pd.DataFrame({"text": ["hello", "world"]})
 
-    result = pipeline.hatespeech_pipeline("ollama", df.copy())
+    result = pipeline.hatespeech_pipeline("ollama", df.copy())  # type: ignore[arg-type]
 
     assert list(result["hate_speech"]) == ["safe", "safe"]
 
@@ -339,6 +452,13 @@ def test_hatespeech_pipeline_appends_results(monkeypatch: pytest.MonkeyPatch) ->
 def test_hatespeech_pipeline_no_results_keeps_dataframe(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """
+    Test the hate speech pipeline to ensure it handles no results correctly.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): The monkeypatch fixture for modifying behavior.
+    """
+
     class DummyDetector:
         def __init__(self, ollama_pipeline) -> None:
             pass
@@ -349,6 +469,6 @@ def test_hatespeech_pipeline_no_results_keeps_dataframe(
     monkeypatch.setattr(pipeline, "HateSpeechDetector", DummyDetector)
     df = pd.DataFrame({"text": ["hello"]})
 
-    result = pipeline.hatespeech_pipeline("ollama", df.copy())
+    result = pipeline.hatespeech_pipeline("ollama", df.copy())  # type: ignore[arg-type]
 
     assert "hate_speech" not in result
