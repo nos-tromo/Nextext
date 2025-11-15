@@ -1,43 +1,102 @@
-import logging
+from __future__ import annotations
+
 import os
-from logging.handlers import RotatingFileHandler
+import sys
 from pathlib import Path
 
+from dotenv import load_dotenv
+from loguru import logger
 
-def setup_logging(
-    default_log_path: str = str(
-        Path(__file__).resolve().parents[2] / ".log" / "nextext.log"
-    ),
-    max_bytes=5_000_000,
-    backup_count=3,
-) -> None:
+load_dotenv()
+APP_NAME = os.getenv("APP_NAME", "nextext")
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
+LOG_ROTATION = os.getenv("LOG_ROTATION", "5 MB")
+LOG_RETENTION = os.getenv("LOG_RETENTION", "3")
+
+
+def _resolve_log_path(
+    default_log_path: str | os.PathLike[str] | None,
+) -> Path:
     """
-    Set up logging with rotating file and console handlers.
+    Resolve the log file path based on environment variable or default.
 
     Args:
-        default_log_path (str): Path to the log file (can be overridden by LOG_PATH env variable).
-        max_bytes (int): Maximum size of each log file before rotation.
-        backup_count (int): Number of rotated backups to keep.
+        default_log_path (str | os.PathLike[str] | None): The default log file path.
+
+    Returns:
+        Path: The resolved log file path.
     """
-    log_path = os.getenv("LOG_PATH", default_log_path)
-    log_dir = Path(log_path).parent
-    log_dir.mkdir(parents=True, exist_ok=True)
+    if default_log_path is None:
+        default_log_path = (
+            Path(__file__).resolve().parents[2] / ".logs" / f"{APP_NAME}.log"
+        )
 
-    log_format = "%(asctime)s | %(levelname)-8s | %(name)s | %(message)s"
-    formatter = logging.Formatter(log_format)
+    env_log_path = os.getenv("LOG_PATH")
+    log_path = Path(env_log_path) if env_log_path else Path(default_log_path)
 
-    # Console handler
-    console_handler = logging.StreamHandler()
-    console_handler.setFormatter(formatter)
-    console_handler.setLevel(logging.INFO)
+    if log_path.is_dir() or not log_path.suffix:
+        log_path = log_path / f"{APP_NAME}.log"
 
-    # File handler with rotation
-    file_handler = RotatingFileHandler(
-        log_path, maxBytes=max_bytes, backupCount=backup_count
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    return log_path
+
+
+def init_logger(
+    default_log_path: str | os.PathLike[str] | None = None,
+    *,
+    encoding="utf-8",
+    level: str | None = None,
+    rotation: str | int | None = None,
+    retention: str | int | None = None,
+    backtrace: bool = False,
+    diagnose: bool = False,
+) -> Path:
+    """
+    Set up logging for the application.
+
+    Args:
+        default_log_path (str | os.PathLike[str] | None, optional): The default log file path. Defaults to None.
+        encoding (str, optional): The log file encoding. Defaults to "utf-8".
+        level (str, optional): The log level. Defaults to "INFO".
+        rotation (str | int, optional): The log file rotation policy. Defaults to LOG_ROTATION.
+        retention (str | int | None, optional): The log file retention policy. Defaults to LOG_RETENTION.
+        backtrace (bool, optional): Whether to include backtrace information. Defaults to False.
+        diagnose (bool, optional): Whether to include diagnostic information. Defaults to False.
+
+    Returns:
+        Path: The path to the log file.
+    """
+    log_path = _resolve_log_path(default_log_path)
+
+    if level is None:
+        level = LOG_LEVEL
+    if rotation is None:
+        rotation = LOG_ROTATION
+    if retention is None:
+        retention = LOG_RETENTION
+
+    retention = retention if isinstance(retention, int) else int(retention)
+
+    logger.remove()
+
+    logger.add(
+        sink=sys.stderr,
+        level=level,
+        backtrace=backtrace,
+        diagnose=diagnose,
+        format="{time:YYYY-MM-DD HH:mm:ss.SSS} | {level:<8} | {name} | {message}",
     )
-    file_handler.setFormatter(formatter)
-    file_handler.setLevel(logging.DEBUG)
 
-    # Root logger config
-    logging.basicConfig(level=logging.INFO, handlers=[console_handler, file_handler])
-    logging.getLogger("nextext").info("Logging initialized.")
+    logger.add(
+        sink=log_path,
+        rotation=rotation,
+        retention=retention,
+        encoding=encoding,
+        level="DEBUG",
+        backtrace=True,
+        diagnose=diagnose,
+        enqueue=True,
+        format="{time:YYYY-MM-DD HH:mm:ss.SSS} | {level:<8} | {line:<4} | {name} | {message}",
+    )
+
+    return log_path

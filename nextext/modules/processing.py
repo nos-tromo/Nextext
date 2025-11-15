@@ -1,10 +1,8 @@
-import logging
 from pathlib import Path
 
 import pandas as pd
+from loguru import logger
 from matplotlib.figure import Figure
-
-logger = logging.getLogger(__name__)
 
 
 class FileProcessor:
@@ -12,7 +10,6 @@ class FileProcessor:
     FileProcessor is the central class for file processing within Nextext.
 
     Attributes:
-        logger (logging.Logger): Logger for the class.
         filename (str): The name of the input file without extension.
         output_path (Path): The output directory path.
 

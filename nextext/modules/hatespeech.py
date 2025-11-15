@@ -1,19 +1,17 @@
-import logging
 import re
 from dataclasses import dataclass, field
 
-from nextext.modules.ollama_cfg import OllamaPipeline
-from nextext.utils.logging_cfg import setup_logging
+from loguru import logger
 
-setup_logging()
-logger = logging.getLogger(__name__)
+from nextext.modules.ollama_cfg import OllamaPipeline
 
 
 @dataclass
 class HateSpeechDetector:
     """
     A class to detect hate speech in text using an Ollama model.
-    """    
+    """
+
     ollama_pipeline: OllamaPipeline = field(default_factory=OllamaPipeline)
 
     def _parse_binary_label(self, resp: str) -> int:
@@ -25,7 +23,7 @@ class HateSpeechDetector:
 
         Returns:
             int: The binary label (0 or 1) indicating hate speech, or -1 on error.
-        """        
+        """
         if resp is None:
             logger.error("Ollama returned None for label")
             return -1

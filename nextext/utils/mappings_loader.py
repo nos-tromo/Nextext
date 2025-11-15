@@ -1,9 +1,8 @@
 import json
-import logging
 from functools import lru_cache
 from pathlib import Path
 
-logger = logging.getLogger(__name__)
+from loguru import logger
 
 
 @lru_cache

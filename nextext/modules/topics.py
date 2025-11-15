@@ -1,5 +1,3 @@
-import logging
-
 import numpy as np
 import pandas as pd
 import pycountry
@@ -9,6 +7,7 @@ from bertopic import BERTopic
 from bertopic.representation import PartOfSpeech
 from camel_tools.tokenizers.word import simple_word_tokenize
 from hdbscan import HDBSCAN
+from loguru import logger
 from nltk.corpus import stopwords
 from nltk.tokenize import sent_tokenize
 from sentence_transformers import SentenceTransformer
@@ -20,8 +19,6 @@ from umap import UMAP
 from nextext.modules.ollama_cfg import OllamaPipeline
 from nextext.utils.mappings_loader import load_mappings
 from nextext.utils.spacy_model_loader import download_spacy_model
-
-logger = logging.getLogger(__name__)
 
 
 class TopicModeling:
@@ -39,7 +36,6 @@ class TopicModeling:
         embedding_model (SentenceTransformer | None): Model for document embeddings.
         topic_model (BERTopic | None): BERTopic model instance.
         topic_df (pd.DataFrame | None): DataFrame containing topic information.
-        logger (logging.Logger): Logger instance for logging messages.
 
     Methods:
         _lang_code_to_name(lang_code: str) -> str | None:
@@ -373,7 +369,7 @@ class TopicModeling:
                 verbose=verbose,
             )
         except Exception as e:
-            logging.error("Error loading topic modeling pipeline: %s", e)
+            logger.error("Error loading topic modeling pipeline: %s", e)
 
     def _embed_docs(self) -> np.ndarray | None:
         """
@@ -383,14 +379,14 @@ class TopicModeling:
             list[list[float]]: A list of embeddings for each document.
         """
         if self.topic_model is None or self.embedding_model is None:
-            logging.error("Topic model or embedding model is not initialized.")
+            logger.error("Topic model or embedding model is not initialized.")
             return None
         try:
             return self.embedding_model.encode(
                 self.docs, show_progress_bar=True, device=self.device
             )
         except Exception as e:
-            logging.error("Error embedding documents: %s", e)
+            logger.error("Error embedding documents: %s", e)
             return None
 
     def fit_topic_model(self) -> pd.DataFrame:
@@ -404,7 +400,7 @@ class TopicModeling:
             ValueError: If the topic model is not initialized or if there are not enough documents.
         """
         if len(self.docs) < 5:
-            logging.warning("Not enough documents for topic modeling. Skipping fit.")
+            logger.warning("Not enough documents for topic modeling. Skipping fit.")
         if self.topic_model is not None:
             # Ensure the embedding model is loaded
             if self.embedding_model is None:
@@ -412,16 +408,14 @@ class TopicModeling:
             # Embed the documents
             embeddings = self._embed_docs()
             if embeddings is None:
-                logging.error("Failed to embed documents. Cannot fit topic model.")
+                logger.error("Failed to embed documents. Cannot fit topic model.")
                 return pd.DataFrame()
             # Fit the topic model
-            self.topic_model.fit_transform(
-                documents=self.docs, embeddings=embeddings
-            )
+            self.topic_model.fit_transform(documents=self.docs, embeddings=embeddings)
             self.topic_df = self.topic_model.get_topic_info()
             return self.topic_df
         else:
-            logging.error("Topic model is not initialized.")
+            logger.error("Topic model is not initialized.")
             return pd.DataFrame()
 
     def summarize_topics(
@@ -442,7 +436,7 @@ class TopicModeling:
         topic_summaries: list[str] = []
 
         if self.topic_df is None or self.topic_df.empty:
-            logging.error("Topic DataFrame is not available for summarization.")
+            logger.error("Topic DataFrame is not available for summarization.")
             return []
 
         for keyword, doc in zip(

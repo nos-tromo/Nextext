@@ -1,7 +1,8 @@
 import argparse
-import logging
 from pathlib import Path
 from typing import Optional
+
+from loguru import logger
 
 from nextext.modules.ollama_cfg import OllamaPipeline
 from nextext.modules.processing import FileProcessor
@@ -14,10 +15,9 @@ from nextext.pipeline import (
     translation_pipeline,
     wordlevel_pipeline,
 )
-from nextext.utils.logging_cfg import setup_logging
+from nextext.utils.logging_cfg import init_logger
 
-setup_logging()
-logger = logging.getLogger(__name__)
+init_logger()
 
 
 def parse_arguments(args_list: Optional[list] = None) -> argparse.Namespace:
@@ -152,7 +152,6 @@ def main() -> None:
     This function orchestrates the entire process, including transcription, translation,
     word statistics, and topic modeling.
     It handles the command-line arguments and manages the flow of data through the various modules.
-    It also sets up logging and error handling for the entire pipeline.
     """
     logger.info("\n\nInitiating Nextext...\n")
 

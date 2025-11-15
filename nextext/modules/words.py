@@ -1,4 +1,3 @@
-import logging
 from collections import Counter, defaultdict
 
 import arabic_reshaper
@@ -8,6 +7,7 @@ import pandas as pd
 import spacy
 from bidi.algorithm import get_display
 from camel_tools.tokenizers.word import simple_word_tokenize
+from loguru import logger
 from matplotlib.figure import Figure
 from pyvis.network import Network
 from spacy.language import Language
@@ -17,8 +17,6 @@ from wordcloud import WordCloud
 from nextext.utils.font_loader import load_font_file
 from nextext.utils.mappings_loader import load_mappings
 from nextext.utils.spacy_model_loader import download_spacy_model
-
-logger = logging.getLogger(__name__)
 
 
 class WordCounter:

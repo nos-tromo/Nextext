@@ -1,12 +1,10 @@
-import logging
 import subprocess
 import sys
 
 import nltk
+from loguru import logger
 
 from nextext.utils.mappings_loader import load_mappings
-
-logger = logging.getLogger(__name__)
 
 
 nltk.download("punkt_tab", quiet=True)

@@ -1,16 +1,14 @@
-import logging
 from typing import Any
 
 import pycountry
 import torch
 from langdetect import detect
+from loguru import logger
 from nltk import sent_tokenize
 from pyarabic.araby import sentence_tokenize
 from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
 
 from nextext.utils.mappings_loader import load_mappings
-
-logger = logging.getLogger(__name__)
 
 
 class Translator:
@@ -19,7 +17,6 @@ class Translator:
 
     Attributes:
         madlad_languages (dict): A dictionary mapping MADLAD language codes to their names.
-        logger (logging.Logger): Logger for the Translator class.
         tokenizer (AutoTokenizer): Tokenizer for the translation model.
         model (AutoModelForSeq2SeqLM): The translation model.
         device (torch.device): The device on which the model is loaded (CPU, CUDA, or MPS).

@@ -1,5 +1,4 @@
 import gc
-import logging
 from datetime import timedelta
 from pathlib import Path
 from typing import Any, Optional
@@ -8,11 +7,10 @@ import numpy as np
 import pandas as pd
 import torch
 import whisperx
+from loguru import logger
 from whisperx.diarize import DiarizationPipeline
 
 from nextext.utils.mappings_loader import load_mappings
-
-logger = logging.getLogger(__name__)
 
 
 class WhisperTranscriber:

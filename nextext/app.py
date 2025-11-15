@@ -1,8 +1,3 @@
-import logging
-
-logging.getLogger("streamlit.watcher.local_sources_watcher").setLevel(logging.ERROR)
-logging.getLogger("streamlit.runtime.scriptrunner_utils").setLevel(logging.ERROR)
-
 import sys
 import tempfile
 from pathlib import Path
@@ -22,11 +17,10 @@ from nextext.pipeline import (
     translation_pipeline,
     wordlevel_pipeline,
 )
-from nextext.utils.logging_cfg import setup_logging
+from nextext.utils.logging_cfg import init_logger
 from nextext.utils.mappings_loader import kv_to_vk, load_and_sort_mappings
 
-setup_logging()
-logger = logging.getLogger(__name__)
+init_logger()
 
 
 def _run_pipeline(tmp_file: Path, opts: dict) -> None:
@@ -88,13 +82,15 @@ def _run_pipeline(tmp_file: Path, opts: dict) -> None:
         raise ConnectionError(
             "Ollama server is not reachable. Please ensure it is running and accessible."
         )
-    
+
     # Topic modelling
     with st.spinner("Running topic modelling… ⏳"):
         if opts["topics"]:
             topics_output = topics_pipeline(
                 data=df,
-                language=opts["trg_lang" if opts["task"] == "translate" else "src_lang"],
+                language=opts[
+                    "trg_lang" if opts["task"] == "translate" else "src_lang"
+                ],
                 ollama_pipeline=ollama_pipeline,
             )
             if topics_output is not None:

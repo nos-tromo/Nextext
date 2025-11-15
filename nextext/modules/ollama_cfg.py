@@ -1,4 +1,3 @@
-import logging
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -6,10 +5,9 @@ from pathlib import Path
 import ollama
 import requests
 import torch
+from loguru import logger
 
 from nextext.utils.mappings_loader import load_mappings
-
-logger = logging.getLogger(__name__)
 
 OLLAMA_HOST: str = os.getenv("OLLAMA_HOST", "http://localhost:11434")
 PROMPT_DIR: Path = Path(__file__).parent.parent / "utils" / "prompts"

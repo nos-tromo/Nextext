@@ -1,7 +1,6 @@
-import logging
 from pathlib import Path
 
-logger = logging.getLogger(__name__)
+from loguru import logger
 
 
 def load_font_file(file: str, utils: Path = Path("utils") / "fonts") -> Path:
