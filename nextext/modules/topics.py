@@ -90,13 +90,13 @@ class TopicModeling:
             data = " ".join(data)
         elif isinstance(data, pd.DataFrame):
             logger.info(
-                "Input data is a DataFrame. Extracting column '%s' for processing.",
+                "Input data is a DataFrame. Extracting column '{}' for processing.",
                 column,
             )
             data = " ".join(data[column].astype(str).tolist())
         else:
             logger.error(
-                "Input data must be a string, list of strings, or a DataFrame. Received: %s",
+                "Input data must be a string, list of strings, or a DataFrame. Received: {}",
                 type(data),
             )
             raise ValueError("Input data must be a string or a list of strings.")
@@ -117,7 +117,7 @@ class TopicModeling:
 
         spacy_languages = load_mappings(spacy_language_file)
         self.nlp = self._load_spacy_model(lang_code, spacy_languages)
-        logger.info("Loaded spaCy model for language '%s': %s", lang_code, self.nlp)
+        logger.info("Loaded spaCy model for language '{}': {}", lang_code, self.nlp)
 
         self.stop_words = stopwords.words(self.language, "english")
         self.embedding_model: SentenceTransformer | None = None
@@ -139,10 +139,10 @@ class TopicModeling:
             if lang_obj and hasattr(lang_obj, "name"):
                 return lang_obj.name.lower()
             else:
-                logger.error("Could not find language name for code: %s", lang_code)
+                logger.error("Could not find language name for code: {}", lang_code)
                 return None
         except Exception as e:
-            logger.error("Error converting language: %s.", e, exc_info=True)
+            logger.error("Error converting language: {}.", e, exc_info=True)
             return None
 
     def _load_spacy_model(
@@ -171,7 +171,7 @@ class TopicModeling:
                 model_id = spacy_languages.get(language)
             if model_id is None:
                 logger.warning(
-                    "Language '%s' not found in spaCy mappings. Using multilingual model.",
+                    "Language '{}' not found in spaCy mappings. Using multilingual model.",
                     language,
                 )
                 model_id = spacy_languages.get("xx")
@@ -180,13 +180,13 @@ class TopicModeling:
                 return spacy.load(model_id)
             else:
                 logger.error(
-                    "No valid spaCy model id found for language '%s'.",
+                    "No valid spaCy model id found for language '{}'.",
                     language,
                 )
                 return None
         except Exception as e:
             logger.warning(
-                "Failed to load the language model for language '%s': %s", language, e
+                "Failed to load the language model for language '{}': {}", language, e
             )
             return None
 
@@ -206,7 +206,7 @@ class TopicModeling:
         try:
             return SentenceTransformer(model, device=self.device, cache_folder="models")
         except Exception as e:
-            logger.error("Error loading sentence transformer model: %s", e)
+            logger.error("Error loading sentence transformer model: {}", e)
             return None
 
     def _load_umap_model(
@@ -249,7 +249,7 @@ class TopicModeling:
                 random_state=random_state,
             )
         except Exception as e:
-            logger.error("Error loading UMAP model: %s", e)
+            logger.error("Error loading UMAP model: {}", e)
             return None
 
     def _load_hdbscan_model(
@@ -279,7 +279,7 @@ class TopicModeling:
                 prediction_data=prediction_data,
             )
         except Exception as e:
-            logger.error("Error loading HDBSCAN model: %s", e)
+            logger.error("Error loading HDBSCAN model: {}", e)
             return None
 
     def _load_vectorizer_model(
@@ -297,7 +297,7 @@ class TopicModeling:
         try:
             return CountVectorizer(stop_words=self.stop_words, ngram_range=ngram_range)
         except Exception as e:
-            logger.error("Error loading vectorizer model: %s", e)
+            logger.error("Error loading vectorizer model: {}", e)
             return None
 
     def _load_representation_model(self) -> PartOfSpeech | None:
@@ -316,7 +316,7 @@ class TopicModeling:
                 )
                 return None
         except Exception as e:
-            logger.error("Error loading representation model: %s", e)
+            logger.error("Error loading representation model: {}", e)
             return None
 
     def load_pipeline(
@@ -369,7 +369,7 @@ class TopicModeling:
                 verbose=verbose,
             )
         except Exception as e:
-            logger.error("Error loading topic modeling pipeline: %s", e)
+            logger.error("Error loading topic modeling pipeline: {}", e)
 
     def _embed_docs(self) -> np.ndarray | None:
         """
@@ -386,7 +386,7 @@ class TopicModeling:
                 self.docs, show_progress_bar=True, device=self.device
             )
         except Exception as e:
-            logger.error("Error embedding documents: %s", e)
+            logger.error("Error embedding documents: {}", e)
             return None
 
     def fit_topic_model(self) -> pd.DataFrame:

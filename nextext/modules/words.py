@@ -83,7 +83,7 @@ class WordCounter:
         spacy_languages = load_mappings(spacy_models_file)
         self.spacy_entities = load_mappings(spacy_entities_file)
         self.nlp = self._load_spacy_model(language, spacy_languages)
-        logger.info("Loaded spaCy model for language '%s': %s", language, self.nlp)
+        logger.info("Loaded spaCy model for language '{}': {}", language, self.nlp)
 
         # Set the font path for word cloud generation
         self.font_path = load_font_file(font_file)
@@ -119,7 +119,7 @@ class WordCounter:
             model_id = spacy_languages.get(language)
         if model_id is None:
             logger.warning(
-                "Language '%s' not found in spaCy mappings. Using multilingual model.",
+                "Language '{}' not found in spaCy mappings. Using multilingual model.",
                 language,
             )
             model_id = spacy_languages.get("xx")
@@ -128,7 +128,7 @@ class WordCounter:
             return spacy.load(model_id)
         else:
             logger.error(
-                "No valid spaCy model id found for language '%s'.",
+                "No valid spaCy model id found for language '{}'.",
                 language,
             )
             return None

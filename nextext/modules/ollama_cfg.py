@@ -26,7 +26,7 @@ class OllamaPipeline:
         """
         Post-initialization to set up the Ollama host and load the system prompt.
         """
-        logger.info("Ollama host set to: %s", self.ollama_host)
+        logger.info("Ollama host set to: {}", self.ollama_host)
         self.sys_prompt = self.load_prompt().format(language=self.out_language)
 
     def _get_ollama_health(self) -> bool:
@@ -63,12 +63,12 @@ class OllamaPipeline:
                 if torch.backends.mps.is_available()
                 else models.get("cpu", self.fallback_model)
             )
-            logger.info("Loaded Ollama model: %s", self._ollama_model)
+            logger.info("Loaded Ollama model: {}", self._ollama_model)
 
         if self._ollama_model is None:
             self._ollama_model = self.fallback_model
             logger.warning(
-                "Could not determine Ollama model from system capabilities. Falling back to '%s'.",
+                "Could not determine Ollama model from system capabilities. Falling back to '{}'.",
                 self.fallback_model,
             )
 
@@ -91,7 +91,7 @@ class OllamaPipeline:
         if not prompt_path.is_file():
             raise FileNotFoundError(f"Prompt file for keyword '{keyword}' not found.")
         with open(prompt_path, "r", encoding="utf-8") as f:
-            logger.info("Loaded prompt from '%s'", prompt_path)
+            logger.info("Loaded prompt from '{}'", prompt_path)
             return f.read()
 
     def call_ollama_server(

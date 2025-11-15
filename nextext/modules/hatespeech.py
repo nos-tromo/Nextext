@@ -38,7 +38,7 @@ class HateSpeechDetector:
             if re.fullmatch(r"[01]", tok):
                 return int(tok)
 
-        logger.error("Non-binary Ollama response: %r", resp)
+        logger.error("Non-binary Ollama response: {}", resp)
         return -1
 
     def _run_inference(

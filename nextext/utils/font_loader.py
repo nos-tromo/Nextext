@@ -19,5 +19,5 @@ def load_font_file(file: str, utils: Path = Path("utils") / "fonts") -> Path:
     """
     root = Path(__file__).resolve().parent.parent
     font_path = root / utils / file
-    logger.info("Loaded font file '%s' from path '%s'", file, font_path)
+    logger.info("Loaded font file '{}' from path '{}'", file, font_path)
     return font_path

@@ -26,9 +26,9 @@ def download_spacy_model(model_id: str) -> None:
             [sys.executable, "-m", "spacy", "download", model_id], check=True
         )
     except subprocess.CalledProcessError as e:
-        logger.error("⚠️ Failed to download %s: %s", model_id, e)
+        logger.error("⚠️ Failed to download {}: {}", model_id, e)
     except Exception as e:
-        logger.error("💥 Unexpected error with %s: %s", model_id, e)
+        logger.error("💥 Unexpected error with {}: {}", model_id, e)
 
 
 def main() -> None:
@@ -49,7 +49,7 @@ def main() -> None:
         logger.info("\n✅ All small models downloaded successfully.")
 
     except Exception as e:
-        logger.exception("An unexpected error occurred: %s", e)
+        logger.exception("An unexpected error occurred: {}", e)
         raise
 
 

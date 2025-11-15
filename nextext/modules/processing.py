@@ -55,11 +55,11 @@ class FileProcessor:
         if not output_path.exists():
             output_path.mkdir(parents=True, exist_ok=True)
             logger.info(
-                "Output directory %s does not exist. Creating a new one.",
+                "Output directory {} does not exist. Creating a new one.",
                 output_path,
             )
         else:
-            logger.info("Output directory %s already exists.", output_path)
+            logger.info("Output directory {} already exists.", output_path)
         return filename, output_path
 
     def write_file_output(
@@ -111,17 +111,17 @@ class FileProcessor:
 
             # File saving notifications
             if output_file_path_csv.exists():
-                logger.info("Saved output: %s", output_file_path_csv)
+                logger.info("Saved output: {}", output_file_path_csv)
             if output_file_path_txt.exists():
-                logger.info("Saved output: %s", output_file_path_txt)
+                logger.info("Saved output: {}", output_file_path_txt)
             if output_file_path_excel.exists():
-                logger.info("Saved output: %s", output_file_path_excel)
+                logger.info("Saved output: {}", output_file_path_excel)
             if output_file_path_png.exists():
-                logger.info("Saved output: %s", output_file_path_png)
+                logger.info("Saved output: {}", output_file_path_png)
 
         else:
             logger.error(
-                "Data type not supported for writing output: %s",
+                "Data type not supported for writing output: {}",
                 type(data),
                 exc_info=True,
             )
