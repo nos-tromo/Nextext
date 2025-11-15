@@ -1,6 +1,5 @@
 import argparse
 from pathlib import Path
-from typing import Optional
 
 from loguru import logger
 
@@ -20,7 +19,7 @@ from nextext.utils.logging_cfg import init_logger
 init_logger()
 
 
-def parse_arguments(args_list: Optional[list] = None) -> argparse.Namespace:
+def parse_arguments(args_list: list | None = None) -> argparse.Namespace:
     """
     Parse command-line arguments for the Nextext CLI.
     This function sets up the argument parser with various options for file processing,
@@ -34,7 +33,7 @@ def parse_arguments(args_list: Optional[list] = None) -> argparse.Namespace:
     while allowing users to customize their processing pipeline as needed.
 
     Args:
-        args_list (Optional[list], optional): Drop-in list of arguments to parse.
+        args_list (list | None, optional): Drop-in list of arguments to parse.
         If None, uses `sys.argv` to parse command-line arguments. Defaults to None.
 
     Raises:
