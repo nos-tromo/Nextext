@@ -1,9 +1,24 @@
-# all hidden files and directories
-.*
-!.dockerignore
-!.gitignore
+# -----------------
+# Global
+# -----------------
+.DS_Store
+.env
+.mypy_cache
+.idea/
+.vscode/
+*.code-workspace
+*.bin
+*.env
+*.ipynb
+*.log
+*.pyc
+*.pyo
+*.so
+*Zone.Identifier
+*.egg-info/
 
 # directories
+.*
 *.egg-info/
 __pycache__/
 build/
@@ -13,8 +28,6 @@ legacy/
 lib/
 models/
 output/
-prototypes/
-tests/
 uploads/
 
 # files
@@ -35,3 +48,14 @@ uploads/
 *.webm
 *.xlsx
 *.zip
+
+# ==================================
+# Exceptions
+# ==================================
+!.dockerignore
+!.gitignore
+!.github/
+!.github/workflows/
+!.github/workflows/ci.yml
+!.pre-commit-config.yaml
+!AGENTS.md
