@@ -46,9 +46,6 @@ class Translator:
             madlad_language_file (str): Path to the MADLAD language mapping file.
             madlad_models_file (str): Path to the MADLAD models mapping file.
             fallback_model (str): Fallback model name if no suitable model is found.
-
-        Raises:
-            RuntimeError: If the model cannot be loaded from local cache or downloaded.
         """
         self.languages = load_mappings(madlad_language_file)
         models = load_mappings(madlad_models_file)
@@ -80,7 +77,6 @@ class Translator:
 
         Raises:
             FileNotFoundError: If the model is not found in local cache and local_only is True.
-            RuntimeError: If the model cannot be loaded due to an error.
         """
         device = torch.device(
             "cuda"
@@ -175,6 +171,7 @@ class Translator:
         Raises:
             ValueError: If the input text is empty.
             ValueError: If the target language is not supported.
+            ValueError: If no sentences are found in the input text.
         """
         if not text:
             raise ValueError("Input text cannot be empty.")

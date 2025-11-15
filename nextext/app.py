@@ -30,6 +30,9 @@ def _run_pipeline(tmp_file: Path, opts: dict) -> None:
     Args:
         tmp_file (Path): Path to the temporary file.
         opts (dict): Options for the pipeline.
+
+    Raises:
+        ConnectionError: If the Ollama server is not reachable.
     """
     # Transcription
     with st.spinner("Transcribing… this might take a while ⏳"):

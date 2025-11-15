@@ -152,6 +152,10 @@ def main() -> None:
     This function orchestrates the entire process, including transcription, translation,
     word statistics, and topic modeling.
     It handles the command-line arguments and manages the flow of data through the various modules.
+
+    Raises:
+        ValueError: If an invalid task is specified.
+        ConnectionError: If the Ollama server is not reachable for analysis tasks.
     """
     logger.info("\n\nInitiating Nextext...\n")
 
@@ -174,6 +178,7 @@ def main() -> None:
         )
         args.src_lang = updated_src_lang  # Update source language if detected
     else:
+        logger.error("Invalid task specified: {}", args.task)
         raise ValueError("Invalid task. Please specify 'transcribe' or 'translate'.")
 
     # Machine translate the transcribed text
@@ -203,6 +208,7 @@ def main() -> None:
     if args.topics or args.summarize or args.toxicity:
         ollama_pipeline = OllamaPipeline()
         if not ollama_pipeline._get_ollama_health():
+            logger.error("Ollama server is not reachable.")
             raise ConnectionError(
                 "Ollama server is not reachable. Please ensure it is running and accessible."
             )

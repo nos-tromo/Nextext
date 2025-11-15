@@ -26,6 +26,7 @@ def get_api_key(token: str = "API_KEY") -> str:
 
     Raises:
         RuntimeError: If the key cannot be retrieved in a non-interactive (e.g. Docker) environment.
+        ValueError: If the key is not found in the environment variables.
     """
     dotenv_path = find_dotenv()
     if dotenv_path:
@@ -132,6 +133,9 @@ def summarization_pipeline(
 
     Returns:
         str: The summarized text or None if an error occurs.
+
+    Raises:
+        ValueError: If the input text is empty.
     """
     if not text:
         raise ValueError("Text cannot be empty.")

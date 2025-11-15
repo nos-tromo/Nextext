@@ -44,11 +44,11 @@ class OllamaPipeline:
         """
         Load and return the appropriate Ollama model based on system capabilities.
 
-        Raises:
-            RuntimeError: If the model cannot be determined.
-
         Returns:
             str: The name of the Ollama model to use.
+
+        Raises:
+            RuntimeError: If the model cannot be determined.
         """
         if self._ollama_model is None:
             models = load_mappings(self.model_file)
