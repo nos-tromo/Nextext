@@ -66,6 +66,13 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools]
 include-package-data = true
 
+[tool.setuptools.package-data]
+nextext = [
+    "utils/fonts/*.ttf",
+    "utils/mappings/*.json",
+    "utils/prompts/*.txt",
+]
+
 [tool.setuptools.packages.find]
 where = ["."]
 
@@ -76,8 +83,8 @@ package = true
 nextext = { workspace = true }
 
 [[tool.uv.index]]
-name = "pytorch-cu130"
-url = "https://download.pytorch.org/whl/cu130"
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
 explicit = true
 
 [[tool.uv.index]]
