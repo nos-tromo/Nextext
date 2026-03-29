@@ -109,9 +109,11 @@ class WordCounter:
         """
         if language == "ar":
             nlp = spacy.blank("ar")
-            nlp.tokenizer = lambda text, nlp=nlp: Doc(
-                nlp.vocab, words=simple_word_tokenize(text)
-            )
+
+            def arabic_tokenizer(text: str) -> Doc:
+                return Doc(nlp.vocab, words=simple_word_tokenize(text))
+
+            nlp.tokenizer = arabic_tokenizer
             return nlp
         # Add other language-specific handling if needed
         model_id = None
