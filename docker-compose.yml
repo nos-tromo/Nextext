@@ -1,8 +1,20 @@
-##########################################################
-# Networks
-##########################################################
-networks:
-  nextextnet:
+#############################################################
+# Docker Compose configuration for Nextext and Ollama services
+# This configuration defines two main services: Nextext (for text processing)
+# and Ollama (for language model hosting). Each service has both CPU and CUDA
+# profiles to allow for flexible deployment based on available hardware.
+#############################################################
+x-build-args: &build-args
+  HTTP_PROXY: ${HTTP_PROXY:-}
+  HTTPS_PROXY: ${HTTPS_PROXY:-}
+  NO_PROXY: ${NO_PROXY:-}
+  http_proxy: ${http_proxy:-}
+  https_proxy: ${https_proxy:-}
+  no_proxy: ${no_proxy:-}
+  PYTHON_SLIM_BOOKWORM_IMAGE: ${PYTHON_SLIM_BOOKWORM_IMAGE:-python:3.11-slim-bookworm}
+  PYTHON_SLIM_IMAGE: ${PYTHON_SLIM_IMAGE:-python:3.11-slim}
+  NVIDIA_CUDA_RUNTIME_IMAGE: ${NVIDIA_CUDA_RUNTIME_IMAGE:-nvidia/cuda:13.0.2-cudnn-runtime-ubuntu22.04}
+  VLLM_OPENAI_IMAGE: ${VLLM_OPENAI_IMAGE:-vllm/vllm-openai:v0.17.1}
 
 services:
   ##########################################################
@@ -12,45 +24,43 @@ services:
     profiles: ["cpu"]
     build:
       context: .
-      dockerfile: Dockerfile
-      target: cpu
-    ports:
+      dockerfile: Dockerfile.cpu
+      args:
+        <<: *build-args
+    ports: &nextext-ports
       - "8501:8501"
-    environment:
-      - API_KEY=${API_KEY}
-      - LOG_PATH=/app/logs/nextext.log
-      - OLLAMA_HOST=http://ollama:11434
-      - STREAMLIT_BROWSER_GATHER_USAGE_STATS=false
-      - STREAMLIT_SERVER_MAX_UPLOAD_SIZE=8192
-      - USE_DEVICE=auto
-    volumes:
-      - model_cache:/root/.cache
-      - nextext_logs:/app/logs
+    environment: &backend-env
+      API_KEY: $API_KEY
+      INFERENCE_PROVIDER: ${INFERENCE_PROVIDER:-ollama}
+      LOG_PATH: /var/log/nextext/nextext.log
+      OPENAI_API_BASE: http://ollama-server:11434
+      STREAMLIT_BROWSER_GATHER_USAGE_STATS: false
+      STREAMLIT_SERVER_MAX_UPLOAD_SIZE: 8192
+      USE_DEVICE: auto
+    volumes: &backend-volumes
+      - huggingface-cache:/root/.cache/huggingface/hub
+      - nextext-cache:/root/.cache/nextext
+      - nextext-logs:/var/log/nextext
+      - nltk-cache:/root/nltk_data
+      - uv-cache:/root/.cache/uv
     networks:
-      nextextnet:
+      nextext-net:
 
   ##########################################################
-  # Nextext (GPU)
+  # Nextext (CUDA)
   ##########################################################
-  nextext-gpu:
-    profiles: ["gpu"]
-    platform: linux/amd64
+  nextext-cuda:
+    profiles: ["cuda"]
     build:
       context: .
-      dockerfile: Dockerfile
-      target: gpu
-    ports:
-      - "8501:8501"
+      dockerfile: Dockerfile.cuda
+      args:
+        <<: *build-args
+    ports: *nextext-ports
     environment:
-      - API_KEY=${API_KEY}
-      - LOG_PATH=/app/logs/nextext-gpu.log
-      - OLLAMA_HOST=http://ollama:11434
-      - STREAMLIT_BROWSER_GATHER_USAGE_STATS=false
-      - STREAMLIT_SERVER_MAX_UPLOAD_SIZE=8192
-      - USE_DEVICE=auto
-    volumes:
-      - model_cache:/root/.cache
-      - nextext_logs:/app/logs
+      <<: *backend-env
+      NVIDIA_VISIBLE_DEVICES: all
+    volumes: *backend-volumes
     deploy:
       resources:
         reservations:
@@ -58,33 +68,36 @@ services:
             - driver: nvidia
               capabilities: [gpu]
     networks:
-      nextextnet:
+      nextext-net:
 
   ##########################################################
   # Ollama (CPU)
   ##########################################################
   ollama:
     profiles: ["cpu"]
-    image: ollama/ollama:latest
-    ports:
-      - "11434:11434"
-    volumes:
-      - ollama_models:/root/.ollama
-    networks:
-      nextextnet:
+    image: ollama/ollama:0.17.7
+    ports: &ollama-ports
+      - 11434:11434
+    environment: &ollama-env
+      OLLAMA_HOST: 0.0.0.0
+    volumes: &ollama-volumes
+      - ollama-cache:/root/.ollama
+    networks: &ollama-net
+      nextext-net:
+        aliases:
+          - ollama-server
 
   ##########################################################
-  # Ollama (GPU)
+  # Ollama (CUDA)
   ##########################################################
-  ollama-gpu:
-    profiles: ["gpu"]
-    image: ollama/ollama:latest
-    ports:
-      - "11434:11434"
+  ollama-cuda:
+    profiles: ["cuda"]
+    image: ollama/ollama:0.17.7
+    ports: *ollama-ports
     environment:
-      - NVIDIA_VISIBLE_DEVICES=all
-    volumes:
-      - ollama_models:/root/.ollama
+      <<: *ollama-env
+      NVIDIA_VISIBLE_DEVICES: all
+    volumes: *ollama-volumes
     deploy:
       resources:
         reservations:
@@ -92,16 +105,22 @@ services:
             - driver: nvidia
               count: all
               capabilities: [gpu]
-    runtime: nvidia
-    restart: always
-    networks:
-      nextextnet:
+    restart: unless-stopped
+    networks: *ollama-net
 
 ##########################################################
 # Volumes
 ##########################################################
 volumes:
-  model_cache:
-  nextext_logs:
-  nltk_cache:
-  ollama_models:
+  huggingface-cache:
+  nextext-cache:
+  nextext-logs:
+  nltk-cache:
+  ollama-cache:
+  uv-cache:  
+
+##########################################################
+# Networks
+##########################################################
+networks:
+  nextext-net:
