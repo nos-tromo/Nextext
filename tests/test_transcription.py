@@ -17,7 +17,9 @@ def _build_transcriber() -> WhisperTranscriber:
     return transcriber
 
 
-def test_merge_transcriptions_keeps_final_sentence_without_terminal_punctuation() -> None:
+def test_merge_transcriptions_keeps_final_sentence_without_terminal_punctuation() -> (
+    None
+):
     """Test that `_merge_transcriptions_by_sentence` correctly merges transcriptions into sentences
     even when the final sentence does not end with terminal punctuation.
     """
