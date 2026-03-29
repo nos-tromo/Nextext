@@ -4,6 +4,11 @@ from nextext.modules.transcription import WhisperTranscriber
 
 
 def _build_transcriber() -> WhisperTranscriber:
+    """Build a WhisperTranscriber instance for testing.
+
+    Returns:
+        WhisperTranscriber: A WhisperTranscriber instance with default column settings.
+    """
     transcriber = WhisperTranscriber.__new__(WhisperTranscriber)
     transcriber.start_column = "start"
     transcriber.end_column = "end"
@@ -13,6 +18,9 @@ def _build_transcriber() -> WhisperTranscriber:
 
 
 def test_merge_transcriptions_keeps_final_sentence_without_terminal_punctuation() -> None:
+    """Test that `_merge_transcriptions_by_sentence` correctly merges transcriptions into sentences
+    even when the final sentence does not end with terminal punctuation.
+    """
     transcriber = _build_transcriber()
     data = pd.DataFrame(
         [
@@ -30,6 +38,9 @@ def test_merge_transcriptions_keeps_final_sentence_without_terminal_punctuation(
 
 
 def test_merge_transcriptions_handles_arabic_question_mark() -> None:
+    """Test that `_merge_transcriptions_by_sentence` correctly merges transcriptions into sentences
+    when the text contains Arabic question marks (؟) as terminal punctuation.
+    """
     transcriber = _build_transcriber()
     data = pd.DataFrame(
         [
