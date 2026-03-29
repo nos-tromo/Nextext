@@ -8,6 +8,7 @@ from nextext.modules.inference_prov_cfg import InferencePipeline
 from nextext.modules.processing import FileProcessor
 from nextext.pipeline import (
     get_api_key,
+    normalize_language_code,
     summarization_pipeline,
     transcription_pipeline,
     translation_pipeline,
@@ -30,7 +31,7 @@ def _language_name(lang_code: str | None) -> str:
     """
     if not lang_code:
         return "German"
-    lang = pycountry.languages.get(alpha_2=lang_code)
+    lang = pycountry.languages.get(alpha_2=normalize_language_code(lang_code))
     return lang.name if lang is not None else lang_code
 
 
@@ -152,7 +153,7 @@ def main() -> None:
     It handles the command-line arguments and manages the flow of data through the various modules.
 
     Raises:
-        ValueError: If an invalid task is specified.
+        ValueError: If an invalid task is specified or if the source language cannot be resolved for analysis.
         ConnectionError: If the Ollama server is not reachable for analysis tasks.
     """
     logger.info("\n\nInitiating Nextext...\n")
@@ -198,7 +199,15 @@ def main() -> None:
         )
 
     # Streamline language for further processing
-    transcript_lang = args.src_lang if args.task == "transcribe" else args.trg_lang
+    if args.task == "transcribe":
+        if args.src_lang is None:
+            logger.error("Unable to resolve source language for downstream analysis.")
+            raise ValueError(
+                "Source language could not be resolved for downstream analysis."
+            )
+        transcript_lang = normalize_language_code(args.src_lang)
+    else:
+        transcript_lang = normalize_language_code(args.trg_lang)
 
     # Calculate word statistics
     if args.words:

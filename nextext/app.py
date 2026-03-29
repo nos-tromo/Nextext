@@ -11,6 +11,7 @@ from streamlit.web import cli as st_cli
 from nextext.modules.inference_prov_cfg import InferencePipeline
 from nextext.pipeline import (
     get_api_key,
+    normalize_language_code,
     summarization_pipeline,
     transcription_pipeline,
     translation_pipeline,
@@ -34,7 +35,7 @@ def _language_name(lang_code: str | None) -> str:
     """
     if not lang_code:
         return "German"
-    lang = pycountry.languages.get(alpha_2=lang_code)
+    lang = pycountry.languages.get(alpha_2=normalize_language_code(lang_code))
     return lang.name if lang is not None else lang_code
 
 
@@ -99,7 +100,10 @@ def _run_pipeline(tmp_file: Path, opts: dict) -> None:
         if opts["words"]:
             wc, ner, nouns, graph, cloud = wordlevel_pipeline(
                 df,
-                opts["trg_lang" if opts["task"] == "translate" else "src_lang"],
+                normalize_language_code(
+                    opts["trg_lang" if opts["task"] == "translate" else "src_lang"]
+                )
+                or "en",
             )
             result["word_counts"] = wc
             result["named_entities"] = ner

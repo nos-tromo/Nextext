@@ -108,6 +108,21 @@ def transcription_pipeline(
     return df, updated_src_lang
 
 
+def normalize_language_code(lang_code: str | None) -> str | None:
+    """
+    Collapse a locale/script code to its base language code.
+
+    Args:
+        lang_code (str | None): The language code to normalize, e.g. "en-US" or "de-CH".
+
+    Returns:
+        str | None: The base language code, e.g. "en" or "de", or None if the input was None.
+    """
+    if lang_code is None:
+        return None
+    return lang_code.split("-", 1)[0]
+
+
 def translation_pipeline(
     df: pd.DataFrame,
     trg_lang: str,
@@ -134,7 +149,7 @@ def translation_pipeline(
             " ".join(df["text"].astype(str).tolist())
         )
         resolved_src_lang = detected_lang.get("code")
-    if resolved_src_lang == trg_lang:
+    if normalize_language_code(resolved_src_lang) == normalize_language_code(trg_lang):
         return df
     df["text"] = df["text"].apply(
         lambda text: translator.translate(trg_lang, text, src_lang=resolved_src_lang)

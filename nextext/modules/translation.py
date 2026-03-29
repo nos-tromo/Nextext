@@ -38,6 +38,19 @@ class Translator:
         src_lang_name = lang_obj.name if lang_obj is not None else ""
         return {"name": src_lang_name, "code": self.src_lang or ""}
 
+    @staticmethod
+    def _base_language_code(lang_code: str) -> str:
+        """
+        Collapse a locale/script code to its base language code.
+
+        Args:
+            lang_code (str): The language code to normalize, e.g. "en-US" or "de-CH".
+
+        Returns:
+            str: The base language code, e.g. "en" or "de".
+        """
+        return lang_code.split("-", 1)[0]
+
     def _language_name(self, lang_code: str) -> str:
         """Resolve an ISO language code to a human-readable name.
 
@@ -100,7 +113,9 @@ class Translator:
             resolved_src_lang = self.detect_language(text).get("code")
         if not resolved_src_lang:
             raise ValueError("Source language could not be determined.")
-        if resolved_src_lang == trg_lang:
+        if self._base_language_code(resolved_src_lang) == self._base_language_code(
+            trg_lang
+        ):
             return text
 
         self.src_lang = resolved_src_lang
