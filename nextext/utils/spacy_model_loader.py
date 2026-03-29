@@ -27,13 +27,18 @@ def download_spacy_model(model_id: str) -> None:
         )
     except subprocess.CalledProcessError as e:
         logger.error("⚠️ Failed to download {}: {}", model_id, e)
+        raise
     except Exception as e:
         logger.error("💥 Unexpected error with {}: {}", model_id, e)
+        raise
 
 
 def main() -> None:
     """
     Main function to download all small spaCy models.
+
+    Raises:
+        RuntimeError: If any of the model downloads fail.
     """
     try:
         # Load mappings for spaCy models
@@ -42,9 +47,19 @@ def main() -> None:
             logger.warning("No spaCy models found in the mappings.")
             return
 
+        failed_models: list[str] = []
+
         # Download each model
         for model_id in models.values():
-            download_spacy_model(model_id)
+            try:
+                download_spacy_model(model_id)
+            except Exception:
+                failed_models.append(model_id)
+
+        if failed_models:
+            raise RuntimeError(
+                "Failed to download spaCy models: " + ", ".join(failed_models)
+            )
 
         logger.info("\n✅ All small models downloaded successfully.")
 
