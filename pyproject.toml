@@ -14,7 +14,6 @@ readme = { file = "README.md", content-type = "text/markdown" }
 dependencies = [
     "accelerate>=1.1.1",
     "arabic-reshaper>=3.0.0",
-    "bertopic>=0.16.4",
     "camel-tools>=1.5.2",
     "huggingface-hub>=0.26.2",
     "langdetect>=1.0.9",
@@ -24,12 +23,12 @@ dependencies = [
     "networkx>=3.4.2",
     "nltk>=3.9.1",
     "numpy>=1.26.4",
-    "ollama>=0.4.8",
+    "openai>=2.2.0",
     "openpyxl>=3.1.5",
     "pandas>=2.2.3",
     "pillow>=11.0.0",
     "pip>=25.0.1",
-    "pyannote-audio>=3.3.2",
+    "pyannote-audio>=3.3.2,<4",
     "pyarabic>=0.6.15",
     "pycountry>=24.6.1",
     "python-bidi>=0.6.3",
@@ -37,14 +36,12 @@ dependencies = [
     "python-multipart>=0.0.20",
     "pyvis>=0.3.2",
     "scikit-learn>=1.5.2",
-    "sentence-transformers>=4.1.0",
     "spacy>=3.8.4",
     "streamlit>=1.44.1",
     "textual>=4.0.0",
-    "torch>=2.5.1",
-    "torchvision>=0.20.1",
-    "transformers>=4.46.2",
-    "umap-learn>=0.5.7",
+    "torch>=2.5.1,<2.9",
+    "torchaudio>=2.5.1,<2.9",
+    "torchvision>=0.20.1,<0.24",
     "watchdog>=6.0.0",
     "whisperx>=3.3.4",
     "wordcloud>=1.9.4",
@@ -71,6 +68,10 @@ torch = [
   { index = "pytorch-cpu",  marker = "sys_platform == 'win32'" },
 ]
 torchvision = [
+  { index = "pytorch-cu128", marker = "sys_platform == 'linux' and platform_machine == 'x86_64'" },
+  { index = "pytorch-cpu",  marker = "sys_platform == 'win32'" },
+]
+torchaudio = [
   { index = "pytorch-cu128", marker = "sys_platform == 'linux' and platform_machine == 'x86_64'" },
   { index = "pytorch-cpu",  marker = "sys_platform == 'win32'" },
 ]
