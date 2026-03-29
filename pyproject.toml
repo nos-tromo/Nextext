@@ -34,6 +34,7 @@ dependencies = [
     "spacy>=3.8.4",
     "streamlit>=1.44.1",
     "textual>=4.0.0",
+    "typer>=0.12,<1",
     "torch>=2.5.1,<2.9",
     "torchaudio>=2.5.1,<2.9",
     "torchvision>=0.20.1,<0.24",
@@ -66,7 +67,7 @@ build-backend = "setuptools.build_meta"
 include-package-data = true
 
 [tool.setuptools.packages.find]
-where = ["nextext*"]
+where = ["."]
 
 [tool.uv]
 package = true
