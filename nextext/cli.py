@@ -205,9 +205,20 @@ def main() -> None:
             raise ValueError(
                 "Source language could not be resolved for downstream analysis."
             )
-        transcript_lang = normalize_language_code(args.src_lang)
+        normalized_lang = normalize_language_code(args.src_lang)
+        if normalized_lang is None:
+            logger.error("Unable to normalize source language for downstream analysis.")
+            raise ValueError(
+                "Source language could not be normalized for downstream analysis."
+            )
     else:
-        transcript_lang = normalize_language_code(args.trg_lang)
+        normalized_lang = normalize_language_code(args.trg_lang)
+        if normalized_lang is None:
+            logger.error("Unable to normalize target language for downstream analysis.")
+            raise ValueError(
+                "Target language could not be normalized for downstream analysis."
+            )
+    transcript_lang: str = normalized_lang
 
     # Calculate word statistics
     if args.words:
