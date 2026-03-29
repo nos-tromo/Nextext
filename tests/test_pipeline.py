@@ -242,7 +242,7 @@ def test_translation_pipeline_returns_input_when_language_matches(
     """
 
     class DummyTranslator:
-        def __init__(self) -> None:
+        def __init__(self, **kwargs) -> None:
             pass
 
         def detect_language(self, text: str) -> dict[str, str]:
@@ -270,23 +270,25 @@ def test_translation_pipeline_translates_each_row(
     """
 
     class DummyTranslator:
-        def __init__(self) -> None:
-            self.calls: list[tuple[str, str]] = []
+        def __init__(self, **kwargs) -> None:
+            self.calls: list[tuple[str, str, str]] = []
 
         def detect_language(self, text: str) -> dict[str, str]:
             return {"code": "en"}
 
-        def translate(self, trg_lang: str, text: str) -> str:
-            self.calls.append((trg_lang, text))
+        def translate(
+            self, trg_lang: str, text: str, src_lang: str | None = None
+        ) -> str:
+            self.calls.append((trg_lang, text, src_lang or ""))
             return f"{text}-{trg_lang}"
 
     translator = DummyTranslator()
-    monkeypatch.setattr(pipeline, "Translator", lambda: translator)
+    monkeypatch.setattr(pipeline, "Translator", lambda **kwargs: translator)
     df = pd.DataFrame({"text": ["hello", "world"]})
 
     result = pipeline.translation_pipeline(df.copy(), "es")
 
-    assert translator.calls == [("es", "hello"), ("es", "world")]
+    assert translator.calls == [("es", "hello", "en"), ("es", "world", "en")]
     assert list(result["text"]) == ["hello-es", "world-es"]
 
 
@@ -306,16 +308,16 @@ def test_summarization_pipeline_formats_prompt(monkeypatch: pytest.MonkeyPatch) 
             assert keyword == "summary"
             return "Summarize: {text}"
 
-        def call_ollama_server(self, prompt: str) -> str:
+        def call_model(self, prompt: str) -> str:
             self.prompts.append(prompt)
             return "summary result"
 
-    ollama_pipeline = DummyPipeline()
+    inference_pipeline = DummyPipeline()
 
-    result = pipeline.summarization_pipeline("Important content", ollama_pipeline)  # type: ignore[arg-type]
+    result = pipeline.summarization_pipeline("Important content", inference_pipeline)  # type: ignore[arg-type]
 
     assert result == "summary result"
-    assert ollama_pipeline.prompts == ["Summarize: Important content"]
+    assert inference_pipeline.prompts == ["Summarize: Important content"]
 
 
 def test_summarization_pipeline_rejects_empty_text(
@@ -383,92 +385,3 @@ def test_wordlevel_pipeline_invokes_all_steps(monkeypatch: pytest.MonkeyPatch) -
     assert list(sentiments["noun"]) == ["test"]
     assert graph == "graph.html"
     assert wordcloud == "wordcloud"
-
-
-def test_topics_pipeline_runs_all_stages(monkeypatch: pytest.MonkeyPatch) -> None:
-    """
-    Test the topics pipeline to ensure all stages are invoked.
-
-    Args:
-        monkeypatch (pytest.MonkeyPatch): The monkeypatch fixture for modifying behavior.
-    """
-
-    class DummyTopicModeling:
-        instance: "DummyTopicModeling"
-
-        def __init__(self, data: list[str], lang_code: str) -> None:
-            self.data = data
-            self.lang_code = lang_code
-            self.loaded = False
-            self.fitted = False
-            DummyTopicModeling.instance = self
-
-        def load_pipeline(self) -> None:
-            self.loaded = True
-
-        def fit_topic_model(self) -> None:
-            self.fitted = True
-
-        def summarize_topics(self, ollama_pipeline) -> list[tuple[str, str]]:
-            assert self.loaded is True
-            assert self.fitted is True
-            assert ollama_pipeline == "ollama"
-            return [("Topic", "Summary")]
-
-    monkeypatch.setattr(pipeline, "TopicModeling", DummyTopicModeling)
-    df = pd.DataFrame({"text": ["text one", "text two"]})
-
-    result = pipeline.topics_pipeline(df, "en", "ollama")  # type: ignore[arg-type]
-
-    assert result == [("Topic", "Summary")]
-    instance = DummyTopicModeling.instance
-    assert instance.data == ["text one", "text two"]
-    assert instance.lang_code == "en"
-
-
-def test_hatespeech_pipeline_appends_results(monkeypatch: pytest.MonkeyPatch) -> None:
-    """
-    Test the hate speech pipeline to ensure it appends results.
-
-    Args:
-        monkeypatch (pytest.MonkeyPatch): The monkeypatch fixture for modifying behavior.
-    """
-
-    class DummyDetector:
-        def __init__(self, ollama_pipeline) -> None:
-            self.ollama = ollama_pipeline
-
-        def process(self, texts: list[str]) -> list[str]:
-            return ["safe" for _ in texts]
-
-    monkeypatch.setattr(pipeline, "HateSpeechDetector", DummyDetector)
-    df = pd.DataFrame({"text": ["hello", "world"]})
-
-    result = pipeline.hatespeech_pipeline("ollama", df.copy())  # type: ignore[arg-type]
-
-    assert list(result["hate_speech"]) == ["safe", "safe"]
-
-
-def test_hatespeech_pipeline_no_results_keeps_dataframe(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """
-    Test the hate speech pipeline to ensure it handles no results correctly.
-
-    Args:
-        monkeypatch (pytest.MonkeyPatch): The monkeypatch fixture for modifying behavior.
-    """
-
-    class DummyDetector:
-        def __init__(self, ollama_pipeline) -> None:
-            pass
-
-        def process(self, texts: list[str]) -> list[str]:
-            return []
-
-    monkeypatch.setattr(pipeline, "HateSpeechDetector", DummyDetector)
-    df = pd.DataFrame({"text": ["hello"]})
-
-    result = pipeline.hatespeech_pipeline("ollama", df.copy())  # type: ignore[arg-type]
-
-    assert "hate_speech" not in result
