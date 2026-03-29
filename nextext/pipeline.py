@@ -6,7 +6,7 @@ import pandas as pd
 from dotenv import find_dotenv, load_dotenv, set_key
 from matplotlib.figure import Figure
 
-from nextext.modules.inference_prov_cfg import InferencePipeline
+from nextext.modules.openai_cfg import InferencePipeline
 from nextext.modules.translation import Translator
 from nextext.modules.words import WordCounter
 

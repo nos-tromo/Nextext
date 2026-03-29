@@ -4,7 +4,7 @@ from pathlib import Path
 from loguru import logger
 import pycountry
 
-from nextext.modules.inference_prov_cfg import InferencePipeline
+from nextext.modules.openai_cfg import InferencePipeline
 from nextext.modules.processing import FileProcessor
 from nextext.pipeline import (
     get_api_key,

@@ -8,7 +8,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 from streamlit.web import cli as st_cli
 
-from nextext.modules.inference_prov_cfg import InferencePipeline
+from nextext.modules.openai_cfg import InferencePipeline
 from nextext.pipeline import (
     get_api_key,
     normalize_language_code,

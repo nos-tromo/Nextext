@@ -1,7 +1,7 @@
 import pycountry
 from langdetect import detect
 
-from nextext.modules.inference_prov_cfg import InferencePipeline
+from nextext.modules.openai_cfg import InferencePipeline
 from nextext.utils.mappings_loader import load_mappings
 
 

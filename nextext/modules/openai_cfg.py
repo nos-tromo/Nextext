@@ -18,7 +18,7 @@ except ImportError:  # pragma: no cover - exercised only when dependency is miss
 else:
     OpenAIClient = _OpenAIClient
 
-OLLAMA_HOST: str = os.getenv("OLLAMA_HOST", "http://localhost:11434")
+OPENAI_API_BASE: str = os.getenv("OPENAI_API_BASE", "http://localhost:11434/v1")
 PROMPT_DIR: Path = Path(__file__).parent.parent / "utils" / "prompts"
 
 
@@ -29,7 +29,7 @@ class InferencePipeline:
     provider: str = field(
         default_factory=lambda: os.getenv("INFERENCE_PROVIDER", "ollama")
     )
-    ollama_host: str = field(default=OLLAMA_HOST, init=False)
+    openai_api_base: str = field(default=OPENAI_API_BASE, init=False)
     model_file: str = "ollama_models.json"
     translation_model_file: str = "translation_models.json"
     _default_model: str | None = field(default=None, init=False)
@@ -79,7 +79,7 @@ class InferencePipeline:
         if custom_base_url:
             return custom_base_url
         if self.provider == "ollama":
-            return f"{self.ollama_host.rstrip('/')}/v1"
+            return f"{self.openai_api_base.rstrip('/')}/v1"
         return None
 
     @property
@@ -118,7 +118,7 @@ class InferencePipeline:
 
         if self.provider == "ollama":
             try:
-                response = requests.get(f"{self.ollama_host}/api/tags", timeout=5)
+                response = requests.get(f"{self.openai_api_base}/api/tags", timeout=5)
             except requests.RequestException as exc:
                 logger.error("Ollama health check failed: {}", exc)
                 return False
