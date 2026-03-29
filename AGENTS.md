@@ -11,7 +11,7 @@ Nextext breaks the speech-to-insight workflow into specialized agents (self-cont
 | Word Intelligence | `nextext/modules/words.py` → `WordCounter`, `wordlevel_pipeline` | Transcript text, resolved language | Word counts, entity table, noun sentiment table, graph HTML, word cloud `Figure` | CLI `-w/--words`, Streamlit "Word-level analysis" |
 | Summarization | `nextext/pipeline.py` → `summarization_pipeline` + `InferencePipeline` | Full transcript text | Summary string in the configured output language | CLI `-sum/--summarize`, Streamlit "Summarisation" |
 | File Export | `nextext/modules/processing.py` → `FileProcessor.write_file_output` | Any agent result | Files in `output/<input-file>/` (`.txt`, `.csv`, `.xlsx`, `.png`) | CLI workflow |
-| Inference Service | `nextext/modules/ollama_cfg.py` → `InferencePipeline` | Prompt template + runtime options | Raw string from an OpenAI-compatible chat endpoint | Shared dependency for translation and summary agents |
+| Inference Service | `nextext/modules/inference_prov_cfg.py` → `InferencePipeline` | Prompt template + runtime options | Raw string from an OpenAI-compatible chat endpoint | Shared dependency for translation and summary agents |
 
 ## Execution Flow
 
@@ -60,7 +60,7 @@ Nextext breaks the speech-to-insight workflow into specialized agents (self-cont
 
 ## Inference Service Agent
 
-- **Key files:** `nextext/modules/ollama_cfg.py`, prompts directory `nextext/utils/prompts/`, model mappings `nextext/utils/mappings/ollama_models.json` and `translation_models.json`.
+- **Key files:** `nextext/modules/inference_prov_cfg.py`, prompts directory `nextext/utils/prompts/`, model mappings `nextext/utils/mappings/ollama_models.json` and `translation_models.json`.
 - **Responsibilities:** Construct prompts, pick provider-specific models, create an OpenAI-compatible client, perform provider health checks, and expose `call_model()` to translation and summarization.
 - **Inputs:** Prompt keyword (`system`, `summary`), runtime options (temperature, stop tokens, max tokens), provider configuration (`INFERENCE_PROVIDER`, `OLLAMA_HOST`, `OPENAI_API_KEY`, optional `OPENAI_BASE_URL`).
 - **Outputs:** Raw string response from the configured chat completion endpoint; `sys_prompt` ensures outputs are emitted in the configured language.
