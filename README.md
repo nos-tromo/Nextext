@@ -77,6 +77,8 @@ export OPENAI_API_KEY=your-key
 uv run load-spacy-models
 ```
 
+spaCy models are cached outside the virtual environment in `~/.cache/nextext/spacy` by default. Override this with `NEXTEXT_SPACY_MODEL_DIR` if needed. In Docker, the existing `/root/.cache` volume keeps these models across container rebuilds.
+
 #### Offline usage 🚫🌐
 
 In case Nextext is intended to run in a firewalled or offline environment, set the environment variable after completing the model downloads:

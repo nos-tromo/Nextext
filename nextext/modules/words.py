@@ -16,12 +16,14 @@ from wordcloud import WordCloud
 
 from nextext.utils.font_loader import load_font_file
 from nextext.utils.mappings_loader import load_mappings
-from nextext.utils.spacy_model_loader import download_spacy_model
+from nextext.utils.spacy_model_loader import (
+    download_spacy_model,
+    ensure_spacy_model_path,
+)
 
 
 class WordCounter:
-    """
-    WordCounter analyzes word frequencies, extracts linguistic features, and generates visualizations from input text.
+    """WordCounter analyzes word frequencies, extracts linguistic features, and generates visualizations from input text.
 
     Attributes:
         text (str): The text to analyze.
@@ -66,8 +68,7 @@ class WordCounter:
         spacy_entities_file: str = "spacy_entities.json",
         font_file: str = "Amiri-Regular.ttf",
     ) -> None:
-        """
-        Initializes the WordCounter with text, language, and configuration files.
+        """Initializes the WordCounter with text, language, and configuration files.
 
         Args:
             text (str): The text to analyze.
@@ -97,8 +98,7 @@ class WordCounter:
     def _load_spacy_model(
         self, language: str, spacy_languages: dict[str, str]
     ) -> Language | None:
-        """
-        Load the spaCy model for the specified language code.
+        """Load the spaCy model for the specified language code.
 
         Args:
             language (str): Language code for which to load the spaCy model.
@@ -126,6 +126,7 @@ class WordCounter:
             )
             model_id = spacy_languages.get("xx")
         if model_id is not None:
+            ensure_spacy_model_path()
             download_spacy_model(model_id)
             return spacy.load(model_id)
         else:
@@ -136,9 +137,7 @@ class WordCounter:
             return None
 
     def text_to_doc(self) -> None:
-        """
-        Convert the text to a spaCy doc object.
-        """
+        """Convert the text to a spaCy doc object."""
         if self.nlp is not None:
             self.doc = self.nlp(self.text)
         else:
@@ -146,8 +145,7 @@ class WordCounter:
             self.doc = None
 
     def lemmatize_doc(self) -> None:
-        """
-        Tokenize and lemmatize the text.
+        """Tokenize and lemmatize the text.
 
         Returns:
             list[str]: List of tokenized and lemmatized words.
@@ -177,8 +175,7 @@ class WordCounter:
     def count_words(
         self, n_words: int = 30, columns: list[str] = ["Word", "Frequency"]
     ) -> pd.DataFrame:
-        """
-        Perform n-gram analysis and count word frequencies using Counter.
+        """Perform n-gram analysis and count word frequencies using Counter.
 
         Args:
             n_words (int): Number of top words to return. Defaults to 30.
@@ -191,10 +188,12 @@ class WordCounter:
             logger.error(
                 "Tokenized document is None. Please run lemmatize_doc() first."
             )
-            return pd.DataFrame(columns=columns).reset_index(drop=True)
+            return pd.DataFrame(columns=pd.Index(columns)).reset_index(drop=True)
         self.word_counts = Counter(token for token in self.tokenized_doc)
         df = (
-            pd.DataFrame(self.word_counts.most_common(n_words), columns=columns)
+            pd.DataFrame(
+                self.word_counts.most_common(n_words), columns=pd.Index(columns)
+            )
             .sort_values(columns[1], ascending=False)
             .reset_index(drop=True)
         )
@@ -203,8 +202,7 @@ class WordCounter:
     def named_entity_recognition(
         self, columns: list[str] = ["Category", "Entity", "Frequency"]
     ) -> pd.DataFrame:
-        """
-        Perform named entity recognition on the text.
+        """Perform named entity recognition on the text.
 
         Args:
             columns (list[str]): Column names for the resulting DataFrame. Defaults to ["Category", "Entity", "Frequency"].
@@ -214,7 +212,7 @@ class WordCounter:
         """
         if self.doc is None:
             logger.error("spaCy doc is None. Please run text_to_doc() first.")
-            return pd.DataFrame(columns=columns).reset_index(drop=True)
+            return pd.DataFrame(columns=pd.Index(columns)).reset_index(drop=True)
         ent_types = set(self.spacy_entities.keys())
         doc_ents = [
             (ent.text, ent.label_)
@@ -224,7 +222,7 @@ class WordCounter:
         entities_count = Counter(doc_ents)
         df = pd.DataFrame(
             [(label, text, count) for (text, label), count in entities_count.items()],
-            columns=columns,
+            columns=pd.Index(columns),
         ).reset_index(drop=True)
         return df
 
@@ -253,7 +251,7 @@ class WordCounter:
         """
         if self.doc is None:
             logger.error("spaCy doc is None. Please run text_to_doc() first.")
-            return pd.DataFrame(columns=columns).reset_index(drop=True)
+            return pd.DataFrame(columns=pd.Index(columns)).reset_index(drop=True)
 
         # Identify top‑frequency noun lemmas
         top_nouns = {
@@ -302,15 +300,16 @@ class WordCounter:
                 }
             )
 
-        self.noun_df = pd.DataFrame(rows, columns=columns).reset_index(drop=True)
+        self.noun_df = pd.DataFrame(rows, columns=pd.Index(columns)).reset_index(
+            drop=True
+        )
         return self.noun_df
 
     def construct_noun_sentiment_graph(
         self,
         columns: list[str] = ["Noun", "Verb", "Adjective"],
     ) -> nx.Graph:
-        """
-        Build a graph from the noun-verb-adjective DataFrame.
+        """Build a graph from the noun-verb-adjective DataFrame.
 
         Args:
             columns (list[str]): Column names for the DataFrame. Defaults to ["Noun", "Verb", "Adjective"].
@@ -342,8 +341,7 @@ class WordCounter:
         return G
 
     def create_interactive_graph(self) -> str:
-        """
-        Export the noun-verb-adjective graph as an interactive HTML file.
+        """Export the noun-verb-adjective graph as an interactive HTML file.
 
         Returns:
             str: HTML string of the interactive graph.
@@ -378,8 +376,7 @@ class WordCounter:
         return html
 
     def create_wordcloud(self) -> Figure:
-        """
-        Create a wordcloud of the most frequent words.
+        """Create a wordcloud of the most frequent words.
 
         Returns:
             Figure: A matplotlib figure containing a wordcloud of the most frequent words.
