@@ -1,6 +1,7 @@
 import sys
 import tempfile
 from pathlib import Path
+from typing import Any
 
 import altair as alt
 import pycountry
@@ -85,7 +86,7 @@ def _run_pipeline(tmp_file: Path, opts: dict) -> None:
             inference_pipeline = None
 
     # Store the DataFrame and default values in session state
-    result = {
+    result: dict[str, Any] = {
         "transcript": df,
         "summary": None,
         "word_counts": None,
