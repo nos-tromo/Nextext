@@ -309,9 +309,9 @@ class WhisperTranscriber:
             text (str): The text string to check.
 
         Returns:
-            bool: True if the text ends with ".", "!", or "?", otherwise False.
+            bool: True if the text ends with a supported sentence-ending punctuation mark, otherwise False.
         """
-        return text.strip().endswith((".", "!", "?"))
+        return text.strip().endswith((".", "!", "?", "؟", "۔"))
 
     def _merge_transcriptions_by_sentence(self, data: pd.DataFrame) -> pd.DataFrame:
         """
@@ -323,6 +323,15 @@ class WhisperTranscriber:
         Returns:
             pd.DataFrame: A new DataFrame with merged sentences and adjusted timestamps.
         """
+        output_columns: list[str] = [
+            self.start_column,
+            self.end_column,
+            self.text_column,
+        ]
+        if data.empty or self.text_column not in data.columns:
+            logger.warning("No transcription rows were available for sentence merging.")
+            return pd.DataFrame(columns=pd.Index(output_columns))
+
         new_rows = []
         current_row = {
             self.start_column: None,
@@ -346,7 +355,14 @@ class WhisperTranscriber:
                     self.text_column: "",
                 }
 
-        merged_df = pd.DataFrame(new_rows)
+        current_text = str(current_row[self.text_column] or "")
+        if current_text.strip():
+            current_row[self.end_column] = current_row[self.end_column] or data.iloc[
+                -1
+            ].get(self.end_column)
+            new_rows.append(current_row)
+
+        merged_df = pd.DataFrame(new_rows, columns=pd.Index(output_columns))
         merged_df[self.text_column] = merged_df[self.text_column].str.strip()
         logger.info("Transcriptions successfully merged by sentence.")
         return merged_df
@@ -384,12 +400,12 @@ class WhisperTranscriber:
             segments.append(row)
 
         # Build columns list dynamically
-        columns = [self.start_column, self.end_column]
+        columns: list[str] = [self.start_column, self.end_column]
         if has_speaker:
             columns.append(self.speaker_column)
         columns.append(self.text_column)
 
-        df = pd.DataFrame(segments, columns=columns)
+        df = pd.DataFrame(segments, columns=pd.Index(columns))
         if self.n_speakers <= 1 and has_speaker:
             df.drop(self.speaker_column, axis=1, inplace=True)
         self.df = self._merge_transcriptions_by_sentence(df)
