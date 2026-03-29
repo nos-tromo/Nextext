@@ -3,16 +3,15 @@ import tempfile
 from pathlib import Path
 
 import altair as alt
+import pycountry
 import streamlit as st
 import streamlit.components.v1 as components
 from streamlit.web import cli as st_cli
 
-from nextext.modules.ollama_cfg import OllamaPipeline
+from nextext.modules.inference_prov_cfg import InferencePipeline
 from nextext.pipeline import (
     get_api_key,
-    hatespeech_pipeline,
     summarization_pipeline,
-    topics_pipeline,
     transcription_pipeline,
     translation_pipeline,
     wordlevel_pipeline,
@@ -21,6 +20,22 @@ from nextext.utils.logging_cfg import init_logger
 from nextext.utils.mappings_loader import kv_to_vk, load_and_sort_mappings
 
 init_logger()
+
+
+def _language_name(lang_code: str | None) -> str:
+    """
+    Convert an ISO language code to a human-readable name for LLM output settings.
+
+    Args:
+        lang_code (str | None): The ISO 639-1 language code.
+
+    Returns:
+        str: The human-readable language name, or "German" if the code is None.
+    """
+    if not lang_code:
+        return "German"
+    lang = pycountry.languages.get(alpha_2=lang_code)
+    return lang.name if lang is not None else lang_code
 
 
 def _run_pipeline(tmp_file: Path, opts: dict) -> None:
@@ -52,13 +67,26 @@ def _run_pipeline(tmp_file: Path, opts: dict) -> None:
     # Translation
     with st.spinner("Translating… this might take a while ⏳"):
         if opts["task"] == "translate" and opts["trg_lang"] != "en":
-            df = translation_pipeline(df, opts["trg_lang"])
+            inference_pipeline = InferencePipeline(
+                out_language=_language_name(opts["trg_lang"])
+            )
+            if not inference_pipeline.get_health():
+                raise ConnectionError(
+                    "The configured inference provider is not reachable. Please ensure it is running and accessible."
+                )
+            df = translation_pipeline(
+                df,
+                opts["trg_lang"],
+                src_lang=opts["src_lang"],
+                inference_pipeline=inference_pipeline,
+            )
+        else:
+            inference_pipeline = None
 
     # Store the DataFrame and default values in session state
     result = {
         "transcript": df,
         "summary": None,
-        "topics": None,
         "word_counts": None,
         "noun_sentiment": None,
         "noun_graph": None,
@@ -79,41 +107,24 @@ def _run_pipeline(tmp_file: Path, opts: dict) -> None:
             result["noun_graph"] = graph
             result["wordcloud"] = cloud
 
-    # Ollanma pipeline setup
-    ollama_pipeline = OllamaPipeline()
-    if not ollama_pipeline._get_ollama_health():
-        raise ConnectionError(
-            "Ollama server is not reachable. Please ensure it is running and accessible."
-        )
-
-    # Topic modelling
-    with st.spinner("Running topic modelling… ⏳"):
-        if opts["topics"]:
-            topics_output = topics_pipeline(
-                data=df,
-                language=opts[
-                    "trg_lang" if opts["task"] == "translate" else "src_lang"
-                ],
-                ollama_pipeline=ollama_pipeline,
-            )
-            if topics_output is not None:
-                result["topics"] = topics_output
-            else:
-                result["topics"] = None, None
-
     # Summarization
     with st.spinner("Summarizing… ⏳"):
         if opts["summarization"]:
+            if inference_pipeline is None:
+                transcript_lang = opts[
+                    "trg_lang" if opts["task"] == "translate" else "src_lang"
+                ]
+                inference_pipeline = InferencePipeline(
+                    out_language=_language_name(transcript_lang)
+                )
+                if not inference_pipeline.get_health():
+                    raise ConnectionError(
+                        "The configured inference provider is not reachable. Please ensure it is running and accessible."
+                    )
             result["summary"] = summarization_pipeline(
                 " ".join(df["text"].astype(str).tolist()),
-                ollama_pipeline=ollama_pipeline,
+                inference_pipeline=inference_pipeline,
             )
-
-    # Hate speech classification
-    with st.spinner("Classifying hate speech… ⏳"):
-        if opts["hatespeech"]:
-            df = hatespeech_pipeline(ollama_pipeline=ollama_pipeline, df=df)
-            result["transcript"] = df  # updated with extra column
 
     st.session_state["result"] = result
     st.success("Done! Select another tab to view results.")
@@ -129,9 +140,9 @@ def _start_page() -> None:
         "Audio / video file", type=["wav", "mp3", "m4a", "mp4", "mkv", "webm"]
     )
 
-    # Load source language mappings from Whisper and target language mappings from Madlad
+    # Load source language mappings from Whisper and target language mappings for translation.
     src_lang_maps, src_lang_names = load_and_sort_mappings("whisper_languages.json")
-    trg_lang_maps, trg_lang_names = load_and_sort_mappings("madlad_languages.json")
+    trg_lang_maps, trg_lang_names = load_and_sort_mappings("translation_languages.json")
 
     # Create GUI columns and widgets
     task = st.radio("Task", ["transcribe", "translate"], horizontal=True)
@@ -147,13 +158,8 @@ def _start_page() -> None:
             ["default", "large-v3", "large-v2", "medium", "small", "base", "tiny"],
             index=0,
         )
-        col3, col4 = st.columns(2)
-        with col3:
-            words = st.checkbox("Word-level analysis")
-            topics = st.checkbox("Topic modelling")
-        with col4:
-            summarization = st.checkbox("Summarisation")
-            hatespeech = st.checkbox("Hate Speech")
+        words = st.checkbox("Word-level analysis")
+        summarization = st.checkbox("Summarisation")
     with col2:
         trg_lang_name = st.selectbox(
             "Target language (for translate task)",
@@ -175,9 +181,7 @@ def _start_page() -> None:
         task=task,
         speakers=speakers,
         words=words,
-        topics=topics,
         summarization=summarization,
-        hatespeech=hatespeech,
     )
 
     if run and uploaded is not None:
@@ -198,8 +202,8 @@ def main() -> None:
     st.title("Nextext – Dashboard Report")
 
     # Top‑level tabs
-    tab_params, tab_transcript, tab_summary, tab_words, tab_topics = st.tabs(
-        ["Parameters", "Transcript", "Summary", "Word-level Analysis", "Topics"]
+    tab_params, tab_transcript, tab_summary, tab_words = st.tabs(
+        ["Parameters", "Transcript", "Summary", "Word-level Analysis"]
     )
 
     # ---------------- Parameters tab ----------------
@@ -212,7 +216,7 @@ def main() -> None:
             "After you upload a file and press **Run** in the "
             "Parameters tab, the results will appear here."
         )
-        for t in (tab_transcript, tab_summary, tab_words, tab_topics):
+        for t in (tab_transcript, tab_summary, tab_words):
             with t:
                 st.info(msg)
 
@@ -282,25 +286,6 @@ def main() -> None:
 
             st.subheader("☁️ Word Cloud")
             st.pyplot(result["wordcloud"])
-
-    # ---------------- Topics tab --------------------
-    with tab_topics:
-        if result["topics"] is None:
-            st.warning("Topic modelling not requested.")
-        else:
-            st.subheader("🗂️ Topics")
-            for title, topic in result["topics"]:
-                st.subheader(title)
-                st.write(topic)
-                st.divider()
-            st.download_button(
-                label="Download",
-                data="\n\n".join(
-                    f"{title}\n{topic}" for (title, topic) in result["topics"]
-                ),
-                file_name="topics.txt",
-                mime="text/plain",
-            )
 
     # ---------------- Footer -----------------------
     st.markdown(
