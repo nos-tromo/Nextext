@@ -1,7 +1,7 @@
 import pycountry
 from langdetect import detect
 
-from nextext.modules.ollama_cfg import InferencePipeline
+from nextext.modules.inference_prov_cfg import InferencePipeline
 from nextext.utils.mappings_loader import load_mappings
 
 
@@ -18,7 +18,7 @@ class Translator:
         Args:
             translation_language_file (str, optional): _description_. Defaults to "translation_languages.json".
             inference_pipeline (InferencePipeline | None, optional): _description_. Defaults to None.
-        """    
+        """
         self.languages = load_mappings(translation_language_file)
         self.inference_pipeline = inference_pipeline or InferencePipeline()
         self.prompt_template = self.inference_pipeline.load_prompt("translation")
