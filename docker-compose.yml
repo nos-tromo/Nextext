@@ -42,6 +42,7 @@ services:
       OPENAI_API_BASE: http://ollama-server:11434
       PRELOAD_MODELS: ${PRELOAD_MODELS:-false}
       STREAMLIT_BROWSER_GATHER_USAGE_STATS: false
+      STREAMLIT_SERVER_FILE_WATCHER_TYPE: none
       STREAMLIT_SERVER_MAX_UPLOAD_SIZE: 8192
       USE_DEVICE: auto
     volumes: &backend-volumes
