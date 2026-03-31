@@ -27,8 +27,7 @@ init_logger()
 
 
 def _language_name(lang_code: str | None) -> str:
-    """
-    Convert an ISO language code to a human-readable name for LLM output settings.
+    """Convert an ISO language code to a human-readable name for LLM output settings.
 
     Args:
         lang_code (str | None): The ISO 639-1 language code.
@@ -70,8 +69,7 @@ def _default_target_language(
 
 
 def _run_pipeline(tmp_file: Path, opts: dict) -> None:
-    """
-    Run the core pipeline and stash results in st.session_state.
+    """Run the core pipeline and stash results in st.session_state.
 
     Args:
         tmp_file (Path): Path to the temporary file.
@@ -164,9 +162,7 @@ def _run_pipeline(tmp_file: Path, opts: dict) -> None:
 
 
 def _start_page() -> None:
-    """
-    Render the pipeline settings form in the Parameters tab.
-    """
+    """Render the pipeline settings form in the Parameters tab."""
     st.markdown("## ⚙️ Pipeline settings")
 
     uploaded = st.file_uploader(
@@ -235,9 +231,7 @@ def _start_page() -> None:
 
 
 def main() -> None:
-    """
-    Main function to run the Streamlit app (tab‑based navigation).
-    """
+    """Main function to run the Streamlit app (tab‑based navigation)."""
     st.set_page_config(page_title="Nextext", layout="wide")
     st.title("Nextext – Dashboard Report")
 
@@ -341,8 +335,7 @@ def main() -> None:
 
 # ---- Streamlit CLI wrapper ----------------------------------------------- #
 def cli() -> None:
-    """
-    CLI entry point for the Streamlit app. This function is used to run the app from the command
+    """CLI entry point for the Streamlit app. This function is used to run the app from the command
     line. It sets up the command line arguments as if the user typed them. For example: `streamlit
     run app.py <any extra args>`.
     """

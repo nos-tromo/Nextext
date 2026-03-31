@@ -6,8 +6,7 @@ from matplotlib.figure import Figure
 
 
 class FileProcessor:
-    """
-    FileProcessor is the central class for file processing within Nextext.
+    """FileProcessor is the central class for file processing within Nextext.
 
     Attributes:
         filename (str): The name of the input file without extension.
@@ -25,8 +24,7 @@ class FileProcessor:
         file_path: Path | None = None,
         output_dir: Path = Path("output"),
     ) -> None:
-        """
-        Initializes the FileProcessor class. Sets up the logger and prepares the output directory for file processing.
+        """Initializes the FileProcessor class. Sets up the logger and prepares the output directory for file processing.
 
         Args:
             file_path (Path | None, optional): The path to the input file.
@@ -40,8 +38,7 @@ class FileProcessor:
         self.filename, self.output_path = self._setup_directories(file_path, output_dir)
 
     def _setup_directories(self, file_path: Path, output_dir: Path) -> tuple[str, Path]:
-        """
-        Set up the necessary directories for file processing. Create the output subdirectory if it doesn't exist.
+        """Set up the necessary directories for file processing. Create the output subdirectory if it doesn't exist.
 
         Args:
             file_path (Path): The path to the input file.
@@ -68,8 +65,7 @@ class FileProcessor:
         label: str,
         target_language: str = "",
     ) -> str | list | tuple | pd.DataFrame | Figure | None:
-        """
-        Write the provided data to an appropriate output file based on its type (text, list, DataFrame, or plot).
+        """Write the provided data to an appropriate output file based on its type (text, list, DataFrame, or plot).
 
         Args:
             data (str | list | tuple | pd.DataFrame | plt.Figure): The data to be written, which can be a string, list, DataFrame, or matplotlib Figure.

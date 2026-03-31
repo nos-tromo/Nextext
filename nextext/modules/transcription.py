@@ -52,8 +52,7 @@ def _configure_torch_safe_globals() -> None:
         from pyannote.audio.core.task import Problem, Resolution, Specifications
     except ImportError:
         logger.debug(
-            "Pyannote task classes are unavailable; skipping Torch "
-            "safe-global registration."
+            "Pyannote task classes are unavailable; skipping Torch safe-global registration."
         )
     else:
         safe_globals.extend([Problem, Resolution, Specifications])

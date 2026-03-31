@@ -13,7 +13,12 @@ def test_get_spacy_model_dir_uses_env_var(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    """Test that the spaCy cache directory honors the environment override."""
+    """Test that the spaCy cache directory honors the environment override.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): The pytest fixture for modifying environment variables.
+        tmp_path (Path): The pytest fixture providing a temporary directory for testing.
+    """
     cache_dir = tmp_path / "spacy-cache"
     monkeypatch.setenv(model_loader.SPACY_MODEL_DIR, str(cache_dir))
 
@@ -24,13 +29,26 @@ def test_download_spacy_model_skips_cached_model(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    """Test that cached spaCy models are not downloaded again."""
+    """Test that cached spaCy models are not downloaded again.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): The pytest fixture for modifying environment variables and functions.
+        tmp_path (Path): The pytest fixture providing a temporary directory for testing.
+    """
     cache_dir = tmp_path / "spacy-cache"
     model_dir = cache_dir / "en_core_web_sm"
     model_dir.mkdir(parents=True)
     monkeypatch.setenv(model_loader.SPACY_MODEL_DIR, str(cache_dir))
 
     def fail_run(*args: object, **kwargs: object) -> None:
+        """Simulate a failure if subprocess.run is called, indicating that the download function attempted to run
+        when it should have been skipped due to the model already being cached. This helps verify that the caching
+        mechanism is working correctly and prevents unnecessary downloads of spaCy models that are already available
+        in the specified cache directory.
+
+        Raises:
+            AssertionError: Always raised to indicate that subprocess.run should not be called for cached models.
+        """
         raise AssertionError("subprocess.run should not be called for cached models")
 
     monkeypatch.setattr(model_loader.subprocess, "run", fail_run)
@@ -44,12 +62,22 @@ def test_download_spacy_model_uses_persistent_target(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    """Test that spaCy downloads target the persistent cache directory."""
+    """Test that spaCy downloads target the persistent cache directory.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): The pytest fixture for modifying environment variables and functions.
+        tmp_path (Path): The pytest fixture providing a temporary directory for testing.
+    """
     cache_dir = tmp_path / "spacy-cache"
     monkeypatch.setenv(model_loader.SPACY_MODEL_DIR, str(cache_dir))
     captured: list[list[str]] = []
 
     def fake_run(cmd: list[str], check: bool) -> None:
+        """Simulate the subprocess.run function to capture the command that would be executed for downloading
+        a spaCy model. This allows us to verify that the download command is correctly targeting the specified
+        cache directory, ensuring that the model is being downloaded to the intended location rather than a
+        default or incorrect path.
+        """
         captured.append(cmd)
 
     monkeypatch.setattr(model_loader.subprocess, "run", fake_run)
@@ -73,7 +101,11 @@ def test_download_spacy_model_uses_persistent_target(
 def test_get_whisper_model_ids_includes_detection_model(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Test that Whisper preload includes the language-detection model."""
+    """Test that Whisper preload includes the language-detection model.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): The pytest fixture for modifying environment variables and functions.
+    """
     monkeypatch.setattr(
         model_loader,
         "load_mappings",
@@ -88,7 +120,11 @@ def test_get_whisper_model_ids_includes_detection_model(
 def test_get_alignment_model_ids_combines_torch_and_hf_models(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Test that alignment model discovery merges Torch and HF defaults."""
+    """Test that alignment model discovery merges Torch and HF defaults.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): The pytest fixture for modifying environment variables and functions.
+    """
     fake_alignment = SimpleNamespace(
         DEFAULT_ALIGN_MODELS_TORCH={"en": "WAV2VEC2_ASR_BASE_960H"},
         DEFAULT_ALIGN_MODELS_HF={"de": "VOXPOPULI_ASR_BASE_10K_DE"},
@@ -106,7 +142,11 @@ def test_get_alignment_model_ids_combines_torch_and_hf_models(
 def test_main_preloads_expected_model_groups(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Test that the main preload routine covers all configured model groups."""
+    """Test that the main preload routine covers all configured model groups.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): The pytest fixture for modifying environment variables and functions.
+    """
     calls: list[tuple[str, str]] = []
 
     monkeypatch.setattr(

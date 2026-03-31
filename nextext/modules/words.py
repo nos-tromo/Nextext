@@ -233,8 +233,7 @@ class WordCounter:
         n_freq_adjs: int | None = 50,
         columns: list[str] = ["Noun", "Verb", "Adjective"],
     ) -> pd.DataFrame:
-        """
-        Retrieve, for each high-frequency noun, its most common governing verbs
+        """Retrieve, for each high-frequency noun, its most common governing verbs
         *and* its most common modifying adjectives, returning a single tidy
         DataFrame.
 

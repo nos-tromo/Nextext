@@ -19,8 +19,7 @@ init_logger()
 
 
 def _language_name(lang_code: str | None) -> str:
-    """
-    Convert an ISO language code to a human-readable name for LLM output settings.
+    """Convert an ISO language code to a human-readable name for LLM output settings.
 
     Args:
         lang_code (str | None): The ISO 639-1 language code.
@@ -35,8 +34,7 @@ def _language_name(lang_code: str | None) -> str:
 
 
 def parse_arguments(args_list: list | None = None) -> argparse.Namespace:
-    """
-    Parse command-line arguments for the Nextext CLI.
+    """Parse command-line arguments for the Nextext CLI.
     This function sets up the argument parser with various options for file processing,
     language settings, model selection, and analysis features.
     It returns the parsed arguments as an `argparse.Namespace` object.
@@ -145,8 +143,7 @@ def parse_arguments(args_list: list | None = None) -> argparse.Namespace:
 
 
 def main() -> None:
-    """
-    Run the Nextext pipeline for transcription, translation, and analysis.
+    """Run the Nextext pipeline for transcription, translation, and analysis.
     This function orchestrates the entire process, including transcription, translation,
     word statistics, and summarization.
     It handles the command-line arguments and manages the flow of data through the various modules.

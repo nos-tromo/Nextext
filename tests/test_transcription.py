@@ -144,7 +144,7 @@ def test_configure_torch_safe_globals_registers_checkpoint_types(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Test that Torch safe globals include required checkpoint classes.
-    
+
     Args:
         monkeypatch (pytest.MonkeyPatch): The pytest monkeypatch fixture for patching.
     """
@@ -155,7 +155,7 @@ def test_configure_torch_safe_globals_registers_checkpoint_types(
 
         Args:
             classes (list[type]): The list of classes to register as safe globals.
-        """        
+        """
         recorded_globals.extend(classes)
 
     monkeypatch.setattr(
@@ -251,7 +251,7 @@ def test_detect_language_uses_silero_vad(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Test that language detection avoids Pyannote VAD model loading.
-    
+
     Args:
         monkeypatch (pytest.MonkeyPatch): The pytest monkeypatch fixture for patching.
     """
@@ -262,7 +262,7 @@ def test_detect_language_uses_silero_vad(
 
         def transcribe(self, audio: np.ndarray) -> dict[str, str]:
             """Return a fixed detected language.
-            
+
             Args:
                 audio (np.ndarray): The input audio array for transcription.
 
@@ -273,7 +273,7 @@ def test_detect_language_uses_silero_vad(
 
     def fake_load_model(**kwargs: object) -> DummyModel:
         """Capture WhisperX model-loading arguments.
-        
+
         Args:
             **kwargs (object): The keyword arguments passed to the model loading function.
 
@@ -299,7 +299,7 @@ def test_load_transcription_model_uses_silero_vad(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Test that transcription model loading avoids Pyannote VAD.
-    
+
     Args:
         monkeypatch (pytest.MonkeyPatch): The pytest monkeypatch fixture for patching.
     """
@@ -307,7 +307,7 @@ def test_load_transcription_model_uses_silero_vad(
 
     def fake_load_model(**kwargs: object) -> SimpleNamespace:
         """Capture WhisperX model-loading arguments.
-        
+
         Args:
             **kwargs (object): The keyword arguments passed to the model loading function.
 

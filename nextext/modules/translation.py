@@ -40,8 +40,7 @@ class Translator:
 
     @staticmethod
     def _base_language_code(lang_code: str) -> str:
-        """
-        Collapse a locale/script code to its base language code.
+        """Collapse a locale/script code to its base language code.
 
         Args:
             lang_code (str): The language code to normalize, e.g. "en-US" or "de-CH".

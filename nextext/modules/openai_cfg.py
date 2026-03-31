@@ -211,8 +211,7 @@ class InferencePipeline:
         top_p: float | None = None,
         system_prompt: str | None = None,
     ) -> str:
-        """
-        Call the configured inference provider via an OpenAI-compatible chat completions API.
+        """Call the configured inference provider via an OpenAI-compatible chat completions API.
 
         Args:
             prompt (str): The user prompt to send to the model.

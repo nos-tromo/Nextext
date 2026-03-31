@@ -27,8 +27,7 @@ def transcription_pipeline(
     task: str,
     n_speakers: int,
 ) -> tuple[pd.DataFrame, str]:
-    """
-    Transcribe and diarize the audio file using WhisperX.
+    """Transcribe and diarize the audio file using WhisperX.
 
     Args:
         file_path (Path): Path to the audio file.
@@ -64,8 +63,7 @@ def transcription_pipeline(
 
 
 def normalize_language_code(lang_code: str | None) -> str | None:
-    """
-    Collapse a locale/script code to its base language code.
+    """Collapse a locale/script code to its base language code.
 
     Args:
         lang_code (str | None): The language code to normalize, e.g. "en-US" or "de-CH".
@@ -84,8 +82,7 @@ def translation_pipeline(
     src_lang: str | None = None,
     inference_pipeline: InferencePipeline | None = None,
 ) -> pd.DataFrame:
-    """
-    Translate the transcribed text using a machine translation model. Translation is performed
+    """Translate the transcribed text using a machine translation model. Translation is performed
     only if the target language is different from the detected source language.
 
     Args:
@@ -116,8 +113,7 @@ def summarization_pipeline(
     text: str,
     inference_pipeline: InferencePipeline,
 ) -> str:
-    """
-    Summarize the given text using a language model and translate the result.
+    """Summarize the given text using a language model and translate the result.
 
     Args:
         text (str): The text to summarize.
@@ -139,8 +135,7 @@ def wordlevel_pipeline(
     data: pd.DataFrame,
     language: str,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, str, Figure]:
-    """
-    Calculates word statistics, generates a histogram, and creates a word cloud from the provided text data.
+    """Calculates word statistics, generates a histogram, and creates a word cloud from the provided text data.
 
     Args:
         data (pd.DataFrame): DataFrame containing the text data to analyze.
