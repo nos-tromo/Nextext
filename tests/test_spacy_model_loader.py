@@ -15,7 +15,7 @@ def test_get_spacy_model_dir_uses_env_var(
         tmp_path (Path): Temporary directory for test files.
     """
     cache_dir = tmp_path / "spacy-cache"
-    monkeypatch.setenv(spacy_model_loader.SPACY_MODEL_DIR_ENV, str(cache_dir))
+    monkeypatch.setenv(spacy_model_loader.SPACY_MODEL_DIR, str(cache_dir))
 
     assert spacy_model_loader.get_spacy_model_dir() == cache_dir
 
@@ -36,7 +36,7 @@ def test_download_spacy_model_skips_cached_model(
     cache_dir = tmp_path / "spacy-cache"
     model_dir = cache_dir / "en_core_web_sm"
     model_dir.mkdir(parents=True)
-    monkeypatch.setenv(spacy_model_loader.SPACY_MODEL_DIR_ENV, str(cache_dir))
+    monkeypatch.setenv(spacy_model_loader.SPACY_MODEL_DIR, str(cache_dir))
 
     def fail_run(*args, **kwargs) -> None:
         raise AssertionError("subprocess.run should not be called for cached models")
@@ -59,7 +59,7 @@ def test_download_spacy_model_uses_persistent_target(
         tmp_path (Path): Temporary directory for test files.
     """
     cache_dir = tmp_path / "spacy-cache"
-    monkeypatch.setenv(spacy_model_loader.SPACY_MODEL_DIR_ENV, str(cache_dir))
+    monkeypatch.setenv(spacy_model_loader.SPACY_MODEL_DIR, str(cache_dir))
     captured: list[list[str]] = []
 
     def fake_run(cmd: list[str], check: bool) -> None:

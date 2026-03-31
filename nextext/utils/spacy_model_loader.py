@@ -1,3 +1,5 @@
+"""Utilities for managing persistent spaCy model downloads."""
+
 import importlib
 import os
 import subprocess
@@ -5,15 +7,19 @@ import sys
 from pathlib import Path
 
 import nltk
+from dotenv import load_dotenv
 from loguru import logger
 
 from nextext.utils.mappings_loader import load_mappings
 
-SPACY_MODEL_DIR_ENV = "NEXTEXT_SPACY_MODEL_DIR"
 
+load_dotenv()
 
 nltk.download("punkt_tab", quiet=True)
 nltk.download("stopwords", quiet=True)
+
+SPACY_MODEL_DIR = "SPACY_MODEL_DIR"
+DEFAULT_SPACY_MODEL_DIR = Path.home() / ".cache" / "spacy"
 
 
 def get_spacy_model_dir() -> Path:
@@ -22,18 +28,19 @@ def get_spacy_model_dir() -> Path:
     Returns:
         Path: The path to the spaCy model cache directory.
     """
-    configured_dir = os.getenv(SPACY_MODEL_DIR_ENV)
+    configured_dir = os.getenv(SPACY_MODEL_DIR)
     if configured_dir:
         return Path(configured_dir).expanduser()
-    return Path.home() / ".cache" / "nextext" / "spacy"
+    return DEFAULT_SPACY_MODEL_DIR
 
 
 def ensure_spacy_model_path(model_dir: Path | None = None) -> Path:
     """Create the persistent model directory and add it to ``sys.path``.
 
     Args:
-        model_dir (Path | None, optional): Optional custom directory for spaCy models.
-        If None, uses the default directory resolved by `get_spacy_model_dir()`. Defaults to None.
+        model_dir (Path | None, optional): Optional custom directory for
+            spaCy models. If None, uses the default directory resolved by
+            ``get_spacy_model_dir()``.
 
     Returns:
         Path: The path to the spaCy model cache directory.
@@ -51,7 +58,8 @@ def is_spacy_model_cached(model_id: str, model_dir: Path | None = None) -> bool:
 
     Args:
         model_id (str): The name of the spaCy model to check.
-        model_dir (Path | None, optional): Optional custom directory for spaCy models.
+        model_dir (Path | None, optional): Optional custom directory for
+            spaCy models.
 
     Returns:
         bool: True if the model is cached, False otherwise.
