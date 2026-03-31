@@ -54,7 +54,7 @@ Clone the repository and run either for CPU or GPU usage:
 
 ```bash
 docker compose --profile cpu up  # CPU
-docker compose --profile gpu up  # GPU
+docker compose --profile cuda up  # CUDA
 ```
 
 Launch the app: `http://localhost:8501/`
