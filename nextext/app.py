@@ -1,5 +1,8 @@
+"""Streamlit UI for the Nextext audio analysis workflow."""
+
 import sys
 import tempfile
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -37,6 +40,33 @@ def _language_name(lang_code: str | None) -> str:
         return "German"
     lang = pycountry.languages.get(alpha_2=normalize_language_code(lang_code))
     return lang.name if lang is not None else lang_code
+
+
+def _default_target_language(
+    language_maps: dict[str, str],
+    language_names: Sequence[str],
+) -> tuple[int, str]:
+    """Resolve a safe default target language for the translation UI.
+
+    Args:
+        language_maps (dict[str, str]): Mapping of language codes to labels.
+        language_names (Sequence[str]): Sorted language labels shown in the UI.
+
+    Returns:
+        tuple[int, str]: The default selectbox index and language code.
+    """
+    preferred_codes = ("de-DE", "de", "en")
+    for language_code in preferred_codes:
+        language_name = language_maps.get(language_code)
+        if language_name in language_names:
+            return language_names.index(language_name), language_code
+
+    if not language_names:
+        return 0, "en"
+
+    fallback_name = language_names[0]
+    fallback_code = kv_to_vk(language_maps).get(fallback_name, "en")
+    return 0, fallback_code
 
 
 def _run_pipeline(tmp_file: Path, opts: dict) -> None:
@@ -146,6 +176,10 @@ def _start_page() -> None:
     # Load source language mappings from Whisper and target language mappings for translation.
     src_lang_maps, src_lang_names = load_and_sort_mappings("whisper_languages.json")
     trg_lang_maps, trg_lang_names = load_and_sort_mappings("translation_languages.json")
+    default_trg_lang_index, default_trg_lang_code = _default_target_language(
+        language_maps=trg_lang_maps,
+        language_names=trg_lang_names,
+    )
 
     # Create GUI columns and widgets
     task = st.radio("Task", ["transcribe", "translate"], horizontal=True)
@@ -167,12 +201,15 @@ def _start_page() -> None:
         trg_lang_name = st.selectbox(
             "Target language (for translate task)",
             trg_lang_names,
-            index=trg_lang_names.index("German"),
+            index=default_trg_lang_index,
         )
         speakers = st.number_input("Max speakers", 1, 10, value=1, step=1)
 
     src_lang_code = kv_to_vk(src_lang_maps).get(src_lang_name)
-    trg_lang_code = kv_to_vk(trg_lang_maps).get(trg_lang_name, "English")
+    trg_lang_code = kv_to_vk(trg_lang_maps).get(
+        trg_lang_name,
+        default_trg_lang_code,
+    )
 
     run = st.button("▶️ Run", disabled=not uploaded)
 
