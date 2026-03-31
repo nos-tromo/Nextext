@@ -312,7 +312,7 @@ def main() -> None:
                 )
                 .properties(height=400)
             )
-            st.altair_chart(chart, use_container_width=True)
+            st.altair_chart(chart, width="stretch")
 
             st.subheader("🧩 Named Entities")
             st.dataframe(result["named_entities"], hide_index=True)
