@@ -1,6 +1,17 @@
-import pandas as pd
+"""Tests for the WhisperX transcription module."""
 
-from nextext.modules.transcription import WhisperTranscriber
+from types import SimpleNamespace
+
+import numpy as np
+import pandas as pd
+import pytest
+
+from nextext.modules import transcription
+from nextext.modules.transcription import (
+    TRANSCRIPTION_VAD_METHOD,
+    WhisperTranscriber,
+    _configure_torch_safe_globals,
+)
 
 
 def _build_transcriber() -> WhisperTranscriber:
@@ -78,3 +89,71 @@ def test_configure_torch_safe_globals_registers_omegaconf(
     class_names = {registered.__name__ for registered in recorded_globals}
     assert "DictConfig" in class_names
     assert "ListConfig" in class_names
+
+
+def test_detect_language_uses_silero_vad(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test that language detection avoids Pyannote VAD model loading."""
+    recorded_kwargs: dict[str, object] = {}
+
+    class DummyModel:
+        """Minimal WhisperX model stub for language detection."""
+
+        def transcribe(self, audio: np.ndarray) -> dict[str, str]:
+            """Return a fixed detected language."""
+            return {"language": "de"}
+
+    def fake_load_model(**kwargs: object) -> DummyModel:
+        """Capture WhisperX model-loading arguments."""
+        recorded_kwargs.update(kwargs)
+        return DummyModel()
+
+    monkeypatch.setattr(transcription.whisperx, "load_model", fake_load_model)
+
+    transcriber = WhisperTranscriber.__new__(WhisperTranscriber)
+    transcriber.audio = np.zeros(32000, dtype=np.float32)
+    transcriber.transcription_device = "cpu"
+
+    detected_language = transcriber._detect_language()
+
+    assert detected_language == "de"
+    assert recorded_kwargs["vad_method"] == TRANSCRIPTION_VAD_METHOD
+
+
+def test_load_transcription_model_uses_silero_vad(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test that transcription model loading avoids Pyannote VAD."""
+    recorded_kwargs: dict[str, object] = {}
+
+    def fake_load_model(**kwargs: object) -> SimpleNamespace:
+        """Capture WhisperX model-loading arguments."""
+        recorded_kwargs.update(kwargs)
+        return SimpleNamespace()
+
+    monkeypatch.setattr(
+        transcription,
+        "load_mappings",
+        lambda _: {"default_transcribe": "small"},
+    )
+    monkeypatch.setattr(transcription.whisperx, "load_model", fake_load_model)
+    monkeypatch.setattr(
+        transcription.whisperx,
+        "load_align_model",
+        lambda **kwargs: (None, None),
+    )
+
+    transcriber = WhisperTranscriber.__new__(WhisperTranscriber)
+    transcriber.task = "transcribe"
+    transcriber.src_lang = "de"
+    transcriber.transcription_device = "cpu"
+
+    transcribe_model, align_model, align_metadata = (
+        transcriber._load_transcription_model("default", "unused.json")
+    )
+
+    assert transcribe_model is not None
+    assert align_model is None
+    assert align_metadata is None
+    assert recorded_kwargs["vad_method"] == TRANSCRIPTION_VAD_METHOD

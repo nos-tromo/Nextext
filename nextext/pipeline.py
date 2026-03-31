@@ -39,8 +39,8 @@ def transcription_pipeline(
         n_speakers (int): Number of speakers for diarization.
 
     Returns:
-        pd.DataFrame: DataFrame containing the transcribed text and speaker diarization.
-        str: Detected source language code.
+        tuple[pd.DataFrame, str]: The transcript DataFrame and the
+            resolved source language code.
     """
     if WhisperTranscriber is None:
         raise RuntimeError(

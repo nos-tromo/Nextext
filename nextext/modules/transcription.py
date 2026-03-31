@@ -175,8 +175,15 @@ class WhisperTranscriber:
             device=self.transcription_device,
             compute_type="float16" if torch.cuda.is_available() else "int8",
             language=None,
+            vad_method=TRANSCRIPTION_VAD_METHOD,
         )
-        result = temp_model.transcribe(clipped_audio)
+        try:
+            result = temp_model.transcribe(clipped_audio)
+        finally:
+            del temp_model
+            if hasattr(torch, "cuda") and torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            gc.collect()
 
         detected_lang = result.get("language")
         if not detected_lang:
@@ -221,6 +228,7 @@ class WhisperTranscriber:
             device=self.transcription_device,
             compute_type=dtype,
             language=None if self.task == "translate" else self.src_lang,
+            vad_method=TRANSCRIPTION_VAD_METHOD,
         )
         try:
             align_model, align_metadata = whisperx.load_align_model(
