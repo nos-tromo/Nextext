@@ -41,6 +41,7 @@ container recreation:
 - `nltk-cache`
 - `ollama-cache`
 - `spacy-cache`
+- `torch-cache`
 
 The helper script creates them with `docker volume create`.
 
