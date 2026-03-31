@@ -52,4 +52,4 @@ RUN --mount=type=cache,target=${UV_CACHE_DIR} \
 
 EXPOSE 8501
 
-CMD ["sh", "-c", "streamlit run nextext/app.py --server.address 0.0.0.0 --server.port 8501"]
+CMD ["sh", "-c", "if [ \"$PRELOAD_MODELS\" = \"true\" ]; then load-models; fi && streamlit run nextext/app.py --server.address 0.0.0.0 --server.port 8501"]

@@ -16,7 +16,7 @@ from wordcloud import WordCloud
 
 from nextext.utils.font_loader import load_font_file
 from nextext.utils.mappings_loader import load_mappings
-from nextext.utils.spacy_model_loader import (
+from nextext.utils.model_loader import (
     download_spacy_model,
     ensure_spacy_model_path,
 )

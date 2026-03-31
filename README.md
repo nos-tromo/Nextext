@@ -90,11 +90,16 @@ export INFERENCE_PROVIDER=openai
 export OPENAI_API_KEY=your-key
 ```
 
-#### Other language and tokenization models 🌐
+#### Local preload command 🌐
 
 ```bash
-uv run load-spacy-models
+uv run load-models
 ```
+
+`load-models` preloads Nextext's NLTK resources, configured spaCy
+packages, WhisperX speech models, WhisperX alignment models, and the
+default diarization pipeline when `HF_HUB_TOKEN` is available. The
+legacy alias `uv run load-spacy-models` still works.
 
 #### Offline usage 🚫🌐
 

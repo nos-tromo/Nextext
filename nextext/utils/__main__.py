@@ -1,4 +1,4 @@
-from nextext.utils.spacy_model_loader import main
+from nextext.utils.model_loader import main
 
 
 if __name__ == "__main__":
