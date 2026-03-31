@@ -56,3 +56,25 @@ def test_merge_transcriptions_handles_arabic_question_mark() -> None:
     assert merged.to_dict("records") == [
         {"start": "0:00:00", "end": "0:00:02", "text": "مرحبا كيف الحال؟"}
     ]
+
+
+def test_configure_torch_safe_globals_registers_omegaconf(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test that Torch safe globals include OmegaConf config classes."""
+    recorded_globals: list[type] = []
+
+    def fake_add_safe_globals(classes: list[type]) -> None:
+        recorded_globals.extend(classes)
+
+    monkeypatch.setattr(
+        transcription.torch.serialization,
+        "add_safe_globals",
+        fake_add_safe_globals,
+    )
+
+    _configure_torch_safe_globals()
+
+    class_names = {registered.__name__ for registered in recorded_globals}
+    assert "DictConfig" in class_names
+    assert "ListConfig" in class_names

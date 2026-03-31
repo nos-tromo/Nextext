@@ -22,6 +22,22 @@ HF_HUB_TOKEN = os.getenv("HF_HUB_TOKEN", "")
 TRANSCRIPTION_VAD_METHOD = "silero"
 
 
+def _configure_torch_safe_globals() -> None:
+    """Register safe globals needed for Pyannote checkpoints on Torch 2.6+."""
+    add_safe_globals = getattr(torch.serialization, "add_safe_globals", None)
+    if add_safe_globals is None:
+        return
+
+    try:
+        from omegaconf import DictConfig, ListConfig
+    except ImportError:
+        logger.debug(
+            "OmegaConf is unavailable; skipping Torch safe-global registration."
+        )
+        return
+
+    add_safe_globals([DictConfig, ListConfig])
+
 
 class WhisperTranscriber:
     """
@@ -95,6 +111,7 @@ class WhisperTranscriber:
 
         self.transcription_device = "cuda" if torch.cuda.is_available() else "cpu"
         self.audio = self._load_audio(file_path)
+        _configure_torch_safe_globals()
 
         # Select or detect language
         whisper_languages = load_mappings(whisper_language_file)
