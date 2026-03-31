@@ -59,3 +59,5 @@ uploads/
 !.github/workflows/ci.yml
 !.pre-commit-config.yaml
 !AGENTS.md
+!scripts/
+!scripts/create_docker_volumes.sh
