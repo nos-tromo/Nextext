@@ -63,8 +63,7 @@ def _configure_torch_safe_globals() -> None:
 
 
 class WhisperTranscriber:
-    """
-    WhisperTranscriber handles audio transcription and speaker diarization using WhisperX.
+    """WhisperTranscriber handles audio transcription and speaker diarization using WhisperX.
 
     Attributes:
         src_lang (str): Source language of the audio.
@@ -108,8 +107,7 @@ class WhisperTranscriber:
         whisper_language_file: str = "whisper_languages.json",
         whisper_model_file: str = "whisper_models.json",
     ) -> None:
-        """
-        Initialize the WhisperTranscriber object.
+        """Initialize the WhisperTranscriber object.
 
         Args:
             file_path (str): The path to the input file.
@@ -161,8 +159,7 @@ class WhisperTranscriber:
 
     @staticmethod
     def _load_audio(file: Path, sample_rate: int = 16000) -> np.ndarray:
-        """
-        Load the audio file as a tensor using the WhisperX library.
+        """Load the audio file as a tensor using the WhisperX library.
 
         Args:
             file (Path): The path to the audio file.
@@ -176,8 +173,7 @@ class WhisperTranscriber:
     def _detect_language(
         self, duration_sec: float = 30.0, sample_rate: int = 16000
     ) -> str | None:
-        """
-        Detect the spoken language in the audio file using WhisperX.
+        """Detect the spoken language in the audio file using WhisperX.
         This method processes only the first `duration_sec` seconds of audio.
 
         Args:
@@ -220,8 +216,7 @@ class WhisperTranscriber:
     def _load_transcription_model(
         self, model_id: str, whisper_model_file: str
     ) -> tuple[Any, Any | None, dict[str, Any] | None]:
-        """
-        Load the Whisper model for transcription. If alignment model is unavailable, skip it.
+        """Load the Whisper model for transcription. If alignment model is unavailable, skip it.
 
         Args:
             model_id (str): The size of the Whisper model (tiny, base, small, medium, large, turbo).
@@ -268,8 +263,7 @@ class WhisperTranscriber:
         return transcribe_model, align_model, align_metadata
 
     def _load_diarization_model(self, auth_token: str) -> DiarizationPipeline:
-        """
-        Load the WhisperX model for speaker diarization.
+        """Load the WhisperX model for speaker diarization.
 
         Args:
             auth_token (str): The Hugging Face token for accessing the diarization model.
@@ -287,8 +281,7 @@ class WhisperTranscriber:
         return DiarizationPipeline(use_auth_token=auth_token, device=device)
 
     def transcription(self, batch_size: int = 16) -> None:
-        """
-        Run the transcription process on the loaded audio file using the WhisperX library.
+        """Run the transcription process on the loaded audio file using the WhisperX library.
 
         Args:
             batch_size (int, optional): The number of audio segments to process in each batch during transcription. Defaults to 16.
@@ -326,8 +319,7 @@ class WhisperTranscriber:
 
     @staticmethod
     def _seconds_to_time(seconds: float) -> str:
-        """
-        Convert seconds to a string representation of time in the format HH:MM:SS.
+        """Convert seconds to a string representation of time in the format HH:MM:SS.
 
         Args:
             seconds (float): The number of seconds to convert.
@@ -338,8 +330,7 @@ class WhisperTranscriber:
         return str(timedelta(seconds=round(seconds)))
 
     def diarization(self) -> None:
-        """
-        Perform speaker diarization on the audio file.
+        """Perform speaker diarization on the audio file.
 
         Raises:
             RuntimeError: If diarization is requested but the diarization model is not available.
@@ -375,8 +366,7 @@ class WhisperTranscriber:
 
     @staticmethod
     def _ends_with_punctuation(text: str) -> bool:
-        """
-        Check if the given text ends with a sentence-ending punctuation mark.
+        """Check if the given text ends with a sentence-ending punctuation mark.
 
         Args:
             text (str): The text string to check.
@@ -387,8 +377,7 @@ class WhisperTranscriber:
         return text.strip().endswith((".", "!", "?", "؟", "۔"))
 
     def _merge_transcriptions_by_sentence(self, data: pd.DataFrame) -> pd.DataFrame:
-        """
-        Merge transcriptions by sentences based on punctuation.
+        """Merge transcriptions by sentences based on punctuation.
 
         Args:
             data (pd.DataFrame): The original DataFrame containing transcription data.
@@ -399,50 +388,80 @@ class WhisperTranscriber:
         output_columns: list[str] = [
             self.start_column,
             self.end_column,
-            self.text_column,
         ]
+        has_speaker = self.speaker_column in data.columns
+        if has_speaker:
+            output_columns.append(self.speaker_column)
+        output_columns.append(self.text_column)
         if data.empty or self.text_column not in data.columns:
             logger.warning("No transcription rows were available for sentence merging.")
             return pd.DataFrame(columns=pd.Index(output_columns))
 
-        new_rows = []
-        current_row = {
-            self.start_column: None,
-            self.end_column: None,
-            self.text_column: "",
-        }
+        def _build_empty_row() -> dict[str, Any]:
+            """Create an empty row for sentence aggregation.
+
+            Returns:
+                dict[str, Any]: A mutable row container for sentence merging.
+            """
+            row: dict[str, Any] = {
+                self.start_column: None,
+                self.end_column: None,
+                self.text_column: "",
+            }
+            if has_speaker:
+                row[self.speaker_column] = None
+            return row
+
+        def _append_current_row(end_value: Any) -> None:
+            """Append the current aggregated row if it contains text.
+
+            Args:
+                end_value (Any): The end timestamp to assign before append.
+            """
+            current_text = str(current_row[self.text_column] or "").strip()
+            if not current_text:
+                return
+            current_row[self.end_column] = end_value
+            current_row[self.text_column] = current_text
+            new_rows.append(current_row.copy())
+
+        new_rows: list[dict[str, Any]] = []
+        current_row = _build_empty_row()
+        previous_end: Any = None
 
         for _, row in data.iterrows():
+            row_speaker = row.get(self.speaker_column) if has_speaker else None
+            current_text = str(current_row[self.text_column] or "").strip()
+            if (
+                has_speaker
+                and current_text
+                and current_row.get(self.speaker_column) != row_speaker
+            ):
+                _append_current_row(previous_end)
+                current_row = _build_empty_row()
+
             if current_row.get(self.start_column) is None:
                 current_row[self.start_column] = row.get(self.start_column)
+            if has_speaker and current_row.get(self.speaker_column) is None:
+                current_row[self.speaker_column] = row_speaker
 
             if row[self.text_column]:
                 current_row[self.text_column] += row[self.text_column].strip() + " "
 
+            previous_end = row.get(self.end_column)
             if self._ends_with_punctuation(row[self.text_column]):
-                current_row[self.end_column] = row.get(self.end_column)
-                new_rows.append(current_row)
-                current_row = {
-                    self.start_column: None,
-                    self.end_column: None,
-                    self.text_column: "",
-                }
+                _append_current_row(previous_end)
+                current_row = _build_empty_row()
 
-        current_text = str(current_row[self.text_column] or "")
-        if current_text.strip():
-            current_row[self.end_column] = current_row[self.end_column] or data.iloc[
-                -1
-            ].get(self.end_column)
-            new_rows.append(current_row)
+        if str(current_row[self.text_column] or "").strip():
+            _append_current_row(previous_end)
 
         merged_df = pd.DataFrame(new_rows, columns=pd.Index(output_columns))
-        merged_df[self.text_column] = merged_df[self.text_column].str.strip()
         logger.info("Transcriptions successfully merged by sentence.")
         return merged_df
 
     def transcript_output(self) -> pd.DataFrame:
-        """
-        Get the transcription result as a DataFrame.
+        """Get the transcription result as a DataFrame.
 
         Returns:
             pd.DataFrame: A DataFrame containing the transcription results.

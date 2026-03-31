@@ -69,13 +69,93 @@ def test_merge_transcriptions_handles_arabic_question_mark() -> None:
     ]
 
 
+def test_merge_transcriptions_preserves_speaker_column() -> None:
+    """Test that sentence merging keeps speaker labels for diarized rows."""
+    transcriber = _build_transcriber()
+    data = pd.DataFrame(
+        [
+            {
+                "start": "0:00:00",
+                "end": "0:00:01",
+                "speaker": "SPEAKER_00",
+                "text": "hello",
+            },
+            {
+                "start": "0:00:01",
+                "end": "0:00:02",
+                "speaker": "SPEAKER_00",
+                "text": "world.",
+            },
+        ]
+    )
+
+    merged = transcriber._merge_transcriptions_by_sentence(data)
+
+    assert list(merged.columns) == ["start", "end", "speaker", "text"]
+    assert merged.to_dict("records") == [
+        {
+            "start": "0:00:00",
+            "end": "0:00:02",
+            "speaker": "SPEAKER_00",
+            "text": "hello world.",
+        }
+    ]
+
+
+def test_merge_transcriptions_splits_when_speaker_changes() -> None:
+    """Test that sentence merging does not blend text across speakers."""
+    transcriber = _build_transcriber()
+    data = pd.DataFrame(
+        [
+            {
+                "start": "0:00:00",
+                "end": "0:00:01",
+                "speaker": "SPEAKER_00",
+                "text": "hello",
+            },
+            {
+                "start": "0:00:01",
+                "end": "0:00:02",
+                "speaker": "SPEAKER_01",
+                "text": "world",
+            },
+        ]
+    )
+
+    merged = transcriber._merge_transcriptions_by_sentence(data)
+
+    assert merged.to_dict("records") == [
+        {
+            "start": "0:00:00",
+            "end": "0:00:01",
+            "speaker": "SPEAKER_00",
+            "text": "hello",
+        },
+        {
+            "start": "0:00:01",
+            "end": "0:00:02",
+            "speaker": "SPEAKER_01",
+            "text": "world",
+        },
+    ]
+
+
 def test_configure_torch_safe_globals_registers_checkpoint_types(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Test that Torch safe globals include required checkpoint classes."""
+    """Test that Torch safe globals include required checkpoint classes.
+    
+    Args:
+        monkeypatch (pytest.MonkeyPatch): The pytest monkeypatch fixture for patching.
+    """
     recorded_globals: list[type] = []
 
     def fake_add_safe_globals(classes: list[type]) -> None:
+        """Fake implementation of `add_safe_globals` for testing.
+
+        Args:
+            classes (list[type]): The list of classes to register as safe globals.
+        """        
         recorded_globals.extend(classes)
 
     monkeypatch.setattr(
@@ -99,7 +179,7 @@ def test_init_skips_diarization_model_for_single_speaker(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Test that single-speaker runs do not load the diarization pipeline.
-    
+
     Args:
         monkeypatch (pytest.MonkeyPatch): The pytest monkeypatch fixture for patching.
     """
@@ -129,7 +209,7 @@ def test_init_skips_diarization_model_for_single_speaker(
         auth_token: str,
     ) -> None:
         """Fail when diarization loading is attempted unexpectedly.
-        
+
         Args:
             auth_token (str): The authentication token for model loading.
 
@@ -170,18 +250,36 @@ def test_diarization_requires_loaded_model() -> None:
 def test_detect_language_uses_silero_vad(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Test that language detection avoids Pyannote VAD model loading."""
+    """Test that language detection avoids Pyannote VAD model loading.
+    
+    Args:
+        monkeypatch (pytest.MonkeyPatch): The pytest monkeypatch fixture for patching.
+    """
     recorded_kwargs: dict[str, object] = {}
 
     class DummyModel:
         """Minimal WhisperX model stub for language detection."""
 
         def transcribe(self, audio: np.ndarray) -> dict[str, str]:
-            """Return a fixed detected language."""
+            """Return a fixed detected language.
+            
+            Args:
+                audio (np.ndarray): The input audio array for transcription.
+
+            Returns:
+                dict[str, str]: A dictionary containing the detected language code.
+            """
             return {"language": "de"}
 
     def fake_load_model(**kwargs: object) -> DummyModel:
-        """Capture WhisperX model-loading arguments."""
+        """Capture WhisperX model-loading arguments.
+        
+        Args:
+            **kwargs (object): The keyword arguments passed to the model loading function.
+
+        Returns:
+            DummyModel: A dummy model instance for testing.
+        """
         recorded_kwargs.update(kwargs)
         return DummyModel()
 
@@ -200,11 +298,22 @@ def test_detect_language_uses_silero_vad(
 def test_load_transcription_model_uses_silero_vad(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Test that transcription model loading avoids Pyannote VAD."""
+    """Test that transcription model loading avoids Pyannote VAD.
+    
+    Args:
+        monkeypatch (pytest.MonkeyPatch): The pytest monkeypatch fixture for patching.
+    """
     recorded_kwargs: dict[str, object] = {}
 
     def fake_load_model(**kwargs: object) -> SimpleNamespace:
-        """Capture WhisperX model-loading arguments."""
+        """Capture WhisperX model-loading arguments.
+        
+        Args:
+            **kwargs (object): The keyword arguments passed to the model loading function.
+
+        Returns:
+            SimpleNamespace: A dummy model instance for testing.
+        """
         recorded_kwargs.update(kwargs)
         return SimpleNamespace()
 
