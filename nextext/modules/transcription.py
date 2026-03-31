@@ -28,15 +28,38 @@ def _configure_torch_safe_globals() -> None:
     if add_safe_globals is None:
         return
 
+    safe_globals: list[Any] = []
+
     try:
         from omegaconf import DictConfig, ListConfig
     except ImportError:
         logger.debug(
             "OmegaConf is unavailable; skipping Torch safe-global registration."
         )
-        return
+    else:
+        safe_globals.extend([DictConfig, ListConfig])
 
-    add_safe_globals([DictConfig, ListConfig])
+    try:
+        from torch.torch_version import TorchVersion
+    except ImportError:
+        logger.debug(
+            "TorchVersion is unavailable; skipping Torch safe-global registration."
+        )
+    else:
+        safe_globals.append(TorchVersion)
+
+    try:
+        from pyannote.audio.core.task import Problem, Resolution, Specifications
+    except ImportError:
+        logger.debug(
+            "Pyannote task classes are unavailable; skipping Torch "
+            "safe-global registration."
+        )
+    else:
+        safe_globals.extend([Problem, Resolution, Specifications])
+
+    if safe_globals:
+        add_safe_globals(safe_globals)
 
 
 class WhisperTranscriber:
@@ -124,11 +147,13 @@ class WhisperTranscriber:
         self.transcribe_model, self.align_model, self.align_metadata = (
             self._load_transcription_model(model_id, whisper_model_file)
         )
-        if not auth_token:
+        self.diarize_model: DiarizationPipeline | None = None
+        if self.n_speakers > 1 and not auth_token:
             logger.warning(
                 "No Hugging Face token provided. Speaker diarization will be unavailable."
             )
-        self.diarize_model = self._load_diarization_model(auth_token)
+        elif self.n_speakers > 1:
+            self.diarize_model = self._load_diarization_model(auth_token)
 
         # Initialize attributes for transcription results and DataFrame
         self.transcription_result: Optional[dict[str, Any]] = None
@@ -315,11 +340,19 @@ class WhisperTranscriber:
     def diarization(self) -> None:
         """
         Perform speaker diarization on the audio file.
+
+        Raises:
+            RuntimeError: If diarization is requested but the diarization model is not available.
         """
         try:
             if self.n_speakers <= 1:
                 logger.info("Skipping diarization as only one speaker is specified.")
                 return
+            if self.diarize_model is None:
+                raise RuntimeError(
+                    "Speaker diarization requires a valid HF_HUB_TOKEN and "
+                    "accepted pyannote model access."
+                )
 
             diarize_segments = self.diarize_model(
                 self.audio, max_speakers=self.n_speakers
@@ -331,7 +364,9 @@ class WhisperTranscriber:
             logger.error("Error during diarization: {}", e, exc_info=True)
             raise
         finally:
-            del self.diarize_model
+            if self.diarize_model is not None:
+                del self.diarize_model
+                self.diarize_model = None
             if hasattr(torch, "cuda") and torch.cuda.is_available():
                 torch.cuda.empty_cache()
                 logger.info("Flushed GPU memory.")
