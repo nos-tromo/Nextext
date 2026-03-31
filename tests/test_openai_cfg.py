@@ -40,8 +40,7 @@ def test_ollama_client_uses_placeholder_api_key(
     assert recorded_kwargs["base_url"].endswith("/v1")
 
 
-def test_ollama_base_url_avoids_duplicate_v1(
-) -> None:
+def test_ollama_base_url_avoids_duplicate_v1() -> None:
     """Test that Ollama base URLs do not append ``/v1`` twice."""
     pipeline = InferencePipeline(provider="ollama")
     pipeline.openai_api_base = "http://localhost:11434/v1"
