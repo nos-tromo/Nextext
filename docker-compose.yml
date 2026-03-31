@@ -39,10 +39,9 @@ services:
       USE_DEVICE: auto
     volumes: &backend-volumes
       - huggingface-cache:/root/.cache/huggingface/hub
-      - nextext-cache:/root/.cache/nextext
       - nextext-logs:/var/log/nextext
       - nltk-cache:/root/nltk_data
-      - uv-cache:/root/.cache/uv
+      - spacy-cache:/root/.cache/spacy
     networks:
       nextext-net:
 
@@ -113,11 +112,14 @@ services:
 ##########################################################
 volumes:
   huggingface-cache:
-  nextext-cache:
+    external: true
   nextext-logs:
   nltk-cache:
+    external: true
   ollama-cache:
-  uv-cache:  
+    external: true
+  spacy-cache:
+    external: true
 
 ##########################################################
 # Networks
