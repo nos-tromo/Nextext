@@ -25,6 +25,7 @@
 **/models/
 **/output/
 **/results/
+**/scripts/
 **/session/
 **/tests/
 
@@ -33,6 +34,8 @@
 *.pyc
 *.pyo
 *.so
+.dockerignore
+.gitignore
 .env*
 .pre-commit-config.yaml
 AGENTS.md
@@ -73,6 +76,4 @@ README.md
 docker-compose.override.yml
 
 # Exceptions
-!.gitignore
-!**/.dockerignore
 !**/prompts/*.txt
