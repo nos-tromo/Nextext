@@ -53,6 +53,7 @@ uploads/
 # Exceptions
 # ==================================
 !.dockerignore
+!.env.example
 !.gitignore
 !.github/
 !.github/workflows/

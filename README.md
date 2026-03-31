@@ -44,6 +44,11 @@ container recreation:
 
 The helper script creates them with `docker volume create`.
 
+If your environment requires an outbound proxy, place
+`HTTP_PROXY`, `HTTPS_PROXY`, and `NO_PROXY` in the project's `.env`
+file. The compose setup uses them for both image builds and runtime
+model downloads in Nextext and Ollama.
+
 #### Profile installation
 
 The Docker setup will install Nextext from `docker-compose.yml` and, with that, pull the latest Ollama image. By default, Nextext uses Ollama as its inference provider through Ollama's OpenAI-compatible endpoint.
