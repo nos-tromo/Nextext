@@ -233,7 +233,8 @@ def _start_page() -> None:
 def main() -> None:
     """Main function to run the Streamlit app (tab‑based navigation)."""
     st.set_page_config(page_title="Nextext", layout="wide")
-    st.title("Nextext – Dashboard Report")
+    st.title("Nextext")
+    st.subheader("Transcribe, translate, and analyze audio/video files")
 
     # Top‑level tabs
     tab_params, tab_transcript, tab_summary, tab_words = st.tabs(
