@@ -1,9 +1,8 @@
-import getpass
-import os
+"""Shared pipeline entry points for Nextext processing stages."""
+
 from pathlib import Path
 
 import pandas as pd
-from dotenv import find_dotenv, load_dotenv, set_key
 from matplotlib.figure import Figure
 
 from nextext.modules.openai_cfg import InferencePipeline
@@ -20,50 +19,8 @@ else:
     WhisperTranscriber = _WhisperTranscriber
 
 
-def get_api_key(token: str = "API_KEY") -> str:
-    """
-    Retrieve the API key from environment or prompt user. Works in both local and Docker environments.
-
-    Args:
-        token (str): The environment variable to read the API key from.
-
-    Returns:
-        str: The API key.
-
-    Raises:
-        RuntimeError: If the key cannot be retrieved in a non-interactive (e.g. Docker) environment.
-        ValueError: If the key is not found in the environment variables.
-    """
-    dotenv_path = find_dotenv()
-    if dotenv_path:
-        load_dotenv(dotenv_path)
-
-    api_key = os.getenv(token)
-    if api_key:
-        return api_key
-
-    if Path("/.dockerenv").exists():
-        raise RuntimeError(
-            f"Missing API key. Please set {token} in your .env file or docker-compose environment."
-        )
-
-    try:
-        api_key = getpass.getpass("Token not found. Please enter your API key: ")
-        if dotenv_path:
-            set_key(dotenv_path, token, api_key)
-        else:
-            with open(".env", "w") as env_file:
-                env_file.write(f"{token}={api_key}\n")
-        return api_key
-    except EOFError:
-        raise RuntimeError(
-            f"API key prompt failed and environment variable {token} is not set."
-        )
-
-
 def transcription_pipeline(
     file_path: Path,
-    api_key: str,
     trg_lang: str,
     src_lang: str,
     model_id: str,
@@ -75,7 +32,6 @@ def transcription_pipeline(
 
     Args:
         file_path (Path): Path to the audio file.
-        api_key (str): API key for authentication.
         trg_lang (str): Target language code for translation check.
         src_lang (str): Source language code.
         model_id (str): Model ID for WhisperX.
@@ -92,7 +48,6 @@ def transcription_pipeline(
         )
     transcriber = WhisperTranscriber(
         file_path=file_path,
-        auth_token=api_key,
         trg_lang=trg_lang,
         src_lang=src_lang,
         model_id=model_id,

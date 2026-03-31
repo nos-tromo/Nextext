@@ -47,28 +47,6 @@ class InferencePipeline:
         self.sys_prompt = self.load_prompt().format(language=self.out_language)
 
     @property
-    def api_key(self) -> str:
-        """Resolve the API key required by the OpenAI client.
-
-        Returns:
-            str: The API key for the configured inference provider.
-
-        Raises:
-            RuntimeError: If the provider is 'openai' and the OPENAI_API_KEY is not set.
-        """
-        if self.provider == "ollama":
-            return (
-                os.getenv("OLLAMA_API_KEY") or os.getenv("OPENAI_API_KEY") or "ollama"
-            )
-
-        api_key = os.getenv("OPENAI_API_KEY")
-        if not api_key:
-            raise RuntimeError(
-                "OPENAI_API_KEY must be set when INFERENCE_PROVIDER is 'openai'."
-            )
-        return api_key
-
-    @property
     def base_url(self) -> str | None:
         """Resolve the provider base URL for the OpenAI client.
 
@@ -97,7 +75,7 @@ class InferencePipeline:
                 "The 'openai' package is required for inference. Run `uv sync` to install it."
             )
         if self._client is None:
-            client_kwargs: dict[str, Any] = {"api_key": self.api_key}
+            client_kwargs: dict[str, Any] = {}
             if self.base_url is not None:
                 client_kwargs["base_url"] = self.base_url
             self._client = OpenAIClient(**client_kwargs)
@@ -124,11 +102,6 @@ class InferencePipeline:
                 return False
             return response.status_code == 200 and "models" in response.json()
 
-        try:
-            _ = self.api_key
-        except RuntimeError as exc:
-            logger.error("OpenAI configuration error: {}", exc)
-            return False
         return True
 
     def _select_model(self, file_name: str, fallback_model: str) -> str:

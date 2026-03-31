@@ -11,7 +11,6 @@ from streamlit.web import cli as st_cli
 
 from nextext.modules.openai_cfg import InferencePipeline
 from nextext.pipeline import (
-    get_api_key,
     normalize_language_code,
     summarization_pipeline,
     transcription_pipeline,
@@ -59,7 +58,6 @@ def _run_pipeline(tmp_file: Path, opts: dict) -> None:
             src_lang=opts["src_lang"],
             model_id=opts["model_id"],
             task=opts["task"],
-            api_key=get_api_key() or "",
             n_speakers=opts["speakers"],
         )
         # Update the source language in the session state

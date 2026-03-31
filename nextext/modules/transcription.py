@@ -1,4 +1,7 @@
+"""Audio transcription and diarization with WhisperX."""
+
 import gc
+import os
 from datetime import timedelta
 from pathlib import Path
 from typing import Any, Optional
@@ -7,10 +10,17 @@ import numpy as np
 import pandas as pd
 import torch
 import whisperx
+from dotenv import load_dotenv
 from loguru import logger
 from whisperx.diarize import DiarizationPipeline
 
 from nextext.utils.mappings_loader import load_mappings
+
+
+load_dotenv()
+HF_HUB_TOKEN = os.getenv("HF_HUB_TOKEN", "")
+TRANSCRIPTION_VAD_METHOD = "silero"
+
 
 
 class WhisperTranscriber:
@@ -47,7 +57,6 @@ class WhisperTranscriber:
     def __init__(
         self,
         file_path: Path,
-        auth_token: str,
         trg_lang: str,
         src_lang: str | None = None,
         model_id: str = "default",
@@ -65,7 +74,6 @@ class WhisperTranscriber:
 
         Args:
             file_path (str): The path to the input file.
-            auth_token (str): The Hugging Face token for accessing the diarization model.
             trg_lang (str): The target language for translation.
             src_lang (str, optional): The source language of the file. Defaults to None, which triggers language detection.
             model_id (str, optional): The size of the Whisper model. Defaults to "default".
@@ -83,6 +91,7 @@ class WhisperTranscriber:
         self.end_column = end_column
         self.speaker_column = speaker_column
         self.text_column = text_column
+        auth_token = HF_HUB_TOKEN
 
         self.transcription_device = "cuda" if torch.cuda.is_available() else "cpu"
         self.audio = self._load_audio(file_path)
@@ -98,6 +107,10 @@ class WhisperTranscriber:
         self.transcribe_model, self.align_model, self.align_metadata = (
             self._load_transcription_model(model_id, whisper_model_file)
         )
+        if not auth_token:
+            logger.warning(
+                "No Hugging Face token provided. Speaker diarization will be unavailable."
+            )
         self.diarize_model = self._load_diarization_model(auth_token)
 
         # Initialize attributes for transcription results and DataFrame

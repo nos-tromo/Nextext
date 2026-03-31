@@ -7,7 +7,6 @@ import pycountry
 from nextext.modules.openai_cfg import InferencePipeline
 from nextext.modules.processing import FileProcessor
 from nextext.pipeline import (
-    get_api_key,
     normalize_language_code,
     summarization_pipeline,
     transcription_pipeline,
@@ -168,7 +167,6 @@ def main() -> None:
     if args.task in ["transcribe", "translate"]:
         transcript_df, updated_src_lang = transcription_pipeline(
             file_path=args.file_path,
-            api_key=get_api_key() or "",
             trg_lang=args.trg_lang,
             src_lang=args.src_lang,
             model_id=args.model_id,

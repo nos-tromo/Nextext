@@ -26,7 +26,7 @@ Nextext breaks the speech-to-insight workflow into specialized agents (self-cont
 
 - **Key files:** `nextext/modules/transcription.py`, `transcription_pipeline()` (`nextext/pipeline.py`).
 - **Responsibilities:** Load audio, auto-detect language when not provided, run WhisperX transcription, optional diarization (`n_speakers > 1`), and emit a normalized DataFrame used by every downstream agent.
-- **Inputs:** `Path` to audio/video, Hugging Face token retrieved through `get_api_key()` (defaults to env var `API_KEY` and persists to `.env`), Whisper model id (`default` resolves via `nextext/utils/mappings/whisper_models.json`), task (`transcribe` or `translate`), target ISO code, optional source code, speaker count.
+- **Inputs:** `Path` to audio/video, Whisper model id (`default` resolves via `nextext/utils/mappings/whisper_models.json`), task (`transcribe` or `translate`), target ISO code, optional source code, speaker count.
 - **Outputs:** `pd.DataFrame` with `start`, `end`, `speaker`, `text`; detected source language stored in `WhisperTranscriber.src_lang`.
 - **Dependencies:** `whisperx`, `torch`, diarization models gated by the Hugging Face token; GPU/MPS detection picks compute dtype automatically.
 - **Operational notes:** If diarization is disabled the speaker column defaults to a single speaker; diarization requires extra VRAM and uses `pyannote` models, so ensure they are downloaded before run or the call will raise.

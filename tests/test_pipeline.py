@@ -1,3 +1,5 @@
+"""Tests for the shared Nextext pipeline helpers."""
+
 from pathlib import Path
 
 import pandas as pd
@@ -44,85 +46,6 @@ def enable_docker_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(Path, "exists", fake_exists)
 
 
-def test_get_api_key_from_environment(monkeypatch: pytest.MonkeyPatch) -> None:
-    """
-    Test getting API key from environment variables.
-
-    Args:
-        monkeypatch (pytest.MonkeyPatch): The monkeypatch fixture for modifying behavior.
-    """
-    monkeypatch.setattr(pipeline, "find_dotenv", lambda: "")
-    monkeypatch.setattr(pipeline, "load_dotenv", lambda path: None)
-    monkeypatch.setenv("API_TOKEN", "secret")
-
-    assert pipeline.get_api_key("API_TOKEN") == "secret"
-
-
-def test_get_api_key_prompts_and_saves(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, disable_docker_env: None
-) -> None:
-    """
-    Test getting API key from environment variables. If not found, prompts the user and saves it to a .env file.
-
-    Args:
-        monkeypatch (pytest.MonkeyPatch): The monkeypatch fixture for modifying behavior.
-        tmp_path (Path): The temporary path fixture for creating temporary files.
-        disable_docker_env (None): The fixture to disable Docker environment detection.
-    """
-    dotenv_path = tmp_path / ".env"
-    saved: dict[str, str] = {}
-
-    monkeypatch.setattr(pipeline, "find_dotenv", lambda: str(dotenv_path))
-    monkeypatch.setattr(pipeline, "load_dotenv", lambda path: None)
-    monkeypatch.setattr(pipeline.getpass, "getpass", lambda prompt: "prompted-key")
-
-    def fake_set_key(path: str, token: str, value: str) -> None:
-        """
-        Fake implementation of setting a key in the .env file.
-
-        Args:
-            path (str): The path to the .env file.
-            token (str): The environment variable name.
-            value (str): The value to set for the environment variable.
-        """
-        saved["path"] = path
-        saved["token"] = token
-        saved["value"] = value
-
-    monkeypatch.setattr(pipeline, "set_key", fake_set_key)
-    monkeypatch.delenv("TEST_TOKEN", raising=False)
-
-    result = pipeline.get_api_key("TEST_TOKEN")
-
-    assert result == "prompted-key"
-    assert saved == {
-        "path": str(dotenv_path),
-        "token": "TEST_TOKEN",
-        "value": "prompted-key",
-    }
-
-
-def test_get_api_key_docker_environment_raises(
-    monkeypatch: pytest.MonkeyPatch, enable_docker_env: None
-) -> None:
-    """
-    Test getting API key from environment variables in a Docker environment. Raises RuntimeError if not found.
-
-    Args:
-        monkeypatch (pytest.MonkeyPatch): The monkeypatch fixture for modifying behavior.
-        enable_docker_env (None): The fixture to enable Docker environment detection.
-
-    Raises:
-        RuntimeError: If the API key is not found in the environment variables.
-    """
-    monkeypatch.setattr(pipeline, "find_dotenv", lambda: "")
-    monkeypatch.setattr(pipeline, "load_dotenv", lambda path: None)
-    monkeypatch.delenv("API_KEY", raising=False)
-
-    with pytest.raises(RuntimeError):
-        pipeline.get_api_key("API_KEY")
-
-
 def test_transcription_pipeline_invokes_transcriber(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -139,7 +62,6 @@ def test_transcription_pipeline_invokes_transcriber(
         def __init__(
             self,
             file_path: Path,
-            auth_token: str,
             trg_lang: str,
             src_lang: str,
             model_id: str,
@@ -148,7 +70,6 @@ def test_transcription_pipeline_invokes_transcriber(
         ) -> None:
             self.params = {
                 "file_path": file_path,
-                "auth_token": auth_token,
                 "trg_lang": trg_lang,
                 "src_lang": src_lang,
                 "model_id": model_id,
@@ -173,7 +94,6 @@ def test_transcription_pipeline_invokes_transcriber(
 
     df, detected_lang = pipeline.transcription_pipeline(
         file_path=Path("/tmp/audio.wav"),
-        api_key="token",
         trg_lang="en",
         src_lang="auto",
         model_id="base",
@@ -216,7 +136,6 @@ def test_transcription_pipeline_falls_back_to_original_language(
 
     df, detected_lang = pipeline.transcription_pipeline(
         file_path=Path("/tmp/audio.wav"),
-        api_key="token",
         trg_lang="en",
         src_lang="es",
         model_id="base",
