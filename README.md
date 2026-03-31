@@ -32,6 +32,20 @@ To enable speaker diarization, accept the user agreement for the following model
 
 ### Docker installation 🐳
 
+#### Shared Docker volumes
+
+The compose file uses external cache volumes so model artifacts survive
+container recreation:
+
+- `huggingface-cache`
+- `nltk-cache`
+- `ollama-cache`
+- `spacy-cache`
+
+The helper script creates them with `docker volume create`.
+
+#### Profile installation
+
 The Docker setup will install Nextext from `docker-compose.yml` and, with that, pull the latest Ollama image. By default, Nextext uses Ollama as its inference provider through Ollama's OpenAI-compatible endpoint.
 
 Select whether to install the CPU or GPU variant (requires a CUDA compatible GPU and the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html) set up):
@@ -76,8 +90,6 @@ export OPENAI_API_KEY=your-key
 ```bash
 uv run load-spacy-models
 ```
-
-spaCy models are cached outside the virtual environment in `~/.cache/nextext/spacy` by default. Override this with `NEXTEXT_SPACY_MODEL_DIR` if needed. In Docker, the existing `/root/.cache` volume keeps these models across container rebuilds.
 
 #### Offline usage 🚫🌐
 
