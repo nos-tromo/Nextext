@@ -1,3 +1,7 @@
+[build-system]
+requires = ["setuptools>=75.0.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "nextext"
 version = "0.8.0"
@@ -59,10 +63,6 @@ dev = [
     "pytest>=9.0.1",
     "ruff>=0.15.7",
 ]
-
-[build-system]
-requires = ["setuptools>=75.0.0", "wheel"]
-build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
 include-package-data = true
