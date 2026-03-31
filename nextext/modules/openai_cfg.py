@@ -1,13 +1,15 @@
+"""Inference client configuration for Ollama and OpenAI-compatible APIs."""
+
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 import requests
-import torch
+from dotenv import load_dotenv
 from loguru import logger
 
-from nextext.utils.mappings_loader import load_mappings
+load_dotenv()
 
 OpenAIClient: Any = None
 
@@ -40,6 +42,8 @@ class InferencePipeline:
         """Post-initialization processing to set up the inference pipeline based on the selected provider."""
         self.provider = self.provider.lower()
         logger.info("Inference provider set to: {}", self.provider)
+        if self.provider == "openai":
+            _ = self.api_key
         self.sys_prompt = self.load_prompt().format(language=self.out_language)
 
     @property
@@ -53,8 +57,23 @@ class InferencePipeline:
         if custom_base_url:
             return custom_base_url
         if self.provider == "ollama":
-            return f"{self.openai_api_base.rstrip('/')}/v1"
+            resolved_base_url = self.openai_api_base.rstrip("/")
+            if resolved_base_url.endswith("/v1"):
+                return resolved_base_url
+            return f"{resolved_base_url}/v1"
         return None
+
+    @property
+    def ollama_api_base(self) -> str:
+        """Resolve the Ollama root API base URL without the OpenAI ``/v1`` path.
+
+        Returns:
+            str: The normalized Ollama API base URL.
+        """
+        resolved_base_url = self.openai_api_base.rstrip("/")
+        if resolved_base_url.endswith("/v1"):
+            return resolved_base_url[:-3]
+        return resolved_base_url
 
     @property
     def client(self) -> Any:
@@ -74,8 +93,30 @@ class InferencePipeline:
             client_kwargs: dict[str, Any] = {}
             if self.base_url is not None:
                 client_kwargs["base_url"] = self.base_url
+            client_kwargs["api_key"] = self.api_key
             self._client = OpenAIClient(**client_kwargs)
         return self._client
+
+    @property
+    def api_key(self) -> str:
+        """Resolve the API key required by the selected inference provider.
+
+        Returns:
+            str: The resolved API key or a placeholder for local Ollama usage.
+
+        Raises:
+            RuntimeError: If ``provider`` is ``openai`` and ``OPENAI_API_KEY``
+                is not configured.
+        """
+        configured_key = os.getenv("OPENAI_API_KEY")
+        if self.provider == "ollama":
+            return configured_key or "ollama"
+        if configured_key:
+            return configured_key
+        raise RuntimeError(
+            "OPENAI_API_KEY must be set in the environment or .env file when "
+            "INFERENCE_PROVIDER=openai."
+        )
 
     def get_health(self) -> bool:
         """Validate that the configured inference provider is reachable enough to serve requests.
@@ -92,12 +133,17 @@ class InferencePipeline:
 
         if self.provider == "ollama":
             try:
-                response = requests.get(f"{self.openai_api_base}/api/tags", timeout=5)
+                response = requests.get(f"{self.ollama_api_base}/api/tags", timeout=5)
             except requests.RequestException as exc:
                 logger.error("Ollama health check failed: {}", exc)
                 return False
             return response.status_code == 200 and "models" in response.json()
 
+        try:
+            _ = self.api_key
+        except RuntimeError as exc:
+            logger.error("OpenAI configuration error: {}", exc)
+            return False
         return True
 
     @property
@@ -251,6 +297,3 @@ class InferencePipeline:
             str: The generated response from the Ollama server.
         """
         return self.call_model(prompt=prompt, **kwargs)
-
-
-OllamaPipeline = InferencePipeline

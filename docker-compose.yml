@@ -39,7 +39,7 @@ services:
       HF_HUB_TOKEN: $HF_HUB_TOKEN
       INFERENCE_PROVIDER: ${INFERENCE_PROVIDER:-ollama}
       LOG_PATH: /var/log/nextext/nextext.log
-      OPENAI_API_BASE: http://ollama-server:11434
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       PRELOAD_MODELS: ${PRELOAD_MODELS:-false}
       STREAMLIT_BROWSER_GATHER_USAGE_STATS: false
       STREAMLIT_SERVER_FILE_WATCHER_TYPE: none
