@@ -44,7 +44,8 @@ services:
       STREAMLIT_BROWSER_GATHER_USAGE_STATS: false
       STREAMLIT_SERVER_FILE_WATCHER_TYPE: none
       STREAMLIT_SERVER_MAX_UPLOAD_SIZE: 8192
-      USE_DEVICE: auto
+      TEXT_MODEL: ${TEXT_MODEL:-}
+      TRANSLATION_MODEL: ${TRANSLATION_MODEL:-}
     volumes: &backend-volumes
       - huggingface-cache:/root/.cache/huggingface/hub
       - nextext-logs:/var/log/nextext

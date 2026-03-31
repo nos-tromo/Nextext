@@ -1,5 +1,0 @@
-{
-    "cuda": "translategemma:12b",
-    "mps": "translategemma:4b",
-    "cpu": "translategemma:4b"
-}

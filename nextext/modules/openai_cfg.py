@@ -30,13 +30,9 @@ class InferencePipeline:
         default_factory=lambda: os.getenv("INFERENCE_PROVIDER", "ollama")
     )
     openai_api_base: str = field(default=OPENAI_API_BASE, init=False)
-    model_file: str = "ollama_models.json"
-    translation_model_file: str = "translation_models.json"
     _default_model: str | None = field(default=None, init=False)
     _translation_model: str | None = field(default=None, init=False)
     _client: Any | None = field(default=None, init=False)
-    fallback_model: str = "qwen3:8b"
-    fallback_translation_model: str = "translategemma"
     prompt_dir: Path = field(default=PROMPT_DIR, init=False)
     out_language: str = "German"
 
@@ -104,56 +100,25 @@ class InferencePipeline:
 
         return True
 
-    def _select_model(self, file_name: str, fallback_model: str) -> str:
-        """Choose the model based on hardware defaults when running against Ollama.
-
-        Args:
-            file_name (str): The JSON file containing model mappings.
-            fallback_model (str): The fallback model to use if no mappings are found.
-
-        Returns:
-            str: The selected model name.
-        """
-        models = load_mappings(file_name)
-        if not models:
-            logger.warning(
-                "Model file '{}' not found or empty. Falling back to '{}'.",
-                file_name,
-                fallback_model,
-            )
-            return fallback_model
-
-        device_key = (
-            "cuda"
-            if torch.cuda.is_available()
-            else "mps"
-            if torch.backends.mps.is_available()
-            else "cpu"
-        )
-        model_name = models.get(device_key) or models.get("cpu") or fallback_model
-        logger.info("Loaded {} model '{}'.", self.provider, model_name)
-        return model_name
-
     @property
     def default_model(self) -> str:
         """Resolve the default chat model for summarization and other general tasks.
 
         Returns:
             str: The default model name.
+
+        Raises:
+            RuntimeError: If ``TEXT_MODEL`` is not configured.
         """
         if self._default_model is None:
-            if self.provider == "ollama":
-                self._default_model = (
-                    os.getenv("OLLAMA_MODEL")
-                    or os.getenv("INFERENCE_MODEL")
-                    or self._select_model(self.model_file, self.fallback_model)
+            configured_model = os.getenv("TEXT_MODEL")
+            if not configured_model:
+                raise RuntimeError(
+                    "TEXT_MODEL must be set in the environment or .env file "
+                    "for text analysis."
                 )
-            else:
-                self._default_model = (
-                    os.getenv("OPENAI_MODEL")
-                    or os.getenv("INFERENCE_MODEL")
-                    or "gpt-4.1-mini"
-                )
+            self._default_model = configured_model
+            logger.info("Loaded {} model '{}'.", self.provider, self._default_model)
         return self._default_model
 
     @property
@@ -162,20 +127,18 @@ class InferencePipeline:
 
         Returns:
             str: The translation model name.
+
+        Raises:
+            RuntimeError: If ``TRANSLATION_MODEL`` is not configured.
         """
         if self._translation_model is None:
-            if self.provider == "ollama":
-                self._translation_model = os.getenv(
-                    "TRANSLATION_MODEL"
-                ) or self._select_model(
-                    self.translation_model_file, self.fallback_translation_model
+            configured_model = os.getenv("TRANSLATION_MODEL")
+            if not configured_model:
+                raise RuntimeError(
+                    "TRANSLATION_MODEL must be set in the environment or "
+                    ".env file for translation."
                 )
-            else:
-                self._translation_model = (
-                    os.getenv("OPENAI_TRANSLATION_MODEL")
-                    or os.getenv("TRANSLATION_MODEL")
-                    or self.default_model
-                )
+            self._translation_model = configured_model
         return self._translation_model
 
     def load_prompt(self, keyword: str = "system") -> str:

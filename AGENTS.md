@@ -38,7 +38,7 @@ Nextext breaks the speech-to-insight workflow into specialized agents (self-cont
 - **Inputs:** Transcript `pd.DataFrame` (only the `text` column is used), target ISO 639-1 code, optional resolved source code from transcription, shared `InferencePipeline`.
 - **Outputs:** In-place replacement of the `text` column; `Translator.src_lang` is populated for logging and downstream toggles.
 - **Dependencies:** `langdetect`, `pycountry`, Ollama's `translategemma` model by default, or an alternate OpenAI-compatible model when `INFERENCE_PROVIDER=openai`.
-- **Operational notes:** Translation is skipped when the resolved source language already equals the target. The default local model is selected from `nextext/utils/mappings/translation_models.json`.
+- **Operational notes:** Translation is skipped when the resolved source language already equals the target. The runtime now requires an explicit `TRANSLATION_MODEL` environment variable when translation is enabled.
 
 ## Word Intelligence Agent
 
@@ -60,7 +60,7 @@ Nextext breaks the speech-to-insight workflow into specialized agents (self-cont
 
 ## Inference Service Agent
 
-- **Key files:** `nextext/modules/openai_cfg.py`, prompts directory `nextext/utils/prompts/`, model mappings `nextext/utils/mappings/ollama_models.json` and `translation_models.json`.
+- **Key files:** `nextext/modules/openai_cfg.py` and prompts directory `nextext/utils/prompts/`.
 - **Responsibilities:** Construct prompts, pick provider-specific models, create an OpenAI-compatible client, perform provider health checks, and expose `call_model()` to translation and summarization.
 - **Inputs:** Prompt keyword (`system`, `summary`), runtime options (temperature, stop tokens, max tokens), provider configuration (`INFERENCE_PROVIDER`, `OPENAI_API_BASE`, `OPENAI_API_KEY`, optional `OPENAI_BASE_URL`).
 - **Outputs:** Raw string response from the configured chat completion endpoint; `sys_prompt` ensures outputs are emitted in the configured language.

@@ -80,7 +80,8 @@ The following models are recommended and tested for this application (select dep
 - [`translategemma:12b`](https://ollama.com/library/translategemma)
 - [`translategemma:4b`](https://ollama.com/library/translategemma)
 
-To configure the app's default chat and translation models, edit `nextext/utils/mappings/ollama_models.json` and `nextext/utils/mappings/translation_models.json`.
+To configure the app's models, set `TEXT_MODEL` for the general LLM and
+`TRANSLATION_MODEL` for translation.
 
 #### OpenAI provider (optional)
 
