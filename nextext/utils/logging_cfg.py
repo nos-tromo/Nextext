@@ -17,8 +17,7 @@ LOG_RETENTION = os.getenv("LOG_RETENTION", "3")
 def _resolve_log_path(
     default_log_path: str | os.PathLike[str] | None,
 ) -> Path:
-    """
-    Resolve the log file path based on environment variable or default.
+    """Resolve the log file path based on environment variable or default.
 
     Args:
         default_log_path (str | os.PathLike[str] | None): The default log file path.
@@ -51,8 +50,7 @@ def init_logger(
     backtrace: bool = False,
     diagnose: bool = False,
 ) -> Path:
-    """
-    Set up logging for the application.
+    """Set up logging for the application.
 
     Args:
         default_log_path (str | os.PathLike[str] | None, optional): The default log file path. Defaults to None.

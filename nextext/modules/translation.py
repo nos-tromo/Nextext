@@ -1,195 +1,133 @@
-from typing import Any
-
 import pycountry
-import torch
 from langdetect import detect
-from loguru import logger
-from nltk import sent_tokenize
-from pyarabic.araby import sentence_tokenize
-from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
 
+from nextext.modules.openai_cfg import InferencePipeline
 from nextext.utils.mappings_loader import load_mappings
 
 
 class Translator:
-    """
-    A class to handle translation between MADLAD languages using a pre-trained model.
-
-    Attributes:
-        madlad_languages (dict): A dictionary mapping MADLAD language codes to their names.
-        tokenizer (AutoTokenizer): Tokenizer for the translation model.
-        model (AutoModelForSeq2SeqLM): The translation model.
-        device (torch.device): The device on which the model is loaded (CPU, CUDA, or MPS).
-        src_lang (str | None): The source language code detected from the input text.
-
-    Methods:
-        __init__(madlad_language_file: str = "madlad_languages.json"): Initializes the Translator class.
-        _load_model(model_name: str = "google/madlad400-3b-mt", local_only: bool = True): Loads the translation model and tokenizer.
-        detect_language(text: str) -> dict[str, str]: Detects the language of a given text.
-        _model_inference(lang: str, text: str, verbose: bool = True) -> str: Uses the model for inference on a given text input.
-        translate(trg_lang: str, text: str) -> str: Translates text sentence-wise between any supported MADLAD languages.
-    """
+    """Translate transcript text with TranslateGemma over the configured inference provider."""
 
     def __init__(
         self,
-        madlad_language_file: str = "madlad_languages.json",
-        madlad_models_file: str = "madlad_models.json",
-        fallback_model: str = "google/madlad400-3b-mt",
+        translation_language_file: str = "translation_languages.json",
+        inference_pipeline: InferencePipeline | None = None,
     ) -> None:
-        """
-        Initialize the Translator class. Loads the MADLAD language mapping file and initializes the
-        translation model. Sets up the logger and loads the model. The model is loaded from local cache
-        if available, otherwise it is downloaded from the Hugging Face Hub. The model is set to run on
-        GPU if available, otherwise it falls back to CPU.
+        """Initialize the Translator.
 
         Args:
-            madlad_language_file (str): Path to the MADLAD language mapping file.
-            madlad_models_file (str): Path to the MADLAD models mapping file.
-            fallback_model (str): Fallback model name if no suitable model is found.
+            translation_language_file (str, optional): _description_. Defaults to "translation_languages.json".
+            inference_pipeline (InferencePipeline | None, optional): _description_. Defaults to None.
         """
-        self.languages = load_mappings(madlad_language_file)
-        models = load_mappings(madlad_models_file)
-        if torch.cuda.is_available():
-            model_id = models.get("cuda")
-        elif torch.backends.mps.is_available():
-            model_id = models.get("mps")
-        else:
-            model_id = models.get("cpu")
-        if model_id is None:
-            model_id = fallback_model
-        self.tokenizer, self.model, self.device = self._load_model(model_id=model_id)
+        self.languages = load_mappings(translation_language_file)
+        self.inference_pipeline = inference_pipeline or InferencePipeline()
+        self.prompt_template = self.inference_pipeline.load_prompt("translation")
         self.src_lang: str | None = None
 
-    def _load_model(
-        self, model_id: str, local_only: bool = True
-    ) -> tuple[Any, Any, torch.device]:
-        """
-        Loads the translation model and tokenizer.
-
-        Tries to load from local cache first. If not found, downloads from Hugging Face Hub.
-
-        Args:
-            model_id (str): The name of the pretrained model.
-            local_only (bool): Whether to restrict loading to local files only.
-
-        Returns:
-            tuple: A tuple containing the tokenizer, model, and device.
-
-        Raises:
-            FileNotFoundError: If the model is not found in local cache and local_only is True.
-        """
-        device = torch.device(
-            "cuda"
-            if torch.cuda.is_available()
-            else "mps"
-            if torch.backends.mps.is_available()
-            else "cpu"
-        )
-        torch_dtype = torch.float16 if device.type in ["cuda", "mps"] else torch.float32
-
-        try:
-            tokenizer = AutoTokenizer.from_pretrained(model_id, local_files_only=True)
-            model = AutoModelForSeq2SeqLM.from_pretrained(
-                model_id, torch_dtype=torch_dtype, local_files_only=local_only
-            ).to(device)
-            logger.info("✅ Loaded model from local cache.")
-        except FileNotFoundError:
-            logger.info("⬇️ Model not in local cache — downloading from Hugging Face...")
-            tokenizer = AutoTokenizer.from_pretrained(model_id)
-            model = AutoModelForSeq2SeqLM.from_pretrained(
-                model_id, torch_dtype=torch_dtype
-            ).to(device)
-
-        return tokenizer, model, device
-
     def detect_language(self, text: str) -> dict[str, str]:
-        """
-        Detect the language of a text.
+        """Detect the language of a text.
 
         Args:
-            text (str): Text to be translated.
+            text (str): The text to detect the language of.
 
         Returns:
-            dict: A dictionary containing the detected language name and code.
+            dict[str, str]: A dictionary containing the detected language name and ISO code.
         """
         self.src_lang = detect(text)
         lang_obj = pycountry.languages.get(alpha_2=self.src_lang)
         src_lang_name = lang_obj.name if lang_obj is not None else ""
         return {"name": src_lang_name, "code": self.src_lang or ""}
 
-    def _model_inference(self, lang: str, text: str, verbose: bool = True) -> str:
-        """
-        Use the model for inference on a given text input.
+    @staticmethod
+    def _base_language_code(lang_code: str) -> str:
+        """Collapse a locale/script code to its base language code.
 
         Args:
-            lang (str): Target language code.
-            text (str): Text to translate.
-            verbose (bool): Set warning if the model's context window is exceeded
+            lang_code (str): The language code to normalize, e.g. "en-US" or "de-CH".
+
+        Returns:
+            str: The base language code, e.g. "en" or "de".
+        """
+        return lang_code.split("-", 1)[0]
+
+    def _language_name(self, lang_code: str) -> str:
+        """Resolve an ISO language code to a human-readable name.
+
+        Args:
+            lang_code (str): The ISO 639-1 language code.
+
+        Returns:
+            str: The human-readable language name, or the original code if it cannot be resolved.
+        """
+        mapped = self.languages.get(lang_code)
+        if mapped:
+            return mapped
+        lang_obj = pycountry.languages.get(alpha_2=lang_code)
+        return lang_obj.name if lang_obj is not None else lang_code
+
+    def _translation_prompt(self, src_lang: str, trg_lang: str, text: str) -> str:
+        """Build the translation prompt expected by TranslateGemma-style instruction tuning.
+
+        Args:
+            src_lang (str): The source language code.
+            trg_lang (str): The target language code.
+            text (str): The text to be translated.
+
+        Returns:
+            str: The formatted translation prompt.
+        """
+        src_name = self._language_name(src_lang)
+        trg_name = self._language_name(trg_lang)
+        return self.prompt_template.format(
+            SOURCE_LANG=src_name,
+            SOURCE_CODE=src_lang,
+            TARGET_LANG=trg_name,
+            TARGET_CODE=trg_lang,
+            TEXT=text,
+        )
+
+    def translate(self, trg_lang: str, text: str, src_lang: str | None = None) -> str:
+        """Translate text with the configured translation model.
+
+        Args:
+            trg_lang (str): The target language code.
+            text (str): The text to be translated.
+            src_lang (str | None, optional): The source language code. If not provided, it will be detected automatically. Defaults to None.
 
         Returns:
             str: The translated text.
-        """
-        prompt = f"<2{lang}> {text}"
-        inputs = self.tokenizer(prompt, return_tensors="pt").to(self.device)
-
-        max_model_len = 256
-        input_ids = inputs.get("input_ids")
-        input_len = input_ids.shape[1]
-        adjusted_max_length = max_model_len
-
-        if input_len >= max_model_len:
-            if verbose:
-                logger.warning(
-                    "⚠️ Input length (%d tokens) hits or exceeds max context window (%d). Output may be truncated or degraded.",
-                    input_len,
-                    max_model_len,
-                )
-                adjusted_max_length = input_len
-            else:
-                adjusted_max_length = max_model_len
-
-        outputs = self.model.generate(
-            **inputs,
-            max_length=adjusted_max_length,
-            num_beams=4,
-            early_stopping=True,
-            no_repeat_ngram_size=3,
-        )
-        return self.tokenizer.batch_decode(outputs, skip_special_tokens=True)[0]
-
-    def translate(self, trg_lang: str, text: str) -> str:
-        """
-        Translates text sentence-wise between any supported MADLAD languages.
-
-        Args:
-            target_lang (str): Target language code.
-            text (str): Text to translate.
-
-        Returns:
-            str: Final translated output.
 
         Raises:
-            ValueError: If the input text is empty.
-            ValueError: If the target language is not supported.
-            ValueError: If no sentences are found in the input text.
+            ValueError: If the input text is empty, if the target language is not supported, or if the source language cannot be determined.
         """
         if not text:
             raise ValueError("Input text cannot be empty.")
         if trg_lang not in self.languages:
             raise ValueError(
-                f"Target language '{trg_lang}' is not supported by the translation model."
+                f"Target language '{trg_lang}' is not supported by the translation pipeline."
             )
-        if self.src_lang == "ar":
-            sentences = sentence_tokenize(text)  # Use pyarabic for Arabic
-        # --------- Add sentence segmentation models for other languages here --------- #
-        else:
-            sentences = sent_tokenize(text)  # Use nltk for other languages
-        if not sentences:
-            raise ValueError("No sentences found in the input text.")
-        return " ".join(
-            [
-                self._model_inference(trg_lang, sentence)
-                for sentence in sentences
-                if len(sentence) > 0
-            ]
+
+        resolved_src_lang = src_lang or self.src_lang
+        if resolved_src_lang is None:
+            resolved_src_lang = self.detect_language(text).get("code")
+        if not resolved_src_lang:
+            raise ValueError("Source language could not be determined.")
+        if self._base_language_code(resolved_src_lang) == self._base_language_code(
+            trg_lang
+        ):
+            return text
+
+        self.src_lang = resolved_src_lang
+        prompt = self._translation_prompt(
+            src_lang=resolved_src_lang,
+            trg_lang=trg_lang,
+            text=text,
+        )
+        return self.inference_pipeline.call_model(
+            prompt=prompt,
+            model=self.inference_pipeline.translation_model,
+            temperature=0.0,
+            system_prompt=(
+                "You are a precise translation engine. Return only the translation text."
+            ),
         )

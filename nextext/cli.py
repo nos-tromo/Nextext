@@ -2,14 +2,13 @@ import argparse
 from pathlib import Path
 
 from loguru import logger
+import pycountry
 
-from nextext.modules.ollama_cfg import OllamaPipeline
+from nextext.modules.openai_cfg import InferencePipeline
 from nextext.modules.processing import FileProcessor
 from nextext.pipeline import (
-    get_api_key,
-    hatespeech_pipeline,
+    normalize_language_code,
     summarization_pipeline,
-    topics_pipeline,
     transcription_pipeline,
     translation_pipeline,
     wordlevel_pipeline,
@@ -19,16 +18,30 @@ from nextext.utils.logging_cfg import init_logger
 init_logger()
 
 
-def parse_arguments(args_list: list | None = None) -> argparse.Namespace:
+def _language_name(lang_code: str | None) -> str:
+    """Convert an ISO language code to a human-readable name for LLM output settings.
+
+    Args:
+        lang_code (str | None): The ISO 639-1 language code.
+
+    Returns:
+        str: The human-readable language name, or "German" if the code is None.
     """
-    Parse command-line arguments for the Nextext CLI.
+    if not lang_code:
+        return "German"
+    lang = pycountry.languages.get(alpha_2=normalize_language_code(lang_code))
+    return lang.name if lang is not None else lang_code
+
+
+def parse_arguments(args_list: list | None = None) -> argparse.Namespace:
+    """Parse command-line arguments for the Nextext CLI.
     This function sets up the argument parser with various options for file processing,
     language settings, model selection, and analysis features.
     It returns the parsed arguments as an `argparse.Namespace` object.
     This function allows users to specify the audio file to be processed, the source and target languages,
     the model size for Whisper, the task to perform (transcription or translation),
-    and various analysis options such as word statistics, topic modeling, summarization, and toxicity analysis.
-    It also supports a full analysis mode that combines multiple analysis features into one command.
+    and various analysis options such as word statistics and summarization.
+    It also supports a full analysis mode that combines the remaining analysis features into one command.
     It is designed to be flexible and user-friendly, providing default values for most options
     while allowing users to customize their processing pipeline as needed.
 
@@ -103,32 +116,18 @@ def parse_arguments(args_list: list | None = None) -> argparse.Namespace:
         help="Show most frequently used words (default: False).",
     )
     parser.add_argument(
-        "-tm",
-        "--topics",
-        dest="topics",
-        action="store_true",
-        help="Enable topic modeling analysis (default: False).",
-    )
-    parser.add_argument(
         "-sum",
         "--summarize",
         dest="summarize",
         action="store_true",
-        help="Additional text and topic summarization (default: False).",
-    )
-    parser.add_argument(
-        "-tox",
-        "--toxicity",
-        dest="toxicity",
-        action="store_true",
-        help="Enable toxicity analysis (default: False).",
+        help="Additional transcript summarization (default: False).",
     )
     parser.add_argument(
         "-F",
         "--full-analysis",
         dest="full_analysis",
         action="store_true",
-        help="Enable full analysis, equivalent to using -w -tm -sum -tox (default: False).",
+        help="Enable full analysis, equivalent to using -w -sum (default: False).",
     )
 
     if args_list:
@@ -138,22 +137,19 @@ def parse_arguments(args_list: list | None = None) -> argparse.Namespace:
 
     if args.full_analysis:
         args.words = True
-        args.topics = True
         args.summarize = True
-        args.toxicity = True
 
     return args
 
 
 def main() -> None:
-    """
-    Run the Nextext pipeline for transcription, translation, and analysis.
+    """Run the Nextext pipeline for transcription, translation, and analysis.
     This function orchestrates the entire process, including transcription, translation,
-    word statistics, and topic modeling.
+    word statistics, and summarization.
     It handles the command-line arguments and manages the flow of data through the various modules.
 
     Raises:
-        ValueError: If an invalid task is specified.
+        ValueError: If an invalid task is specified or if the source language cannot be resolved for analysis.
         ConnectionError: If the Ollama server is not reachable for analysis tasks.
     """
     logger.info("\n\nInitiating Nextext...\n")
@@ -168,7 +164,6 @@ def main() -> None:
     if args.task in ["transcribe", "translate"]:
         transcript_df, updated_src_lang = transcription_pipeline(
             file_path=args.file_path,
-            api_key=get_api_key() or "",
             trg_lang=args.trg_lang,
             src_lang=args.src_lang,
             model_id=args.model_id,
@@ -181,11 +176,44 @@ def main() -> None:
         raise ValueError("Invalid task. Please specify 'transcribe' or 'translate'.")
 
     # Machine translate the transcribed text
+    inference_pipeline = None
     if args.task == "translate" and args.trg_lang != "en":
-        transcript_df = translation_pipeline(df=transcript_df, trg_lang=args.trg_lang)
+        inference_pipeline = InferencePipeline(
+            out_language=_language_name(args.trg_lang)
+        )
+        if not inference_pipeline.get_health():
+            logger.error("The configured inference provider is not reachable.")
+            raise ConnectionError(
+                "The configured inference provider is not reachable. Please ensure it is running and accessible."
+            )
+        transcript_df = translation_pipeline(
+            df=transcript_df,
+            trg_lang=args.trg_lang,
+            src_lang=args.src_lang,
+            inference_pipeline=inference_pipeline,
+        )
 
     # Streamline language for further processing
-    transcript_lang = args.src_lang if args.task == "transcribe" else args.trg_lang
+    if args.task == "transcribe":
+        if args.src_lang is None:
+            logger.error("Unable to resolve source language for downstream analysis.")
+            raise ValueError(
+                "Source language could not be resolved for downstream analysis."
+            )
+        normalized_lang = normalize_language_code(args.src_lang)
+        if normalized_lang is None:
+            logger.error("Unable to normalize source language for downstream analysis.")
+            raise ValueError(
+                "Source language could not be normalized for downstream analysis."
+            )
+    else:
+        normalized_lang = normalize_language_code(args.trg_lang)
+        if normalized_lang is None:
+            logger.error("Unable to normalize target language for downstream analysis.")
+            raise ValueError(
+                "Target language could not be normalized for downstream analysis."
+            )
+    transcript_lang: str = normalized_lang
 
     # Calculate word statistics
     if args.words:
@@ -204,38 +232,25 @@ def main() -> None:
         for export, name in exports:
             file_processor.write_file_output(export, name)
 
-    if args.topics or args.summarize or args.toxicity:
-        ollama_pipeline = OllamaPipeline()
-        if not ollama_pipeline._get_ollama_health():
-            logger.error("Ollama server is not reachable.")
+    if args.summarize:
+        if inference_pipeline is None:
+            inference_pipeline = InferencePipeline(
+                out_language=_language_name(transcript_lang)
+            )
+        if not inference_pipeline.get_health():
+            logger.error("The configured inference provider is not reachable.")
             raise ConnectionError(
-                "Ollama server is not reachable. Please ensure it is running and accessible."
+                "The configured inference provider is not reachable. Please ensure it is running and accessible."
             )
-
-        # Perform topic modeling
-        if args.topics:
-            topic_df = topics_pipeline(
-                data=transcript_df,
-                language=transcript_lang,
-                ollama_pipeline=ollama_pipeline,
-            )
-            if topic_df is not None:
-                file_processor.write_file_output(topic_df, "topics")
 
         # Summarize the transcribed text
         if args.summarize:
             transcript_summary = summarization_pipeline(
                 text=" ".join(transcript_df["text"].astype(str).tolist()),
-                ollama_pipeline=ollama_pipeline,
+                inference_pipeline=inference_pipeline,
             )
             if transcript_summary is not None:
                 file_processor.write_file_output(transcript_summary, "summary")
-
-        # Classify text for hate speech
-        if args.toxicity:
-            transcript_df = hatespeech_pipeline(
-                ollama_pipeline=ollama_pipeline, df=transcript_df
-            )
 
     # Save final transcript
     file_processor.write_file_output(transcript_df, "transcript")

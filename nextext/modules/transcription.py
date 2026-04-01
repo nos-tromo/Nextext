@@ -1,4 +1,7 @@
+"""Audio transcription and diarization with WhisperX."""
+
 import gc
+import os
 from datetime import timedelta
 from pathlib import Path
 from typing import Any, Optional
@@ -7,15 +10,59 @@ import numpy as np
 import pandas as pd
 import torch
 import whisperx
+from dotenv import load_dotenv
 from loguru import logger
 from whisperx.diarize import DiarizationPipeline
 
 from nextext.utils.mappings_loader import load_mappings
 
 
+load_dotenv()
+HF_HUB_TOKEN = os.getenv("HF_HUB_TOKEN", "")
+TRANSCRIPTION_VAD_METHOD = "silero"
+
+
+def _configure_torch_safe_globals() -> None:
+    """Register safe globals needed for Pyannote checkpoints on Torch 2.6+."""
+    add_safe_globals = getattr(torch.serialization, "add_safe_globals", None)
+    if add_safe_globals is None:
+        return
+
+    safe_globals: list[Any] = []
+
+    try:
+        from omegaconf import DictConfig, ListConfig
+    except ImportError:
+        logger.debug(
+            "OmegaConf is unavailable; skipping Torch safe-global registration."
+        )
+    else:
+        safe_globals.extend([DictConfig, ListConfig])
+
+    try:
+        from torch.torch_version import TorchVersion
+    except ImportError:
+        logger.debug(
+            "TorchVersion is unavailable; skipping Torch safe-global registration."
+        )
+    else:
+        safe_globals.append(TorchVersion)
+
+    try:
+        from pyannote.audio.core.task import Problem, Resolution, Specifications
+    except ImportError:
+        logger.debug(
+            "Pyannote task classes are unavailable; skipping Torch safe-global registration."
+        )
+    else:
+        safe_globals.extend([Problem, Resolution, Specifications])
+
+    if safe_globals:
+        add_safe_globals(safe_globals)
+
+
 class WhisperTranscriber:
-    """
-    WhisperTranscriber handles audio transcription and speaker diarization using WhisperX.
+    """WhisperTranscriber handles audio transcription and speaker diarization using WhisperX.
 
     Attributes:
         src_lang (str): Source language of the audio.
@@ -47,7 +94,6 @@ class WhisperTranscriber:
     def __init__(
         self,
         file_path: Path,
-        auth_token: str,
         trg_lang: str,
         src_lang: str | None = None,
         model_id: str = "default",
@@ -60,12 +106,10 @@ class WhisperTranscriber:
         whisper_language_file: str = "whisper_languages.json",
         whisper_model_file: str = "whisper_models.json",
     ) -> None:
-        """
-        Initialize the WhisperTranscriber object.
+        """Initialize the WhisperTranscriber object.
 
         Args:
             file_path (str): The path to the input file.
-            auth_token (str): The Hugging Face token for accessing the diarization model.
             trg_lang (str): The target language for translation.
             src_lang (str, optional): The source language of the file. Defaults to None, which triggers language detection.
             model_id (str, optional): The size of the Whisper model. Defaults to "default".
@@ -83,9 +127,11 @@ class WhisperTranscriber:
         self.end_column = end_column
         self.speaker_column = speaker_column
         self.text_column = text_column
+        auth_token = HF_HUB_TOKEN
 
         self.transcription_device = "cuda" if torch.cuda.is_available() else "cpu"
         self.audio = self._load_audio(file_path)
+        _configure_torch_safe_globals()
 
         # Select or detect language
         whisper_languages = load_mappings(whisper_language_file)
@@ -98,7 +144,13 @@ class WhisperTranscriber:
         self.transcribe_model, self.align_model, self.align_metadata = (
             self._load_transcription_model(model_id, whisper_model_file)
         )
-        self.diarize_model = self._load_diarization_model(auth_token)
+        self.diarize_model: DiarizationPipeline | None = None
+        if self.n_speakers > 1 and not auth_token:
+            logger.warning(
+                "No Hugging Face token provided. Speaker diarization will be unavailable."
+            )
+        elif self.n_speakers > 1:
+            self.diarize_model = self._load_diarization_model(auth_token)
 
         # Initialize attributes for transcription results and DataFrame
         self.transcription_result: Optional[dict[str, Any]] = None
@@ -106,8 +158,7 @@ class WhisperTranscriber:
 
     @staticmethod
     def _load_audio(file: Path, sample_rate: int = 16000) -> np.ndarray:
-        """
-        Load the audio file as a tensor using the WhisperX library.
+        """Load the audio file as a tensor using the WhisperX library.
 
         Args:
             file (Path): The path to the audio file.
@@ -121,8 +172,7 @@ class WhisperTranscriber:
     def _detect_language(
         self, duration_sec: float = 30.0, sample_rate: int = 16000
     ) -> str | None:
-        """
-        Detect the spoken language in the audio file using WhisperX.
+        """Detect the spoken language in the audio file using WhisperX.
         This method processes only the first `duration_sec` seconds of audio.
 
         Args:
@@ -145,8 +195,15 @@ class WhisperTranscriber:
             device=self.transcription_device,
             compute_type="float16" if torch.cuda.is_available() else "int8",
             language=None,
+            vad_method=TRANSCRIPTION_VAD_METHOD,
         )
-        result = temp_model.transcribe(clipped_audio)
+        try:
+            result = temp_model.transcribe(clipped_audio)
+        finally:
+            del temp_model
+            if hasattr(torch, "cuda") and torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            gc.collect()
 
         detected_lang = result.get("language")
         if not detected_lang:
@@ -158,8 +215,7 @@ class WhisperTranscriber:
     def _load_transcription_model(
         self, model_id: str, whisper_model_file: str
     ) -> tuple[Any, Any | None, dict[str, Any] | None]:
-        """
-        Load the Whisper model for transcription. If alignment model is unavailable, skip it.
+        """Load the Whisper model for transcription. If alignment model is unavailable, skip it.
 
         Args:
             model_id (str): The size of the Whisper model (tiny, base, small, medium, large, turbo).
@@ -191,6 +247,7 @@ class WhisperTranscriber:
             device=self.transcription_device,
             compute_type=dtype,
             language=None if self.task == "translate" else self.src_lang,
+            vad_method=TRANSCRIPTION_VAD_METHOD,
         )
         try:
             align_model, align_metadata = whisperx.load_align_model(
@@ -205,8 +262,7 @@ class WhisperTranscriber:
         return transcribe_model, align_model, align_metadata
 
     def _load_diarization_model(self, auth_token: str) -> DiarizationPipeline:
-        """
-        Load the WhisperX model for speaker diarization.
+        """Load the WhisperX model for speaker diarization.
 
         Args:
             auth_token (str): The Hugging Face token for accessing the diarization model.
@@ -224,8 +280,7 @@ class WhisperTranscriber:
         return DiarizationPipeline(use_auth_token=auth_token, device=device)
 
     def transcription(self, batch_size: int = 16) -> None:
-        """
-        Run the transcription process on the loaded audio file using the WhisperX library.
+        """Run the transcription process on the loaded audio file using the WhisperX library.
 
         Args:
             batch_size (int, optional): The number of audio segments to process in each batch during transcription. Defaults to 16.
@@ -263,8 +318,7 @@ class WhisperTranscriber:
 
     @staticmethod
     def _seconds_to_time(seconds: float) -> str:
-        """
-        Convert seconds to a string representation of time in the format HH:MM:SS.
+        """Convert seconds to a string representation of time in the format HH:MM:SS.
 
         Args:
             seconds (float): The number of seconds to convert.
@@ -275,13 +329,20 @@ class WhisperTranscriber:
         return str(timedelta(seconds=round(seconds)))
 
     def diarization(self) -> None:
-        """
-        Perform speaker diarization on the audio file.
+        """Perform speaker diarization on the audio file.
+
+        Raises:
+            RuntimeError: If diarization is requested but the diarization model is not available.
         """
         try:
             if self.n_speakers <= 1:
                 logger.info("Skipping diarization as only one speaker is specified.")
                 return
+            if self.diarize_model is None:
+                raise RuntimeError(
+                    "Speaker diarization requires a valid HF_HUB_TOKEN and "
+                    "accepted pyannote model access."
+                )
 
             diarize_segments = self.diarize_model(
                 self.audio, max_speakers=self.n_speakers
@@ -293,7 +354,9 @@ class WhisperTranscriber:
             logger.error("Error during diarization: {}", e, exc_info=True)
             raise
         finally:
-            del self.diarize_model
+            if self.diarize_model is not None:
+                del self.diarize_model
+                self.diarize_model = None
             if hasattr(torch, "cuda") and torch.cuda.is_available():
                 torch.cuda.empty_cache()
                 logger.info("Flushed GPU memory.")
@@ -302,20 +365,18 @@ class WhisperTranscriber:
 
     @staticmethod
     def _ends_with_punctuation(text: str) -> bool:
-        """
-        Check if the given text ends with a sentence-ending punctuation mark.
+        """Check if the given text ends with a sentence-ending punctuation mark.
 
         Args:
             text (str): The text string to check.
 
         Returns:
-            bool: True if the text ends with ".", "!", or "?", otherwise False.
+            bool: True if the text ends with a supported sentence-ending punctuation mark, otherwise False.
         """
-        return text.strip().endswith((".", "!", "?"))
+        return text.strip().endswith((".", "!", "?", "؟", "۔"))
 
     def _merge_transcriptions_by_sentence(self, data: pd.DataFrame) -> pd.DataFrame:
-        """
-        Merge transcriptions by sentences based on punctuation.
+        """Merge transcriptions by sentences based on punctuation.
 
         Args:
             data (pd.DataFrame): The original DataFrame containing transcription data.
@@ -323,37 +384,83 @@ class WhisperTranscriber:
         Returns:
             pd.DataFrame: A new DataFrame with merged sentences and adjusted timestamps.
         """
-        new_rows = []
-        current_row = {
-            self.start_column: None,
-            self.end_column: None,
-            self.text_column: "",
-        }
+        output_columns: list[str] = [
+            self.start_column,
+            self.end_column,
+        ]
+        has_speaker = self.speaker_column in data.columns
+        if has_speaker:
+            output_columns.append(self.speaker_column)
+        output_columns.append(self.text_column)
+        if data.empty or self.text_column not in data.columns:
+            logger.warning("No transcription rows were available for sentence merging.")
+            return pd.DataFrame(columns=pd.Index(output_columns))
+
+        def _build_empty_row() -> dict[str, Any]:
+            """Create an empty row for sentence aggregation.
+
+            Returns:
+                dict[str, Any]: A mutable row container for sentence merging.
+            """
+            row: dict[str, Any] = {
+                self.start_column: None,
+                self.end_column: None,
+                self.text_column: "",
+            }
+            if has_speaker:
+                row[self.speaker_column] = None
+            return row
+
+        def _append_current_row(end_value: Any) -> None:
+            """Append the current aggregated row if it contains text.
+
+            Args:
+                end_value (Any): The end timestamp to assign before append.
+            """
+            current_text = str(current_row[self.text_column] or "").strip()
+            if not current_text:
+                return
+            current_row[self.end_column] = end_value
+            current_row[self.text_column] = current_text
+            new_rows.append(current_row.copy())
+
+        new_rows: list[dict[str, Any]] = []
+        current_row = _build_empty_row()
+        previous_end: Any = None
 
         for _, row in data.iterrows():
+            row_speaker = row.get(self.speaker_column) if has_speaker else None
+            current_text = str(current_row[self.text_column] or "").strip()
+            if (
+                has_speaker
+                and current_text
+                and current_row.get(self.speaker_column) != row_speaker
+            ):
+                _append_current_row(previous_end)
+                current_row = _build_empty_row()
+
             if current_row.get(self.start_column) is None:
                 current_row[self.start_column] = row.get(self.start_column)
+            if has_speaker and current_row.get(self.speaker_column) is None:
+                current_row[self.speaker_column] = row_speaker
 
             if row[self.text_column]:
                 current_row[self.text_column] += row[self.text_column].strip() + " "
 
+            previous_end = row.get(self.end_column)
             if self._ends_with_punctuation(row[self.text_column]):
-                current_row[self.end_column] = row.get(self.end_column)
-                new_rows.append(current_row)
-                current_row = {
-                    self.start_column: None,
-                    self.end_column: None,
-                    self.text_column: "",
-                }
+                _append_current_row(previous_end)
+                current_row = _build_empty_row()
 
-        merged_df = pd.DataFrame(new_rows)
-        merged_df[self.text_column] = merged_df[self.text_column].str.strip()
+        if str(current_row[self.text_column] or "").strip():
+            _append_current_row(previous_end)
+
+        merged_df = pd.DataFrame(new_rows, columns=pd.Index(output_columns))
         logger.info("Transcriptions successfully merged by sentence.")
         return merged_df
 
     def transcript_output(self) -> pd.DataFrame:
-        """
-        Get the transcription result as a DataFrame.
+        """Get the transcription result as a DataFrame.
 
         Returns:
             pd.DataFrame: A DataFrame containing the transcription results.
@@ -384,12 +491,12 @@ class WhisperTranscriber:
             segments.append(row)
 
         # Build columns list dynamically
-        columns = [self.start_column, self.end_column]
+        columns: list[str] = [self.start_column, self.end_column]
         if has_speaker:
             columns.append(self.speaker_column)
         columns.append(self.text_column)
 
-        df = pd.DataFrame(segments, columns=columns)
+        df = pd.DataFrame(segments, columns=pd.Index(columns))
         if self.n_speakers <= 1 and has_speaker:
             df.drop(self.speaker_column, axis=1, inplace=True)
         self.df = self._merge_transcriptions_by_sentence(df)

@@ -1,3 +1,5 @@
+"""Tests for the shared Nextext pipeline helpers."""
+
 from pathlib import Path
 
 import pandas as pd
@@ -10,8 +12,7 @@ pytest.importorskip("pandas")
 
 @pytest.fixture
 def disable_docker_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    """
-    Disable Docker environment detection by mocking the Path.exists method.
+    """Disable Docker environment detection by mocking the Path.exists method.
 
     Args:
         monkeypatch (pytest.MonkeyPatch): The monkeypatch fixture for modifying behavior.
@@ -19,6 +20,14 @@ def disable_docker_env(monkeypatch: pytest.MonkeyPatch) -> None:
     original_exists = Path.exists
 
     def fake_exists(path: Path) -> bool:  # type: ignore[override]
+        """Mock the Path.exists method to simulate a non-Docker environment by returning False for the /.dockerenv path.
+
+        Args:
+            path (Path): The path to check for existence.
+
+        Returns:
+            bool: False if the path is /.dockerenv, otherwise the result of the original Path.exists method.
+        """
         if path.as_posix() == "/.dockerenv":
             return False
         return original_exists(path)
@@ -28,8 +37,7 @@ def disable_docker_env(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.fixture
 def enable_docker_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    """
-    Enable Docker environment detection by mocking the Path.exists method.
+    """Enable Docker environment detection by mocking the Path.exists method.
 
     Args:
         monkeypatch (pytest.MonkeyPatch): The monkeypatch fixture for modifying behavior.
@@ -44,111 +52,44 @@ def enable_docker_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(Path, "exists", fake_exists)
 
 
-def test_get_api_key_from_environment(monkeypatch: pytest.MonkeyPatch) -> None:
-    """
-    Test getting API key from environment variables.
-
-    Args:
-        monkeypatch (pytest.MonkeyPatch): The monkeypatch fixture for modifying behavior.
-    """
-    monkeypatch.setattr(pipeline, "find_dotenv", lambda: "")
-    monkeypatch.setattr(pipeline, "load_dotenv", lambda path: None)
-    monkeypatch.setenv("API_TOKEN", "secret")
-
-    assert pipeline.get_api_key("API_TOKEN") == "secret"
-
-
-def test_get_api_key_prompts_and_saves(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, disable_docker_env: None
-) -> None:
-    """
-    Test getting API key from environment variables. If not found, prompts the user and saves it to a .env file.
-
-    Args:
-        monkeypatch (pytest.MonkeyPatch): The monkeypatch fixture for modifying behavior.
-        tmp_path (Path): The temporary path fixture for creating temporary files.
-        disable_docker_env (None): The fixture to disable Docker environment detection.
-    """
-    dotenv_path = tmp_path / ".env"
-    saved: dict[str, str] = {}
-
-    monkeypatch.setattr(pipeline, "find_dotenv", lambda: str(dotenv_path))
-    monkeypatch.setattr(pipeline, "load_dotenv", lambda path: None)
-    monkeypatch.setattr(pipeline.getpass, "getpass", lambda prompt: "prompted-key")
-
-    def fake_set_key(path: str, token: str, value: str) -> None:
-        """
-        Fake implementation of setting a key in the .env file.
-
-        Args:
-            path (str): The path to the .env file.
-            token (str): The environment variable name.
-            value (str): The value to set for the environment variable.
-        """
-        saved["path"] = path
-        saved["token"] = token
-        saved["value"] = value
-
-    monkeypatch.setattr(pipeline, "set_key", fake_set_key)
-    monkeypatch.delenv("TEST_TOKEN", raising=False)
-
-    result = pipeline.get_api_key("TEST_TOKEN")
-
-    assert result == "prompted-key"
-    assert saved == {
-        "path": str(dotenv_path),
-        "token": "TEST_TOKEN",
-        "value": "prompted-key",
-    }
-
-
-def test_get_api_key_docker_environment_raises(
-    monkeypatch: pytest.MonkeyPatch, enable_docker_env: None
-) -> None:
-    """
-    Test getting API key from environment variables in a Docker environment. Raises RuntimeError if not found.
-
-    Args:
-        monkeypatch (pytest.MonkeyPatch): The monkeypatch fixture for modifying behavior.
-        enable_docker_env (None): The fixture to enable Docker environment detection.
-
-    Raises:
-        RuntimeError: If the API key is not found in the environment variables.
-    """
-    monkeypatch.setattr(pipeline, "find_dotenv", lambda: "")
-    monkeypatch.setattr(pipeline, "load_dotenv", lambda path: None)
-    monkeypatch.delenv("API_KEY", raising=False)
-
-    with pytest.raises(RuntimeError):
-        pipeline.get_api_key("API_KEY")
-
-
 def test_transcription_pipeline_invokes_transcriber(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """
-    Test the transcription pipeline to ensure it invokes the transcriber correctly.
+    """Test the transcription pipeline to ensure it invokes the transcriber correctly.
 
     Args:
         monkeypatch (pytest.MonkeyPatch): The monkeypatch fixture for modifying behavior.
     """
 
     class DummyTranscriber:
+        """A dummy transcriber class to test the transcription pipeline without relying
+        on the actual WhisperX implementation. It records the parameters passed to it and
+        whether its methods were called, allowing us to verify the pipeline's behavior.
+        """
+
         instance: "DummyTranscriber"
 
         def __init__(
             self,
             file_path: Path,
-            auth_token: str,
             trg_lang: str,
             src_lang: str,
             model_id: str,
             task: str,
             n_speakers: int,
         ) -> None:
+            """Initialize the dummy transcriber with the given parameters.
+
+            Args:
+                file_path (Path): Path to the audio file.
+                trg_lang (str): Target language code.
+                src_lang (str): Source language code.
+                model_id (str): Model ID for the transcription model.
+                task (str): Task to perform (transcribe or translate).
+                n_speakers (int): Number of speakers for diarization.
+            """
             self.params = {
                 "file_path": file_path,
-                "auth_token": auth_token,
                 "trg_lang": trg_lang,
                 "src_lang": src_lang,
                 "model_id": model_id,
@@ -161,19 +102,25 @@ def test_transcription_pipeline_invokes_transcriber(
             DummyTranscriber.instance = self
 
         def transcription(self) -> None:
+            """Simulate the transcription process by setting a flag to indicate that the method was called."""
             self.transcription_called = True
 
         def diarization(self) -> None:
+            """Simulate the diarization process by setting a flag to indicate that the method was called."""
             self.diarization_called = True
 
         def transcript_output(self) -> pd.DataFrame:
+            """Simulate the output of the transcription process by returning a DataFrame with dummy text data.
+
+            Returns:
+                pd.DataFrame: A DataFrame containing the dummy transcription text.
+            """
             return pd.DataFrame({"text": ["bonjour"]})
 
     monkeypatch.setattr(pipeline, "WhisperTranscriber", DummyTranscriber)
 
     df, detected_lang = pipeline.transcription_pipeline(
         file_path=Path("/tmp/audio.wav"),
-        api_key="token",
         trg_lang="en",
         src_lang="auto",
         model_id="base",
@@ -200,23 +147,42 @@ def test_transcription_pipeline_falls_back_to_original_language(
     """
 
     class DummyTranscriber:
+        """A dummy transcriber class to test the transcription pipeline's language fallback
+        behavior. It simulates a scenario where the transcriber detects a source language
+        but does not set it, allowing us to verify that the pipeline correctly falls back
+        to the original source language provided as an argument.
+        """
+
         def __init__(self, *args, **kwargs) -> None:
+            """Initialize the dummy transcriber. The parameters are not used in this dummy
+            implementation, but they are accepted to match the expected signature of the
+            actual transcriber.
+            """
             self.src_lang = None
 
         def transcription(self) -> None:
+            """Simulate the transcription process. In this dummy implementation, it does not
+            set the src_lang attribute, allowing us to test the fallback behavior in the pipeline.
+            """
             pass
 
         def diarization(self) -> None:
+            """Simulate the diarization process. In this dummy implementation, it should not be
+            called when n_speakers <= 1."""
             pytest.fail("diarization should not be called when n_speakers <= 1")
 
         def transcript_output(self) -> pd.DataFrame:
+            """Simulate the output of the transcription process by returning a DataFrame with dummy text data.
+
+            Returns:
+                pd.DataFrame: A DataFrame containing the dummy transcription text.
+            """
             return pd.DataFrame({"text": ["hola"]})
 
     monkeypatch.setattr(pipeline, "WhisperTranscriber", DummyTranscriber)
 
     df, detected_lang = pipeline.transcription_pipeline(
         file_path=Path("/tmp/audio.wav"),
-        api_key="token",
         trg_lang="en",
         src_lang="es",
         model_id="base",
@@ -242,13 +208,49 @@ def test_translation_pipeline_returns_input_when_language_matches(
     """
 
     class DummyTranslator:
-        def __init__(self) -> None:
+        """A dummy translator class to test the translation pipeline's behavior when the
+        detected source language matches the target language. It simulates a scenario where
+        the translator detects the source language as the same as the target language, and
+        it raises an assertion error if the translate method is called, allowing us to verify
+        that the pipeline correctly returns the input without attempting translation.
+        """
+
+        def __init__(self, **kwargs) -> None:
+            """Initialize the dummy translator. The parameters are not used in this dummy
+            implementation, but they are accepted to match the expected signature of the
+            actual translator.
+            """
             pass
 
         def detect_language(self, text: str) -> dict[str, str]:
+            """Simulate language detection by returning a dictionary indicating that the detected
+            language code is "es", which matches the target language in the test, allowing us to
+            verify that the translation pipeline correctly identifies the language match and returns
+            the input without translation.
+
+            Args:
+                text (str): The text for which to detect the language.
+
+            Returns:
+                dict[str, str]: A dictionary containing the detected language code.
+            """
             return {"code": "es"}
 
         def translate(self, trg_lang: str, text: str) -> str:
+            """Simulate the translation process. In this dummy implementation, it raises an assertion
+            error if called, because the translation pipeline should not attempt to translate when
+            the detected source language matches the target language.
+
+            Args:
+                trg_lang (str): The target language for translation.
+                text (str): The text to be translated.
+
+            Returns:
+                str: The translated text (not used in this dummy implementation).
+
+            Raises:
+                AssertionError: If the translate method is called when the source and target languages match.
+            """
             raise AssertionError("translate should not be called when languages match")
 
     monkeypatch.setattr(pipeline, "Translator", DummyTranslator)
@@ -270,23 +272,56 @@ def test_translation_pipeline_translates_each_row(
     """
 
     class DummyTranslator:
-        def __init__(self) -> None:
-            self.calls: list[tuple[str, str]] = []
+        """A dummy translator class to test the translation pipeline's behavior when the detected source
+        language does not match the target language. It simulates a scenario where the translator detects
+        a source language different from the target language and records the parameters passed to the
+        translate method, allowing us to verify that the pipeline correctly attempts translation for each
+        row of text.
+        """
+
+        def __init__(self, **kwargs) -> None:
+            """Initialize the dummy translator. The parameters are not used in this dummy implementation,
+            but they are accepted to match the expected signature of the actual translator.
+            """
+            self.calls: list[tuple[str, str, str]] = []
 
         def detect_language(self, text: str) -> dict[str, str]:
+            """Simulate language detection by returning a dictionary indicating that the detected language
+            code is "en", which does not match the target language "es" in the test, allowing us to verify
+            that the translation pipeline correctly identifies the language mismatch and attempts translation
+            for each row of text.
+
+            Args:
+                text (str): The text for which to detect the language.
+
+            Returns:
+                dict[str, str]: A dictionary containing the detected language code.
+            """
             return {"code": "en"}
 
-        def translate(self, trg_lang: str, text: str) -> str:
-            self.calls.append((trg_lang, text))
+        def translate(
+            self, trg_lang: str, text: str, src_lang: str | None = None
+        ) -> str:
+            """Simulate the translation process by recording the parameters passed to the translate method and returning a dummy translated string that combines the original text and the target language code. This allows us to verify that the translation pipeline correctly attempts translation for each row of text when the detected source language does not match the target language.
+
+            Args:
+                trg_lang (str): The target language for translation.
+                text (str): The text to be translated.
+                src_lang (str | None): The source language of the text. If None, it will be inferred.
+
+            Returns:
+                str: The translated text (not used in this dummy implementation).
+            """
+            self.calls.append((trg_lang, text, src_lang or ""))
             return f"{text}-{trg_lang}"
 
     translator = DummyTranslator()
-    monkeypatch.setattr(pipeline, "Translator", lambda: translator)
+    monkeypatch.setattr(pipeline, "Translator", lambda **kwargs: translator)
     df = pd.DataFrame({"text": ["hello", "world"]})
 
     result = pipeline.translation_pipeline(df.copy(), "es")
 
-    assert translator.calls == [("es", "hello"), ("es", "world")]
+    assert translator.calls == [("es", "hello", "en"), ("es", "world", "en")]
     assert list(result["text"]) == ["hello-es", "world-es"]
 
 
@@ -298,24 +333,83 @@ def test_summarization_pipeline_formats_prompt(monkeypatch: pytest.MonkeyPatch) 
         monkeypatch (pytest.MonkeyPatch): The monkeypatch fixture for modifying behavior.
     """
 
-    class DummyPipeline:
+    # Import the real InferencePipeline type for subclassing
+    from nextext.modules.openai_cfg import InferencePipeline
+
+    class DummyPipeline(InferencePipeline):
+        """A dummy inference pipeline class to test the summarization pipeline's prompt formatting behavior."""
+
         def __init__(self) -> None:
+            """Initialize the dummy inference pipeline and set up a list to record the prompts passed to the
+            call_model method.
+            """
             self.prompts: list[str] = []
 
-        def load_prompt(self, keyword: str) -> str:
+        def load_prompt(self, keyword: str = "system") -> str:
+            """Load the prompt template for the given keyword.
+
+            Args:
+                keyword (str): The keyword for the prompt template.
+
+            Returns:
+                str: The prompt template.
+            """
             assert keyword == "summary"
             return "Summarize: {text}"
 
-        def call_ollama_server(self, prompt: str) -> str:
+        def call_model(
+            self,
+            prompt: str,
+            model: str | None = None,
+            think: bool = False,
+            num_ctx: int = 32768,
+            temperature: float = 0.1,
+            seed: int = 42,
+            stop: list[str] | None = None,
+            num_predict: int | None = None,
+            top_k: int | None = None,
+            top_p: float | None = None,
+            system_prompt: str | None = None,
+        ) -> str:
+            """Simulate calling the model with the given prompt.
+
+            Args:
+                prompt (str): The prompt to pass to the model.
+                model (str | None): Unused test double argument.
+                think (bool): Unused test double argument.
+                num_ctx (int): Unused test double argument.
+                temperature (float): Unused test double argument.
+                seed (int): Unused test double argument.
+                stop (list[str] | None): Unused test double argument.
+                num_predict (int | None): Unused test double argument.
+                top_k (int | None): Unused test double argument.
+                top_p (float | None): Unused test double argument.
+                system_prompt (str | None): Unused test double argument.
+
+            Returns:
+                str: The model's response.
+            """
+            del (
+                model,
+                think,
+                num_ctx,
+                temperature,
+                seed,
+                stop,
+                num_predict,
+                top_k,
+                top_p,
+                system_prompt,
+            )
             self.prompts.append(prompt)
             return "summary result"
 
-    ollama_pipeline = DummyPipeline()
+    inference_pipeline = DummyPipeline()
 
-    result = pipeline.summarization_pipeline("Important content", ollama_pipeline)  # type: ignore[arg-type]
+    result = pipeline.summarization_pipeline("Important content", inference_pipeline)
 
     assert result == "summary result"
-    assert ollama_pipeline.prompts == ["Summarize: Important content"]
+    assert inference_pipeline.prompts == ["Summarize: Important content"]
 
 
 def test_summarization_pipeline_rejects_empty_text(
@@ -330,8 +424,11 @@ def test_summarization_pipeline_rejects_empty_text(
     Raises:
         ValueError: If the input text is empty.
     """
+    from nextext.modules.openai_cfg import InferencePipeline
+
+    dummy_pipeline = InferencePipeline()
     with pytest.raises(ValueError):
-        pipeline.summarization_pipeline("", object())  # type: ignore[arg-type]
+        pipeline.summarization_pipeline("", dummy_pipeline)
 
 
 def test_wordlevel_pipeline_invokes_all_steps(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -343,30 +440,82 @@ def test_wordlevel_pipeline_invokes_all_steps(monkeypatch: pytest.MonkeyPatch) -
     """
 
     class DummyWordCounter:
+        """A dummy word counter class to test the word-level pipeline's behavior."""
+
         def __init__(self, text: str, language: str) -> None:
+            """Initialize the dummy word counter with the given text and language, and set up a list to record
+            the steps invoked.
+
+            Args:
+                text (str): The text to be processed.
+                language (str): The language of the text.
+            """
             self.text = text
             self.language = language
             self.steps: list[str] = []
 
         def text_to_doc(self) -> None:
+            """Simulate the process of converting text to a document format. In this dummy implementation,
+            it simply records that the text_to_doc step was invoked, allowing us to verify that the word-level
+            pipeline correctly calls this step as part of its processing.
+            """
             self.steps.append("text_to_doc")
 
         def lemmatize_doc(self) -> None:
+            """Simulate the process of lemmatizing a document. In this dummy implementation, it simply records
+            that the lemmatize_doc step was invoked, allowing us to verify that the word-level pipeline correctly
+            calls this step as part of its processing.
+            """
             self.steps.append("lemmatize_doc")
 
         def count_words(self) -> pd.DataFrame:
+            """Simulate the process of counting words in the text. In this dummy implementation, it returns a
+            DataFrame with a single word and its count, allowing us to verify that the word-level pipeline correctly
+            calls this step and processes its output.
+
+            Returns:
+                pd.DataFrame: A DataFrame containing a single word and its count.
+            """
             return pd.DataFrame({"word": ["test"], "count": [1]})
 
         def named_entity_recognition(self) -> pd.DataFrame:
+            """Simulate the process of named entity recognition. In this dummy implementation, it returns a DataFrame
+            with a single entity, allowing us to verify that the word-level pipeline correctly calls this step and
+            processes its output.
+
+            Returns:
+                pd.DataFrame: A DataFrame containing a single entity.
+            """
             return pd.DataFrame({"entity": ["Test"]})
 
         def get_noun_sentiment(self) -> pd.DataFrame:
+            """Simulate the process of getting noun sentiment. In this dummy implementation, it returns a DataFrame
+            with a single noun and its sentiment score, allowing us to verify that the word-level pipeline correctly
+            calls this step and processes its output.
+
+            Returns:
+                pd.DataFrame: A DataFrame containing a single noun and its sentiment score.
+            """
             return pd.DataFrame({"noun": ["test"], "sentiment": [0.5]})
 
         def create_interactive_graph(self) -> str:
+            """Simulate the process of creating an interactive graph. In this dummy implementation, it returns a string
+            representing the path to the graph, allowing us to verify that the word-level pipeline correctly calls this
+            step and processes its output.
+
+            Returns:
+                str: A string representing the path to the interactive graph.
+            """
             return "graph.html"
 
         def create_wordcloud(self) -> str:
+            """Simulate the process of creating a word cloud. In this dummy implementation, it returns a string
+            representing the path to the word cloud, allowing us to verify that the word-level pipeline correctly calls this
+            step and processes its output.
+
+            Returns:
+                str: A string representing the path to the word cloud.
+            """
             return "wordcloud"
 
     monkeypatch.setattr(
@@ -383,92 +532,3 @@ def test_wordlevel_pipeline_invokes_all_steps(monkeypatch: pytest.MonkeyPatch) -
     assert list(sentiments["noun"]) == ["test"]
     assert graph == "graph.html"
     assert wordcloud == "wordcloud"
-
-
-def test_topics_pipeline_runs_all_stages(monkeypatch: pytest.MonkeyPatch) -> None:
-    """
-    Test the topics pipeline to ensure all stages are invoked.
-
-    Args:
-        monkeypatch (pytest.MonkeyPatch): The monkeypatch fixture for modifying behavior.
-    """
-
-    class DummyTopicModeling:
-        instance: "DummyTopicModeling"
-
-        def __init__(self, data: list[str], lang_code: str) -> None:
-            self.data = data
-            self.lang_code = lang_code
-            self.loaded = False
-            self.fitted = False
-            DummyTopicModeling.instance = self
-
-        def load_pipeline(self) -> None:
-            self.loaded = True
-
-        def fit_topic_model(self) -> None:
-            self.fitted = True
-
-        def summarize_topics(self, ollama_pipeline) -> list[tuple[str, str]]:
-            assert self.loaded is True
-            assert self.fitted is True
-            assert ollama_pipeline == "ollama"
-            return [("Topic", "Summary")]
-
-    monkeypatch.setattr(pipeline, "TopicModeling", DummyTopicModeling)
-    df = pd.DataFrame({"text": ["text one", "text two"]})
-
-    result = pipeline.topics_pipeline(df, "en", "ollama")  # type: ignore[arg-type]
-
-    assert result == [("Topic", "Summary")]
-    instance = DummyTopicModeling.instance
-    assert instance.data == ["text one", "text two"]
-    assert instance.lang_code == "en"
-
-
-def test_hatespeech_pipeline_appends_results(monkeypatch: pytest.MonkeyPatch) -> None:
-    """
-    Test the hate speech pipeline to ensure it appends results.
-
-    Args:
-        monkeypatch (pytest.MonkeyPatch): The monkeypatch fixture for modifying behavior.
-    """
-
-    class DummyDetector:
-        def __init__(self, ollama_pipeline) -> None:
-            self.ollama = ollama_pipeline
-
-        def process(self, texts: list[str]) -> list[str]:
-            return ["safe" for _ in texts]
-
-    monkeypatch.setattr(pipeline, "HateSpeechDetector", DummyDetector)
-    df = pd.DataFrame({"text": ["hello", "world"]})
-
-    result = pipeline.hatespeech_pipeline("ollama", df.copy())  # type: ignore[arg-type]
-
-    assert list(result["hate_speech"]) == ["safe", "safe"]
-
-
-def test_hatespeech_pipeline_no_results_keeps_dataframe(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """
-    Test the hate speech pipeline to ensure it handles no results correctly.
-
-    Args:
-        monkeypatch (pytest.MonkeyPatch): The monkeypatch fixture for modifying behavior.
-    """
-
-    class DummyDetector:
-        def __init__(self, ollama_pipeline) -> None:
-            pass
-
-        def process(self, texts: list[str]) -> list[str]:
-            return []
-
-    monkeypatch.setattr(pipeline, "HateSpeechDetector", DummyDetector)
-    df = pd.DataFrame({"text": ["hello"]})
-
-    result = pipeline.hatespeech_pipeline("ollama", df.copy())  # type: ignore[arg-type]
-
-    assert "hate_speech" not in result

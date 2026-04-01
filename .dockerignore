@@ -1,42 +1,79 @@
-# Python cache and virtual environments
-**/__pycache__/
-*.py[cod]
-*.egg-info/
-.mypy_cache/
-.venv/
-.env
-
-# System/IDE files
-.DS_Store
-.vscode/
-.idea/
+# Ignore Git and local metadata
+.git
+.vscode
+.idea
 *.code-workspace
-*.ipynb
+.DS_Store
 
-# Git and test files
-.git/
-.log/
+# Backend build artifacts and caches
+**/__pycache__/
+**/*.egg-info/
+**/.github/
+**/.logs/
+**/.mypy_cache/
+**/.pre-commit-cache/
+**/.pytest_cache/
+**/.ruff_cache/
+**/.uv-cache/
+**/.venv/
+**/build/
+**/data/
+**/dist/
+**/env/
+**/legacy/
+**/lib/
+**/models/
+**/output/
+**/results/
+**/scripts/
+**/session/
+**/tests/
+
+# Environment and config files
+*.bundle
+*.pyc
+*.pyo
+*.so
+.dockerignore
 .gitignore
-test/
-build/
-legacy/
-lib/
-models/
+.env*
+.pre-commit-config.yaml
+AGENTS.md
+docker-compose.yml
+Dockerfile*
+LICENSE
+README.md
 
-# Data and output files
-data/
-output/
-prototypes/
+# Media, data, and large files not needed for build
+.DS_Store
+*.csv
 *.db
+*.doc*
 *.gguf
+*.gif
 *.html
+*.ipynb
+*.jpeg
+*.jpg
 *.log
 *.mkv
 *.mp3
 *.mp4
-*.m4a
 *.ogg
+*.pdf
+*.png
 *.sh
+*.sqlite3
+*.txt
 *.wav
 *.webm
+*.xls*
 *.zip
+
+# Docker-specific
+*.pid
+*.sock
+docker-compose.override.yml
+
+# Exceptions
+!**/prompts/*.txt

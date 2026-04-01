@@ -10,8 +10,7 @@ def load_mappings(
     file: str,
     subdir: str = "mappings",
 ) -> dict[str, str]:
-    """
-    Load mappings from a JSON file.
+    """Load mappings from a JSON file.
 
     Args:
         file (str): Description of the file to load.
@@ -29,8 +28,7 @@ def load_mappings(
 
 
 def load_and_sort_mappings(file: str) -> tuple[dict[str, str], list[str]]:
-    """
-    Load language mappings from a JSON file.
+    """Load language mappings from a JSON file.
 
     Args:
         file (str): The filename of the JSON file containing language mappings.
@@ -45,8 +43,7 @@ def load_and_sort_mappings(file: str) -> tuple[dict[str, str], list[str]]:
 
 
 def kv_to_vk(mappings: dict[str, str]) -> dict[str, str]:
-    """
-    Convert a dictionary from key-value to value-key mapping.
+    """Convert a dictionary from key-value to value-key mapping.
 
     Args:
         mappings (dict[str, str]): A dictionary with keys as language codes and values as language names.

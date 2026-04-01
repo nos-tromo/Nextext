@@ -1,0 +1,358 @@
+"""Utilities for preloading Nextext language and speech models."""
+
+import gc
+import importlib
+import os
+import subprocess
+import sys
+from collections.abc import Iterable
+from pathlib import Path
+
+import nltk
+from dotenv import load_dotenv
+from loguru import logger
+
+from nextext.utils.mappings_loader import load_mappings
+
+
+load_dotenv()
+
+SPACY_MODEL_DIR = "SPACY_MODEL_DIR"
+DEFAULT_SPACY_MODEL_DIR = Path.home() / ".cache" / "spacy"
+NLTK_RESOURCES = ("punkt_tab", "stopwords")
+WHISPER_LANGUAGE_DETECTION_MODEL = "small"
+WHISPER_VAD_METHOD = "silero"
+DIARIZATION_MODEL_ID = "pyannote/speaker-diarization-3.1"
+DIARIZATION_DEPENDENCY_IDS = ("pyannote/segmentation-3.0",)
+
+
+def get_spacy_model_dir() -> Path:
+    """Resolve the persistent spaCy model cache directory.
+
+    Returns:
+        Path: The path to the spaCy model cache directory.
+    """
+    configured_dir = os.getenv(SPACY_MODEL_DIR)
+    if configured_dir:
+        return Path(configured_dir).expanduser()
+    return DEFAULT_SPACY_MODEL_DIR
+
+
+def ensure_spacy_model_path(model_dir: Path | None = None) -> Path:
+    """Create the persistent model directory and add it to ``sys.path``.
+
+    Args:
+        model_dir (Path | None): Optional custom directory for spaCy
+            models.
+
+    Returns:
+        Path: The path to the spaCy model cache directory.
+    """
+    resolved_dir = model_dir or get_spacy_model_dir()
+    resolved_dir.mkdir(parents=True, exist_ok=True)
+    resolved_dir_str = str(resolved_dir)
+    if resolved_dir_str not in sys.path:
+        sys.path.insert(0, resolved_dir_str)
+    return resolved_dir
+
+
+def is_spacy_model_cached(model_id: str, model_dir: Path | None = None) -> bool:
+    """Check whether a spaCy model package exists in the persistent cache.
+
+    Args:
+        model_id (str): The name of the spaCy model to check.
+        model_dir (Path | None): Optional custom directory for spaCy
+            models.
+
+    Returns:
+        bool: True if the model is cached, False otherwise.
+    """
+    resolved_dir = ensure_spacy_model_path(model_dir)
+    return (resolved_dir / model_id).exists()
+
+
+def get_spacy_model_ids(
+    spacy_models_file: str = "spacy_models.json",
+) -> list[str]:
+    """Return the distinct spaCy model package names used by Nextext.
+
+    Args:
+        spacy_models_file (str): Mapping file containing language to spaCy
+            model definitions.
+
+    Returns:
+        list[str]: Sorted spaCy package names.
+    """
+    spacy_models = load_mappings(spacy_models_file)
+    return sorted(set(spacy_models.values()))
+
+
+def get_whisper_model_ids(
+    whisper_models_file: str = "whisper_models.json",
+) -> list[str]:
+    """Return the distinct Whisper model IDs used by Nextext.
+
+    Args:
+        whisper_models_file (str): Mapping file containing model aliases.
+
+    Returns:
+        list[str]: Sorted Whisper model IDs including the detection model.
+    """
+    whisper_models = load_mappings(whisper_models_file)
+    model_ids = set(whisper_models.values())
+    model_ids.add(WHISPER_LANGUAGE_DETECTION_MODEL)
+    return sorted(model_ids)
+
+
+def get_alignment_model_ids() -> dict[str, str]:
+    """Return the default WhisperX alignment model per language code.
+
+    Returns:
+        dict[str, str]: Language-code to alignment-model mapping.
+    """
+    import whisperx.alignment as alignment
+
+    alignment_models: dict[str, str] = dict(alignment.DEFAULT_ALIGN_MODELS_TORCH)
+    alignment_models.update(alignment.DEFAULT_ALIGN_MODELS_HF)
+    return dict(sorted(alignment_models.items()))
+
+
+def ensure_nltk_resources(resources: Iterable[str] = NLTK_RESOURCES) -> None:
+    """Download the NLTK resources required by Nextext.
+
+    Args:
+        resources (Iterable[str]): Resource names to fetch.
+    """
+    for resource in resources:
+        nltk.download(resource, quiet=True)
+        logger.info("Loaded NLTK resource '{}'.", resource)
+
+
+def download_spacy_model(model_id: str) -> None:
+    """Download a spaCy model into the persistent cache directory.
+
+    Args:
+        model_id (str): The name of the spaCy model to download.
+
+    Raises:
+        subprocess.CalledProcessError: If the subprocess command fails.
+    """
+    model_dir = ensure_spacy_model_path()
+    if is_spacy_model_cached(model_id, model_dir):
+        logger.info("spaCy model '{}' already cached in '{}'.", model_id, model_dir)
+        return
+
+    subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "spacy",
+            "download",
+            model_id,
+            "--target",
+            str(model_dir),
+        ],
+        check=True,
+    )
+    importlib.invalidate_caches()
+    logger.info("Loaded spaCy model '{}'.", model_id)
+
+
+def preload_spacy_models(model_ids: Iterable[str] | None = None) -> None:
+    """Preload all configured spaCy models.
+
+    Args:
+        model_ids (Iterable[str] | None): Optional explicit model IDs to
+            preload.
+    """
+    resolved_model_ids = list(model_ids or get_spacy_model_ids())
+    for model_id in resolved_model_ids:
+        download_spacy_model(model_id)
+
+
+def _cleanup_torch_resources() -> None:
+    """Release transient Torch resources after model preloading."""
+    import torch
+
+    if hasattr(torch, "cuda") and torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    gc.collect()
+
+
+def preload_whisper_model(model_id: str, device: str = "cpu") -> None:
+    """Preload a WhisperX speech model into the local cache.
+
+    Args:
+        model_id (str): The Whisper model ID to preload.
+        device (str): Device used for the preload step.
+    """
+    import whisperx
+
+    compute_type = "float16" if device == "cuda" else "int8"
+    logger.info("Loading Whisper model '{}'.", model_id)
+    pipeline = whisperx.load_model(
+        whisper_arch=model_id,
+        device=device,
+        compute_type=compute_type,
+        language="en",
+        vad_method=WHISPER_VAD_METHOD,
+    )
+    del pipeline
+    _cleanup_torch_resources()
+
+
+def preload_whisper_models(
+    model_ids: Iterable[str] | None = None,
+    device: str = "cpu",
+) -> None:
+    """Preload the WhisperX ASR models used by Nextext.
+
+    Args:
+        model_ids (Iterable[str] | None): Optional explicit model IDs to
+            preload.
+        device (str): Device used for the preload step.
+    """
+    resolved_model_ids = list(model_ids or get_whisper_model_ids())
+    for model_id in resolved_model_ids:
+        preload_whisper_model(model_id, device=device)
+
+
+def preload_alignment_model(
+    language_code: str,
+    model_id: str,
+    device: str = "cpu",
+) -> None:
+    """Preload one WhisperX alignment model.
+
+    Args:
+        language_code (str): Language code supported by WhisperX alignment.
+        model_id (str): Exact alignment model ID.
+        device (str): Device used for the preload step.
+    """
+    import whisperx
+
+    logger.info(
+        "Loading alignment model '{}' for language '{}'.",
+        model_id,
+        language_code,
+    )
+    align_model, _ = whisperx.load_align_model(
+        language_code=language_code,
+        device=device,
+        model_name=model_id,
+    )
+    del align_model
+    _cleanup_torch_resources()
+
+
+def preload_alignment_models(
+    alignment_models: dict[str, str] | None = None,
+    device: str = "cpu",
+) -> None:
+    """Preload all default WhisperX alignment models.
+
+    Args:
+        alignment_models (dict[str, str] | None): Optional explicit
+            language-to-model mapping.
+        device (str): Device used for the preload step.
+    """
+    resolved_alignment_models = alignment_models or get_alignment_model_ids()
+    for language_code, model_id in resolved_alignment_models.items():
+        preload_alignment_model(language_code, model_id, device=device)
+
+
+def preload_diarization_model(
+    auth_token: str | None,
+    device: str = "cpu",
+) -> None:
+    """Preload the default WhisperX diarization pipeline.
+
+    Args:
+        auth_token (str | None): Hugging Face token used for private gated
+            model access.
+        device (str): Device used for the preload step.
+    """
+    if not auth_token:
+        logger.warning(
+            "Skipping diarization preload. '{}' also depends on {}.",
+            DIARIZATION_MODEL_ID,
+            ", ".join(DIARIZATION_DEPENDENCY_IDS),
+        )
+        return
+
+    from whisperx.diarize import DiarizationPipeline
+
+    from nextext.modules.transcription import _configure_torch_safe_globals
+
+    _configure_torch_safe_globals()
+    logger.info("Loading diarization model '{}'.", DIARIZATION_MODEL_ID)
+    pipeline = DiarizationPipeline(
+        model_name=DIARIZATION_MODEL_ID,
+        use_auth_token=auth_token,
+        device=device,
+    )
+    del pipeline
+    _cleanup_torch_resources()
+
+
+def _get_default_device() -> str:
+    """Resolve the preferred device for preload operations.
+
+    Returns:
+        str: ``cuda`` when available, otherwise ``cpu``.
+    """
+    import torch
+
+    return "cuda" if torch.cuda.is_available() else "cpu"
+
+
+def main() -> None:
+    """Preload Nextext's local language and speech models.
+
+    Raises:
+        RuntimeError: If any preload operation fails.
+    """
+    failures: list[str] = []
+    device = _get_default_device()
+    logger.info("Preloading Nextext models on device '{}'.", device)
+
+    try:
+        ensure_nltk_resources()
+    except Exception as exc:
+        failures.append(f"nltk resources ({exc})")
+
+    for model_id in get_spacy_model_ids():
+        try:
+            download_spacy_model(model_id)
+        except Exception as exc:
+            failures.append(f"spaCy {model_id} ({exc})")
+
+    for model_id in get_whisper_model_ids():
+        try:
+            preload_whisper_model(model_id, device=device)
+        except Exception as exc:
+            failures.append(f"Whisper {model_id} ({exc})")
+
+    for language_code, model_id in get_alignment_model_ids().items():
+        try:
+            preload_alignment_model(
+                language_code=language_code,
+                model_id=model_id,
+                device=device,
+            )
+        except Exception as exc:
+            failures.append(f"Alignment {language_code}:{model_id} ({exc})")
+
+    try:
+        preload_diarization_model(os.getenv("HF_HUB_TOKEN"), device=device)
+    except Exception as exc:
+        failures.append(f"Diarization {DIARIZATION_MODEL_ID} ({exc})")
+
+    if failures:
+        raise RuntimeError("Failed to preload models: " + "; ".join(failures))
+
+    logger.info("All Nextext preload models are available.")
+
+
+if __name__ == "__main__":
+    main()

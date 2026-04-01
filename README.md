@@ -1,6 +1,6 @@
 # Nextext 🎙️
 
-**Nextext** is a modular toolkit for transcribing, translating, and analyzing natural language from audio and video files using state-of-the-art machine learning models. Designed for flexibility, it supports both a user-friendly Streamlit web interface and command-line operation. The results are compiled into structured output files featuring transcriptions, summaries, statistics, topic modeling, and sentiment analysis, making it ideal for comprehensive audio and text analysis workflows.
+**Nextext** is a modular toolkit for transcribing, translating, and analyzing natural language from audio and video files using state-of-the-art machine learning models. Designed for flexibility, it supports both a user-friendly Streamlit web interface and command-line operation. The results are compiled into structured output files featuring transcriptions, summaries, and word-level statistics.
 
 > This is a personal project that is under heavy development. It could, and likely does, contain bugs, incomplete code,
 > or other unintended issues. As such, the software is provided as-is, without warranty of any kind.
@@ -16,7 +16,7 @@
 Without Docker usage:
 
 - [`uv`](https://github.com/astral-sh/uv) for Python version and dependency management
-- [Ollama](https://ollama.com/) for local inference
+- [Ollama](https://ollama.com/) for local inference via its OpenAI-compatible API
 
 ### Manual installation 📦
 
@@ -32,7 +32,27 @@ To enable speaker diarization, accept the user agreement for the following model
 
 ### Docker installation 🐳
 
-The Docker setup will install Nextext from `docker-compose.yml` and, with that, pull the latest Ollama image. All inference is ran with Nextext and Ollama chained in a shared network.
+#### Shared Docker volumes
+
+The compose file uses external cache volumes so model artifacts survive
+container recreation:
+
+- `huggingface-cache`
+- `nltk-cache`
+- `ollama-cache`
+- `spacy-cache`
+- `torch-cache`
+
+The helper script creates them with `docker volume create`.
+
+If your environment requires an outbound proxy, place
+`HTTP_PROXY`, `HTTPS_PROXY`, and `NO_PROXY` in the project's `.env`
+file. The compose setup uses them for both image builds and runtime
+model downloads in Nextext and Ollama.
+
+#### Profile installation
+
+The Docker setup will install Nextext from `docker-compose.yml` and, with that, pull the latest Ollama image. By default, Nextext uses Ollama as its inference provider through Ollama's OpenAI-compatible endpoint.
 
 Select whether to install the CPU or GPU variant (requires a CUDA compatible GPU and the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html) set up):
 
@@ -40,7 +60,7 @@ Clone the repository and run either for CPU or GPU usage:
 
 ```bash
 docker compose --profile cpu up  # CPU
-docker compose --profile gpu up  # GPU
+docker compose --profile cuda up  # CUDA
 ```
 
 Launch the app: `http://localhost:8501/`
@@ -49,11 +69,6 @@ Launch the app: `http://localhost:8501/`
 
 Transcription and alignment models used by [WhisperX](https://github.com/m-bain/whisperX/) will be downloaded upon first usage. Some models can be downloaded beforehand:
 
-#### Hugging Face 🤗
-
-- [`google/madlad400-3b-mt`](https://huggingface.co/google/madlad400-3b-mt)
-- [`sentence-transformers/paraphrase-multilingual-mpnet-base-v2`](https://huggingface.co/sentence-transformers/paraphrase-multilingual-mpnet-base-v2)
-
 #### Ollama 🦙
 
 The following models are recommended and tested for this application (select depending on your hardware setup):
@@ -61,14 +76,32 @@ The following models are recommended and tested for this application (select dep
 - [`gemma3:27b-it-qat`](https://ollama.com/library/gemma3)
 - [`gemma3:12b-it-qat`](https://ollama.com/library/gemma3)
 - [`gemma3n:e4b`](https://ollama.com/library/gemma3n)
+- [`translategemma:27b`](https://ollama.com/library/translategemma)
+- [`translategemma:12b`](https://ollama.com/library/translategemma)
+- [`translategemma:4b`](https://ollama.com/library/translategemma)
 
-To configure the app's default models, edit the selector located at `nextext/utils/mappings/ollama_models.json`.
+To configure the app's models, set `TEXT_MODEL` for the general LLM and
+`TRANSLATION_MODEL` for translation.
 
-#### Other language and tokenization models 🌐
+#### OpenAI provider (optional)
+
+Ollama remains the default inference provider. To target the hosted OpenAI API instead, set:
 
 ```bash
-uv run load-spacy-models
+export INFERENCE_PROVIDER=openai
+export OPENAI_API_KEY=your-key
 ```
+
+#### Local preload command 🌐
+
+```bash
+uv run load-models
+```
+
+`load-models` preloads Nextext's NLTK resources, configured spaCy
+packages, WhisperX speech models, WhisperX alignment models, and the
+default diarization pipeline when `HF_HUB_TOKEN` is available. The
+legacy alias `uv run load-spacy-models` still works.
 
 #### Offline usage 🚫🌐
 
@@ -114,11 +147,9 @@ Running `uv run nextext-cli [ARGS]` from the command line supports the following
 -t, --task            Specify the task to perform: 'transcribe' (default), or 'translate'.
 -s, --speakers        Specify the maximum number of speakers for diarization (default: 1).
 -w, --words           Show most frequently used words (default: False).
--tm, --topics         Enable topic modeling analysis (default: False).
--sum, --summarize     Additional text and topic summarization (default: False).
--tox, --toxicity      Enable toxicity analysis (default: False).
+-sum, --summarize     Additional transcript summarization (default: False).
 -o, --output          Specify the output directory (default: output).
--F, --full-analysis   Enable full analysis, equivalent to using -w -tm -sum -tox (default: False).
+-F, --full-analysis   Enable full analysis, equivalent to using -w -sum (default: False).
 ```
 
 In CLI mode, you can let Nextext iterate over a directory to batch process files:
@@ -133,7 +164,6 @@ done
 
 - ~~🐳 Dockerize the application~~
 - 🛠️ Refactor proper logging and error handling
-- 🧪 Improve overall toxicity classification quality
 - 🎨 Polish Streamlit frontend
 - 🤖 Integrate LLM chatbot into UI
 - 📊 Add comprehensive report output

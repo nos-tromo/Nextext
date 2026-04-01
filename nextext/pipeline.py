@@ -1,75 +1,36 @@
-import getpass
-import os
+"""Shared pipeline entry points for Nextext processing stages."""
+
 from pathlib import Path
 
 import pandas as pd
-from dotenv import find_dotenv, load_dotenv, set_key
 from matplotlib.figure import Figure
 
-from nextext.modules.ollama_cfg import OllamaPipeline
-from nextext.modules.topics import TopicModeling
-from nextext.modules.hatespeech import HateSpeechDetector
-from nextext.modules.transcription import WhisperTranscriber
+from nextext.modules.openai_cfg import InferencePipeline
 from nextext.modules.translation import Translator
 from nextext.modules.words import WordCounter
 
+WhisperTranscriber = None
 
-def get_api_key(token: str = "API_KEY") -> str:
-    """
-    Retrieve the API key from environment or prompt user. Works in both local and Docker environments.
-
-    Args:
-        token (str): The environment variable to read the API key from.
-
-    Returns:
-        str: The API key.
-
-    Raises:
-        RuntimeError: If the key cannot be retrieved in a non-interactive (e.g. Docker) environment.
-        ValueError: If the key is not found in the environment variables.
-    """
-    dotenv_path = find_dotenv()
-    if dotenv_path:
-        load_dotenv(dotenv_path)
-
-    api_key = os.getenv(token)
-    if api_key:
-        return api_key
-
-    if Path("/.dockerenv").exists():
-        raise RuntimeError(
-            f"Missing API key. Please set {token} in your .env file or docker-compose environment."
-        )
-
-    try:
-        api_key = getpass.getpass("Token not found. Please enter your API key: ")
-        if dotenv_path:
-            set_key(dotenv_path, token, api_key)
-        else:
-            with open(".env", "w") as env_file:
-                env_file.write(f"{token}={api_key}\n")
-        return api_key
-    except EOFError:
-        raise RuntimeError(
-            f"API key prompt failed and environment variable {token} is not set."
-        )
+try:
+    from nextext.modules.transcription import WhisperTranscriber as _WhisperTranscriber
+except Exception:  # pragma: no cover - environment-specific optional dependency failure
+    pass
+else:
+    WhisperTranscriber = _WhisperTranscriber
 
 
 def transcription_pipeline(
     file_path: Path,
-    api_key: str,
     trg_lang: str,
     src_lang: str,
     model_id: str,
     task: str,
     n_speakers: int,
 ) -> tuple[pd.DataFrame, str]:
-    """
-    Transcribe and diarize the audio file using WhisperX.
+    """Transcribe and diarize the audio file using WhisperX.
 
     Args:
         file_path (Path): Path to the audio file.
-        api_key (str): API key for authentication.
         trg_lang (str): Target language code for translation check.
         src_lang (str): Source language code.
         model_id (str): Model ID for WhisperX.
@@ -77,12 +38,15 @@ def transcription_pipeline(
         n_speakers (int): Number of speakers for diarization.
 
     Returns:
-        pd.DataFrame: DataFrame containing the transcribed text and speaker diarization.
-        str: Detected source language code.
+        tuple[pd.DataFrame, str]: The transcript DataFrame and the
+            resolved source language code.
     """
+    if WhisperTranscriber is None:
+        raise RuntimeError(
+            "Transcription dependencies could not be imported. Please verify the WhisperX and torchaudio installation."
+        )
     transcriber = WhisperTranscriber(
         file_path=file_path,
-        auth_token=api_key,
         trg_lang=trg_lang,
         src_lang=src_lang,
         model_id=model_id,
@@ -98,38 +62,62 @@ def transcription_pipeline(
     return df, updated_src_lang
 
 
-def translation_pipeline(df: pd.DataFrame, trg_lang: str) -> pd.DataFrame:
+def normalize_language_code(lang_code: str | None) -> str | None:
+    """Collapse a locale/script code to its base language code.
+
+    Args:
+        lang_code (str | None): The language code to normalize, e.g. "en-US" or "de-CH".
+
+    Returns:
+        str | None: The base language code, e.g. "en" or "de", or None if the input was None.
     """
-    Translate the transcribed text using a machine translation model. Translation is performed
+    if lang_code is None:
+        return None
+    return lang_code.split("-", 1)[0]
+
+
+def translation_pipeline(
+    df: pd.DataFrame,
+    trg_lang: str,
+    src_lang: str | None = None,
+    inference_pipeline: InferencePipeline | None = None,
+) -> pd.DataFrame:
+    """Translate the transcribed text using a machine translation model. Translation is performed
     only if the target language is different from the detected source language.
 
     Args:
         df (pd.DataFrame): DataFrame containing the transcribed text.
         trg_lang (str): Target language code for translation.
+        src_lang (str | None): Source language code, if already known.
+        inference_pipeline (InferencePipeline | None): Shared inference client.
 
     Returns:
         pd.DataFrame: DataFrame with the translated text.
     """
-    translator = Translator()
-    detected_lang = translator.detect_language(
-        " ".join(df["text"].astype(str).tolist())
-    )
-    if detected_lang.get("code") == trg_lang:
+    translator = Translator(inference_pipeline=inference_pipeline)
+    resolved_src_lang = src_lang
+    if resolved_src_lang is None:
+        detected_lang = translator.detect_language(
+            " ".join(df["text"].astype(str).tolist())
+        )
+        resolved_src_lang = detected_lang.get("code")
+    if normalize_language_code(resolved_src_lang) == normalize_language_code(trg_lang):
         return df
-    df["text"] = df["text"].apply(lambda text: translator.translate(trg_lang, text))
+    df["text"] = df["text"].apply(
+        lambda text: translator.translate(trg_lang, text, src_lang=resolved_src_lang)
+    )
     return df
 
 
 def summarization_pipeline(
     text: str,
-    ollama_pipeline: OllamaPipeline,
+    inference_pipeline: InferencePipeline,
 ) -> str:
-    """
-    Summarize the given text using a language model and translate the result.
+    """Summarize the given text using a language model and translate the result.
 
     Args:
         text (str): The text to summarize.
-        ollama_pipeline (OllamaPipeline): An instance of the OllamaPipeline class for language model interactions.
+        inference_pipeline (InferencePipeline): An inference pipeline for language model interactions.
 
     Returns:
         str: The summarized text or None if an error occurs.
@@ -139,16 +127,15 @@ def summarization_pipeline(
     """
     if not text:
         raise ValueError("Text cannot be empty.")
-    prompt = ollama_pipeline.load_prompt("summary").format(text=text)
-    return ollama_pipeline.call_ollama_server(prompt=prompt)
+    prompt = inference_pipeline.load_prompt("summary").format(text=text)
+    return inference_pipeline.call_model(prompt=prompt)
 
 
 def wordlevel_pipeline(
     data: pd.DataFrame,
     language: str,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, str, Figure]:
-    """
-    Calculates word statistics, generates a histogram, and creates a word cloud from the provided text data.
+    """Calculates word statistics, generates a histogram, and creates a word cloud from the provided text data.
 
     Args:
         data (pd.DataFrame): DataFrame containing the text data to analyze.
@@ -176,48 +163,3 @@ def wordlevel_pipeline(
     wordcloud = word_analysis.create_wordcloud()
 
     return word_counts, named_entities, noun_sentiment, noun_graph, wordcloud
-
-
-def topics_pipeline(
-    data: pd.DataFrame,
-    language: str,
-    ollama_pipeline: OllamaPipeline,
-) -> list[tuple[str, str]] | None:
-    """
-    Perform topic modeling analysis.
-
-    Args:
-        data (pd.DataFrame): DataFrame with the data to analyze.
-        language (str): Language of the text data.
-        ollama_pipeline (OllamaPipeline): An instance of the OllamaPipeline class for language model interactions.
-
-    Returns:
-        list[tuple[str, str] | None: List of topic titles and summaries, or None if no topics are found.
-    """
-    topic_modeling = TopicModeling(
-        data=data["text"].astype(str).tolist(),
-        lang_code=language,
-    )
-    topic_modeling.load_pipeline()
-    topic_modeling.fit_topic_model()
-    return topic_modeling.summarize_topics(ollama_pipeline=ollama_pipeline)
-
-
-def hatespeech_pipeline(
-    ollama_pipeline: OllamaPipeline, df: pd.DataFrame
-) -> pd.DataFrame:
-    """
-    Perform toxicity analysis on the text data.
-
-    Args:
-        ollama_pipeline (OllamaPipeline): An instance of the OllamaPipeline class for language model interactions.
-        df (pd.DataFrame): DataFrame containing the text data to analyze.
-
-    Returns:
-        pd.DataFrame: DataFrame with an additional column for toxicity scores.
-    """
-    classifier = HateSpeechDetector(ollama_pipeline=ollama_pipeline)
-    result = classifier.process(df["text"].astype(str).tolist())
-    if len(result) > 0:
-        df["hate_speech"] = result
-    return df

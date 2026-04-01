@@ -4,8 +4,7 @@ from loguru import logger
 
 
 def load_font_file(file: str, utils: Path = Path("utils") / "fonts") -> Path:
-    """
-    Load a font file from the specified path, converting it to an absolute path if necessary.
+    """Load a font file from the specified path, converting it to an absolute path if necessary.
 
     Args:
         file (str): The name of the font file to load.
