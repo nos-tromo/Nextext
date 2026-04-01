@@ -62,7 +62,7 @@ def test_download_spacy_model_uses_persistent_target(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    """Test that spaCy downloads target the persistent cache directory.
+    """Test that spaCy wheel installs target the persistent cache directory.
 
     Args:
         monkeypatch (pytest.MonkeyPatch): The pytest fixture for modifying environment variables and functions.
@@ -89,13 +89,66 @@ def test_download_spacy_model_uses_persistent_target(
         [
             sys.executable,
             "-m",
-            "spacy",
-            "download",
-            "en_core_web_sm",
+            "pip",
+            "install",
+            "--no-deps",
             "--target",
             str(cache_dir),
+            (
+                "https://github.com/explosion/spacy-models/releases/download/"
+                "en_core_web_sm-3.8.0/"
+                "en_core_web_sm-3.8.0-py3-none-any.whl"
+            ),
         ]
     ]
+
+
+def test_get_spacy_model_package_version_uses_override(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test that the spaCy model package version honors the environment override.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): The pytest fixture for modifying environment variables.
+    """
+    monkeypatch.setenv(model_loader.SPACY_MODEL_PACKAGE_VERSION, "3.7.2")
+
+    assert model_loader.get_spacy_model_package_version() == "3.7.2"
+
+
+def test_get_spacy_model_package_version_uses_spacy_minor_release(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test that the spaCy model package version is derived from the installed spaCy version.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): The pytest fixture for modifying module behavior.
+    """
+    monkeypatch.delenv(model_loader.SPACY_MODEL_PACKAGE_VERSION, raising=False)
+    monkeypatch.setattr(model_loader, "package_version", lambda _: "3.8.4")
+
+    assert model_loader.get_spacy_model_package_version() == "3.8.0"
+
+
+def test_get_spacy_model_download_url_uses_override_base_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test that the direct spaCy download URL honors the configured base URL.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): The pytest fixture for modifying environment variables.
+    """
+    monkeypatch.setenv(
+        model_loader.SPACY_MODEL_DOWNLOAD_BASE_URL,
+        "https://mirror.example.com/spacy",
+    )
+    monkeypatch.setenv(model_loader.SPACY_MODEL_PACKAGE_VERSION, "3.8.0")
+
+    assert model_loader.get_spacy_model_download_url("en_core_web_sm") == (
+        "https://mirror.example.com/spacy/"
+        "en_core_web_sm-3.8.0/"
+        "en_core_web_sm-3.8.0-py3-none-any.whl"
+    )
 
 
 def test_get_whisper_model_ids_includes_detection_model(

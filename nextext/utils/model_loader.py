@@ -6,6 +6,7 @@ import os
 import subprocess
 import sys
 from collections.abc import Iterable
+from importlib.metadata import PackageNotFoundError, version as package_version
 from pathlib import Path
 
 import nltk
@@ -18,7 +19,12 @@ from nextext.utils.mappings_loader import load_mappings
 load_dotenv()
 
 SPACY_MODEL_DIR = "SPACY_MODEL_DIR"
+SPACY_MODEL_DOWNLOAD_BASE_URL = "SPACY_MODEL_DOWNLOAD_BASE_URL"
+SPACY_MODEL_PACKAGE_VERSION = "SPACY_MODEL_PACKAGE_VERSION"
 DEFAULT_SPACY_MODEL_DIR = Path.home() / ".cache" / "spacy"
+DEFAULT_SPACY_MODEL_DOWNLOAD_BASE_URL = (
+    "https://github.com/explosion/spacy-models/releases/download"
+)
 NLTK_RESOURCES = ("punkt_tab", "stopwords")
 WHISPER_LANGUAGE_DETECTION_MODEL = "small"
 WHISPER_VAD_METHOD = "silero"
@@ -36,6 +42,58 @@ def get_spacy_model_dir() -> Path:
     if configured_dir:
         return Path(configured_dir).expanduser()
     return DEFAULT_SPACY_MODEL_DIR
+
+
+def get_spacy_model_package_version() -> str:
+    """Resolve the compatible spaCy model package version.
+
+    Returns:
+        str: The compatible model package version.
+    """
+    configured_version = os.getenv(SPACY_MODEL_PACKAGE_VERSION)
+    if configured_version:
+        return configured_version
+
+    try:
+        installed_spacy_version = package_version("spacy")
+    except PackageNotFoundError as exc:
+        raise RuntimeError("spaCy must be installed before loading models.") from exc
+
+    version_parts = installed_spacy_version.split(".")
+    if len(version_parts) < 2:
+        raise RuntimeError(
+            f"Unsupported spaCy version '{installed_spacy_version}' for model preload."
+        )
+
+    return f"{version_parts[0]}.{version_parts[1]}.0"
+
+
+def get_spacy_model_download_base_url() -> str:
+    """Resolve the base URL used for direct spaCy model downloads.
+
+    Returns:
+        str: Base URL for spaCy model wheel downloads.
+    """
+    return os.getenv(
+        SPACY_MODEL_DOWNLOAD_BASE_URL,
+        DEFAULT_SPACY_MODEL_DOWNLOAD_BASE_URL,
+    ).rstrip("/")
+
+
+def get_spacy_model_download_url(model_id: str) -> str:
+    """Build the direct wheel URL for a spaCy model package.
+
+    Args:
+        model_id (str): The name of the spaCy model package.
+
+    Returns:
+        str: The model wheel URL.
+    """
+    model_version = get_spacy_model_package_version()
+    wheel_name = f"{model_id}-{model_version}-py3-none-any.whl"
+    return (
+        f"{get_spacy_model_download_base_url()}/{model_id}-{model_version}/{wheel_name}"
+    )
 
 
 def ensure_spacy_model_path(model_dir: Path | None = None) -> Path:
@@ -142,15 +200,17 @@ def download_spacy_model(model_id: str) -> None:
         logger.info("spaCy model '{}' already cached in '{}'.", model_id, model_dir)
         return
 
+    download_url = get_spacy_model_download_url(model_id)
     subprocess.run(
         [
             sys.executable,
             "-m",
-            "spacy",
-            "download",
-            model_id,
+            "pip",
+            "install",
+            "--no-deps",
             "--target",
             str(model_dir),
+            download_url,
         ],
         check=True,
     )
