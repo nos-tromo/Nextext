@@ -19,16 +19,16 @@
 
 # directories
 .*
-*.egg-info/
-__pycache__/
-build/
-data/
-env/
-legacy/
-lib/
-models/
-output/
-uploads/
+**/*.egg-info/
+**/__pycache__/
+**/build/
+**/data/
+**/env/
+**/legacy/
+**/lib/
+**/models/
+**/output/
+**/uploads/
 
 # files
 *.code-workspace
@@ -38,6 +38,7 @@ uploads/
 *.html
 *.ipynb
 *.log
+*.md
 *.mkv
 *.mp3
 *.mp4
@@ -58,6 +59,7 @@ uploads/
 !.github/
 !.github/workflows/
 !.github/workflows/ci.yml
+!.github/workflows/codeql.yml
 !.pre-commit-config.yaml
 !AGENTS.md
 !scripts/
