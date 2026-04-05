@@ -8,6 +8,7 @@
 # Backend build artifacts and caches
 **/__pycache__/
 **/*.egg-info/
+**/.claude/
 **/.github/
 **/.logs/
 **/.mypy_cache/
