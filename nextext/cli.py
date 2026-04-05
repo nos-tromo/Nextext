@@ -152,7 +152,7 @@ def main() -> None:
 
     Raises:
         ValueError: If an invalid task is specified or if the source language cannot be resolved for analysis.
-        ConnectionError: If the Ollama server is not reachable for analysis tasks.
+        ConnectionError: If the configured inference provider is not reachable for analysis tasks.
     """
     logger.info("\n\nInitiating Nextext...\n")
 
