@@ -13,9 +13,9 @@ from nextext.pipeline import (
     translation_pipeline,
     wordlevel_pipeline,
 )
-from nextext.utils.logging_cfg import init_logger
+from nextext.utils.log_cfg import setup_logging
 
-init_logger()
+setup_logging()
 
 
 def _language_name(lang_code: str | None) -> str:
