@@ -16,7 +16,7 @@
 Without Docker usage:
 
 - [`uv`](https://github.com/astral-sh/uv) for Python version and dependency management
-- [Ollama](https://ollama.com/) for local inference via its OpenAI-compatible API
+- Any OpenAI-compatible inference provider (e.g. [Ollama](https://ollama.com/)) reachable via `OPENAI_API_BASE`
 
 ### Manual installation 📦
 
@@ -39,24 +39,60 @@ container recreation:
 
 - `huggingface-cache`
 - `nltk-cache`
-- `ollama-cache`
 - `spacy-cache`
 - `torch-cache`
 
-The helper script creates them with `docker volume create`.
+The helper script creates them with `docker volume create`:
+
+```bash
+sh scripts/create_docker_volumes.sh
+```
 
 If your environment requires an outbound proxy, place
 `HTTP_PROXY`, `HTTPS_PROXY`, and `NO_PROXY` in the project's `.env`
 file. The compose setup uses them for both image builds and runtime
-model downloads in Nextext and Ollama.
+model downloads in Nextext.
+
+#### Inference provider
+
+Nextext communicates with any OpenAI-compatible inference provider via `OPENAI_API_BASE` and `OPENAI_API_KEY`. Provider selection is handled entirely through environment variables — no code changes required.
+
+The Nextext compose services join an external Docker network (`inference-net`) so they can reach whichever inference container you deploy on that network. **Create the network and start your inference provider before running the compose stack.**
+
+**Ollama (recommended for local/self-hosted use):**
+
+```bash
+# Create Docker network and persistent cache
+docker network create inference-net
+
+# Run the Ollama service
+docker run -d \
+  --network inference-net \
+  --name ollama \
+  -v ollama-cache:/root/.ollama \
+  -p 11434:11434 \
+  ollama/ollama
+```
+
+Then configure Nextext to reach it by adding the following to your `.env` file:
+
+```bash
+OPENAI_API_BASE=http://ollama:11434/v1
+OPENAI_API_KEY=ollama
+```
+
+**Hosted OpenAI API:**
+
+```bash
+OPENAI_API_BASE=https://api.openai.com/v1
+OPENAI_API_KEY=your-key
+```
+
+Any other OpenAI-compatible endpoint (vLLM, LiteLLM, etc.) works the same way — set `OPENAI_API_BASE` to the `/v1` endpoint and `OPENAI_API_KEY` to whatever the provider expects.
 
 #### Profile installation
 
-The Docker setup will install Nextext from `docker-compose.yml` and, with that, pull the latest Ollama image. By default, Nextext uses Ollama as its inference provider through Ollama's OpenAI-compatible endpoint.
-
-Select whether to install the CPU or GPU variant (requires a CUDA compatible GPU and the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html) set up):
-
-Clone the repository and run either for CPU or GPU usage:
+Clone the repository and run either for CPU or GPU usage (requires a CUDA compatible GPU and the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html) for the CUDA profile):
 
 ```bash
 docker compose --profile cpu up  # CPU
@@ -69,27 +105,27 @@ Launch the app: `http://localhost:8501/`
 
 Transcription and alignment models used by [WhisperX](https://github.com/m-bain/whisperX/) will be downloaded upon first usage. Some models can be downloaded beforehand:
 
-#### Ollama 🦙
+#### Ollama models 🦙
 
 The following models are recommended and tested for this application (select depending on your hardware setup):
 
-- [`gemma3:27b-it-qat`](https://ollama.com/library/gemma3)
-- [`gemma3:12b-it-qat`](https://ollama.com/library/gemma3)
-- [`gemma3n:e4b`](https://ollama.com/library/gemma3n)
-- [`translategemma:27b`](https://ollama.com/library/translategemma)
-- [`translategemma:12b`](https://ollama.com/library/translategemma)
-- [`translategemma:4b`](https://ollama.com/library/translategemma)
+| Purpose | Model |
+|---------|-------|
+| Summarization / general | [`gemma3:27b-it-qat`](https://ollama.com/library/gemma3), [`gemma3:12b-it-qat`](https://ollama.com/library/gemma3), [`gemma3n:e4b`](https://ollama.com/library/gemma3n) |
+| Translation | [`translategemma:27b`](https://ollama.com/library/translategemma), [`translategemma:12b`](https://ollama.com/library/translategemma), [`translategemma:4b`](https://ollama.com/library/translategemma) |
 
-To configure the app's models, set `TEXT_MODEL` for the general LLM and
-`TRANSLATION_MODEL` for translation.
-
-#### OpenAI provider (optional)
-
-Ollama remains the default inference provider. To target the hosted OpenAI API instead, set:
+Pull models into the running Ollama container:
 
 ```bash
-export INFERENCE_PROVIDER=openai
-export OPENAI_API_KEY=your-key
+docker exec ollama ollama pull gemma3:12b-it-qat
+docker exec ollama ollama pull translategemma:4b
+```
+
+Then set the model names in `.env`:
+
+```bash
+TEXT_MODEL=gemma3:12b-it-qat
+TRANSLATION_MODEL=translategemma:4b
 ```
 
 #### Local preload command 🌐
