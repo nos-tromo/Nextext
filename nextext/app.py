@@ -20,9 +20,11 @@ from nextext.pipeline import (
     translation_pipeline,
     wordlevel_pipeline,
 )
+from nextext.utils.env_cfg import set_offline_env
 from nextext.utils.log_cfg import setup_logging
 from nextext.utils.mappings_loader import kv_to_vk, load_and_sort_mappings
 
+set_offline_env()
 setup_logging()
 PIPELINE_STAGE_LABELS: tuple[str, ...] = (
     "Transcribing",

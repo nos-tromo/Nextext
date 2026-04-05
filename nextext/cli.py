@@ -13,8 +13,10 @@ from nextext.pipeline import (
     translation_pipeline,
     wordlevel_pipeline,
 )
+from nextext.utils.env_cfg import set_offline_env
 from nextext.utils.log_cfg import setup_logging
 
+set_offline_env()
 setup_logging()
 
 
