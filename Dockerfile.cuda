@@ -34,7 +34,7 @@ COPY pyproject.toml uv.lock ./
 
 # Install dependencies (using cache mount to speed up downloads)
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-install-project
+    uv sync --frozen --no-install-project --extra cuda
 
 ENV VIRTUAL_ENV=/app/.venv
 ENV PATH="/app/.venv/bin:$PATH"
