@@ -11,6 +11,7 @@ from pathlib import Path
 
 import nltk
 from dotenv import load_dotenv
+from gliner import GLiNER
 from loguru import logger
 
 from nextext.utils.mappings_loader import load_mappings
@@ -28,6 +29,7 @@ DEFAULT_SPACY_MODEL_DOWNLOAD_BASE_URL = (
 NLTK_RESOURCES = ("punkt_tab", "stopwords")
 WHISPER_LANGUAGE_DETECTION_MODEL = "small"
 WHISPER_VAD_METHOD = "silero"
+GLINER_MODEL_ID = "urchade/gliner_multi-v2.1"
 DIARIZATION_MODEL_ID = "pyannote/speaker-diarization-3.1"
 DIARIZATION_DEPENDENCY_IDS = ("pyannote/segmentation-3.0",)
 
@@ -355,6 +357,19 @@ def preload_diarization_model(
     _cleanup_torch_resources()
 
 
+def preload_gliner_model(model_id: str = GLINER_MODEL_ID) -> None:
+    """Download and cache the GLiNER NER model.
+
+    Args:
+        model_id (str): The Hugging Face model ID for GLiNER.
+    """
+    logger.info("Loading GLiNER model '{}'.", model_id)
+    model = GLiNER.from_pretrained(model_id)
+    del model
+    gc.collect()
+    logger.info("GLiNER model '{}' cached.", model_id)
+
+
 def _get_default_device() -> str:
     """Resolve the preferred device for preload operations.
 
@@ -407,6 +422,11 @@ def main() -> None:
         preload_diarization_model(os.getenv("HF_HUB_TOKEN"), device=device)
     except Exception as exc:
         failures.append(f"Diarization {DIARIZATION_MODEL_ID} ({exc})")
+
+    try:
+        preload_gliner_model()
+    except Exception as exc:
+        failures.append(f"GLiNER {GLINER_MODEL_ID} ({exc})")
 
     if failures:
         raise RuntimeError("Failed to preload models: " + "; ".join(failures))

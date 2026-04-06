@@ -9,7 +9,6 @@ from typing import Any
 import altair as alt
 import pycountry
 import streamlit as st
-import streamlit.components.v1 as components
 from streamlit.web import cli as st_cli
 
 from nextext.modules.openai_cfg import InferencePipeline
@@ -238,8 +237,6 @@ def _run_pipeline(
         "transcript": df,
         "summary": None,
         "word_counts": None,
-        "noun_sentiment": None,
-        "noun_graph": None,
         "named_entities": None,
         "wordcloud": None,
         "resolved_src_lang": file_opts["src_lang"],
@@ -249,14 +246,12 @@ def _run_pipeline(
     # Word-level analysis
     _notify(PIPELINE_STAGE_LABELS[2], 2)
     if file_opts["words"]:
-        wc, ner, nouns, graph, cloud = wordlevel_pipeline(
+        wc, ner, cloud = wordlevel_pipeline(
             df,
             normalize_language_code(transcript_language) or "en",
         )
         result["word_counts"] = wc
         result["named_entities"] = ner
-        result["noun_sentiment"] = nouns
-        result["noun_graph"] = graph
         result["wordcloud"] = cloud
 
     # Summarization
@@ -521,14 +516,68 @@ def main() -> None:
             st.altair_chart(chart, width="stretch")
 
             st.subheader("🧩 Named Entities")
-            st.dataframe(result["named_entities"], hide_index=True)
-
-            st.subheader("🗣️ Noun Sentiment")
-            st.dataframe(result["noun_sentiment"], hide_index=True)
-            if result["noun_graph"]:
-                components.html(result["noun_graph"], height=800, scrolling=False)
+            _ner_df = result["named_entities"]
+            if _ner_df is not None and not _ner_df.empty:
+                _top15 = (
+                    _ner_df.sort_values("Frequency", ascending=False).head(15).copy()
+                )
+                _top15["Label"] = _top15["Entity"] + " (" + _top15["Category"] + ")"
+                st.altair_chart(
+                    alt.Chart(_top15)
+                    .mark_bar()
+                    .encode(
+                        x=alt.X("Label:N", sort="-y", title="Entity"),
+                        y=alt.Y("Frequency:Q", title="Frequency"),
+                        tooltip=["Category", "Entity", "Frequency"],
+                    )
+                    .properties(height=350),
+                    width="stretch",
+                )
+                _categories = sorted(_ner_df["Category"].unique().tolist())
+                _ner_col1, _ner_col2 = st.columns([1, 2])
+                with _ner_col1:
+                    _selected_cat = st.selectbox(
+                        "Entity category",
+                        options=["All", *_categories],
+                        index=0,
+                        key="ner_category_select",
+                    )
+                _filtered = (
+                    _ner_df
+                    if _selected_cat == "All"
+                    else _ner_df[_ner_df["Category"] == _selected_cat]
+                )
+                _filtered = _filtered.sort_values("Frequency", ascending=False)
+                _entity_labels = {
+                    row["Entity"]: f"{row['Entity']} ({row['Frequency']} mentions)"
+                    for _, row in _filtered.iterrows()
+                }
+                with _ner_col2:
+                    _selected_entity = st.selectbox(
+                        "Entity",
+                        options=_filtered["Entity"].tolist(),
+                        format_func=lambda e: _entity_labels.get(e, e),
+                        key="ner_entity_select",
+                    )
+                if _selected_entity:
+                    _transcript_df = result["transcript"]
+                    _mask = _transcript_df["text"].str.contains(
+                        _selected_entity, case=False, na=False
+                    )
+                    _passages = _transcript_df[_mask]
+                    if not _passages.empty:
+                        _display_cols = [
+                            c for c in ("start", "end", "speaker", "text")
+                            if c in _passages.columns
+                        ]
+                        st.dataframe(
+                            _passages[_display_cols].reset_index(drop=True),
+                            hide_index=True,
+                        )
+                    else:
+                        st.info(f"No transcript passages found for '{_selected_entity}'.")
             else:
-                st.info("No noun graph available.")
+                st.info("No named entities found.")
 
             st.subheader("☁️ Word Cloud")
             st.pyplot(result["wordcloud"])

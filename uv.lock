@@ -825,6 +825,23 @@ wheels = [
 ]
 
 [[package]]
+name = "gliner"
+version = "0.2.26"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "huggingface-hub" },
+    { name = "onnxruntime" },
+    { name = "sentencepiece" },
+    { name = "torch" },
+    { name = "tqdm" },
+    { name = "transformers" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/49/18/e199cb97147c4a9260c75e4caf51e17be6ff969b0604a029c9c62810cbe0/gliner-0.2.26.tar.gz", hash = "sha256:6783be92b4b81caa878dcc4269ba37800207c37118d8ff9be028b93bddd6813d", size = 181224, upload-time = "2026-03-19T15:07:22.707Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/7c/6e/d54d3d2867e29b68a22b144f570c8204209647fccc7879cec5218d6ed5fb/gliner-0.2.26-py3-none-any.whl", hash = "sha256:b9baa47641efb90b9d069add0528ed2464d137991ff097f42b0cab37a91ba991", size = 170429, upload-time = "2026-03-19T15:07:19.914Z" },
+]
+
+[[package]]
 name = "greenlet"
 version = "3.3.2"
 source = { registry = "https://pypi.org/simple" }
@@ -1589,6 +1606,7 @@ dependencies = [
     { name = "accelerate" },
     { name = "arabic-reshaper" },
     { name = "camel-tools" },
+    { name = "gliner" },
     { name = "huggingface-hub" },
     { name = "langdetect" },
     { name = "llvmlite" },
@@ -1635,6 +1653,7 @@ requires-dist = [
     { name = "accelerate", specifier = ">=1.1.1" },
     { name = "arabic-reshaper", specifier = ">=3.0.0" },
     { name = "camel-tools", specifier = ">=1.5.2" },
+    { name = "gliner", specifier = ">=0.2.0" },
     { name = "huggingface-hub", specifier = ">=0.26.2" },
     { name = "langdetect", specifier = ">=1.0.9" },
     { name = "llvmlite", specifier = ">=0.41.0" },

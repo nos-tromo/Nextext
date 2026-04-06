@@ -134,8 +134,8 @@ def summarization_pipeline(
 def wordlevel_pipeline(
     data: pd.DataFrame,
     language: str,
-) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, str, Figure]:
-    """Calculates word statistics, generates a histogram, and creates a word cloud from the provided text data.
+) -> tuple[pd.DataFrame, pd.DataFrame, Figure]:
+    """Calculates word statistics, named entities, and creates a word cloud from the provided text data.
 
     Args:
         data (pd.DataFrame): DataFrame containing the text data to analyze.
@@ -145,8 +145,6 @@ def wordlevel_pipeline(
         tuple: A tuple containing:
             - pd.DataFrame: DataFrame with word counts.
             - pd.DataFrame: DataFrame with named entities.
-            - pd.DataFrame: DataFrame with noun sentiment.
-            - str: Path to the interactive noun graph HTML file.
             - Figure: Word cloud figure.
     """
     word_analysis = WordCounter(
@@ -158,8 +156,6 @@ def wordlevel_pipeline(
     word_analysis.lemmatize_doc()
     word_counts = word_analysis.count_words()
     named_entities = word_analysis.named_entity_recognition()
-    noun_sentiment = word_analysis.get_noun_sentiment()
-    noun_graph = word_analysis.create_interactive_graph()
     wordcloud = word_analysis.create_wordcloud()
 
-    return word_counts, named_entities, noun_sentiment, noun_graph, wordcloud
+    return word_counts, named_entities, wordcloud

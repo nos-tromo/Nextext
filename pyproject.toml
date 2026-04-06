@@ -14,6 +14,7 @@ dependencies = [
     "accelerate>=1.1.1",
     "arabic-reshaper>=3.0.0",
     "camel-tools>=1.5.2",
+    "gliner>=0.2.0",
     "huggingface-hub>=0.26.2",
     "langdetect>=1.0.9",
     "llvmlite>=0.41.0",
