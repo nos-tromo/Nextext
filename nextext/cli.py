@@ -219,16 +219,13 @@ def main() -> None:
 
     # Calculate word statistics
     if args.words:
-        word_counts, named_entities, noun_sentiment, noun_graph, wordcloud_fig = (
-            wordlevel_pipeline(
-                data=transcript_df,
-                language=transcript_lang,
-            )
+        word_counts, named_entities, wordcloud_fig = wordlevel_pipeline(
+            data=transcript_df,
+            language=transcript_lang,
         )
         exports = [
             (word_counts, "words"),
             (named_entities, "entities"),
-            (noun_sentiment, "nouns"),
             (wordcloud_fig, "wordcloud"),
         ]
         for export, name in exports:

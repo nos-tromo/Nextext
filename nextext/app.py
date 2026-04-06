@@ -567,7 +567,8 @@ def main() -> None:
                     _passages = _transcript_df[_mask]
                     if not _passages.empty:
                         _display_cols = [
-                            c for c in ("start", "end", "speaker", "text")
+                            c
+                            for c in ("start", "end", "speaker", "text")
                             if c in _passages.columns
                         ]
                         st.dataframe(
@@ -575,7 +576,9 @@ def main() -> None:
                             hide_index=True,
                         )
                     else:
-                        st.info(f"No transcript passages found for '{_selected_entity}'.")
+                        st.info(
+                            f"No transcript passages found for '{_selected_entity}'."
+                        )
             else:
                 st.info("No named entities found.")
 

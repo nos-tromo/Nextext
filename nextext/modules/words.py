@@ -6,20 +6,18 @@ import shutil
 import tempfile
 import threading
 import warnings
-from collections import Counter, defaultdict
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
 import arabic_reshaper
 import matplotlib.pyplot as plt
-import networkx as nx
 import pandas as pd
 import spacy
 from bidi.algorithm import get_display
 from camel_tools.tokenizers.word import simple_word_tokenize
 from loguru import logger
 from matplotlib.figure import Figure
-from pyvis.network import Network
 from spacy.language import Language
 from spacy.tokens import Doc
 from wordcloud import WordCloud
@@ -191,7 +189,9 @@ def _prepare_local_gliner_model_dir(model_dir: Path, cache_dir: Path) -> Path:
         value = config.get(field)
         if not isinstance(value, str) or not value.strip():
             continue
-        resolved = _resolve_local_gliner_dependency(cache_dir=cache_dir, dependency=value)
+        resolved = _resolve_local_gliner_dependency(
+            cache_dir=cache_dir, dependency=value
+        )
         resolved_str = str(resolved)
         if value != resolved_str:
             config[field] = resolved_str
@@ -253,13 +253,17 @@ def _get_gliner_model() -> Any:
             from gliner import GLiNER  # noqa: PLC0415
 
             cache_dir = _resolve_hf_cache_dir()
-            load_target, local_only = _resolve_gliner_load_target(_GLINER_MODEL_ID, cache_dir)
+            load_target, local_only = _resolve_gliner_load_target(
+                _GLINER_MODEL_ID, cache_dir
+            )
             logger.info(
                 "Loading GLiNER model '{}' (local_only={}).",
                 _GLINER_MODEL_ID,
                 local_only,
             )
-            _gliner_model = GLiNER.from_pretrained(load_target, local_files_only=local_only)
+            _gliner_model = GLiNER.from_pretrained(
+                load_target, local_files_only=local_only
+            )
             logger.info("GLiNER model loaded.")
     return _gliner_model
 
@@ -321,12 +325,6 @@ class WordCounter:
             Counts word frequencies and returns a DataFrame of the most common words.
         named_entity_recognition(columns: list[str] = ["Category", "Entity", "Frequency"]) -> pd.DataFrame:
             Performs named entity recognition on the text and returns a DataFrame.
-        get_noun_adjectives(n_freq_nouns: int = 50, n_freq_adjs: int = 5, columns: list[str] = ["Noun", "Adjective"]) -> pd.DataFrame:
-            Finds the most frequent nouns and their associated adjectives, returning a DataFrame.
-        construct_noun_sentiment_graph(columns: list[str] = ["Noun", "Verb", "Adjective"]) -> nx.Graph:
-            Constructs a semantic graph of nouns, verbs, and adjectives from the noun sentiment DataFrame.
-        create_interactive_graph() -> str:
-            Exports the noun-verb-adjective graph as an interactive HTML file.
         create_wordcloud() -> Figure:
             Generates a word cloud visualization of word frequencies.
     """
@@ -516,154 +514,6 @@ class WordCounter:
             [(label, text, count) for (label, text), count in entity_counts.items()],
             columns=pd.Index(columns),
         ).reset_index(drop=True)
-
-    def get_noun_sentiment(
-        self,
-        n_freq_nouns: int | None = 100,
-        n_freq_verbs: int | None = 50,
-        n_freq_adjs: int | None = 50,
-        columns: list[str] = ["Noun", "Verb", "Adjective"],
-    ) -> pd.DataFrame:
-        """Retrieve, for each high-frequency noun, its most common governing verbs
-        *and* its most common modifying adjectives, returning a single tidy
-        DataFrame.
-
-        Args:
-            n_freq_nouns (int | None): How many top nouns to keep. Defaults to 100 (all nouns).
-            n_freq_verbs (int | None): How many top verbs to keep per noun. Defaults to 50 (all verbs).
-            n_freq_adjs (int | None): How many top adjectives to keep per noun. Defaults to 50 (all adjectives).
-            columns (list[str]): Column names for the resulting DataFrame.
-                                 Defaults to ["Noun", "Verb", "Adjective"].
-
-        Returns:
-            pd.DataFrame: One row per noun with two comma-separated columns listing
-                          verbs and adjectives.
-        """
-        if self.doc is None:
-            logger.error("spaCy doc is None. Please run text_to_doc() first.")
-            return pd.DataFrame(columns=pd.Index(columns)).reset_index(drop=True)
-
-        # Identify top‑frequency noun lemmas
-        top_nouns = {
-            noun for noun, _ in Counter(self.tokenized_nouns).most_common(n_freq_nouns)
-        }
-
-        noun_verb_map: dict[str, list[str]] = defaultdict(list)
-        noun_adj_map: dict[str, list[str]] = defaultdict(list)
-
-        # Single pass through doc to collect verbs *and* adjectives
-        for token in self.doc:
-            if token.pos_ == "NOUN":
-                noun_lemma = token.lemma_.lower()
-                if noun_lemma not in top_nouns:
-                    continue
-
-                # Governing verb (head) ---------------------------------
-                if token.head.pos_ == "VERB":
-                    noun_verb_map[noun_lemma].append(token.head.lemma_.lower())
-
-                # Adjectival modifiers ---------------------------------
-                for child in token.children:
-                    if child.pos_ == "ADJ":
-                        noun_adj_map[noun_lemma].append(child.lemma_.lower())
-
-            # Also capture pattern where adjective precedes noun (amod)
-            elif token.pos_ == "ADJ" and token.head.pos_ == "NOUN":
-                noun_lemma = token.head.lemma_.lower()
-                if noun_lemma in top_nouns:
-                    noun_adj_map[noun_lemma].append(token.lemma_.lower())
-
-        # Build output rows --------------------------------------------
-        rows = []
-        for noun in sorted(top_nouns):
-            verbs = noun_verb_map.get(noun, [])
-            adjs = noun_adj_map.get(noun, [])
-
-            top_verbs = [v for v, _ in Counter(verbs).most_common(n_freq_verbs)]
-            top_adjs = [a for a, _ in Counter(adjs).most_common(n_freq_adjs)]
-
-            rows.append(
-                {
-                    columns[0]: noun,
-                    columns[1]: ", ".join(top_verbs),
-                    columns[2]: ", ".join(top_adjs),
-                }
-            )
-
-        self.noun_df = pd.DataFrame(rows, columns=pd.Index(columns)).reset_index(
-            drop=True
-        )
-        return self.noun_df
-
-    def construct_noun_sentiment_graph(
-        self,
-        columns: list[str] = ["Noun", "Verb", "Adjective"],
-    ) -> nx.Graph:
-        """Build a graph from the noun-verb-adjective DataFrame.
-
-        Args:
-            columns (list[str]): Column names for the DataFrame. Defaults to ["Noun", "Verb", "Adjective"].
-
-        Returns:
-            nx.Graph: The constructed semantic graph.
-        """
-        if self.noun_df is None:
-            logger.error(
-                "Noun DataFrame is None. Please run get_noun_adjectives() first."
-            )
-            return nx.Graph()
-
-        G = nx.Graph()
-        for _, row in self.noun_df.iterrows():
-            noun = row[columns[0]]
-            verbs = row[columns[1]].split(", ") if row[columns[1]] else []
-            adjs = row[columns[2]].split(", ") if row[columns[2]] else []
-
-            G.add_node(noun, type="noun")
-
-            for v in verbs:
-                G.add_node(v, type="verb")
-                G.add_edge(noun, v, relation="verb")
-
-            for a in adjs:
-                G.add_node(a, type="adj")
-                G.add_edge(noun, a, relation="adj")
-        return G
-
-    def create_interactive_graph(self) -> str:
-        """Export the noun-verb-adjective graph as an interactive HTML file.
-
-        Returns:
-            str: HTML string of the interactive graph.
-        """
-        G = self.construct_noun_sentiment_graph()
-        if G.number_of_nodes() == 0:
-            logger.warning("Graph is empty. No nodes to visualize.")
-            return "<p>No data to visualize.</p>"
-
-        net = Network(notebook=False, bgcolor="#000000", font_color="white")
-        for node, attr in G.nodes(data=True):
-            net.add_node(
-                node,
-                label=node,
-                color={"noun": "#4f81bd", "verb": "#9bbb59", "adj": "#c0504d"}.get(
-                    attr["type"], "#dddddd"
-                ),
-            )
-
-        for u, v, d in G.edges(data=True):
-            net.add_edge(u, v, title=d["relation"])
-
-        # Remove annoying white padding around the graph (more precise)
-        html = net.generate_html()
-        html = html.replace(
-            "<body>",
-            """<body style="margin:0;padding:0;background-color:#222222;height:100vh;">""",
-        ).replace(
-            '<div id="mynetwork"',
-            '<div id="mynetwork" style="height:100vh;width:100%;background-color:#222222;border:none;"',
-        )
-        return html
 
     def create_wordcloud(self) -> Figure:
         """Create a wordcloud of the most frequent words.

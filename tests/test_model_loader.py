@@ -77,6 +77,10 @@ def test_download_spacy_model_uses_persistent_target(
         a spaCy model. This allows us to verify that the download command is correctly targeting the specified
         cache directory, ensuring that the model is being downloaded to the intended location rather than a
         default or incorrect path.
+
+        Args:
+            cmd (list[str]): The command that would be executed by subprocess.run, captured for verification.
+            check (bool): A flag indicating whether to check the command execution result, included for signature
         """
         captured.append(cmd)
 

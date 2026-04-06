@@ -506,12 +506,8 @@ def test_wordlevel_pipeline_invokes_all_steps(monkeypatch: pytest.MonkeyPatch) -
     )
     df = pd.DataFrame({"text": ["alpha", "beta"]})
 
-    counts, entities, sentiments, graph, wordcloud = pipeline.wordlevel_pipeline(
-        df, "en"
-    )
+    counts, entities, wordcloud = pipeline.wordlevel_pipeline(df, "en")
 
     assert list(counts["word"]) == ["test"]
     assert list(entities["entity"]) == ["Test"]
-    assert list(sentiments["noun"]) == ["test"]
-    assert graph == "graph.html"
     assert wordcloud == "wordcloud"
