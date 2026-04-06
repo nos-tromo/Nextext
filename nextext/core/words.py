@@ -1,4 +1,3 @@
-from PIL.ImageFont import load
 import hashlib
 import json
 import os
