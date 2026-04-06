@@ -1,3 +1,4 @@
+from PIL.ImageFont import load
 import hashlib
 import json
 import os
@@ -16,6 +17,7 @@ import pandas as pd
 import spacy
 from bidi.algorithm import get_display
 from camel_tools.tokenizers.word import simple_word_tokenize
+from dotenv import load_dotenv
 from loguru import logger
 from matplotlib.figure import Figure
 from spacy.language import Language
@@ -29,11 +31,13 @@ from nextext.utils.model_loader import (
     ensure_spacy_model_path,
 )
 
+load_dotenv()
+
 # ---------------------------------------------------------------------------
 # GLiNER NER — module-level singleton and offline loading helpers
 # ---------------------------------------------------------------------------
 
-_GLINER_MODEL_ID = "urchade/gliner_multi-v2.1"
+_GLINER_MODEL_ID = os.getenv("NER_MODEL", "gliner-community/gliner_large-v2.5")
 _GLINER_LABELS = [
     "date",
     "event",
