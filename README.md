@@ -69,7 +69,7 @@ docker network create inference-net
 docker run -d \
   --network inference-net \
   --name ollama \
-  --gpus all \  # remove if no GPU is available
+  --gpus all \
   -v ollama-cache:/root/.ollama \
   -p 11434:11434 \
   ollama/ollama:0.17.7
