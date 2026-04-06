@@ -3,9 +3,6 @@
 # -----------------
 .DS_Store
 .env
-.mypy_cache
-.idea/
-.vscode/
 *.code-workspace
 *.bin
 *.env
@@ -15,20 +12,29 @@
 *.pyo
 *.so
 *Zone.Identifier
-*.egg-info/
 
 # directories
 .*
-*.egg-info/
-__pycache__/
-build/
-data/
-env/
-legacy/
-lib/
-models/
-output/
-uploads/
+**/*.egg-info/
+**/__pycache__/
+**/.claude/
+**/.idea/
+**/.mypy_cache/
+**/.pre-commit-cache/
+**/.pytest_cache/
+**/.ruff_cache/
+**/.uv-cache/
+**/.venv/
+**/.vscode/
+**/build/
+**/data/
+**/dist/
+**/env/
+**/legacy/
+**/lib/
+**/models/
+**/output/
+**/uploads/
 
 # files
 *.code-workspace
@@ -38,6 +44,7 @@ uploads/
 *.html
 *.ipynb
 *.log
+*.md
 *.mkv
 *.mp3
 *.mp4
@@ -58,6 +65,7 @@ uploads/
 !.github/
 !.github/workflows/
 !.github/workflows/ci.yml
+!.github/workflows/codeql.yml
 !.pre-commit-config.yaml
 !AGENTS.md
 !scripts/

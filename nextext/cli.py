@@ -13,9 +13,11 @@ from nextext.pipeline import (
     translation_pipeline,
     wordlevel_pipeline,
 )
-from nextext.utils.logging_cfg import init_logger
+from nextext.utils.env_cfg import set_offline_env
+from nextext.utils.log_cfg import setup_logging
 
-init_logger()
+set_offline_env()
+setup_logging()
 
 
 def _language_name(lang_code: str | None) -> str:
@@ -150,7 +152,7 @@ def main() -> None:
 
     Raises:
         ValueError: If an invalid task is specified or if the source language cannot be resolved for analysis.
-        ConnectionError: If the Ollama server is not reachable for analysis tasks.
+        ConnectionError: If the configured inference provider is not reachable for analysis tasks.
     """
     logger.info("\n\nInitiating Nextext...\n")
 

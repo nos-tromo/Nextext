@@ -13,8 +13,7 @@ x-proxy-env: &proxy-env
   no_proxy: ${no_proxy:-}
 
 x-base-image-build-env: &base-image-build-env
-  PYTHON_SLIM_BOOKWORM_IMAGE: ${PYTHON_SLIM_BOOKWORM_IMAGE:-python:3.11-slim-bookworm}
-  PYTHON_SLIM_IMAGE: ${PYTHON_SLIM_IMAGE:-python:3.11-slim}
+  PYTHON_IMAGE: ${PYTHON_IMAGE:-python:3.12.10-slim-bookworm}
   NVIDIA_CUDA_RUNTIME_IMAGE: ${NVIDIA_CUDA_RUNTIME_IMAGE:-nvidia/cuda:13.0.2-cudnn-runtime-ubuntu22.04}
   VLLM_OPENAI_IMAGE: ${VLLM_OPENAI_IMAGE:-vllm/vllm-openai:v0.17.1}
 
@@ -38,10 +37,9 @@ services:
       <<: *proxy-env
       HF_HUB_OFFLINE: ${HF_HUB_OFFLINE:-false}
       HF_HUB_TOKEN: $HF_HUB_TOKEN
-      INFERENCE_PROVIDER: ${INFERENCE_PROVIDER:-ollama}
       LOG_PATH: /var/log/nextext/nextext.log
-      OPENAI_API_BASE: ${OPENAI_API_BASE:-http://ollama-server:11434/v1}
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_API_BASE: ${OPENAI_API_BASE}
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
       PRELOAD_MODELS: ${PRELOAD_MODELS:-false}
       STREAMLIT_BROWSER_GATHER_USAGE_STATS: false
       STREAMLIT_SERVER_FILE_WATCHER_TYPE: none
@@ -56,6 +54,7 @@ services:
       - torch-cache:/root/.cache/torch
     networks:
       nextext-net:
+      inference-net:
 
   ##########################################################
   # Nextext (CUDA)
@@ -80,45 +79,7 @@ services:
               capabilities: [gpu]
     networks:
       nextext-net:
-
-  ##########################################################
-  # Ollama (CPU)
-  ##########################################################
-  ollama:
-    profiles: ["cpu"]
-    image: ollama/ollama:0.17.7
-    ports: &ollama-ports
-      - 11434:11434
-    environment: &ollama-env
-      <<: *proxy-env
-      OLLAMA_HOST: 0.0.0.0
-    volumes: &ollama-volumes
-      - ollama-cache:/root/.ollama
-    networks: &ollama-net
-      nextext-net:
-        aliases:
-          - ollama-server
-
-  ##########################################################
-  # Ollama (CUDA)
-  ##########################################################
-  ollama-cuda:
-    profiles: ["cuda"]
-    image: ollama/ollama:0.17.7
-    ports: *ollama-ports
-    environment:
-      <<: *ollama-env
-      NVIDIA_VISIBLE_DEVICES: all
-    volumes: *ollama-volumes
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
-    restart: unless-stopped
-    networks: *ollama-net
+      inference-net:
 
 ##########################################################
 # Volumes
@@ -128,8 +89,6 @@ volumes:
     external: true
   nextext-logs:
   nltk-cache:
-    external: true
-  ollama-cache:
     external: true
   spacy-cache:
     external: true
@@ -141,3 +100,6 @@ volumes:
 ##########################################################
 networks:
   nextext-net:
+  inference-net:
+    external: true
+    name: ${INFERENCE_NETWORK:-inference-net}
