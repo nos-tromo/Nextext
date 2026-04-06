@@ -68,5 +68,6 @@
 !.github/workflows/codeql.yml
 !.pre-commit-config.yaml
 !AGENTS.md
+!CLAUDE.md
 !scripts/
 !scripts/create_docker_volumes.sh
