@@ -11,7 +11,7 @@ import pycountry
 import streamlit as st
 from streamlit.web import cli as st_cli
 
-from nextext.modules.openai_cfg import InferencePipeline
+from nextext.core.openai_cfg import InferencePipeline
 from nextext.pipeline import (
     normalize_language_code,
     summarization_pipeline,

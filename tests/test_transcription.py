@@ -6,8 +6,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from nextext.modules import transcription
-from nextext.modules.transcription import (
+from nextext.core import transcription
+from nextext.core.transcription import (
     TRANSCRIPTION_VAD_METHOD,
     WhisperTranscriber,
     _configure_torch_safe_globals,

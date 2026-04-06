@@ -334,7 +334,7 @@ def test_summarization_pipeline_formats_prompt(monkeypatch: pytest.MonkeyPatch) 
     """
 
     # Import the real InferencePipeline type for subclassing
-    from nextext.modules.openai_cfg import InferencePipeline
+    from nextext.core.openai_cfg import InferencePipeline
 
     class DummyPipeline(InferencePipeline):
         """A dummy inference pipeline class to test the summarization pipeline's prompt formatting behavior."""
@@ -407,7 +407,7 @@ def test_summarization_pipeline_rejects_empty_text(
     Raises:
         ValueError: If the input text is empty.
     """
-    from nextext.modules.openai_cfg import InferencePipeline
+    from nextext.core.openai_cfg import InferencePipeline
 
     dummy_pipeline = InferencePipeline()
     with pytest.raises(ValueError):

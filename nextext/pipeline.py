@@ -5,14 +5,14 @@ from pathlib import Path
 import pandas as pd
 from matplotlib.figure import Figure
 
-from nextext.modules.openai_cfg import InferencePipeline
-from nextext.modules.translation import Translator
-from nextext.modules.words import WordCounter
+from nextext.core.openai_cfg import InferencePipeline
+from nextext.core.translation import Translator
+from nextext.core.words import WordCounter
 
 WhisperTranscriber = None
 
 try:
-    from nextext.modules.transcription import WhisperTranscriber as _WhisperTranscriber
+    from nextext.core.transcription import WhisperTranscriber as _WhisperTranscriber
 except Exception:  # pragma: no cover - environment-specific optional dependency failure
     pass
 else:

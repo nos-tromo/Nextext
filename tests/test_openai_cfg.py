@@ -2,8 +2,8 @@
 
 import pytest
 
-from nextext.modules import openai_cfg
-from nextext.modules.openai_cfg import InferencePipeline
+from nextext.core import openai_cfg
+from nextext.core.openai_cfg import InferencePipeline
 
 
 def test_client_uses_configured_api_key(

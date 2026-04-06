@@ -4,8 +4,8 @@ from pathlib import Path
 from loguru import logger
 import pycountry
 
-from nextext.modules.openai_cfg import InferencePipeline
-from nextext.modules.processing import FileProcessor
+from nextext.core.openai_cfg import InferencePipeline
+from nextext.core.processing import FileProcessor
 from nextext.pipeline import (
     normalize_language_code,
     summarization_pipeline,

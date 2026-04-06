@@ -344,7 +344,7 @@ def preload_diarization_model(
 
     from whisperx.diarize import DiarizationPipeline
 
-    from nextext.modules.transcription import _configure_torch_safe_globals
+    from nextext.core.transcription import _configure_torch_safe_globals
 
     _configure_torch_safe_globals()
     logger.info("Loading diarization model '{}'.", DIARIZATION_MODEL_ID)
