@@ -69,10 +69,10 @@ docker network create inference-net
 docker run -d \
   --network inference-net \
   --name ollama \
-  --gpus all \
+  --gpus all \  # remove if no GPU is available
   -v ollama-cache:/root/.ollama \
   -p 11434:11434 \
-  ollama/ollama
+  ollama/ollama:0.17.7
 ```
 
 Then configure Nextext to reach it by adding the following to your `.env` file:
