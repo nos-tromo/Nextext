@@ -2,6 +2,7 @@
 
 import gc
 import os
+import warnings
 from datetime import timedelta
 from pathlib import Path
 from typing import Any, Optional
@@ -16,7 +17,10 @@ from whisperx.diarize import DiarizationPipeline
 
 from nextext.utils.mappings_loader import load_mappings
 
-
+# Suppress NNPACK warnings emitted by PyTorch when the CPU lacks required
+# SIMD support (common inside Docker containers).  Without this filter the
+# Silero VAD model floods stderr with thousands of identical warnings.
+warnings.filterwarnings("ignore", message=".*Could not initialize NNPACK.*")
 load_dotenv()
 HF_HUB_TOKEN = os.getenv("HF_HUB_TOKEN", "")
 TRANSCRIPTION_VAD_METHOD = "silero"
