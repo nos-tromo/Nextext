@@ -48,14 +48,6 @@ class TranscriptionConfig:
     whisper_model: str
 
 
-@dataclass(frozen=True)
-class HateSpeechConfig:
-    """Dataclass for hate speech detection configuration."""
-
-    enabled: bool
-    max_chars: int
-
-
 VALID_INFERENCE_PROVIDERS: frozenset[str] = frozenset({"ollama", "vllm", "openai"})
 
 
@@ -112,21 +104,6 @@ def load_inference_env() -> InferenceConfig:
         )
         raw = "ollama"
     return InferenceConfig(provider=raw)
-
-
-def load_hate_speech_env() -> HateSpeechConfig:
-    """Loads hate speech detection configuration from environment variables.
-
-    Returns:
-        HateSpeechConfig: Dataclass containing hate speech detection configuration.
-        - enabled (bool): Whether hate speech detection is enabled.
-        - max_chars (int): Maximum characters per segment to send for detection.
-    """
-    raw_enabled = os.getenv("ENABLE_HATE_SPEECH_DETECTION", "false").lower()
-    return HateSpeechConfig(
-        enabled=raw_enabled in {"1", "true", "yes"},
-        max_chars=int(os.getenv("HATE_SPEECH_MAX_CHARS", "2048")),
-    )
 
 
 def load_path_env() -> PathConfig:

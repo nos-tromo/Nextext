@@ -10,7 +10,6 @@ from nextext.core.hate_speech import (
     _normalize_confidence,
     _parse_hate_speech_payload,
 )
-from nextext.utils.env_cfg import load_hate_speech_env
 
 
 # ---------------------------------------------------------------------------
@@ -216,38 +215,3 @@ def test_detector_truncates_text_to_max_chars(monkeypatch: pytest.MonkeyPatch) -
     detector.detect("hello world")
 
     assert received_prompts[0] == "hello"
-
-
-# ---------------------------------------------------------------------------
-# Environment config
-# ---------------------------------------------------------------------------
-
-
-def test_load_hate_speech_env_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Test that load_hate_speech_env returns correct defaults when env vars are absent.
-
-    Args:
-        monkeypatch (pytest.MonkeyPatch): The pytest monkeypatch fixture for patching.
-    """
-    monkeypatch.delenv("ENABLE_HATE_SPEECH_DETECTION", raising=False)
-    monkeypatch.delenv("HATE_SPEECH_MAX_CHARS", raising=False)
-
-    config = load_hate_speech_env()
-
-    assert config.enabled is False
-    assert config.max_chars == 2048
-
-
-def test_load_hate_speech_env_enabled(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Test that load_hate_speech_env correctly parses truthy env values.
-
-    Args:
-        monkeypatch (pytest.MonkeyPatch): The pytest monkeypatch fixture for patching.
-    """
-    monkeypatch.setenv("ENABLE_HATE_SPEECH_DETECTION", "true")
-    monkeypatch.setenv("HATE_SPEECH_MAX_CHARS", "1024")
-
-    config = load_hate_speech_env()
-
-    assert config.enabled is True
-    assert config.max_chars == 1024
