@@ -28,7 +28,6 @@ DEFAULT_SPACY_MODEL_DOWNLOAD_BASE_URL = (
 )
 NLTK_RESOURCES = ("punkt_tab", "stopwords")
 WHISPER_LANGUAGE_DETECTION_MODEL = "small"
-WHISPER_VAD_METHOD = "silero"
 GLINER_MODEL_ID = "urchade/gliner_multi-v2.1"
 DIARIZATION_MODEL_ID = "pyannote/speaker-diarization-3.1"
 DIARIZATION_DEPENDENCY_IDS = ("pyannote/segmentation-3.0",)
@@ -164,19 +163,6 @@ def get_whisper_model_ids(
     return sorted(model_ids)
 
 
-def get_alignment_model_ids() -> dict[str, str]:
-    """Return the default WhisperX alignment model per language code.
-
-    Returns:
-        dict[str, str]: Language-code to alignment-model mapping.
-    """
-    import whisperx.alignment as alignment
-
-    alignment_models: dict[str, str] = dict(alignment.DEFAULT_ALIGN_MODELS_TORCH)
-    alignment_models.update(alignment.DEFAULT_ALIGN_MODELS_HF)
-    return dict(sorted(alignment_models.items()))
-
-
 def ensure_nltk_resources(resources: Iterable[str] = NLTK_RESOURCES) -> None:
     """Download the NLTK resources required by Nextext.
 
@@ -242,24 +228,17 @@ def _cleanup_torch_resources() -> None:
 
 
 def preload_whisper_model(model_id: str, device: str = "cpu") -> None:
-    """Preload a WhisperX speech model into the local cache.
+    """Preload an openai-whisper speech model into the local cache.
 
     Args:
         model_id (str): The Whisper model ID to preload.
         device (str): Device used for the preload step.
     """
-    import whisperx
+    import whisper
 
-    compute_type = "float16" if device == "cuda" else "int8"
     logger.info("Loading Whisper model '{}'.", model_id)
-    pipeline = whisperx.load_model(
-        whisper_arch=model_id,
-        device=device,
-        compute_type=compute_type,
-        language="en",
-        vad_method=WHISPER_VAD_METHOD,
-    )
-    del pipeline
+    model = whisper.load_model(model_id, device=device)
+    del model
     _cleanup_torch_resources()
 
 
@@ -279,55 +258,11 @@ def preload_whisper_models(
         preload_whisper_model(model_id, device=device)
 
 
-def preload_alignment_model(
-    language_code: str,
-    model_id: str,
-    device: str = "cpu",
-) -> None:
-    """Preload one WhisperX alignment model.
-
-    Args:
-        language_code (str): Language code supported by WhisperX alignment.
-        model_id (str): Exact alignment model ID.
-        device (str): Device used for the preload step.
-    """
-    import whisperx
-
-    logger.info(
-        "Loading alignment model '{}' for language '{}'.",
-        model_id,
-        language_code,
-    )
-    align_model, _ = whisperx.load_align_model(
-        language_code=language_code,
-        device=device,
-        model_name=model_id,
-    )
-    del align_model
-    _cleanup_torch_resources()
-
-
-def preload_alignment_models(
-    alignment_models: dict[str, str] | None = None,
-    device: str = "cpu",
-) -> None:
-    """Preload all default WhisperX alignment models.
-
-    Args:
-        alignment_models (dict[str, str] | None): Optional explicit
-            language-to-model mapping.
-        device (str): Device used for the preload step.
-    """
-    resolved_alignment_models = alignment_models or get_alignment_model_ids()
-    for language_code, model_id in resolved_alignment_models.items():
-        preload_alignment_model(language_code, model_id, device=device)
-
-
 def preload_diarization_model(
     auth_token: str | None,
     device: str = "cpu",
 ) -> None:
-    """Preload the default WhisperX diarization pipeline.
+    """Preload the pyannote speaker diarization pipeline.
 
     Args:
         auth_token (str | None): Hugging Face token used for private gated
@@ -342,17 +277,18 @@ def preload_diarization_model(
         )
         return
 
-    from whisperx.diarize import DiarizationPipeline
+    import torch
+    from pyannote.audio import Pipeline as DiarizationPipeline
 
     from nextext.core.transcription import _configure_torch_safe_globals
 
     _configure_torch_safe_globals()
     logger.info("Loading diarization model '{}'.", DIARIZATION_MODEL_ID)
-    pipeline = DiarizationPipeline(
-        model_name=DIARIZATION_MODEL_ID,
+    pipeline = DiarizationPipeline.from_pretrained(
+        DIARIZATION_MODEL_ID,
         use_auth_token=auth_token,
-        device=device,
     )
+    pipeline.to(torch.device(device))
     del pipeline
     _cleanup_torch_resources()
 
@@ -407,16 +343,6 @@ def main() -> None:
             preload_whisper_model(model_id, device=device)
         except Exception as exc:
             failures.append(f"Whisper {model_id} ({exc})")
-
-    for language_code, model_id in get_alignment_model_ids().items():
-        try:
-            preload_alignment_model(
-                language_code=language_code,
-                model_id=model_id,
-                device=device,
-            )
-        except Exception as exc:
-            failures.append(f"Alignment {language_code}:{model_id} ({exc})")
 
     try:
         preload_diarization_model(os.getenv("HF_HUB_TOKEN"), device=device)
