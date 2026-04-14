@@ -32,7 +32,7 @@ services:
       args:
         <<: *build-args
     ports: &nextext-ports
-      - ${NEXTEXT_PORT:-8501:8501}
+      - ${NEXTEXT_HOST_PORT:-8501}:8501
     environment: &backend-env
       <<: *proxy-env
       HF_HUB_OFFLINE: ${HF_HUB_OFFLINE:-false}
