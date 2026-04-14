@@ -1,9 +1,54 @@
 """Tests for the inference client configuration helpers."""
 
+from typing import Any
+
 import pytest
 
 from nextext.core import openai_cfg
 from nextext.core.openai_cfg import InferencePipeline
+from nextext.utils.env_cfg import load_inference_env
+
+
+class _RecordingCompletions:
+    """Capture chat completion request kwargs for assertion."""
+
+    def __init__(self) -> None:
+        self.calls: list[dict[str, Any]] = []
+
+    def create(self, **kwargs: Any) -> Any:
+        self.calls.append(kwargs)
+
+        class _Msg:
+            content = "ok"
+
+        class _Choice:
+            message = _Msg()
+
+        class _Resp:
+            choices = [_Choice()]
+
+        return _Resp()
+
+
+class _RecordingClient:
+    """Minimal OpenAI client stub exposing a recording completions endpoint."""
+
+    def __init__(self, completions: _RecordingCompletions) -> None:
+        class _Chat:
+            def __init__(self, c: _RecordingCompletions) -> None:
+                self.completions = c
+
+        self.chat = _Chat(completions)
+
+
+def _install_recording_client(
+    monkeypatch: pytest.MonkeyPatch, pipeline: InferencePipeline
+) -> _RecordingCompletions:
+    """Replace the pipeline's OpenAI client with a recording stub and bypass health."""
+    completions = _RecordingCompletions()
+    monkeypatch.setattr(pipeline, "_client", _RecordingClient(completions))
+    monkeypatch.setattr(pipeline, "get_health", lambda: True)
+    return completions
 
 
 def test_client_uses_configured_api_key(
@@ -122,3 +167,108 @@ def test_translation_model_requires_translation_model(
 
     with pytest.raises(RuntimeError, match="TRANSLATION_MODEL"):
         _ = pipeline.translation_model
+
+
+def test_call_model_includes_system_message_by_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """call_model must send a system role by default for backward compatibility."""
+    monkeypatch.setenv("TEXT_MODEL", "llama3.1:8b")
+    pipeline = InferencePipeline()
+    completions = _install_recording_client(monkeypatch, pipeline)
+
+    pipeline.call_model(prompt="hello")
+
+    assert len(completions.calls) == 1
+    messages = completions.calls[0]["messages"]
+    assert len(messages) == 2
+    assert messages[0]["role"] == "system"
+    assert messages[0]["content"] == pipeline.sys_prompt
+    assert messages[1] == {"role": "user", "content": "hello"}
+
+
+def test_call_model_custom_system_prompt_still_works(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An explicit system_prompt overrides the default without changing structure."""
+    monkeypatch.setenv("TEXT_MODEL", "llama3.1:8b")
+    pipeline = InferencePipeline()
+    completions = _install_recording_client(monkeypatch, pipeline)
+
+    pipeline.call_model(prompt="hi", system_prompt="be terse")
+
+    messages = completions.calls[0]["messages"]
+    assert messages[0] == {"role": "system", "content": "be terse"}
+    assert messages[1] == {"role": "user", "content": "hi"}
+
+
+def test_call_model_omits_system_message_when_disabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """include_system_prompt=False must produce a single user-only message."""
+    monkeypatch.setenv("TEXT_MODEL", "llama3.1:8b")
+    pipeline = InferencePipeline()
+    completions = _install_recording_client(monkeypatch, pipeline)
+
+    pipeline.call_model(prompt="payload", include_system_prompt=False)
+
+    messages = completions.calls[0]["messages"]
+    assert len(messages) == 1
+    assert messages[0] == {"role": "user", "content": "payload"}
+    assert all(m.get("role") != "system" for m in messages)
+
+
+def test_inference_pipeline_provider_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Unset INFERENCE_PROVIDER falls back to ollama."""
+    monkeypatch.delenv("INFERENCE_PROVIDER", raising=False)
+
+    pipeline = InferencePipeline()
+
+    assert pipeline.provider == "ollama"
+
+
+@pytest.mark.parametrize("value", ["ollama", "vllm", "openai"])
+def test_inference_pipeline_provider_all_three(
+    monkeypatch: pytest.MonkeyPatch, value: str
+) -> None:
+    """All three valid providers round-trip through the env var."""
+    monkeypatch.setenv("INFERENCE_PROVIDER", value)
+
+    pipeline = InferencePipeline()
+
+    assert pipeline.provider == value
+
+
+def test_inference_pipeline_provider_lowercases(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Uppercase INFERENCE_PROVIDER resolves to its canonical lowercase form."""
+    monkeypatch.setenv("INFERENCE_PROVIDER", "VLLM")
+
+    pipeline = InferencePipeline()
+
+    assert pipeline.provider == "vllm"
+
+
+def test_inference_pipeline_provider_validates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Unknown INFERENCE_PROVIDER values fall back to ollama."""
+    monkeypatch.setenv("INFERENCE_PROVIDER", "garbage")
+
+    pipeline = InferencePipeline()
+
+    assert pipeline.provider == "ollama"
+
+
+def test_load_inference_env_returns_dataclass(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """load_inference_env returns a frozen InferenceConfig with the resolved provider."""
+    monkeypatch.setenv("INFERENCE_PROVIDER", "vllm")
+
+    cfg = load_inference_env()
+
+    assert cfg.provider == "vllm"

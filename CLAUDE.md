@@ -59,9 +59,9 @@ See `AGENTS.md` for detailed agent documentation including I/O contracts and how
 ## Environment
 
 Key env vars (see `.env.example`):
-- `INFERENCE_PROVIDER` — `ollama` or `openai`
+- `INFERENCE_PROVIDER` — `ollama` (default), `vllm`, or `openai`. Selects the translation prompt format: `ollama`/`openai` use the templated prompt in `nextext/utils/prompts/translation.txt`, while `vllm` sends a single-user-message delimiter format (`<<<source>>>...<<<target>>>...<<<text>>>...`) required by `Infomaniak-AI/vllm-translategemma-4b-it`.
 - `HF_HUB_TOKEN` — required for diarization models
-- `OPENAI_API_KEY`, `OPENAI_API_BASE` — for OpenAI provider
+- `OPENAI_API_KEY`, `OPENAI_API_BASE` — OpenAI-compatible endpoint credentials; shared across translation, summarization, and hate-speech detection, so in `vllm` mode the LiteLLM proxy must expose both `TEXT_MODEL` and `TRANSLATION_MODEL` on the same endpoint.
 - `TEXT_MODEL`, `TRANSLATION_MODEL` — LLM model names
 - `NEXTEXT_OFFLINE=1` — offline mode (skip model downloads)
 

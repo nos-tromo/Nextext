@@ -13,6 +13,7 @@ from streamlit.web import cli as st_cli
 
 from nextext.core.openai_cfg import InferencePipeline
 from nextext.pipeline import (
+    hate_speech_pipeline,
     normalize_language_code,
     summarization_pipeline,
     transcription_pipeline,
@@ -30,6 +31,7 @@ PIPELINE_STAGE_LABELS: tuple[str, ...] = (
     "Translating",
     "Running word-level analysis",
     "Summarizing",
+    "Detecting hate speech",
 )
 
 
@@ -239,6 +241,7 @@ def _run_pipeline(
         "word_counts": None,
         "named_entities": None,
         "wordcloud": None,
+        "hate_speech_findings": None,
         "resolved_src_lang": file_opts["src_lang"],
         "transcript_language": transcript_language,
     }
@@ -268,6 +271,23 @@ def _run_pipeline(
                 )
         result["summary"] = summarization_pipeline(
             " ".join(df["text"].astype(str).tolist()),
+            inference_pipeline=inference_pipeline,
+        )
+
+    # Hate speech detection
+    _notify(PIPELINE_STAGE_LABELS[4], 4)
+    if file_opts.get("hate_speech"):
+        if inference_pipeline is None:
+            inference_pipeline = InferencePipeline(
+                out_language=_language_name(transcript_language)
+            )
+            if not inference_pipeline.get_health():
+                raise ConnectionError(
+                    "The configured inference provider is not reachable. "
+                    "Please ensure it is running and accessible."
+                )
+        result["hate_speech_findings"] = hate_speech_pipeline(
+            df=df,
             inference_pipeline=inference_pipeline,
         )
 
@@ -379,6 +399,7 @@ def _start_page() -> None:
         )
         words = st.checkbox("Word-level analysis")
         summarization = st.checkbox("Summarisation")
+        hate_speech = st.checkbox("Hate speech detection")
     with col2:
         trg_lang_name = st.selectbox(
             "Target language (for translate task)",
@@ -404,6 +425,7 @@ def _start_page() -> None:
         speakers=speakers,
         words=words,
         summarization=summarization,
+        hate_speech=hate_speech,
     )
 
     if run and uploaded_files:
@@ -421,8 +443,8 @@ def main() -> None:
     st.subheader("Transcribe, translate, and analyze audio/video files")
 
     # Top‑level tabs
-    tab_params, tab_transcript, tab_summary, tab_words = st.tabs(
-        ["Parameters", "Transcript", "Summary", "Word-level Analysis"]
+    tab_params, tab_transcript, tab_summary, tab_words, tab_hate = st.tabs(
+        ["Parameters", "Transcript", "Summary", "Word-level Analysis", "Hate Speech"]
     )
 
     # ---------------- Parameters tab ----------------
@@ -439,7 +461,7 @@ def main() -> None:
             "After you upload one or more files and press **Run** in the "
             "Parameters tab, the results will appear here."
         )
-        for t in (tab_transcript, tab_summary, tab_words):
+        for t in (tab_transcript, tab_summary, tab_words, tab_hate):
             with t:
                 st.info(msg)
 
@@ -584,6 +606,22 @@ def main() -> None:
 
             st.subheader("☁️ Word Cloud")
             st.pyplot(result["wordcloud"])
+
+    # ------------ Hate Speech tab -------------------
+    with tab_hate:
+        findings = result.get("hate_speech_findings")
+        if findings is None:
+            st.warning("Hate speech detection not requested.")
+        elif not findings:
+            st.success("No hate speech detected.")
+        else:
+            st.subheader("🚨 Hate Speech Findings")
+            for item in findings:
+                with st.expander(
+                    f"{item['category'].title()} — {item['confidence']} confidence"
+                ):
+                    st.write(f"**Reason:** {item['reason']}")
+                    st.write(f"**Flagged text:** {item['text']}")
 
     # ---------------- Footer -----------------------
     st.markdown(

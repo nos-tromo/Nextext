@@ -414,6 +414,53 @@ def test_summarization_pipeline_rejects_empty_text(
         pipeline.summarization_pipeline("", dummy_pipeline)
 
 
+def test_hate_speech_pipeline_returns_flagged_rows(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test that hate_speech_pipeline returns only rows flagged as hate speech.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): The monkeypatch fixture for modifying behavior.
+    """
+    import nextext.core.hate_speech as hs_module
+    from nextext.core.openai_cfg import InferencePipeline
+
+    responses = iter(
+        [
+            {
+                "hate_speech": True,
+                "category": "racism",
+                "confidence": "high",
+                "reason": "Contains slurs",
+            },
+            {
+                "hate_speech": False,
+                "category": "none",
+                "confidence": "low",
+                "reason": "",
+            },
+        ]
+    )
+
+    class DummyDetector:
+        def __init__(self, inference_pipeline, max_chars):
+            pass
+
+        def detect(self, text: str) -> dict:
+            return next(responses)
+
+    monkeypatch.setattr(hs_module, "HateSpeechDetector", DummyDetector)
+
+    df = pd.DataFrame({"text": ["bad text", "good text"]})
+    dummy_ip = InferencePipeline.__new__(InferencePipeline)
+
+    results = pipeline.hate_speech_pipeline(df, dummy_ip)
+
+    assert len(results) == 1
+    assert results[0]["category"] == "racism"
+    assert results[0]["text"] == "bad text"
+
+
 def test_wordlevel_pipeline_invokes_all_steps(monkeypatch: pytest.MonkeyPatch) -> None:
     """
     Test the word-level pipeline to ensure all steps are invoked.

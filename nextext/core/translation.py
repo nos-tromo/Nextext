@@ -1,5 +1,6 @@
 import pycountry
 from langdetect import detect
+from loguru import logger
 
 from nextext.core.openai_cfg import InferencePipeline
 from nextext.utils.mappings_loader import load_mappings
@@ -23,6 +24,7 @@ class Translator:
         self.inference_pipeline = inference_pipeline or InferencePipeline()
         self.prompt_template = self.inference_pipeline.load_prompt("translation")
         self.src_lang: str | None = None
+        self._warned_vllm_model: bool = False
 
     def detect_language(self, text: str) -> dict[str, str]:
         """Detect the language of a text.
@@ -86,6 +88,25 @@ class Translator:
             TEXT=text,
         )
 
+    @staticmethod
+    def _vllm_translation_prompt(src_code: str, trg_code: str, text: str) -> str:
+        """Build the delimiter-format prompt expected by the vLLM TranslateGemma model.
+
+        The ``Infomaniak-AI/vllm-translategemma-4b-it`` model card specifies
+        that language codes and the source text are encoded directly in a
+        single user message using literal ``<<<...>>>`` delimiters, with no
+        system role.
+
+        Args:
+            src_code (str): The ISO 639-1 source language code.
+            trg_code (str): The ISO 639-1 target language code.
+            text (str): The text to be translated.
+
+        Returns:
+            str: The wire-format user-message content for the vLLM backend.
+        """
+        return f"<<<source>>>{src_code}<<<target>>>{trg_code}<<<text>>>{text}"
+
     def translate(self, trg_lang: str, text: str, src_lang: str | None = None) -> str:
         """Translate text with the configured translation model.
 
@@ -118,6 +139,31 @@ class Translator:
             return text
 
         self.src_lang = resolved_src_lang
+
+        if self.inference_pipeline.provider == "vllm":
+            translation_model = self.inference_pipeline.translation_model
+            if (
+                not self._warned_vllm_model
+                and "translategemma" not in translation_model.lower()
+            ):
+                logger.warning(
+                    "INFERENCE_PROVIDER=vllm but TRANSLATION_MODEL='{}' does "
+                    "not look like a TranslateGemma variant. Proceeding anyway.",
+                    translation_model,
+                )
+                self._warned_vllm_model = True
+            vllm_prompt = self._vllm_translation_prompt(
+                src_code=resolved_src_lang,
+                trg_code=trg_lang,
+                text=text,
+            )
+            return self.inference_pipeline.call_model(
+                prompt=vllm_prompt,
+                model=translation_model,
+                temperature=0.0,
+                include_system_prompt=False,
+            )
+
         prompt = self._translation_prompt(
             src_lang=resolved_src_lang,
             trg_lang=trg_lang,

@@ -1,16 +1,21 @@
-"""Tests for the WhisperX transcription module."""
+"""Tests for the openai-whisper transcription module."""
 
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import numpy as np
 import pandas as pd
 import pytest
+import torch
 
 from nextext.core import transcription
 from nextext.core.transcription import (
-    TRANSCRIPTION_VAD_METHOD,
+    ExternalWhisperTranscriber,
     WhisperTranscriber,
     _configure_torch_safe_globals,
+    _ends_with_punctuation,
+    _merge_transcriptions_by_sentence,
+    _seconds_to_time,
 )
 
 
@@ -26,6 +31,11 @@ def _build_transcriber() -> WhisperTranscriber:
     transcriber.text_column = "text"
     transcriber.speaker_column = "speaker"
     return transcriber
+
+
+# ---------------------------------------------------------------------------
+# Sentence merging (unchanged logic, now delegates to module-level function)
+# ---------------------------------------------------------------------------
 
 
 def test_merge_transcriptions_keeps_final_sentence_without_terminal_punctuation() -> (
@@ -140,6 +150,49 @@ def test_merge_transcriptions_splits_when_speaker_changes() -> None:
     ]
 
 
+# ---------------------------------------------------------------------------
+# Module-level helper functions
+# ---------------------------------------------------------------------------
+
+
+def test_seconds_to_time_formats_correctly() -> None:
+    """Test that _seconds_to_time converts seconds to HH:MM:SS format."""
+    assert _seconds_to_time(0) == "0:00:00"
+    assert _seconds_to_time(3661) == "1:01:01"
+    assert _seconds_to_time(90.4) == "0:01:30"
+
+
+def test_ends_with_punctuation_detects_terminal_marks() -> None:
+    """Test that _ends_with_punctuation handles Latin and Arabic punctuation."""
+    assert _ends_with_punctuation("hello.") is True
+    assert _ends_with_punctuation("hello!") is True
+    assert _ends_with_punctuation("hello?") is True
+    assert _ends_with_punctuation("مرحبا؟") is True
+    assert _ends_with_punctuation("hello") is False
+    assert _ends_with_punctuation("") is False
+
+
+def test_module_level_merge_function_matches_instance_method() -> None:
+    """Test that the module-level _merge_transcriptions_by_sentence produces the same result
+    as calling the instance method on WhisperTranscriber.
+    """
+    transcriber = _build_transcriber()
+    data = pd.DataFrame(
+        [
+            {"start": "0:00:00", "end": "0:00:01", "text": "hello"},
+            {"start": "0:00:01", "end": "0:00:02", "text": "world."},
+        ]
+    )
+    instance_result = transcriber._merge_transcriptions_by_sentence(data)
+    module_result = _merge_transcriptions_by_sentence(data.copy())
+    pd.testing.assert_frame_equal(instance_result, module_result)
+
+
+# ---------------------------------------------------------------------------
+# Torch safe globals
+# ---------------------------------------------------------------------------
+
+
 def test_configure_torch_safe_globals_registers_checkpoint_types(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -151,11 +204,6 @@ def test_configure_torch_safe_globals_registers_checkpoint_types(
     recorded_globals: list[type] = []
 
     def fake_add_safe_globals(classes: list[type]) -> None:
-        """Fake implementation of `add_safe_globals` for testing.
-
-        Args:
-            classes (list[type]): The list of classes to register as safe globals.
-        """
         recorded_globals.extend(classes)
 
     monkeypatch.setattr(
@@ -173,6 +221,11 @@ def test_configure_torch_safe_globals_registers_checkpoint_types(
     assert "Problem" in class_names
     assert "Resolution" in class_names
     assert "Specifications" in class_names
+
+
+# ---------------------------------------------------------------------------
+# WhisperTranscriber initialisation
+# ---------------------------------------------------------------------------
 
 
 def test_init_skips_diarization_model_for_single_speaker(
@@ -201,21 +254,10 @@ def test_init_skips_diarization_model_for_single_speaker(
     monkeypatch.setattr(
         WhisperTranscriber,
         "_load_transcription_model",
-        lambda self, model_id, whisper_model_file: (SimpleNamespace(), None, None),
+        lambda self, model_id, whisper_model_file: SimpleNamespace(),
     )
 
-    def fail_load_diarization_model(
-        self,
-        auth_token: str,
-    ) -> None:
-        """Fail when diarization loading is attempted unexpectedly.
-
-        Args:
-            auth_token (str): The authentication token for model loading.
-
-        Raises:
-            AssertionError: Always raised to indicate that diarization loading should not occur.
-        """
+    def fail_load_diarization_model(self, auth_token: str) -> None:
         raise AssertionError(
             "_load_diarization_model should not be called for one speaker"
         )
@@ -235,6 +277,11 @@ def test_init_skips_diarization_model_for_single_speaker(
     assert transcriber.diarize_model is None
 
 
+# ---------------------------------------------------------------------------
+# Diarization
+# ---------------------------------------------------------------------------
+
+
 def test_diarization_requires_loaded_model() -> None:
     """Test that diarization raises a clear error when the model is missing."""
     transcriber = WhisperTranscriber.__new__(WhisperTranscriber)
@@ -247,98 +294,175 @@ def test_diarization_requires_loaded_model() -> None:
         transcriber.diarization()
 
 
-def test_detect_language_uses_silero_vad(
+def test_assign_speakers_uses_maximum_overlap() -> None:
+    """Test that _assign_speakers assigns the speaker with the longest overlap."""
+    transcriber = WhisperTranscriber.__new__(WhisperTranscriber)
+    transcriber.transcription_result = {
+        "segments": [{"start": 0.0, "end": 2.0, "text": "hello world"}]
+    }
+
+    # Build a fake diarization result using itertracks
+    turn_a = SimpleNamespace(start=0.0, end=1.8)  # 1.8 s overlap
+    turn_b = SimpleNamespace(start=1.8, end=2.0)  # 0.2 s overlap
+
+    fake_annotation = MagicMock()
+    fake_annotation.itertracks.return_value = [
+        (turn_a, None, "SPEAKER_00"),
+        (turn_b, None, "SPEAKER_01"),
+    ]
+
+    transcriber._assign_speakers(fake_annotation)
+
+    assert transcriber.transcription_result["segments"][0]["speaker"] == "SPEAKER_00"
+
+
+# ---------------------------------------------------------------------------
+# Language detection (new mel-spectrogram based approach)
+# ---------------------------------------------------------------------------
+
+
+def test_detect_language_uses_whisper_mel_spectrogram(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Test that language detection avoids Pyannote VAD model loading.
+    """Test that language detection uses the openai-whisper mel spectrogram API.
 
     Args:
         monkeypatch (pytest.MonkeyPatch): The pytest monkeypatch fixture for patching.
     """
-    recorded_kwargs: dict[str, object] = {}
+    dummy_mel = torch.zeros(1, 80, 100)
+    dummy_probs = {"de": 0.9, "en": 0.1}
 
     class DummyModel:
-        """Minimal WhisperX model stub for language detection."""
+        device = "cpu"
+        dims = SimpleNamespace(n_mels=80)
 
-        def transcribe(self, audio: np.ndarray) -> dict[str, str]:
-            """Return a fixed detected language.
+        def detect_language(self, mel):
+            return None, dummy_probs
 
-            Args:
-                audio (np.ndarray): The input audio array for transcription.
-
-            Returns:
-                dict[str, str]: A dictionary containing the detected language code.
-            """
-            return {"language": "de"}
-
-    def fake_load_model(**kwargs: object) -> DummyModel:
-        """Capture WhisperX model-loading arguments.
-
-        Args:
-            **kwargs (object): The keyword arguments passed to the model loading function.
-
-        Returns:
-            DummyModel: A dummy model instance for testing.
-        """
-        recorded_kwargs.update(kwargs)
+    def fake_load_model(name, device):
+        assert name == "small"
         return DummyModel()
 
-    monkeypatch.setattr(transcription.whisperx, "load_model", fake_load_model)
+    monkeypatch.setattr(transcription.whisper, "load_model", fake_load_model)
+    monkeypatch.setattr(transcription.whisper, "pad_or_trim", lambda audio: audio)
+    monkeypatch.setattr(
+        transcription.whisper,
+        "log_mel_spectrogram",
+        lambda audio, n_mels: dummy_mel,
+    )
 
-    transcriber = WhisperTranscriber.__new__(WhisperTranscriber)
-    transcriber.audio = np.zeros(32000, dtype=np.float32)
-    transcriber.transcription_device = "cpu"
+    t = WhisperTranscriber.__new__(WhisperTranscriber)
+    t.audio = np.zeros(32000, dtype=np.float32)
+    t.transcription_device = "cpu"
 
-    detected_language = transcriber._detect_language()
+    detected = t._detect_language()
 
-    assert detected_language == "de"
-    assert recorded_kwargs["vad_method"] == TRANSCRIPTION_VAD_METHOD
+    assert detected == "de"
 
 
-def test_load_transcription_model_uses_silero_vad(
+# ---------------------------------------------------------------------------
+# Transcription model loading
+# ---------------------------------------------------------------------------
+
+
+def test_load_transcription_model_returns_whisper_model(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Test that transcription model loading avoids Pyannote VAD.
+    """Test that _load_transcription_model loads a single whisper model.
 
     Args:
         monkeypatch (pytest.MonkeyPatch): The pytest monkeypatch fixture for patching.
     """
-    recorded_kwargs: dict[str, object] = {}
+    dummy_model = SimpleNamespace()
 
-    def fake_load_model(**kwargs: object) -> SimpleNamespace:
-        """Capture WhisperX model-loading arguments.
-
-        Args:
-            **kwargs (object): The keyword arguments passed to the model loading function.
-
-        Returns:
-            SimpleNamespace: A dummy model instance for testing.
-        """
-        recorded_kwargs.update(kwargs)
-        return SimpleNamespace()
+    def fake_load_model(name, device):
+        return dummy_model
 
     monkeypatch.setattr(
         transcription,
         "load_mappings",
         lambda _: {"default_transcribe": "small"},
     )
-    monkeypatch.setattr(transcription.whisperx, "load_model", fake_load_model)
-    monkeypatch.setattr(
-        transcription.whisperx,
-        "load_align_model",
-        lambda **kwargs: (None, None),
-    )
+    monkeypatch.setattr(transcription.whisper, "load_model", fake_load_model)
 
-    transcriber = WhisperTranscriber.__new__(WhisperTranscriber)
+    t = WhisperTranscriber.__new__(WhisperTranscriber)
+    t.task = "transcribe"
+    t.src_lang = "de"
+    t.transcription_device = "cpu"
+
+    model = t._load_transcription_model("default", "unused.json")
+
+    assert model is dummy_model
+
+
+# ---------------------------------------------------------------------------
+# ExternalWhisperTranscriber
+# ---------------------------------------------------------------------------
+
+
+def test_external_transcriber_transcript_output(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test that ExternalWhisperTranscriber.transcript_output builds the correct DataFrame.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): The pytest monkeypatch fixture for patching.
+    """
+    transcriber = ExternalWhisperTranscriber.__new__(ExternalWhisperTranscriber)
+    transcriber.file_path = transcription.Path("dummy.wav")
+    transcriber.src_lang = "en"
     transcriber.task = "transcribe"
-    transcriber.src_lang = "de"
-    transcriber.transcription_device = "cpu"
+    transcriber._model_id = "whisper-1"
+    transcriber.start_column = "start"
+    transcriber.end_column = "end"
+    transcriber.speaker_column = "speaker"
+    transcriber.text_column = "text"
+    transcriber.transcription_result = {
+        "segments": [
+            {"start": 0.0, "end": 1.5, "text": "Hello world."},
+            {"start": 1.5, "end": 3.0, "text": "How are you?"},
+        ]
+    }
 
-    transcribe_model, align_model, align_metadata = (
-        transcriber._load_transcription_model("default", "unused.json")
+    df = transcriber.transcript_output()
+
+    assert list(df.columns) == ["start", "end", "text"]
+    assert len(df) == 2
+    assert df.iloc[0]["text"] == "Hello world."
+    assert df.iloc[1]["text"] == "How are you?"
+
+
+def test_external_transcriber_transcription_populates_src_lang(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test that ExternalWhisperTranscriber.transcription() populates src_lang from the response.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): The pytest monkeypatch fixture for patching.
+    """
+    seg = SimpleNamespace(start=0.0, end=1.0, text="Hola.")
+    fake_response = SimpleNamespace(segments=[seg], language="es")
+
+    fake_client = MagicMock()
+    fake_client.audio.transcriptions.create.return_value = fake_response
+
+    transcriber = ExternalWhisperTranscriber.__new__(ExternalWhisperTranscriber)
+    transcriber.file_path = transcription.Path(__file__)  # use an existing file
+    transcriber.src_lang = None
+    transcriber.task = "transcribe"
+    transcriber._model_id = "whisper-1"
+    transcriber._client = None
+    transcriber.transcription_result = None
+
+    # Bypass lazy client creation
+    monkeypatch.setattr(
+        type(transcriber),
+        "_get_client",
+        property(lambda self: fake_client),
     )
 
-    assert transcribe_model is not None
-    assert align_model is None
-    assert align_metadata is None
-    assert recorded_kwargs["vad_method"] == TRANSCRIPTION_VAD_METHOD
+    transcriber.transcription()
+
+    assert transcriber.src_lang == "es"
+    assert transcriber.transcription_result is not None
+    assert len(transcriber.transcription_result["segments"]) == 1

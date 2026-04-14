@@ -1,12 +1,14 @@
 import argparse
 from pathlib import Path
 
+import pandas as pd
 from loguru import logger
 import pycountry
 
 from nextext.core.openai_cfg import InferencePipeline
 from nextext.core.processing import FileProcessor
 from nextext.pipeline import (
+    hate_speech_pipeline,
     normalize_language_code,
     summarization_pipeline,
     transcription_pipeline,
@@ -123,6 +125,13 @@ def parse_arguments(args_list: list | None = None) -> argparse.Namespace:
         dest="summarize",
         action="store_true",
         help="Additional transcript summarization (default: False).",
+    )
+    parser.add_argument(
+        "-hs",
+        "--hate-speech",
+        dest="hate_speech",
+        action="store_true",
+        help="Detect hate speech in transcript segments via LLM (default: False).",
     )
     parser.add_argument(
         "-F",
@@ -250,6 +259,31 @@ def main() -> None:
             )
             if transcript_summary is not None:
                 file_processor.write_file_output(transcript_summary, "summary")
+
+    # Hate speech detection
+    if args.hate_speech:
+        if inference_pipeline is None:
+            inference_pipeline = InferencePipeline(
+                out_language=_language_name(transcript_lang)
+            )
+        if not inference_pipeline.get_health():
+            logger.error("The configured inference provider is not reachable.")
+            raise ConnectionError(
+                "The configured inference provider is not reachable. Please ensure it is running and accessible."
+            )
+        hate_speech_findings = hate_speech_pipeline(
+            df=transcript_df,
+            inference_pipeline=inference_pipeline,
+        )
+        if hate_speech_findings:
+            file_processor.write_file_output(
+                pd.DataFrame(hate_speech_findings), "hate_speech"
+            )
+            logger.info(
+                "Hate speech detected in {} segment(s).", len(hate_speech_findings)
+            )
+        else:
+            logger.info("No hate speech detected.")
 
     # Save final transcript
     file_processor.write_file_output(transcript_df, "transcript")

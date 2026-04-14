@@ -40,6 +40,78 @@ class PathConfig:
     hf_hub_cache: Path
 
 
+@dataclass(frozen=True)
+class TranscriptionConfig:
+    """Dataclass for transcription provider configuration."""
+
+    provider: str
+    whisper_model: str
+
+
+@dataclass(frozen=True)
+class HateSpeechConfig:
+    """Dataclass for hate speech detection configuration."""
+
+    enabled: bool
+    max_chars: int
+
+
+VALID_INFERENCE_PROVIDERS: frozenset[str] = frozenset({"ollama", "vllm", "openai"})
+
+
+@dataclass(frozen=True)
+class InferenceConfig:
+    """Dataclass for inference provider configuration."""
+
+    provider: str  # one of VALID_INFERENCE_PROVIDERS
+
+
+def load_transcription_env() -> TranscriptionConfig:
+    """Loads transcription provider configuration from environment variables.
+
+    Returns:
+        TranscriptionConfig: Dataclass containing transcription configuration.
+        - provider (str): Transcription provider — "local" (default) or "external".
+        - whisper_model (str): Model name to send to the external API.
+    """
+    return TranscriptionConfig(
+        provider=os.getenv("TRANSCRIPTION_PROVIDER", "local").lower(),
+        whisper_model=os.getenv("WHISPER_MODEL", "whisper-1"),
+    )
+
+
+def load_inference_env() -> InferenceConfig:
+    """Loads inference provider configuration from environment variables.
+
+    Returns:
+        InferenceConfig: Dataclass containing the resolved provider.
+        - provider (str): One of ``ollama`` (default), ``vllm``, or ``openai``.
+            Unknown values fall back to ``ollama`` with a warning.
+    """
+    raw = os.getenv("INFERENCE_PROVIDER", "ollama").strip().lower()
+    if raw not in VALID_INFERENCE_PROVIDERS:
+        logger.warning(
+            "Unknown INFERENCE_PROVIDER '{}'. Falling back to 'ollama'.", raw
+        )
+        raw = "ollama"
+    return InferenceConfig(provider=raw)
+
+
+def load_hate_speech_env() -> HateSpeechConfig:
+    """Loads hate speech detection configuration from environment variables.
+
+    Returns:
+        HateSpeechConfig: Dataclass containing hate speech detection configuration.
+        - enabled (bool): Whether hate speech detection is enabled.
+        - max_chars (int): Maximum characters per segment to send for detection.
+    """
+    raw_enabled = os.getenv("ENABLE_HATE_SPEECH_DETECTION", "false").lower()
+    return HateSpeechConfig(
+        enabled=raw_enabled in {"1", "true", "yes"},
+        max_chars=int(os.getenv("HATE_SPEECH_MAX_CHARS", "2048")),
+    )
+
+
 def load_path_env() -> PathConfig:
     """Loads path configuration from environment variables or defaults.
 
