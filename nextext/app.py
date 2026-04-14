@@ -55,17 +55,23 @@ def _dataframe_to_excel_bytes(df: pd.DataFrame) -> bytes:
     return buffer.getvalue()
 
 
-def _build_results_archive(results: Sequence[dict[str, Any]]) -> bytes:
+def _build_results_archive(
+    results: Sequence[dict[str, Any]],
+    archive_stem: str,
+) -> bytes:
     """Bundle every produced output for every processed file into a ZIP.
 
     Outputs mirror the CLI labels (``transcript``, ``summary``, ``words``,
-    ``entities``, ``wordcloud``, ``hate_speech``). Each file lands inside a
-    per-upload subdirectory to keep filenames stable when upload stems
-    collide; the filename itself follows the
-    ``{original_stem}_{output_type}.{ext}`` pattern.
+    ``entities``, ``wordcloud``, ``hate_speech``). All files are wrapped in
+    a top-level directory matching the ZIP filename stem, then nested inside
+    a per-upload subdirectory so single-file and multi-file archives share
+    the same ``{archive_stem}/{original_stem}/{original_stem}_{output}.ext``
+    layout.
 
     Args:
         results (Sequence[dict[str, Any]]): Stored result entries.
+        archive_stem (str): Top-level directory name inside the ZIP, matching
+            the download filename stem.
 
     Returns:
         bytes: ZIP archive bytes ready to feed into ``st.download_button``.
@@ -75,7 +81,7 @@ def _build_results_archive(results: Sequence[dict[str, Any]]) -> bytes:
         for index, result in enumerate(results, start=1):
             original_name = str(result.get("file_name", f"result_{index}"))
             stem = Path(original_name).stem or f"result_{index}"
-            base = f"{stem}/{stem}"
+            base = f"{archive_stem}/{stem}/{stem}"
 
             transcript = result.get("transcript")
             if isinstance(transcript, pd.DataFrame) and not transcript.empty:
@@ -135,24 +141,28 @@ def _build_results_archive(results: Sequence[dict[str, Any]]) -> bytes:
     return buffer.getvalue()
 
 
-def _results_archive_bytes(results: Sequence[dict[str, Any]]) -> bytes:
+def _results_archive_bytes(
+    results: Sequence[dict[str, Any]],
+    archive_stem: str,
+) -> bytes:
     """Return cached archive bytes for the current results list.
 
     The bytes are memoized in ``st.session_state`` keyed by the identity of
-    the results list, so switching tabs or selectors does not rebuild the
-    archive on every rerun.
+    the results list and the archive stem, so switching tabs or selectors
+    does not rebuild the archive on every rerun.
 
     Args:
         results (Sequence[dict[str, Any]]): Stored result entries.
+        archive_stem (str): Top-level directory name inside the ZIP.
 
     Returns:
         bytes: ZIP archive bytes for the current results list.
     """
-    cache_key = id(results)
+    cache_key = (id(results), archive_stem)
     cached = st.session_state.get("_results_archive")
     if isinstance(cached, tuple) and cached[0] == cache_key:
         return cached[1]
-    payload = _build_results_archive(results)
+    payload = _build_results_archive(results, archive_stem)
     st.session_state["_results_archive"] = (cache_key, payload)
     return payload
 
@@ -599,10 +609,11 @@ def main() -> None:
     archive_timestamp = st.session_state.get(
         "results_timestamp"
     ) or datetime.now().strftime("%Y%m%d_%H%M%S")
+    archive_stem = f"{archive_timestamp}_nextext_output"
     st.download_button(
         label="⬇️ Download all outputs (ZIP)",
-        data=_results_archive_bytes(results),
-        file_name=f"{archive_timestamp}_nextext_output.zip",
+        data=_results_archive_bytes(results, archive_stem),
+        file_name=f"{archive_stem}.zip",
         mime="application/zip",
         help=(
             "Bundles every produced output (transcripts, summaries, word "
