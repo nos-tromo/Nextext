@@ -52,6 +52,7 @@ services:
       - nltk-cache:/root/nltk_data
       - spacy-cache:/root/.cache/spacy
       - torch-cache:/root/.cache/torch
+      - whisper-cache:/root/.cache/whisper
     networks:
       nextext-net:
       inference-net:
@@ -93,6 +94,8 @@ volumes:
   spacy-cache:
     external: true
   torch-cache:
+    external: true
+  whisper-cache:
     external: true
 
 ##########################################################
