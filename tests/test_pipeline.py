@@ -367,6 +367,7 @@ def test_summarization_pipeline_formats_prompt(monkeypatch: pytest.MonkeyPatch) 
             num_predict: int | None = None,
             top_p: float | None = None,
             system_prompt: str | None = None,
+            include_system_prompt: bool = True,
         ) -> str:
             """Simulate calling the model with the given prompt.
 
@@ -379,11 +380,21 @@ def test_summarization_pipeline_formats_prompt(monkeypatch: pytest.MonkeyPatch) 
                 num_predict (int | None): Unused test double argument.
                 top_p (float | None): Unused test double argument.
                 system_prompt (str | None): Unused test double argument.
+                include_system_prompt (bool): Unused test double argument.
 
             Returns:
                 str: The model's response.
             """
-            del model, temperature, seed, stop, num_predict, top_p, system_prompt
+            del (
+                model,
+                temperature,
+                seed,
+                stop,
+                num_predict,
+                top_p,
+                system_prompt,
+                include_system_prompt,
+            )
             self.prompts.append(prompt)
             return "summary result"
 

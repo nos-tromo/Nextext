@@ -1,5 +1,7 @@
 """Tests for the hate speech detection agent."""
 
+from typing import Any, cast
+
 import pytest
 
 from nextext.core.hate_speech import (
@@ -134,19 +136,38 @@ def test_detector_calls_inference_pipeline(monkeypatch: pytest.MonkeyPatch) -> N
     """
     from nextext.core.openai_cfg import InferencePipeline
 
-    class DummyPipeline(InferencePipeline):
-        def __init__(self) -> None:
-            pass
+    class DummyPipeline:
+        """Structural stand-in for ``InferencePipeline`` used by the detector."""
 
         def load_prompt(self, keyword: str = "system") -> str:
+            """Return a stub prompt template for the hate-speech keyword.
+
+            Args:
+                keyword (str): The prompt keyword requested by the caller.
+
+            Returns:
+                str: A minimal template containing a ``{text}`` placeholder.
+            """
             assert keyword == "hate_speech"
             return "Analyze: {text}"
 
-        def call_model(self, prompt: str, **kwargs: object) -> str:
+        def call_model(self, prompt: str, **kwargs: Any) -> str:
+            """Return a canned JSON payload and assert the prompt content.
+
+            Args:
+                prompt (str): The formatted prompt passed by the detector.
+                **kwargs (Any): Remaining ``InferencePipeline.call_model``
+                    keyword arguments, ignored by this stub.
+
+            Returns:
+                str: A JSON string describing a clean (non-hate) result.
+            """
             assert "hello world" in prompt
             return '{"hate_speech": false, "category": "none", "confidence": "low", "reason": "clean"}'
 
-    detector = HateSpeechDetector(DummyPipeline(), max_chars=2048)
+    detector = HateSpeechDetector(
+        cast(InferencePipeline, DummyPipeline()), max_chars=2048
+    )
     result = detector.detect("hello world")
 
     assert result["hate_speech"] is False
@@ -163,18 +184,35 @@ def test_detector_truncates_text_to_max_chars(monkeypatch: pytest.MonkeyPatch) -
 
     received_prompts: list[str] = []
 
-    class DummyPipeline(InferencePipeline):
-        def __init__(self) -> None:
-            pass
+    class DummyPipeline:
+        """Structural stand-in for ``InferencePipeline`` that records prompts."""
 
         def load_prompt(self, keyword: str = "system") -> str:
+            """Return a passthrough template exposing the raw text argument.
+
+            Args:
+                keyword (str): The prompt keyword requested by the caller.
+
+            Returns:
+                str: A template consisting only of the ``{text}`` placeholder.
+            """
             return "{text}"
 
-        def call_model(self, prompt: str, **kwargs: object) -> str:
+        def call_model(self, prompt: str, **kwargs: Any) -> str:
+            """Capture the prompt and return a canned clean payload.
+
+            Args:
+                prompt (str): The formatted prompt passed by the detector.
+                **kwargs (Any): Remaining ``InferencePipeline.call_model``
+                    keyword arguments, ignored by this stub.
+
+            Returns:
+                str: A JSON string describing a clean (non-hate) result.
+            """
             received_prompts.append(prompt)
             return '{"hate_speech": false, "category": "none", "confidence": "low", "reason": ""}'
 
-    detector = HateSpeechDetector(DummyPipeline(), max_chars=5)
+    detector = HateSpeechDetector(cast(InferencePipeline, DummyPipeline()), max_chars=5)
     detector.detect("hello world")
 
     assert received_prompts[0] == "hello"
