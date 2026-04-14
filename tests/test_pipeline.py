@@ -428,7 +428,6 @@ def test_hate_speech_pipeline_returns_flagged_rows(
     Args:
         monkeypatch (pytest.MonkeyPatch): The monkeypatch fixture for modifying behavior.
     """
-    import nextext.core.hate_speech as hs_module
     from nextext.core.openai_cfg import InferencePipeline
 
     responses = iter(
@@ -455,7 +454,7 @@ def test_hate_speech_pipeline_returns_flagged_rows(
         def detect(self, text: str) -> dict:
             return next(responses)
 
-    monkeypatch.setattr(hs_module, "HateSpeechDetector", DummyDetector)
+    monkeypatch.setattr(pipeline, "HateSpeechDetector", DummyDetector)
 
     df = pd.DataFrame({"text": ["bad text", "good text"]})
     dummy_ip = InferencePipeline.__new__(InferencePipeline)

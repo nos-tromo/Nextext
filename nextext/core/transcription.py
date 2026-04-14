@@ -12,8 +12,28 @@ import torch
 import whisper
 from dotenv import load_dotenv
 from loguru import logger
+from openai import APIStatusError, OpenAI
 from pyannote.audio import Pipeline as DiarizationPipeline
 
+try:
+    from omegaconf import DictConfig, ListConfig
+except ImportError:  # pragma: no cover - optional dependency
+    DictConfig = None  # type: ignore[misc,assignment]
+    ListConfig = None  # type: ignore[misc,assignment]
+
+try:
+    from torch.torch_version import TorchVersion
+except ImportError:  # pragma: no cover - optional dependency
+    TorchVersion = None  # type: ignore[misc,assignment]
+
+try:
+    from pyannote.audio.core.task import Problem, Resolution, Specifications
+except ImportError:  # pragma: no cover - optional dependency
+    Problem = None  # type: ignore[misc,assignment]
+    Resolution = None  # type: ignore[misc,assignment]
+    Specifications = None  # type: ignore[misc,assignment]
+
+from nextext.utils.env_cfg import load_inference_env
 from nextext.utils.mappings_loader import load_mappings
 
 
@@ -36,32 +56,26 @@ def _configure_torch_safe_globals() -> None:
 
     safe_globals: list[Any] = []
 
-    try:
-        from omegaconf import DictConfig, ListConfig
-    except ImportError:
+    if DictConfig is not None and ListConfig is not None:
+        safe_globals.extend([DictConfig, ListConfig])
+    else:
         logger.debug(
             "OmegaConf is unavailable; skipping Torch safe-global registration."
         )
-    else:
-        safe_globals.extend([DictConfig, ListConfig])
 
-    try:
-        from torch.torch_version import TorchVersion
-    except ImportError:
+    if TorchVersion is not None:
+        safe_globals.append(TorchVersion)
+    else:
         logger.debug(
             "TorchVersion is unavailable; skipping Torch safe-global registration."
         )
-    else:
-        safe_globals.append(TorchVersion)
 
-    try:
-        from pyannote.audio.core.task import Problem, Resolution, Specifications
-    except ImportError:
+    if Problem is not None and Resolution is not None and Specifications is not None:
+        safe_globals.extend([Problem, Resolution, Specifications])
+    else:
         logger.debug(
             "Pyannote task classes are unavailable; skipping Torch safe-global registration."
         )
-    else:
-        safe_globals.extend([Problem, Resolution, Specifications])
 
     if safe_globals:
         add_safe_globals(safe_globals)
@@ -567,8 +581,6 @@ class ExternalWhisperTranscriber:
     def _get_client(self) -> Any:
         """Lazily create the OpenAI-compatible client from environment variables."""
         if self._client is None:
-            from openai import OpenAI
-
             client_kwargs: dict[str, Any] = {"api_key": os.getenv("OPENAI_API_KEY", "")}
             base_url = os.getenv("OPENAI_API_BASE", "").rstrip("/")
             if base_url:
@@ -583,10 +595,6 @@ class ExternalWhisperTranscriber:
         exposed by OpenAI-compatible servers as a separate ``/v1/audio/translations``
         endpoint. ``task`` itself is not accepted on either endpoint.
         """
-        from openai import APIStatusError
-
-        from nextext.utils.env_cfg import load_inference_env
-
         client = self._get_client
         file_size = self.file_path.stat().st_size
         logger.info(

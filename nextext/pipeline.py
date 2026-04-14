@@ -1,17 +1,19 @@
 """Shared pipeline entry points for Nextext processing stages."""
 
 from pathlib import Path
+from typing import Any
 
 import pandas as pd  # type: ignore[import-untyped]
 from matplotlib.figure import Figure
 
+from nextext.core.hate_speech import HateSpeechDetector
 from nextext.core.openai_cfg import InferencePipeline
 from nextext.core.translation import Translator
 from nextext.core.words import WordCounter
 from nextext.utils.env_cfg import load_transcription_env
 
-WhisperTranscriber = None
-ExternalWhisperTranscriber = None
+WhisperTranscriber: Any = None
+ExternalWhisperTranscriber: Any = None
 
 try:
     from nextext.core.transcription import (
@@ -21,10 +23,8 @@ try:
 except Exception:  # pragma: no cover - environment-specific optional dependency failure
     pass
 else:
-    WhisperTranscriber: type[_WhisperTranscriber] = _WhisperTranscriber
-    ExternalWhisperTranscriber: type[_ExternalWhisperTranscriber] = (
-        _ExternalWhisperTranscriber
-    )
+    WhisperTranscriber = _WhisperTranscriber
+    ExternalWhisperTranscriber = _ExternalWhisperTranscriber
 
 
 def transcription_pipeline(
@@ -209,8 +209,6 @@ def hate_speech_pipeline(
         list[dict]: Flagged segments, each containing hate_speech, category,
             confidence, reason, and text.
     """
-    from nextext.core.hate_speech import HateSpeechDetector
-
     detector = HateSpeechDetector(inference_pipeline, max_chars)
     results: list[dict] = []
     for _, row in df.iterrows():

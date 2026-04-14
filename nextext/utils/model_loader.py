@@ -207,8 +207,6 @@ def preload_spacy_models(model_ids: Iterable[str] | None = None) -> None:
 
 def _cleanup_torch_resources() -> None:
     """Release transient Torch resources after model preloading."""
-    import torch
-
     if hasattr(torch, "cuda") and torch.cuda.is_available():
         torch.cuda.empty_cache()
     gc.collect()
@@ -307,8 +305,6 @@ def _get_default_device() -> str:
     Returns:
         str: ``cuda`` when available, otherwise ``cpu``.
     """
-    import torch
-
     return "cuda" if torch.cuda.is_available() else "cpu"
 
 
