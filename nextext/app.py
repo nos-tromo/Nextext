@@ -1,14 +1,19 @@
 """Streamlit UI for the Nextext audio analysis workflow."""
 
+import io
 import sys
 import tempfile
+import zipfile
 from collections.abc import Callable, Sequence
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 import altair as alt
+import pandas as pd
 import pycountry
 import streamlit as st
+from matplotlib.figure import Figure
 from streamlit.web import cli as st_cli
 
 from nextext.core.openai_cfg import InferencePipeline
@@ -33,6 +38,123 @@ PIPELINE_STAGE_LABELS: tuple[str, ...] = (
     "Summarizing",
     "Detecting hate speech",
 )
+
+
+def _dataframe_to_excel_bytes(df: pd.DataFrame) -> bytes:
+    """Serialize a DataFrame to XLSX bytes using openpyxl.
+
+    Args:
+        df (pd.DataFrame): The DataFrame to serialize.
+
+    Returns:
+        bytes: XLSX bytes suitable for inclusion in a ZIP archive.
+    """
+    buffer = io.BytesIO()
+    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+        df.to_excel(writer, index=False, sheet_name="Sheet1")
+    return buffer.getvalue()
+
+
+def _build_results_archive(results: Sequence[dict[str, Any]]) -> bytes:
+    """Bundle every produced output for every processed file into a ZIP.
+
+    Outputs mirror the CLI labels (``transcript``, ``summary``, ``words``,
+    ``entities``, ``wordcloud``, ``hate_speech``). Each file lands inside a
+    per-upload subdirectory to keep filenames stable when upload stems
+    collide; the filename itself follows the
+    ``{original_stem}_{output_type}.{ext}`` pattern.
+
+    Args:
+        results (Sequence[dict[str, Any]]): Stored result entries.
+
+    Returns:
+        bytes: ZIP archive bytes ready to feed into ``st.download_button``.
+    """
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for index, result in enumerate(results, start=1):
+            original_name = str(result.get("file_name", f"result_{index}"))
+            stem = Path(original_name).stem or f"result_{index}"
+            base = f"{stem}/{stem}"
+
+            transcript = result.get("transcript")
+            if isinstance(transcript, pd.DataFrame) and not transcript.empty:
+                zf.writestr(
+                    f"{base}_transcript.csv",
+                    transcript.to_csv(index=False).encode("utf-8"),
+                )
+                zf.writestr(
+                    f"{base}_transcript.xlsx",
+                    _dataframe_to_excel_bytes(transcript),
+                )
+
+            summary = result.get("summary")
+            if isinstance(summary, str) and summary.strip():
+                zf.writestr(f"{base}_summary.txt", summary.encode("utf-8"))
+
+            word_counts = result.get("word_counts")
+            if isinstance(word_counts, pd.DataFrame) and not word_counts.empty:
+                zf.writestr(
+                    f"{base}_words.csv",
+                    word_counts.to_csv(index=False).encode("utf-8"),
+                )
+                zf.writestr(
+                    f"{base}_words.xlsx",
+                    _dataframe_to_excel_bytes(word_counts),
+                )
+
+            named_entities = result.get("named_entities")
+            if isinstance(named_entities, pd.DataFrame) and not named_entities.empty:
+                zf.writestr(
+                    f"{base}_entities.csv",
+                    named_entities.to_csv(index=False).encode("utf-8"),
+                )
+                zf.writestr(
+                    f"{base}_entities.xlsx",
+                    _dataframe_to_excel_bytes(named_entities),
+                )
+
+            wordcloud = result.get("wordcloud")
+            if isinstance(wordcloud, Figure):
+                png_buffer = io.BytesIO()
+                wordcloud.savefig(png_buffer, format="png", bbox_inches="tight")
+                zf.writestr(f"{base}_wordcloud.png", png_buffer.getvalue())
+
+            findings = result.get("hate_speech_findings")
+            if findings:
+                findings_df = pd.DataFrame(findings)
+                zf.writestr(
+                    f"{base}_hate_speech.csv",
+                    findings_df.to_csv(index=False).encode("utf-8"),
+                )
+                zf.writestr(
+                    f"{base}_hate_speech.xlsx",
+                    _dataframe_to_excel_bytes(findings_df),
+                )
+
+    return buffer.getvalue()
+
+
+def _results_archive_bytes(results: Sequence[dict[str, Any]]) -> bytes:
+    """Return cached archive bytes for the current results list.
+
+    The bytes are memoized in ``st.session_state`` keyed by the identity of
+    the results list, so switching tabs or selectors does not rebuild the
+    archive on every rerun.
+
+    Args:
+        results (Sequence[dict[str, Any]]): Stored result entries.
+
+    Returns:
+        bytes: ZIP archive bytes for the current results list.
+    """
+    cache_key = id(results)
+    cached = st.session_state.get("_results_archive")
+    if isinstance(cached, tuple) and cached[0] == cache_key:
+        return cached[1]
+    payload = _build_results_archive(results)
+    st.session_state["_results_archive"] = (cache_key, payload)
+    return payload
 
 
 def _language_name(lang_code: str | None) -> str:
@@ -430,9 +552,11 @@ def _start_page() -> None:
 
     if run and uploaded_files:
         results = _process_uploaded_files(uploaded_files, st.session_state["opts"])
+        st.session_state.pop("_results_archive", None)
         st.session_state["results"] = results
         st.session_state["result"] = results[0]
         st.session_state["selected_result_file"] = results[0]["file_name"]
+        st.session_state["results_timestamp"] = datetime.now().strftime("%Y%m%d_%H%M%S")
         st.success("Done! Select another tab to view results.")
 
 
@@ -476,6 +600,21 @@ def main() -> None:
             unsafe_allow_html=True,
         )
         return
+
+    archive_timestamp = st.session_state.get(
+        "results_timestamp"
+    ) or datetime.now().strftime("%Y%m%d_%H%M%S")
+    st.download_button(
+        label="⬇️ Download all outputs (ZIP)",
+        data=_results_archive_bytes(results),
+        file_name=f"{archive_timestamp}_nextext_output.zip",
+        mime="application/zip",
+        help=(
+            "Bundles every produced output (transcripts, summaries, word "
+            "tables, named entities, word clouds, hate-speech findings) for "
+            "every processed file."
+        ),
+    )
 
     selected_file_name = None
     if len(results) > 1:
