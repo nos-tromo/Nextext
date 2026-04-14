@@ -10,6 +10,7 @@ from importlib.metadata import PackageNotFoundError, version as package_version
 from pathlib import Path
 
 import nltk
+import whisper
 from dotenv import load_dotenv
 from gliner import GLiNER
 from loguru import logger
@@ -228,18 +229,31 @@ def _cleanup_torch_resources() -> None:
 
 
 def preload_whisper_model(model_id: str, device: str = "cpu") -> None:
-    """Preload an openai-whisper speech model into the local cache.
+    """Download an openai-whisper checkpoint into the local cache.
+
+    The weights are fetched to ``~/.cache/whisper`` (or ``XDG_CACHE_HOME``)
+    without being loaded into host memory, so preloading large checkpoints
+    does not require the RAM needed at inference time.
 
     Args:
         model_id (str): The Whisper model ID to preload.
-        device (str): Device used for the preload step.
+        device (str): Unused; retained for call-site compatibility.
     """
-    import whisper
+    del device
 
-    logger.info("Loading Whisper model '{}'.", model_id)
-    model = whisper.load_model(model_id, device=device)
-    del model
-    _cleanup_torch_resources()
+    if model_id not in whisper._MODELS:
+        raise ValueError(
+            f"Unknown Whisper model '{model_id}'. Available: {sorted(whisper._MODELS)}."
+        )
+
+    default_cache = os.path.join(os.path.expanduser("~"), ".cache")
+    download_root = os.path.join(os.getenv("XDG_CACHE_HOME", default_cache), "whisper")
+
+    logger.info("Downloading Whisper model '{}' to '{}'.", model_id, download_root)
+    checkpoint_path = whisper._download(
+        whisper._MODELS[model_id], download_root, in_memory=False
+    )
+    logger.info("Whisper model '{}' cached at '{}'.", model_id, checkpoint_path)
 
 
 def preload_whisper_models(
