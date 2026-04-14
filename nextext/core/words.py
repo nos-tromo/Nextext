@@ -74,7 +74,7 @@ def _resolve_hf_cache_path(cache_dir: Path, repo_id: str) -> Path | None:
 
     Args:
         cache_dir: HF hub cache directory (e.g. ~/.cache/huggingface/hub).
-        repo_id: HuggingFace repository ID (e.g. "urchade/gliner_multi-v2.1").
+        repo_id: HuggingFace repository ID (e.g. "gliner-community/gliner_large-v2.5").
 
     Returns:
         Path to the snapshot directory if found, otherwise None.

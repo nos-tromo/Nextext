@@ -28,7 +28,7 @@ DEFAULT_SPACY_MODEL_DOWNLOAD_BASE_URL = (
 )
 NLTK_RESOURCES = ("punkt_tab", "stopwords")
 WHISPER_LANGUAGE_DETECTION_MODEL = "small"
-GLINER_MODEL_ID = "urchade/gliner_multi-v2.1"
+GLINER_MODEL_ID = "gliner-community/gliner_large-v2.5"
 DIARIZATION_MODEL_ID = "pyannote/speaker-diarization-3.1"
 DIARIZATION_DEPENDENCY_IDS = ("pyannote/segmentation-3.0",)
 
