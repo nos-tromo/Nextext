@@ -36,7 +36,10 @@ services:
       <<: *proxy-env
       HF_HUB_OFFLINE: ${HF_HUB_OFFLINE:-false}
       HF_HUB_TOKEN: $HF_HUB_TOKEN
+      INFERENCE_PROVIDER: ${INFERENCE_PROVIDER:-ollama}
       LOG_PATH: /var/log/nextext/nextext.log
+      NER_MODEL: ${NER_MODEL:-}
+      NEXTEXT_OFFLINE: ${NEXTEXT_OFFLINE:-1}
       OPENAI_API_BASE: ${OPENAI_API_BASE}
       OPENAI_API_KEY: ${OPENAI_API_KEY}
       PRELOAD_MODELS: ${PRELOAD_MODELS:-false}
@@ -45,6 +48,7 @@ services:
       STREAMLIT_SERVER_MAX_UPLOAD_SIZE: 8192
       TEXT_MODEL: ${TEXT_MODEL:-}
       TRANSLATION_MODEL: ${TRANSLATION_MODEL:-}
+      WHISPER_MODEL: ${WHISPER_MODEL:-}
     volumes: &backend-volumes
       - huggingface-cache:/root/.cache/huggingface/hub
       - nextext-logs:/var/log/nextext
