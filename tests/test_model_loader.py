@@ -154,25 +154,6 @@ def test_get_spacy_model_download_url_uses_override_base_url(
     )
 
 
-def test_get_whisper_model_ids_includes_detection_model(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Test that Whisper preload includes the language-detection model.
-
-    Args:
-        monkeypatch (pytest.MonkeyPatch): The pytest fixture for modifying environment variables and functions.
-    """
-    monkeypatch.setattr(
-        model_loader,
-        "load_mappings",
-        lambda _: {"default_transcribe": "turbo", "default_translate": "large-v3"},
-    )
-
-    model_ids = model_loader.get_whisper_model_ids()
-
-    assert model_ids == ["large-v3", "small", "turbo"]
-
-
 def test_main_preloads_expected_model_groups(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -205,8 +186,8 @@ def test_main_preloads_expected_model_groups(
     )
     monkeypatch.setattr(
         model_loader,
-        "get_whisper_model_ids",
-        lambda: ["small", "turbo"],
+        "LOCAL_WHISPER_MODEL_IDS",
+        ("large-v3-turbo", "large-v3"),
     )
     monkeypatch.setattr(
         model_loader,
@@ -232,8 +213,8 @@ def test_main_preloads_expected_model_groups(
     assert calls == [
         ("nltk", "all"),
         ("spacy", "en_core_web_sm"),
-        ("whisper:cpu", "small"),
-        ("whisper:cpu", "turbo"),
+        ("whisper:cpu", "large-v3-turbo"),
+        ("whisper:cpu", "large-v3"),
         ("diarization:cpu", "secret-token"),
         ("gliner", model_loader.GLINER_MODEL_ID),
     ]

@@ -20,6 +20,11 @@ from nextext.utils.mappings_loader import load_mappings
 load_dotenv()
 HF_HUB_TOKEN = os.getenv("HF_HUB_TOKEN", "")
 
+LOCAL_WHISPER_MODELS: dict[str, str] = {
+    "transcribe": "large-v3-turbo",
+    "translate": "large-v3",
+}
+
 
 def _configure_torch_safe_globals() -> None:
     """Register safe globals needed for Pyannote checkpoints on Torch 2.6+."""
@@ -187,8 +192,8 @@ class WhisperTranscriber:
 
     Methods:
         _load_audio(file): Load audio file as numpy array.
-        _detect_language(duration_sec, sample_rate): Detect spoken language in the audio.
-        _load_transcription_model(model_id, whisper_model_file): Load Whisper model.
+        _detect_language(duration_sec, sample_rate): Detect spoken language and load large-v3-turbo.
+        _load_transcription_model(preloaded_model): Reuse or swap to the task-specific Whisper model.
         _load_diarization_model(auth_token): Load pyannote diarization pipeline.
         transcription(): Run transcription on the loaded audio file.
         _assign_speakers(diarization_result): Assign speakers from diarization to segments.
@@ -201,7 +206,6 @@ class WhisperTranscriber:
         file_path: Path,
         trg_lang: str,
         src_lang: str | None = None,
-        model_id: str = "default",
         task: str = "transcribe",
         n_speakers: int = 1,
         start_column: str = "start",
@@ -209,7 +213,6 @@ class WhisperTranscriber:
         speaker_column: str = "speaker",
         text_column: str = "text",
         whisper_language_file: str = "whisper_languages.json",
-        whisper_model_file: str = "whisper_models.json",
     ) -> None:
         """Initialize the WhisperTranscriber object.
 
@@ -217,7 +220,6 @@ class WhisperTranscriber:
             file_path (Path): The path to the input file.
             trg_lang (str): The target language for translation.
             src_lang (str, optional): The source language of the file. Defaults to None, which triggers language detection.
-            model_id (str, optional): The size of the Whisper model. Defaults to "default".
             task (str): Indicates whether the task is transcription or translation. Defaults to "transcribe".
             n_speakers (int): The maximum number of speakers to identify in the audio. Defaults to 1.
             start_column (str): The text column with the starting timestamp. Defaults to "start".
@@ -225,7 +227,6 @@ class WhisperTranscriber:
             speaker_column (str): The text column with the speaker information. Defaults to "speaker".
             text_column (str): The text column where the result is stored. Defaults to "text".
             whisper_language_file (str): Path to the Whisper language mapping file.
-            whisper_model_file (str): Path to the Whisper model configuration file.
         """
         self.n_speakers = n_speakers
         self.start_column = start_column
@@ -238,17 +239,17 @@ class WhisperTranscriber:
         self.audio = self._load_audio(file_path)
         _configure_torch_safe_globals()
 
-        # Select or detect language
+        # Detect language with the transcribe model so it can be reused when the
+        # resolved task is "transcribe" (avoids loading the model twice).
         whisper_languages = load_mappings(whisper_language_file)
-        det_lang = self._detect_language() or "en"
+        det_lang, detect_model = self._detect_language()
+        det_lang = det_lang or "en"
         self.src_lang = src_lang if src_lang in whisper_languages.keys() else det_lang
         self.task = "transcribe" if det_lang == trg_lang else task
         logger.info("Using language '{}' for task '{}'", self.src_lang, self.task)
 
-        # Load the transcription model
-        self.transcribe_model = self._load_transcription_model(
-            model_id, whisper_model_file
-        )
+        # Load the transcription model (reusing detect_model when compatible).
+        self.transcribe_model = self._load_transcription_model(detect_model)
         self.diarize_model: DiarizationPipeline | None = None
         if self.n_speakers > 1 and not auth_token:
             logger.warning(
@@ -276,68 +277,79 @@ class WhisperTranscriber:
 
     def _detect_language(
         self, duration_sec: float = 30.0, sample_rate: int = 16000
-    ) -> str | None:
-        """Detect the spoken language using a small Whisper model and mel spectrogram analysis.
-        This method processes only the first `duration_sec` seconds of audio.
+    ) -> tuple[str | None, Any]:
+        """Detect the spoken language and return the loaded Whisper model.
+
+        Loads ``large-v3-turbo`` once and uses it for mel-spectrogram-based
+        language detection on the first ``duration_sec`` seconds of audio. The
+        loaded model is returned so the caller can reuse it for the transcribe
+        task without paying a second load.
 
         Args:
             duration_sec (float): Number of seconds from the start of the audio to use for detection.
             sample_rate (int): Sample rate for the audio processing. Defaults to 16000.
 
         Returns:
-            str: Detected language code (e.g., "en", "de"), or None if detection fails.
+            tuple[str | None, Any]: Detected language code (e.g., ``"en"``) and
+            the loaded Whisper model.
 
         Raises:
             RuntimeError: If language detection fails.
         """
         sample_frames = int(duration_sec * sample_rate)
-        logger.info("Detecting language using openai-whisper...")
-        model = whisper.load_model("small", device=self.transcription_device)
-        try:
-            audio_clip = whisper.pad_or_trim(self.audio[:sample_frames])
-            mel = whisper.log_mel_spectrogram(audio_clip, n_mels=model.dims.n_mels).to(
-                model.device
-            )
-            _, probs = model.detect_language(mel)
-            detected_lang = max(probs, key=probs.get)
-        finally:
-            del model
-            if hasattr(torch, "cuda") and torch.cuda.is_available():
-                torch.cuda.empty_cache()
-            gc.collect()
+        detection_model_id = LOCAL_WHISPER_MODELS["transcribe"]
+        logger.info(
+            "Loading Whisper model '{}' for language detection...", detection_model_id
+        )
+        model = whisper.load_model(detection_model_id, device=self.transcription_device)
+        audio_clip = whisper.pad_or_trim(self.audio[:sample_frames])
+        mel = whisper.log_mel_spectrogram(audio_clip, n_mels=model.dims.n_mels).to(
+            model.device
+        )
+        _, probs = model.detect_language(mel)
+        detected_lang = max(probs, key=probs.get)
 
         if not detected_lang:
             raise RuntimeError("Language detection failed.")
 
         logger.info("Detected language: {}", detected_lang)
-        return detected_lang
+        return detected_lang, model
 
-    def _load_transcription_model(self, model_id: str, whisper_model_file: str) -> Any:
-        """Load the Whisper model for transcription.
+    def _load_transcription_model(self, preloaded_model: Any) -> Any:
+        """Resolve the Whisper model used for the chosen task.
+
+        Reuses ``preloaded_model`` (the ``large-v3-turbo`` instance already
+        loaded for language detection) when ``self.task == "transcribe"``. For
+        the translate task the preloaded model is released and ``large-v3`` is
+        loaded in its place.
 
         Args:
-            model_id (str): The size of the Whisper model (tiny, base, small, medium, large, turbo).
-            whisper_model_file (str): Path to the Whisper model configuration file.
+            preloaded_model (Any): The Whisper model returned by
+                :meth:`_detect_language`.
 
         Returns:
-            Any: The loaded Whisper model for transcription.
-
-        Raises:
-            ValueError: If the model configuration is invalid.
+            Any: The Whisper model to use for transcription.
         """
-        model_config = load_mappings(whisper_model_file)
-        config_key = f"{model_id}_{self.task}" if model_id == "default" else model_id
-        mapped_model_id = model_config.get(config_key)
+        if self.task == "transcribe":
+            logger.info(
+                "Reusing Whisper model '{}' for task '{}'.",
+                LOCAL_WHISPER_MODELS["transcribe"],
+                self.task,
+            )
+            return preloaded_model
 
-        if mapped_model_id is None:
-            raise ValueError(f"Invalid model configuration for key '{config_key}'.")
+        del preloaded_model
+        if hasattr(torch, "cuda") and torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        gc.collect()
 
+        translate_model_id = LOCAL_WHISPER_MODELS["translate"]
         logger.info(
             "Loading Whisper model '{}' for task '{}'...",
-            mapped_model_id,
+            translate_model_id,
             self.task,
         )
-        return whisper.load_model(mapped_model_id, device=self.transcription_device)
+        return whisper.load_model(translate_model_id, device=self.transcription_device)
 
     def _load_diarization_model(self, auth_token: str) -> DiarizationPipeline:
         """Load the pyannote diarization pipeline.

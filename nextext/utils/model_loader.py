@@ -9,13 +9,16 @@ from collections.abc import Iterable
 from importlib.metadata import PackageNotFoundError, version as package_version
 from pathlib import Path
 
-import nltk
-import whisper
+import nltk  # type: ignore[import-untyped]
+import torch
+import whisper  # type: ignore[import-untyped]
 from dotenv import load_dotenv
-from gliner import GLiNER
+from gliner import GLiNER  # type: ignore[import-untyped]
 from loguru import logger
+from pyannote.audio import Pipeline as DiarizationPipeline  # type: ignore[import-untyped]
 
 from nextext.utils.mappings_loader import load_mappings
+from nextext.core.transcription import _configure_torch_safe_globals
 
 
 load_dotenv()
@@ -28,7 +31,7 @@ DEFAULT_SPACY_MODEL_DOWNLOAD_BASE_URL = (
     "https://github.com/explosion/spacy-models/releases/download"
 )
 NLTK_RESOURCES = ("punkt_tab", "stopwords")
-WHISPER_LANGUAGE_DETECTION_MODEL = "small"
+LOCAL_WHISPER_MODEL_IDS: tuple[str, ...] = ("large-v3-turbo", "large-v3")
 GLINER_MODEL_ID = "gliner-community/gliner_large-v2.5"
 DIARIZATION_MODEL_ID = "pyannote/speaker-diarization-3.1"
 DIARIZATION_DEPENDENCY_IDS = ("pyannote/segmentation-3.0",)
@@ -147,23 +150,6 @@ def get_spacy_model_ids(
     return sorted(set(spacy_models.values()))
 
 
-def get_whisper_model_ids(
-    whisper_models_file: str = "whisper_models.json",
-) -> list[str]:
-    """Return the distinct Whisper model IDs used by Nextext.
-
-    Args:
-        whisper_models_file (str): Mapping file containing model aliases.
-
-    Returns:
-        list[str]: Sorted Whisper model IDs including the detection model.
-    """
-    whisper_models = load_mappings(whisper_models_file)
-    model_ids = set(whisper_models.values())
-    model_ids.add(WHISPER_LANGUAGE_DETECTION_MODEL)
-    return sorted(model_ids)
-
-
 def ensure_nltk_resources(resources: Iterable[str] = NLTK_RESOURCES) -> None:
     """Download the NLTK resources required by Nextext.
 
@@ -260,14 +246,14 @@ def preload_whisper_models(
     model_ids: Iterable[str] | None = None,
     device: str = "cpu",
 ) -> None:
-    """Preload the WhisperX ASR models used by Nextext.
+    """Preload the local openai-whisper models used by Nextext.
 
     Args:
         model_ids (Iterable[str] | None): Optional explicit model IDs to
-            preload.
+            preload. Defaults to :data:`LOCAL_WHISPER_MODEL_IDS`.
         device (str): Device used for the preload step.
     """
-    resolved_model_ids = list(model_ids or get_whisper_model_ids())
+    resolved_model_ids = list(model_ids or LOCAL_WHISPER_MODEL_IDS)
     for model_id in resolved_model_ids:
         preload_whisper_model(model_id, device=device)
 
@@ -290,11 +276,6 @@ def preload_diarization_model(
             ", ".join(DIARIZATION_DEPENDENCY_IDS),
         )
         return
-
-    import torch
-    from pyannote.audio import Pipeline as DiarizationPipeline
-
-    from nextext.core.transcription import _configure_torch_safe_globals
 
     _configure_torch_safe_globals()
     logger.info("Loading diarization model '{}'.", DIARIZATION_MODEL_ID)
@@ -352,7 +333,7 @@ def main() -> None:
         except Exception as exc:
             failures.append(f"spaCy {model_id} ({exc})")
 
-    for model_id in get_whisper_model_ids():
+    for model_id in LOCAL_WHISPER_MODEL_IDS:
         try:
             preload_whisper_model(model_id, device=device)
         except Exception as exc:

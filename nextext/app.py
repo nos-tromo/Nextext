@@ -7,10 +7,10 @@ import zipfile
 from collections.abc import Callable, Sequence
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import altair as alt
-import pandas as pd
+import pandas as pd  # type: ignore[import-untyped]
 import pycountry
 import streamlit as st
 from matplotlib.figure import Figure
@@ -50,7 +50,7 @@ def _dataframe_to_excel_bytes(df: pd.DataFrame) -> bytes:
         bytes: XLSX bytes suitable for inclusion in a ZIP archive.
     """
     buffer = io.BytesIO()
-    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+    with pd.ExcelWriter(cast(Any, buffer), engine="openpyxl") as writer:
         df.to_excel(writer, index=False, sheet_name="Sheet1")
     return buffer.getvalue()
 
@@ -327,7 +327,6 @@ def _run_pipeline(
         file_path=tmp_file,
         trg_lang=file_opts["trg_lang"],
         src_lang=file_opts["src_lang"],
-        model_id=file_opts["model_id"],
         task=file_opts["task"],
         n_speakers=file_opts["speakers"],
     )
@@ -499,7 +498,9 @@ def _start_page() -> None:
 
     # Load source language mappings from Whisper and target language mappings for translation.
     src_lang_maps, src_lang_names = load_and_sort_mappings("whisper_languages.json")
-    trg_lang_maps, trg_lang_names = load_and_sort_mappings("translation_languages.json")
+    trg_lang_maps, trg_lang_names = load_and_sort_mappings(
+        "translategemma_languages.json"
+    )
     default_trg_lang_index, default_trg_lang_code = _default_target_language(
         language_maps=trg_lang_maps,
         language_names=trg_lang_names,
@@ -512,11 +513,6 @@ def _start_page() -> None:
         src_lang_name = st.selectbox(
             "Source language",
             ["Detect language"] + src_lang_names,
-            index=0,
-        )
-        model_id = st.selectbox(
-            "Whisper model",
-            ["default", "large-v3", "large-v2", "medium", "small", "base", "tiny"],
             index=0,
         )
         words = st.checkbox("Word-level analysis")
@@ -542,7 +538,6 @@ def _start_page() -> None:
     st.session_state["opts"] = dict(
         src_lang=src_lang_code,
         trg_lang=trg_lang_code,
-        model_id=model_id,
         task=task,
         speakers=speakers,
         words=words,

@@ -89,14 +89,6 @@ def parse_arguments(args_list: list | None = None) -> argparse.Namespace:
         help="Specify the language code (ISO 639-1) of the target language (default: 'de').",
     )
     parser.add_argument(
-        "-m",
-        "--model",
-        dest="model_id",
-        type=str,
-        default="default",
-        help="Specify the model size for Whisper (default: 'default' = 'turbo').",
-    )
-    parser.add_argument(
         "-t",
         "--task",
         dest="task",
@@ -177,7 +169,6 @@ def main() -> None:
             file_path=args.file_path,
             trg_lang=args.trg_lang,
             src_lang=args.src_lang,
-            model_id=args.model_id,
             task=args.task,
             n_speakers=args.speakers,
         )

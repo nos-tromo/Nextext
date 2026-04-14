@@ -2,12 +2,10 @@
 
 from pathlib import Path
 
-import pandas as pd
+import pandas as pd  # type: ignore[import-untyped]
 import pytest
 
 from nextext import pipeline
-
-pytest.importorskip("pandas")
 
 
 @pytest.fixture
@@ -60,6 +58,7 @@ def test_transcription_pipeline_invokes_transcriber(
     Args:
         monkeypatch (pytest.MonkeyPatch): The monkeypatch fixture for modifying behavior.
     """
+    monkeypatch.setenv("INFERENCE_PROVIDER", "ollama")
 
     class DummyTranscriber:
         """A dummy transcriber class to test the transcription pipeline without relying
@@ -74,7 +73,6 @@ def test_transcription_pipeline_invokes_transcriber(
             file_path: Path,
             trg_lang: str,
             src_lang: str,
-            model_id: str,
             task: str,
             n_speakers: int,
         ) -> None:
@@ -84,7 +82,6 @@ def test_transcription_pipeline_invokes_transcriber(
                 file_path (Path): Path to the audio file.
                 trg_lang (str): Target language code.
                 src_lang (str): Source language code.
-                model_id (str): Model ID for the transcription model.
                 task (str): Task to perform (transcribe or translate).
                 n_speakers (int): Number of speakers for diarization.
             """
@@ -92,7 +89,6 @@ def test_transcription_pipeline_invokes_transcriber(
                 "file_path": file_path,
                 "trg_lang": trg_lang,
                 "src_lang": src_lang,
-                "model_id": model_id,
                 "task": task,
                 "n_speakers": n_speakers,
             }
@@ -123,7 +119,6 @@ def test_transcription_pipeline_invokes_transcriber(
         file_path=Path("/tmp/audio.wav"),
         trg_lang="en",
         src_lang="auto",
-        model_id="base",
         task="transcribe",
         n_speakers=2,
     )
@@ -145,6 +140,7 @@ def test_transcription_pipeline_falls_back_to_original_language(
     Args:
         monkeypatch (pytest.MonkeyPatch): The monkeypatch fixture for modifying behavior.
     """
+    monkeypatch.setenv("INFERENCE_PROVIDER", "ollama")
 
     class DummyTranscriber:
         """A dummy transcriber class to test the transcription pipeline's language fallback
@@ -185,7 +181,6 @@ def test_transcription_pipeline_falls_back_to_original_language(
         file_path=Path("/tmp/audio.wav"),
         trg_lang="en",
         src_lang="es",
-        model_id="base",
         task="transcribe",
         n_speakers=1,
     )

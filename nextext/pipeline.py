@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-import pandas as pd
+import pandas as pd  # type: ignore[import-untyped]
 from matplotlib.figure import Figure
 
 from nextext.core.openai_cfg import InferencePipeline
@@ -21,29 +21,30 @@ try:
 except Exception:  # pragma: no cover - environment-specific optional dependency failure
     pass
 else:
-    WhisperTranscriber = _WhisperTranscriber
-    ExternalWhisperTranscriber = _ExternalWhisperTranscriber
+    WhisperTranscriber: type[_WhisperTranscriber] = _WhisperTranscriber
+    ExternalWhisperTranscriber: type[_ExternalWhisperTranscriber] = (
+        _ExternalWhisperTranscriber
+    )
 
 
 def transcription_pipeline(
     file_path: Path,
     trg_lang: str,
     src_lang: str,
-    model_id: str,
     task: str,
     n_speakers: int,
 ) -> tuple[pd.DataFrame, str]:
     """Transcribe the audio file using either a local Whisper model or an external API.
 
-    The transcription provider is selected via the ``TRANSCRIPTION_PROVIDER`` environment
-    variable (``local`` by default; set to ``external`` to use an OpenAI-compatible
-    Whisper API). External transcription does not support diarization.
+    The transcription provider is derived from ``INFERENCE_PROVIDER``: ``ollama``
+    runs the bundled ``openai-whisper`` locally, while ``openai`` and ``vllm``
+    forward the audio to an OpenAI-compatible ``/v1/audio/transcriptions``
+    endpoint. External transcription does not support diarization.
 
     Args:
         file_path (Path): Path to the audio file.
         trg_lang (str): Target language code for translation check.
         src_lang (str): Source language code.
-        model_id (str): Model ID for local Whisper. Ignored for external provider.
         task (str): Task to perform (transcribe or translate).
         n_speakers (int): Number of speakers for diarization (local provider only).
 
@@ -58,37 +59,34 @@ def transcription_pipeline(
             raise RuntimeError(
                 "Transcription dependencies could not be imported. Please verify the openai package installation."
             )
-        transcriber = ExternalWhisperTranscriber(
+        external_transcriber = ExternalWhisperTranscriber(
             file_path=file_path,
             trg_lang=trg_lang,
             src_lang=src_lang,
             model_id=config.whisper_model,
             task=task,
         )
-        transcriber.transcription()
-        df = transcriber.transcript_output()
-        updated_src_lang = transcriber.src_lang
-        updated_src_lang = updated_src_lang if updated_src_lang else src_lang
+        external_transcriber.transcription()
+        df = external_transcriber.transcript_output()
+        updated_src_lang = external_transcriber.src_lang or src_lang
         return df, updated_src_lang
     else:
         if WhisperTranscriber is None:
             raise RuntimeError(
                 "Transcription dependencies could not be imported. Please verify the openai-whisper and torchaudio installation."
             )
-        transcriber = WhisperTranscriber(
+        local_transcriber = WhisperTranscriber(
             file_path=file_path,
             trg_lang=trg_lang,
             src_lang=src_lang,
-            model_id=model_id,
             task=task,
             n_speakers=n_speakers,
         )
-        transcriber.transcription()
+        local_transcriber.transcription()
         if n_speakers > 1:
-            transcriber.diarization()
-        df = transcriber.transcript_output()
-        updated_src_lang = transcriber.src_lang
-        updated_src_lang = updated_src_lang if updated_src_lang else src_lang
+            local_transcriber.diarization()
+        df = local_transcriber.transcript_output()
+        updated_src_lang = local_transcriber.src_lang or src_lang
         return df, updated_src_lang
 
 

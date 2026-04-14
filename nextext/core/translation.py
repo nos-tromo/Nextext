@@ -11,13 +11,13 @@ class Translator:
 
     def __init__(
         self,
-        translation_language_file: str = "translation_languages.json",
+        translation_language_file: str = "translategemma_languages.json",
         inference_pipeline: InferencePipeline | None = None,
     ) -> None:
         """Initialize the Translator.
 
         Args:
-            translation_language_file (str, optional): _description_. Defaults to "translation_languages.json".
+            translation_language_file (str, optional): _description_. Defaults to "translategemma_languages.json".
             inference_pipeline (InferencePipeline | None, optional): _description_. Defaults to None.
         """
         self.languages = load_mappings(translation_language_file)

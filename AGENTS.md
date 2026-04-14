@@ -27,11 +27,11 @@ Nextext breaks the speech-to-insight workflow into specialized agents (self-cont
 
 - **Key files:** `nextext/core/transcription.py`, `transcription_pipeline()` (`nextext/pipeline.py`).
 - **Responsibilities:** Load audio, auto-detect language when not provided, run openai-whisper transcription, optional pyannote-based diarization (`n_speakers > 1`), and emit a normalized DataFrame used by every downstream agent.
-- **Inputs:** `Path` to audio/video, Whisper model id (`default` resolves via `nextext/utils/mappings/whisper_models.json`), task (`transcribe` or `translate`), target ISO code, optional source code, speaker count.
+- **Inputs:** `Path` to audio/video, task (`transcribe` or `translate`), target ISO code, optional source code, speaker count.
 - **Outputs:** `pd.DataFrame` with `start`, `end`, `speaker`, `text`; detected source language stored in `WhisperTranscriber.src_lang`.
-- **Providers:** Set `TRANSCRIPTION_PROVIDER=local` (default) to use the bundled openai-whisper model, or `TRANSCRIPTION_PROVIDER=external` to forward the audio to any OpenAI-compatible `/v1/audio/transcriptions` endpoint (configured via `OPENAI_API_BASE`, `OPENAI_API_KEY`, `WHISPER_MODEL`). External mode uses `ExternalWhisperTranscriber` and does not support diarization.
+- **Providers:** Derived from `INFERENCE_PROVIDER`. `ollama` (default) runs local openai-whisper with hardcoded models (`large-v3-turbo` for transcribe, `large-v3` for translate). `openai` and `vllm` forward the audio to an OpenAI-compatible `/v1/audio/transcriptions` endpoint via `ExternalWhisperTranscriber` (no diarization). The external model defaults to `whisper-1` (openai) or `openai/whisper-large-v3` (vllm) and can be overridden via `WHISPER_MODEL`.
 - **Dependencies:** `openai-whisper`, `torch`, `pyannote-audio` (diarization only, gated by Hugging Face token). GPU detection is automatic.
-- **Operational notes:** Language detection uses a small Whisper model with mel spectrogram analysis. Diarization assigns speakers via maximum segment overlap from the pyannote timeline. Speaker column is omitted when `n_speakers == 1`.
+- **Operational notes:** The `large-v3-turbo` model is loaded once and reused for both mel-spectrogram language detection and the transcribe task; the translate task releases it and loads `large-v3`. Diarization assigns speakers via maximum segment overlap from the pyannote timeline. Speaker column is omitted when `n_speakers == 1`.
 
 ## Translation Agent
 

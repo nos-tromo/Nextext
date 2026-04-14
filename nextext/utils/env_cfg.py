@@ -66,17 +66,34 @@ class InferenceConfig:
     provider: str  # one of VALID_INFERENCE_PROVIDERS
 
 
+EXTERNAL_WHISPER_DEFAULTS: dict[str, str] = {
+    "openai": "whisper-1",
+    "vllm": "openai/whisper-large-v3",
+}
+
+
 def load_transcription_env() -> TranscriptionConfig:
-    """Loads transcription provider configuration from environment variables.
+    """Loads transcription provider configuration derived from ``INFERENCE_PROVIDER``.
 
     Returns:
         TranscriptionConfig: Dataclass containing transcription configuration.
-        - provider (str): Transcription provider — "local" (default) or "external".
-        - whisper_model (str): Model name to send to the external API.
+        - provider (str): ``"local"`` when ``INFERENCE_PROVIDER=ollama`` (the
+          default), otherwise ``"external"``.
+        - whisper_model (str): Model name used by the external Whisper API.
+          Empty string in local mode. Defaults to ``whisper-1`` for ``openai``
+          and ``openai/whisper-large-v3`` for ``vllm``; ``WHISPER_MODEL``
+          overrides the default when set to a non-empty value.
     """
+    inference_provider = load_inference_env().provider
+
+    if inference_provider == "ollama":
+        return TranscriptionConfig(provider="local", whisper_model="")
+
+    default_model = EXTERNAL_WHISPER_DEFAULTS[inference_provider]
+    override = os.getenv("WHISPER_MODEL", "").strip()
     return TranscriptionConfig(
-        provider=os.getenv("TRANSCRIPTION_PROVIDER", "local").lower(),
-        whisper_model=os.getenv("WHISPER_MODEL", "whisper-1"),
+        provider="external",
+        whisper_model=override or default_model,
     )
 
 

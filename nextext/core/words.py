@@ -10,18 +10,19 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
-import arabic_reshaper
-import matplotlib.pyplot as plt
-import pandas as pd
+import arabic_reshaper  # type: ignore[import-untyped]
+import matplotlib.pyplot as plt  # type: ignore[import-untyped]
+import pandas as pd  # type: ignore[import-untyped]
 import spacy
-from bidi.algorithm import get_display
-from camel_tools.tokenizers.word import simple_word_tokenize
+from bidi.algorithm import get_display  # type: ignore[import-untyped]
+from camel_tools.tokenizers.word import simple_word_tokenize  # type: ignore[import-untyped]
 from dotenv import load_dotenv
+from gliner import GLiNER  # type: ignore[import-untyped]
 from loguru import logger
 from matplotlib.figure import Figure
 from spacy.language import Language
 from spacy.tokens import Doc
-from wordcloud import WordCloud
+from wordcloud import WordCloud  # type: ignore[import-untyped]
 
 from nextext.utils.font_loader import load_font_file
 from nextext.utils.mappings_loader import load_mappings
@@ -253,8 +254,6 @@ def _get_gliner_model() -> Any:
         return _gliner_model
     with _gliner_lock:
         if _gliner_model is None:
-            from gliner import GLiNER  # noqa: PLC0415
-
             cache_dir = _resolve_hf_cache_dir()
             load_target, local_only = _resolve_gliner_load_target(
                 _GLINER_MODEL_ID, cache_dir
