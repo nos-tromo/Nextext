@@ -25,6 +25,8 @@ LOCAL_WHISPER_MODELS: dict[str, str] = {
     "translate": "large-v3",
 }
 
+OPENAI_WHISPER_MAX_UPLOAD_BYTES: int = 25 * 1024 * 1024
+
 
 def _configure_torch_safe_globals() -> None:
     """Register safe globals needed for Pyannote checkpoints on Torch 2.6+."""
@@ -575,17 +577,64 @@ class ExternalWhisperTranscriber:
         return self._client
 
     def transcription(self) -> None:
-        """Call the external Whisper API and store the segment results."""
+        """Call the external Whisper API and store the segment results.
+
+        Whisper's built-in ``translate`` task always targets English and is
+        exposed by OpenAI-compatible servers as a separate ``/v1/audio/translations``
+        endpoint. ``task`` itself is not accepted on either endpoint.
+        """
+        from openai import APIStatusError
+
+        from nextext.utils.env_cfg import load_inference_env
+
         client = self._get_client
-        with open(self.file_path, "rb") as f:
-            response = client.audio.transcriptions.create(
-                model=self._model_id,
-                file=f,
-                response_format="verbose_json",
-                timestamp_granularities=["segment"],
-                language=self.src_lang,
-                task=self.task,
+        file_size = self.file_path.stat().st_size
+        logger.info(
+            "External Whisper request: model='{}' task='{}' language='{}' file='{}' size={}B",
+            self._model_id,
+            self.task,
+            self.src_lang,
+            self.file_path.name,
+            file_size,
+        )
+        provider = load_inference_env().provider
+        if provider == "openai" and file_size > OPENAI_WHISPER_MAX_UPLOAD_BYTES:
+            size_mb = file_size / (1024 * 1024)
+            limit_mb = OPENAI_WHISPER_MAX_UPLOAD_BYTES / (1024 * 1024)
+            raise ValueError(
+                f"Audio file '{self.file_path.name}' is {size_mb:.1f} MB, "
+                f"which exceeds OpenAI's {limit_mb:.0f} MB Whisper upload limit. "
+                "Compress or split the file before retrying, or switch "
+                "INFERENCE_PROVIDER to 'ollama' (local) or 'vllm' (self-hosted, "
+                "no hard cap)."
             )
+        try:
+            with open(self.file_path, "rb") as f:
+                if self.task == "translate":
+                    response = client.audio.translations.create(
+                        model=self._model_id,
+                        file=f,
+                        response_format="verbose_json",
+                    )
+                else:
+                    kwargs: dict[str, Any] = {
+                        "model": self._model_id,
+                        "file": f,
+                        "response_format": "verbose_json",
+                        "timestamp_granularities": ["segment"],
+                    }
+                    if self.src_lang:
+                        kwargs["language"] = self.src_lang
+                    response = client.audio.transcriptions.create(**kwargs)
+        except APIStatusError as exc:
+            body = getattr(exc, "response", None)
+            body_text = body.text if body is not None else ""
+            logger.error(
+                "External Whisper API error {}: {}",
+                exc.status_code,
+                body_text or exc.message,
+            )
+            raise
         segments = []
         for seg in response.segments:
             segments.append(
