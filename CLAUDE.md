@@ -36,6 +36,7 @@ mypy --no-incremental --ignore-missing-imports --disable-error-code=import-untyp
 **Agent-based design:** Each feature is a stateless agent (module) with narrow input/output. Orchestrators (Streamlit UI or CLI) manage state and compose agents via shared pipelines.
 
 **Pipeline flow:**
+
 1. **Transcription** (always-on) → WhisperX transcription + optional diarization → `pd.DataFrame`
 2. **Translation** (optional) → LLM-based segment translation via `InferencePipeline`
 3. **Word-level analysis** (optional) → word counts, named entities, sentiment, graphs, word clouds
@@ -43,14 +44,15 @@ mypy --no-incremental --ignore-missing-imports --disable-error-code=import-untyp
 5. **File export** (CLI only) → `.txt`, `.csv`, `.xlsx`, `.png` to `output/<input-file>/`
 
 **Key modules:**
+
 - `nextext/app.py` — Streamlit UI entry point, session state orchestration
 - `nextext/cli.py` — CLI entry point (Typer), argument parsing, batch processing
 - `nextext/pipeline.py` — Shared pipeline functions connecting all agents
-- `nextext/modules/transcription.py` — WhisperX transcription & speaker diarization
-- `nextext/modules/translation.py` — LLM translation with prompt templates
-- `nextext/modules/words.py` — NLP word-level analysis (spaCy, NLTK)
-- `nextext/modules/openai_cfg.py` — `InferencePipeline` for OpenAI-compatible LLM calls
-- `nextext/modules/processing.py` — File I/O and export formatting
+- `nextext/core/transcription.py` — WhisperX transcription & speaker diarization
+- `nextext/core/translation.py` — LLM translation with prompt templates
+- `nextext/core/words.py` — NLP word-level analysis (spaCy, NLTK)
+- `nextext/core/openai_cfg.py` — `InferencePipeline` for OpenAI-compatible LLM calls
+- `nextext/core/processing.py` — File I/O and export formatting
 - `nextext/utils/mappings/` — JSON config files for Whisper/spaCy model names, language codes
 - `nextext/utils/prompts/` — LLM prompt templates (system, translation, summary)
 
@@ -59,6 +61,7 @@ See `AGENTS.md` for detailed agent documentation including I/O contracts and how
 ## Environment
 
 Key env vars (see `.env.example`):
+
 - `INFERENCE_PROVIDER` — `ollama` (default), `vllm`, or `openai`. Selects the translation prompt format: `ollama`/`openai` use the templated prompt in `nextext/utils/prompts/translation.txt`, while `vllm` sends a single-user-message delimiter format (`<<<source>>>...<<<target>>>...<<<text>>>...`) required by `Infomaniak-AI/vllm-translategemma-4b-it`.
 - `HF_HUB_TOKEN` — required for diarization models
 - `OPENAI_API_KEY`, `OPENAI_API_BASE` — OpenAI-compatible endpoint credentials; shared across translation, summarization, and hate-speech detection, so in `vllm` mode the LiteLLM proxy must expose both `TEXT_MODEL` and `TRANSLATION_MODEL` on the same endpoint.
