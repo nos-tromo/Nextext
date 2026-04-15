@@ -32,7 +32,7 @@ services:
         <<: *build-args
     ports: &nextext-ports
       - ${NEXTEXT_HOST_PORT:-8501}:8501
-    environment: &backend-env
+    environment: &nextext-env
       <<: *proxy-env
       HF_HUB_OFFLINE: ${HF_HUB_OFFLINE:-false}
       HF_HUB_TOKEN: $HF_HUB_TOKEN
@@ -49,16 +49,17 @@ services:
       TEXT_MODEL: ${TEXT_MODEL:-}
       TRANSLATION_MODEL: ${TRANSLATION_MODEL:-}
       WHISPER_MODEL: ${WHISPER_MODEL:-}
-    volumes: &backend-volumes
+    volumes: &nextext-volumes
       - huggingface-cache:/root/.cache/huggingface/hub
       - nextext-logs:/var/log/nextext
       - nltk-cache:/root/nltk_data
       - spacy-cache:/root/.cache/spacy
       - torch-cache:/root/.cache/torch
       - whisper-cache:/root/.cache/whisper
-    networks:
-      nextext-net:
+    networks: &nextext-networks
       inference-net:
+        aliases:
+          - nextext
 
   ##########################################################
   # Nextext (CUDA)
@@ -72,18 +73,16 @@ services:
         <<: *build-args
     ports: *nextext-ports
     environment:
-      <<: *backend-env
+      <<: *nextext-env
       NVIDIA_VISIBLE_DEVICES: all
-    volumes: *backend-volumes
+    volumes: *nextext-volumes
     deploy:
       resources:
         reservations:
           devices:
             - driver: nvidia
               capabilities: [gpu]
-    networks:
-      nextext-net:
-      inference-net:
+    networks: *nextext-networks
 
 ##########################################################
 # Volumes
@@ -105,7 +104,6 @@ volumes:
 # Networks
 ##########################################################
 networks:
-  nextext-net:
   inference-net:
     external: true
     name: ${INFERENCE_NETWORK:-inference-net}
