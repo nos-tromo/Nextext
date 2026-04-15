@@ -27,7 +27,7 @@ dependencies = [
     "pandas>=2.2.3",
     "pillow>=11.0.0",
     "pip>=25.0.1",
-    "pyannote-audio>=3.3.2,<4",
+    "pyannote-audio>=3.3.2,<5",
     "pyarabic>=0.6.15",
     "pycountry>=24.6.1",
     "python-bidi>=0.6.3",
@@ -74,14 +74,14 @@ where = ["."]
 
 [project.optional-dependencies]
 cpu = [
-  "torch>=2.5.1,<2.9",
-  "torchaudio>=2.5.1,<2.9",
-  "torchvision>=0.20.1,<0.24",
+  "torch>=2.5.1,<2.12",
+  "torchaudio>=2.5.1,<2.12",
+  "torchvision>=0.20.1,<0.27",
 ]
 cuda = [
-  "torch>=2.5.1,<2.9",
-  "torchaudio>=2.5.1,<2.9",
-  "torchvision>=0.20.1,<0.24",
+  "torch>=2.5.1,<2.12",
+  "torchaudio>=2.5.1,<2.12",
+  "torchvision>=0.20.1,<0.27",
 ]
 
 [tool.uv]
