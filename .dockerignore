@@ -40,6 +40,7 @@
 .env*
 .pre-commit-config.yaml
 AGENTS.md
+CLAUDE.md
 docker-compose.yml
 Dockerfile*
 LICENSE
