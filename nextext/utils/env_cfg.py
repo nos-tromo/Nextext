@@ -49,6 +49,7 @@ class TranscriptionConfig:
 
 
 VALID_INFERENCE_PROVIDERS: frozenset[str] = frozenset({"ollama", "vllm", "openai"})
+VALID_RESIDENCY_STRATEGIES: frozenset[str] = frozenset({"offload", "evict"})
 
 
 @dataclass(frozen=True)
@@ -56,6 +57,18 @@ class InferenceConfig:
     """Dataclass for inference provider configuration."""
 
     provider: str  # one of VALID_INFERENCE_PROVIDERS
+
+
+@dataclass(frozen=True)
+class MemoryConfig:
+    """Dataclass for model residency configuration.
+
+    Attributes:
+        default_strategy: Global fallback strategy applied when no per-model
+            override is set. One of :data:`VALID_RESIDENCY_STRATEGIES`.
+    """
+
+    default_strategy: str
 
 
 EXTERNAL_WHISPER_DEFAULTS: dict[str, str] = {
@@ -106,6 +119,27 @@ def load_inference_env() -> InferenceConfig:
     return InferenceConfig(provider=raw)
 
 
+def load_memory_env() -> MemoryConfig:
+    """Loads model residency configuration from environment variables.
+
+    Returns:
+        MemoryConfig: Dataclass containing the resolved residency settings.
+        - default_strategy (str): ``"offload"`` (default) or ``"evict"``. Read
+          from ``MODEL_RESIDENCY_STRATEGY``. Unknown values fall back to
+          ``"offload"`` with a warning. Per-model overrides
+          (``MODEL_RESIDENCY_<NAME>``) are resolved inside the model registry
+          and are not surfaced here.
+    """
+    raw = os.getenv("MODEL_RESIDENCY_STRATEGY", "offload").strip().lower()
+    if raw not in VALID_RESIDENCY_STRATEGIES:
+        logger.warning(
+            "Unknown MODEL_RESIDENCY_STRATEGY '{}'. Falling back to 'offload'.",
+            raw,
+        )
+        raw = "offload"
+    return MemoryConfig(default_strategy=raw)
+
+
 def load_path_env() -> PathConfig:
     """Loads path configuration from environment variables or defaults.
 
@@ -121,7 +155,7 @@ def load_path_env() -> PathConfig:
     utils_dir: Path = Path(__file__).parent.resolve()
     default_prompts_dir: Path = utils_dir / "prompts"
     project_root: Path = utils_dir.parents[1]
-    default_log_dir = project_root / ".logs" / "nextext.log"
+    default_log_dir = project_root / ".log" / "nextext.log"
 
     return PathConfig(
         logs=Path(os.getenv("LOG_PATH", default_log_dir)).expanduser(),

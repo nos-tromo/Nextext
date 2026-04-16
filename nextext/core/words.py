@@ -4,7 +4,6 @@ import os
 import re
 import shutil
 import tempfile
-import threading
 import warnings
 from collections import Counter
 from pathlib import Path
@@ -30,6 +29,7 @@ from nextext.utils.model_loader import (
     download_spacy_model,
     ensure_spacy_model_path,
 )
+from nextext.utils.model_registry import REGISTRY, ModelSpec, Strategy
 
 load_dotenv()
 
@@ -43,13 +43,11 @@ _GLINER_LABELS = [
     "event",
     "fac",
     "group",
-    "lang",
     "loc",
     "money",
     "org",
     "person",
     "time",
-    "weapon",
 ]
 _GLINER_THRESHOLD = 0.3
 _GLINER_WORD_BUDGET = 512
@@ -58,8 +56,6 @@ _SENTENCE_RE = re.compile(
     r".+?(?:[.!?]+[\"')\]]*(?=\s+|$)|\n{2,}|$)",
     re.DOTALL,
 )
-_gliner_model: Any = None
-_gliner_lock = threading.Lock()
 
 
 def _resolve_hf_cache_dir() -> Path:
@@ -247,27 +243,63 @@ def _resolve_gliner_load_target(model_id: str, cache_dir: Path) -> tuple[str, bo
     return model_id, False
 
 
-def _get_gliner_model() -> Any:
-    """Return the GLiNER singleton, loading it on first call (thread-safe)."""
-    global _gliner_model
-    if _gliner_model is not None:
-        return _gliner_model
-    with _gliner_lock:
-        if _gliner_model is None:
-            cache_dir = _resolve_hf_cache_dir()
-            load_target, local_only = _resolve_gliner_load_target(
-                _GLINER_MODEL_ID, cache_dir
-            )
-            logger.info(
-                "Loading GLiNER model '{}' (local_only={}).",
-                _GLINER_MODEL_ID,
-                local_only,
-            )
-            _gliner_model = GLiNER.from_pretrained(
-                load_target, local_files_only=local_only
-            )
-            logger.info("GLiNER model loaded.")
-    return _gliner_model
+def _load_gliner() -> Any:
+    """Build the GLiNER model fresh from the local HF cache (registry loader).
+
+    Returns:
+        Any: A ``GLiNER`` model instance on CPU.
+
+    Raises:
+        FileNotFoundError: If ``NEXTEXT_OFFLINE=1`` and the model is not
+            present in the local HF Hub cache.
+    """
+    cache_dir = _resolve_hf_cache_dir()
+    load_target, local_only = _resolve_gliner_load_target(_GLINER_MODEL_ID, cache_dir)
+    logger.info(
+        "Loading GLiNER model '{}' (local_only={}).",
+        _GLINER_MODEL_ID,
+        local_only,
+    )
+    model = GLiNER.from_pretrained(load_target, local_files_only=local_only)
+    logger.info("GLiNER model loaded.")
+    return model
+
+
+def _move_gliner(model: Any, device: str) -> Any:
+    """Move a GLiNER model to ``device``.
+
+    GLiNER's own ``.to()`` covers the wrapped transformer in recent versions,
+    but older releases only move the inner ``.model`` attribute.  The public
+    API is tried first; if it raises, the inner module is moved directly.
+
+    Args:
+        model (Any): A ``GLiNER`` model instance to move.
+        device (str): Target device string, e.g. ``"cuda"`` or ``"cpu"``.
+
+    Returns:
+        Any: The same ``GLiNER`` model instance after the move.
+    """
+    to_method = getattr(model, "to", None)
+    if callable(to_method):
+        try:
+            to_method(device)
+            return model
+        except (AttributeError, TypeError, NotImplementedError):
+            pass
+    inner = getattr(model, "model", None)
+    if inner is not None and hasattr(inner, "to"):
+        inner.to(device)
+    return model
+
+
+REGISTRY.register(
+    ModelSpec(
+        name="gliner",
+        loader=_load_gliner,
+        mover=_move_gliner,
+        default_strategy=Strategy.OFFLOAD,
+    )
+)
 
 
 def _chunk_text(text: str, word_budget: int = _GLINER_WORD_BUDGET) -> list[str]:
@@ -483,30 +515,29 @@ class WordCounter:
             logger.error("Text is empty. Cannot run NER.")
             return pd.DataFrame(columns=pd.Index(columns)).reset_index(drop=True)
 
+        all_entities: list[tuple[str, str]] = []
         try:
-            model = _get_gliner_model()
+            with REGISTRY.acquire("gliner") as model:
+                with warnings.catch_warnings():
+                    warnings.filterwarnings(
+                        "ignore",
+                        message=".*truncat.*max_length.*no maximum length.*",
+                    )
+                    for chunk in _chunk_text(self.text):
+                        try:
+                            preds = model.predict_entities(
+                                chunk, _GLINER_LABELS, threshold=_GLINER_THRESHOLD
+                            )
+                            for pred in preds:
+                                text_val = pred.get("text", "").strip()
+                                label = pred.get("label", "").strip()
+                                if text_val and label and len(text_val) >= 3:
+                                    all_entities.append((label.upper(), text_val))
+                        except Exception as exc:
+                            logger.warning("GLiNER chunk inference failed: {}", exc)
         except Exception as exc:
             logger.error("Failed to load GLiNER model: {}", exc)
             return pd.DataFrame(columns=pd.Index(columns)).reset_index(drop=True)
-
-        all_entities: list[tuple[str, str]] = []
-        with warnings.catch_warnings():
-            warnings.filterwarnings(
-                "ignore",
-                message=".*truncat.*max_length.*no maximum length.*",
-            )
-            for chunk in _chunk_text(self.text):
-                try:
-                    preds = model.predict_entities(
-                        chunk, _GLINER_LABELS, threshold=_GLINER_THRESHOLD
-                    )
-                    for pred in preds:
-                        text_val = pred.get("text", "").strip()
-                        label = pred.get("label", "").strip()
-                        if text_val and label and len(text_val) >= 3:
-                            all_entities.append((label.upper(), text_val))
-                except Exception as exc:
-                    logger.warning("GLiNER chunk inference failed: {}", exc)
 
         if not all_entities:
             return pd.DataFrame(columns=pd.Index(columns)).reset_index(drop=True)

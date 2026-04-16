@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Nextext is a modular audio analysis toolkit that transcribes, translates, and analyzes natural language from audio/video files. It uses WhisperX for transcription, spaCy/NLTK for NLP, and LLMs (Ollama or OpenAI-compatible) for translation and summarization.
+Nextext is a modular audio analysis toolkit that transcribes, translates, and analyzes natural language from audio/video files. It uses openai-whisper for transcription, pyannote-audio for diarization, GLiNER for named-entity recognition, spaCy/NLTK for word-level NLP, and LLMs (Ollama, vLLM, or OpenAI-compatible endpoints) for translation, summarization, and hate-speech detection.
 
 ## Commands
 
@@ -37,22 +37,25 @@ mypy --no-incremental --ignore-missing-imports --disable-error-code=import-untyp
 
 **Pipeline flow:**
 
-1. **Transcription** (always-on) → WhisperX transcription + optional diarization → `pd.DataFrame`
+1. **Transcription** (always-on) → openai-whisper transcription + optional pyannote diarization → `pd.DataFrame`
 2. **Translation** (optional) → LLM-based segment translation via `InferencePipeline`
-3. **Word-level analysis** (optional) → word counts, named entities, sentiment, graphs, word clouds
+3. **Word-level analysis** (optional) → word counts, GLiNER named entities, word clouds
 4. **Summarization** (optional) → LLM summary via `InferencePipeline`
-5. **File export** (CLI only) → `.txt`, `.csv`, `.xlsx`, `.png` to `output/<input-file>/`
+5. **Hate-speech detection** (optional) → per-segment LLM classification
+6. **File export** (CLI) / **ZIP download** (Streamlit) → `.txt`, `.csv`, `.xlsx`, `.png`
 
 **Key modules:**
 
 - `nextext/app.py` — Streamlit UI entry point, session state orchestration
-- `nextext/cli.py` — CLI entry point (Typer), argument parsing, batch processing
+- `nextext/cli.py` — CLI entry point (argparse), single-file processing
 - `nextext/pipeline.py` — Shared pipeline functions connecting all agents
-- `nextext/core/transcription.py` — WhisperX transcription & speaker diarization
+- `nextext/core/transcription.py` — openai-whisper transcription & pyannote diarization
 - `nextext/core/translation.py` — LLM translation with prompt templates
-- `nextext/core/words.py` — NLP word-level analysis (spaCy, NLTK)
+- `nextext/core/words.py` — NLP word-level analysis (spaCy + GLiNER NER)
+- `nextext/core/hate_speech.py` — LLM-based hate-speech detection
 - `nextext/core/openai_cfg.py` — `InferencePipeline` for OpenAI-compatible LLM calls
 - `nextext/core/processing.py` — File I/O and export formatting
+- `nextext/utils/model_registry.py` — Centralized GPU model residency manager
 - `nextext/utils/mappings/` — JSON config files for Whisper/spaCy model names, language codes
 - `nextext/utils/prompts/` — LLM prompt templates (system, translation, summary)
 
@@ -67,6 +70,11 @@ Key env vars (see `.env.example`):
 - `OPENAI_API_KEY`, `OPENAI_API_BASE` — OpenAI-compatible endpoint credentials; shared across translation, summarization, and hate-speech detection, so in `vllm` mode the LiteLLM proxy must expose both `TEXT_MODEL` and `TRANSLATION_MODEL` on the same endpoint.
 - `TEXT_MODEL`, `TRANSLATION_MODEL` — LLM model names
 - `NEXTEXT_OFFLINE=1` — offline mode (skip model downloads)
+- `MODEL_RESIDENCY_STRATEGY` — `offload` (default) or `evict`. Controls how the registry releases GPU models between files. Per-model overrides: `MODEL_RESIDENCY_GLINER`, `MODEL_RESIDENCY_WHISPER_TURBO`, `MODEL_RESIDENCY_WHISPER_LARGE`, `MODEL_RESIDENCY_DIARIZATION`.
+
+## Memory management
+
+GPU-resident models (`whisper_turbo`, `whisper_large`, `diarization`, `gliner`) are owned by a process-wide registry in `nextext/utils/model_registry.py`. Callers wrap model use in `with REGISTRY.acquire(name) as model:` so the model is on GPU only for the duration of the block; the registry releases it (offload or evict) on exit. The Streamlit and CLI entry points call `flush_gpu()` between files to reclaim PyTorch allocator reservations. Adding a new GPU model means registering a `ModelSpec` with a `loader` (CPU construction) and `mover` (`.to(device)`).
 
 ## Testing
 

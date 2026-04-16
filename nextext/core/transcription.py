@@ -1,40 +1,47 @@
 """Audio transcription and diarization with openai-whisper."""
 
-import gc
 import os
 from datetime import timedelta
+from importlib import import_module
 from pathlib import Path
+from types import ModuleType
 from typing import Any, Optional
 
 import numpy as np
-import pandas as pd
+import pandas as pd  # type: ignore[import]
 import torch
-import whisper
+import whisper  # type: ignore[import]
 from dotenv import load_dotenv
 from loguru import logger
 from openai import APIStatusError, OpenAI
-from pyannote.audio import Pipeline as DiarizationPipeline
-
-try:
-    from omegaconf import DictConfig, ListConfig
-except ImportError:  # pragma: no cover - optional dependency
-    DictConfig = None  # type: ignore[misc,assignment]
-    ListConfig = None  # type: ignore[misc,assignment]
-
-try:
-    from torch.torch_version import TorchVersion
-except ImportError:  # pragma: no cover - optional dependency
-    TorchVersion = None  # type: ignore[misc,assignment]
-
-try:
-    from pyannote.audio.core.task import Problem, Resolution, Specifications
-except ImportError:  # pragma: no cover - optional dependency
-    Problem = None  # type: ignore[misc,assignment]
-    Resolution = None  # type: ignore[misc,assignment]
-    Specifications = None  # type: ignore[misc,assignment]
-
+from pyannote.audio import Pipeline as DiarizationPipeline  # type: ignore[import]
 from nextext.utils.env_cfg import load_inference_env
 from nextext.utils.mappings_loader import load_mappings
+from nextext.utils.model_registry import REGISTRY, ModelSpec, Strategy
+
+
+def _load_optional_module(module_name: str) -> ModuleType | None:
+    """Load an optional module and return None when unavailable."""
+    try:
+        return import_module(module_name)
+    except ImportError:  # pragma: no cover - optional dependency
+        return None
+
+
+_omegaconf = _load_optional_module("omegaconf")
+
+DictConfig: Any = getattr(_omegaconf, "DictConfig", None)
+ListConfig: Any = getattr(_omegaconf, "ListConfig", None)
+
+_torch_version = _load_optional_module("torch.torch_version")
+
+TorchVersion: Any = getattr(_torch_version, "TorchVersion", None)
+
+_pyannote_task = _load_optional_module("pyannote.audio.core.task")
+
+Problem: Any = getattr(_pyannote_task, "Problem", None)
+Resolution: Any = getattr(_pyannote_task, "Resolution", None)
+Specifications: Any = getattr(_pyannote_task, "Specifications", None)
 
 
 load_dotenv()
@@ -44,6 +51,12 @@ LOCAL_WHISPER_MODELS: dict[str, str] = {
     "transcribe": "large-v3-turbo",
     "translate": "large-v3",
 }
+
+_WHISPER_REGISTRY_KEYS: dict[str, str] = {
+    "transcribe": "whisper_turbo",
+    "translate": "whisper_large",
+}
+_DIARIZATION_MODEL_ID: str = "pyannote/speaker-diarization-3.1"
 
 OPENAI_WHISPER_MAX_UPLOAD_BYTES: int = 25 * 1024 * 1024
 
@@ -188,33 +201,114 @@ def _merge_transcriptions_by_sentence(
     return merged_df
 
 
+_configure_torch_safe_globals()
+
+
+def _load_whisper(model_id: str) -> Any:
+    """Load an openai-whisper model onto CPU.
+
+    The registry mover is responsible for moving the instance onto GPU when
+    acquired, so loaders always build on CPU regardless of hardware.
+
+    Args:
+        model_id (str): openai-whisper model identifier.
+
+    Returns:
+        Any: The loaded Whisper model on CPU.
+    """
+    logger.info("Loading Whisper model '{}' on CPU.", model_id)
+    return whisper.load_model(model_id, device="cpu")
+
+
+def _move_torch_module(model: Any, device: str) -> Any:
+    """Move an ``nn.Module``-like object (Whisper / pyannote) to ``device``.
+
+    Args:
+        model (Any): A model with a ``.to()`` method, e.g. a Whisper model or
+            a pyannote ``Pipeline``.
+        device (str): Target device string, e.g. ``"cuda"`` or ``"cpu"``.
+
+    Returns:
+        Any: The same model instance after the in-place move.
+    """
+    model.to(torch.device(device))
+    return model
+
+
+def _load_diarization_pipeline() -> DiarizationPipeline:
+    """Load the pyannote speaker diarization pipeline onto CPU.
+
+    Returns:
+        DiarizationPipeline: The loaded pyannote pipeline on CPU, ready to be
+            promoted to GPU via :func:`_move_torch_module`.
+
+    Raises:
+        RuntimeError: If ``HF_HUB_TOKEN`` is not set in the environment.
+    """
+    if not HF_HUB_TOKEN:
+        raise RuntimeError(
+            "Speaker diarization requires HF_HUB_TOKEN. Set it in your environment."
+        )
+    logger.info("Loading diarization pipeline '{}' on CPU.", _DIARIZATION_MODEL_ID)
+    return DiarizationPipeline.from_pretrained(
+        _DIARIZATION_MODEL_ID,
+        use_auth_token=HF_HUB_TOKEN,
+    )
+
+
+REGISTRY.register(
+    ModelSpec(
+        name="whisper_turbo",
+        loader=lambda: _load_whisper(LOCAL_WHISPER_MODELS["transcribe"]),
+        mover=_move_torch_module,
+        default_strategy=Strategy.OFFLOAD,
+    )
+)
+REGISTRY.register(
+    ModelSpec(
+        name="whisper_large",
+        loader=lambda: _load_whisper(LOCAL_WHISPER_MODELS["translate"]),
+        mover=_move_torch_module,
+        default_strategy=Strategy.OFFLOAD,
+    )
+)
+REGISTRY.register(
+    ModelSpec(
+        name="diarization",
+        loader=_load_diarization_pipeline,
+        mover=_move_torch_module,
+        default_strategy=Strategy.OFFLOAD,
+    )
+)
+
+
 class WhisperTranscriber:
-    """WhisperTranscriber handles audio transcription and speaker diarization using openai-whisper.
+    """Transcribes and optionally diarizes audio using openai-whisper and pyannote.
+
+    All GPU-resident models (Whisper turbo, Whisper large, diarization pipeline)
+    are managed through the process-wide :data:`REGISTRY` and are acquired
+    lazily on first use.  Between files, call
+    :func:`nextext.utils.model_registry.flush_gpu` to reclaim VRAM.
 
     Attributes:
-        src_lang (str): Source language of the audio.
-        task (str): Task type, "transcribe" or "translate".
+        src_lang (str): Source language of the audio, resolved during ``__init__``.
+        task (str): ``"transcribe"`` or ``"translate"``.
         n_speakers (int): Maximum number of speakers for diarization.
         start_column (str): DataFrame column for segment start times.
         end_column (str): DataFrame column for segment end times.
         speaker_column (str): DataFrame column for speaker labels.
         text_column (str): DataFrame column for transcribed text.
-        transcription_device (str): Device used for model inference ("cuda" or "cpu").
-        transcribe_model: Loaded Whisper transcription model.
-        diarize_model: Loaded pyannote diarization pipeline.
-        audio (np.ndarray): Loaded audio array at 16 kHz.
-        transcription_result (Optional[dict[str, Any]]): Result of transcription.
-        df (Optional[pd.DataFrame]): DataFrame with transcription results.
-
-    Methods:
-        _load_audio(file): Load audio file as numpy array.
-        _detect_language(duration_sec, sample_rate): Detect spoken language and load large-v3-turbo.
-        _load_transcription_model(preloaded_model): Reuse or swap to the task-specific Whisper model.
-        _load_diarization_model(auth_token): Load pyannote diarization pipeline.
-        transcription(): Run transcription on the loaded audio file.
-        _assign_speakers(diarization_result): Assign speakers from diarization to segments.
-        diarization(): Perform speaker diarization and assign labels to segments.
-        transcript_output(): Return the transcription result as a DataFrame.
+        transcription_device (str): Preferred device for inference
+            (``"cuda"`` or ``"cpu"``).
+        diarize_model (Any): ``True`` when diarization is available (token
+            present and ``n_speakers > 1``); ``None`` otherwise.  The actual
+            pipeline is acquired from the registry lazily inside
+            :meth:`diarization`.
+        audio (np.ndarray): Audio loaded at 16 kHz by whisper.
+        transcription_result (Optional[dict[str, Any]]): Raw output populated
+            by :meth:`transcription`.
+        df (Optional[pd.DataFrame]): Final DataFrame populated by
+            :meth:`transcript_output`.
     """
 
     def __init__(
@@ -249,32 +343,27 @@ class WhisperTranscriber:
         self.end_column = end_column
         self.speaker_column = speaker_column
         self.text_column = text_column
-        auth_token = HF_HUB_TOKEN
 
         self.transcription_device = "cuda" if torch.cuda.is_available() else "cpu"
         self.audio = self._load_audio(file_path)
-        _configure_torch_safe_globals()
 
-        # Detect language with the transcribe model so it can be reused when the
-        # resolved task is "transcribe" (avoids loading the model twice).
         whisper_languages = load_mappings(whisper_language_file)
-        det_lang, detect_model = self._detect_language()
-        det_lang = det_lang or "en"
+        det_lang = self._detect_language() or "en"
         self.src_lang = src_lang if src_lang in whisper_languages.keys() else det_lang
         self.task = "transcribe" if det_lang == trg_lang else task
         logger.info("Using language '{}' for task '{}'", self.src_lang, self.task)
 
-        # Load the transcription model (reusing detect_model when compatible).
-        self.transcribe_model = self._load_transcription_model(detect_model)
-        self.diarize_model: DiarizationPipeline | None = None
-        if self.n_speakers > 1 and not auth_token:
-            logger.warning(
-                "No Hugging Face token provided. Speaker diarization will be unavailable."
-            )
-        elif self.n_speakers > 1:
-            self.diarize_model = self._load_diarization_model(auth_token)
+        self.diarize_model: Any = None
+        if self.n_speakers > 1:
+            if not HF_HUB_TOKEN:
+                logger.warning(
+                    "No Hugging Face token provided. Speaker diarization will be unavailable."
+                )
+            else:
+                # Sentinel: diarization is available; pipeline is acquired lazily
+                # via REGISTRY.acquire("diarization") inside diarization().
+                self.diarize_model = True
 
-        # Initialize attributes for transcription results and DataFrame
         self.transcription_result: Optional[dict[str, Any]] = None
         self.df: pd.DataFrame | None = None
 
@@ -293,119 +382,51 @@ class WhisperTranscriber:
 
     def _detect_language(
         self, duration_sec: float = 30.0, sample_rate: int = 16000
-    ) -> tuple[str | None, Any]:
-        """Detect the spoken language and return the loaded Whisper model.
+    ) -> str | None:
+        """Detect the spoken language using ``large-v3-turbo``.
 
-        Loads ``large-v3-turbo`` once and uses it for mel-spectrogram-based
-        language detection on the first ``duration_sec`` seconds of audio. The
-        loaded model is returned so the caller can reuse it for the transcribe
-        task without paying a second load.
+        The Whisper model is acquired via the process-wide model registry and
+        released as soon as detection finishes. Under the OFFLOAD strategy it
+        stays cached on CPU so a subsequent transcription run can re-promote
+        it to GPU without a fresh disk load.
 
         Args:
             duration_sec (float): Number of seconds from the start of the audio to use for detection.
             sample_rate (int): Sample rate for the audio processing. Defaults to 16000.
 
         Returns:
-            tuple[str | None, Any]: Detected language code (e.g., ``"en"``) and
-            the loaded Whisper model.
+            str | None: Detected language code (e.g., ``"en"``).
 
         Raises:
             RuntimeError: If language detection fails.
         """
         sample_frames = int(duration_sec * sample_rate)
-        detection_model_id = LOCAL_WHISPER_MODELS["transcribe"]
-        logger.info(
-            "Loading Whisper model '{}' for language detection...", detection_model_id
-        )
-        model = whisper.load_model(detection_model_id, device=self.transcription_device)
         audio_clip = whisper.pad_or_trim(self.audio[:sample_frames])
-        mel = whisper.log_mel_spectrogram(audio_clip, n_mels=model.dims.n_mels).to(
-            model.device
-        )
-        _, probs = model.detect_language(mel)
-        detected_lang = max(probs, key=probs.get)
+        with REGISTRY.acquire("whisper_turbo") as model:
+            mel = whisper.log_mel_spectrogram(audio_clip, n_mels=model.dims.n_mels).to(
+                model.device
+            )
+            _, probs = model.detect_language(mel)
+            detected_lang = max(probs, key=probs.get)
 
         if not detected_lang:
             raise RuntimeError("Language detection failed.")
 
         logger.info("Detected language: {}", detected_lang)
-        return detected_lang, model
-
-    def _load_transcription_model(self, preloaded_model: Any) -> Any:
-        """Resolve the Whisper model used for the chosen task.
-
-        Reuses ``preloaded_model`` (the ``large-v3-turbo`` instance already
-        loaded for language detection) when ``self.task == "transcribe"``. For
-        the translate task the preloaded model is released and ``large-v3`` is
-        loaded in its place.
-
-        Args:
-            preloaded_model (Any): The Whisper model returned by
-                :meth:`_detect_language`.
-
-        Returns:
-            Any: The Whisper model to use for transcription.
-        """
-        if self.task == "transcribe":
-            logger.info(
-                "Reusing Whisper model '{}' for task '{}'.",
-                LOCAL_WHISPER_MODELS["transcribe"],
-                self.task,
-            )
-            return preloaded_model
-
-        del preloaded_model
-        if hasattr(torch, "cuda") and torch.cuda.is_available():
-            torch.cuda.empty_cache()
-        gc.collect()
-
-        translate_model_id = LOCAL_WHISPER_MODELS["translate"]
-        logger.info(
-            "Loading Whisper model '{}' for task '{}'...",
-            translate_model_id,
-            self.task,
-        )
-        return whisper.load_model(translate_model_id, device=self.transcription_device)
-
-    def _load_diarization_model(self, auth_token: str) -> DiarizationPipeline:
-        """Load the pyannote diarization pipeline.
-
-        Args:
-            auth_token (str): The Hugging Face token for accessing the diarization model.
-
-        Returns:
-            DiarizationPipeline: The loaded pyannote speaker diarization pipeline.
-        """
-        device = (
-            "cuda"
-            if torch.cuda.is_available()
-            else "mps"
-            if torch.backends.mps.is_available()
-            else "cpu"
-        )
-        pipeline = DiarizationPipeline.from_pretrained(
-            "pyannote/speaker-diarization-3.1",
-            use_auth_token=auth_token,
-        )
-        return pipeline.to(torch.device(device))
+        return detected_lang
 
     def transcription(self) -> None:
         """Run the transcription process on the loaded audio file using openai-whisper."""
+        key = _WHISPER_REGISTRY_KEYS.get(self.task, "whisper_turbo")
         try:
-            result = self.transcribe_model.transcribe(
-                self.audio, task=self.task, language=self.src_lang
-            )
+            with REGISTRY.acquire(key) as model:
+                result = model.transcribe(
+                    self.audio, task=self.task, language=self.src_lang
+                )
             self.transcription_result = {"segments": result["segments"]}
         except Exception as e:
             logger.error("Error during transcription: {}", e, exc_info=True)
             raise
-        finally:
-            del self.transcribe_model
-            if hasattr(torch, "cuda") and torch.cuda.is_available():
-                torch.cuda.empty_cache()
-                logger.info("Flushed GPU memory.")
-            gc.collect()
-            logger.info("Resources cleaned up.")
 
     def _assign_speakers(self, diarization_result: Any) -> None:
         """Assign speaker labels to transcription segments based on maximum overlap.
@@ -437,34 +458,25 @@ class WhisperTranscriber:
         Raises:
             RuntimeError: If diarization is requested but the diarization model is not available.
         """
-        try:
-            if self.n_speakers <= 1:
-                logger.info("Skipping diarization as only one speaker is specified.")
-                return
-            if self.diarize_model is None:
-                raise RuntimeError(
-                    "Speaker diarization requires a valid HF_HUB_TOKEN and "
-                    "accepted pyannote model access."
-                )
-
-            waveform = torch.tensor(self.audio).unsqueeze(0)
-            diarize_result = self.diarize_model(
-                {"waveform": waveform, "sample_rate": 16000},
-                max_speakers=self.n_speakers,
+        if self.n_speakers <= 1:
+            logger.info("Skipping diarization as only one speaker is specified.")
+            return
+        if self.diarize_model is None:
+            raise RuntimeError(
+                "Speaker diarization requires a valid HF_HUB_TOKEN and "
+                "accepted pyannote model access."
             )
+        try:
+            waveform = torch.tensor(self.audio).unsqueeze(0)
+            with REGISTRY.acquire("diarization") as pipeline:
+                diarize_result = pipeline(
+                    {"waveform": waveform, "sample_rate": 16000},
+                    max_speakers=self.n_speakers,
+                )
             self._assign_speakers(diarize_result)
         except Exception as e:
             logger.error("Error during diarization: {}", e, exc_info=True)
             raise
-        finally:
-            if self.diarize_model is not None:
-                del self.diarize_model
-                self.diarize_model = None
-            if hasattr(torch, "cuda") and torch.cuda.is_available():
-                torch.cuda.empty_cache()
-                logger.info("Flushed GPU memory.")
-            gc.collect()
-            logger.info("Resources cleaned up.")
 
     @staticmethod
     def _ends_with_punctuation(text: str) -> bool:

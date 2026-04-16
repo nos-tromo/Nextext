@@ -17,6 +17,7 @@ from nextext.pipeline import (
 )
 from nextext.utils.env_cfg import set_offline_env
 from nextext.utils.log_cfg import setup_logging
+from nextext.utils.model_registry import flush_gpu
 
 set_offline_env()
 setup_logging()
@@ -160,6 +161,24 @@ def main() -> None:
     # Parse command-line arguments
     args = parse_arguments()
 
+    try:
+        _run_main(args)
+    finally:
+        flush_gpu()
+
+
+def _run_main(args: argparse.Namespace) -> None:
+    """Execute the main Nextext pipeline on the parsed CLI arguments.
+
+    Args:
+        args (argparse.Namespace): Parsed CLI arguments from
+            :func:`parse_arguments`.
+
+    Raises:
+        ValueError: If ``args.task`` is not ``"transcribe"`` or
+            ``"translate"``, or if the source language cannot be resolved.
+        ConnectionError: If the configured inference provider is not reachable.
+    """
     # Set up input/output directories and file paths
     file_processor = FileProcessor(args.file_path)
 

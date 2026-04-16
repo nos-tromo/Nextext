@@ -1,6 +1,7 @@
 """Tests for the openai-whisper transcription module."""
 
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import MagicMock
 
 import numpy as np
@@ -17,6 +18,7 @@ from nextext.core.transcription import (
     _merge_transcriptions_by_sentence,
     _seconds_to_time,
 )
+from nextext.utils.model_registry import REGISTRY
 
 
 def _build_transcriber() -> WhisperTranscriber:
@@ -231,7 +233,7 @@ def test_configure_torch_safe_globals_registers_checkpoint_types(
 def test_init_skips_diarization_model_for_single_speaker(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Test that single-speaker runs do not load the diarization pipeline.
+    """Test that single-speaker runs do not arm the diarization path.
 
     Args:
         monkeypatch (pytest.MonkeyPatch): The pytest monkeypatch fixture for patching.
@@ -244,28 +246,12 @@ def test_init_skips_diarization_model_for_single_speaker(
     monkeypatch.setattr(
         WhisperTranscriber,
         "_detect_language",
-        lambda self: ("de", SimpleNamespace()),
+        lambda self: "de",
     )
     monkeypatch.setattr(
         transcription,
         "load_mappings",
         lambda _: {"de": "German", "en": "English"},
-    )
-    monkeypatch.setattr(
-        WhisperTranscriber,
-        "_load_transcription_model",
-        lambda self, preloaded_model: SimpleNamespace(),
-    )
-
-    def fail_load_diarization_model(self, auth_token: str) -> None:
-        raise AssertionError(
-            "_load_diarization_model should not be called for one speaker"
-        )
-
-    monkeypatch.setattr(
-        WhisperTranscriber,
-        "_load_diarization_model",
-        fail_load_diarization_model,
     )
 
     transcriber = WhisperTranscriber(
@@ -333,16 +319,28 @@ def test_detect_language_uses_whisper_mel_spectrogram(
     dummy_probs = {"de": 0.9, "en": 0.1}
 
     class DummyModel:
-        device = "cpu"
-        dims = SimpleNamespace(n_mels=80)
+        def __init__(self) -> None:
+            self.dims = SimpleNamespace(n_mels=80)
+            self._device = torch.device("cpu")
 
-        def detect_language(self, mel):
+        @property
+        def device(self) -> torch.device:
+            return self._device
+
+        def to(self, device: Any) -> "DummyModel":
+            self._device = (
+                device if isinstance(device, torch.device) else torch.device(device)
+            )
+            return self
+
+        def detect_language(self, mel: Any) -> tuple[Any, dict[str, float]]:
             return None, dummy_probs
 
     dummy_model = DummyModel()
+    loaded_ids: list[str] = []
 
-    def fake_load_model(name, device):
-        assert name == "large-v3-turbo"
+    def fake_load_model(name: str, device: Any = None) -> DummyModel:
+        loaded_ids.append(name)
         return dummy_model
 
     monkeypatch.setattr(transcription.whisper, "load_model", fake_load_model)
@@ -352,54 +350,60 @@ def test_detect_language_uses_whisper_mel_spectrogram(
         "log_mel_spectrogram",
         lambda audio, n_mels: dummy_mel,
     )
+    # Start from a clean registry slot so our patched loader is called.
+    REGISTRY.evict("whisper_turbo")
 
     t = WhisperTranscriber.__new__(WhisperTranscriber)
     t.audio = np.zeros(32000, dtype=np.float32)
     t.transcription_device = "cpu"
 
-    detected, returned_model = t._detect_language()
+    detected = t._detect_language()
 
     assert detected == "de"
-    assert returned_model is dummy_model
+    assert loaded_ids == ["large-v3-turbo"]
+    REGISTRY.evict("whisper_turbo")
 
 
 # ---------------------------------------------------------------------------
-# Transcription model loading
+# Transcription model routing via the registry
 # ---------------------------------------------------------------------------
 
 
-def test_load_transcription_model_reuses_preloaded_for_transcribe() -> None:
-    """The transcribe task reuses the already-loaded detection model."""
-    preloaded = SimpleNamespace()
-
-    t = WhisperTranscriber.__new__(WhisperTranscriber)
-    t.task = "transcribe"
-    t.transcription_device = "cpu"
-
-    assert t._load_transcription_model(preloaded) is preloaded
-
-
-def test_load_transcription_model_swaps_to_large_v3_for_translate(
+def test_transcription_acquires_task_specific_registry_key(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The translate task releases the preloaded model and loads large-v3."""
-    loaded_names: list[str] = []
-    replacement = SimpleNamespace()
+    """transcription() must acquire whisper_turbo for transcribe, whisper_large for translate."""
+    acquired_keys: list[str] = []
+    fake_model = MagicMock()
+    fake_model.transcribe.return_value = {"segments": []}
 
-    def fake_load_model(name, device):
-        loaded_names.append(name)
-        return replacement
+    class _FakeCtx:
+        def __enter__(self) -> Any:
+            return fake_model
 
-    monkeypatch.setattr(transcription.whisper, "load_model", fake_load_model)
+        def __exit__(self, *exc: Any) -> None:
+            return None
+
+    class _FakeRegistry:
+        def acquire(self, key: str, *, device: Any = None) -> _FakeCtx:
+            acquired_keys.append(key)
+            return _FakeCtx()
+
+    monkeypatch.setattr(transcription, "REGISTRY", _FakeRegistry())
 
     t = WhisperTranscriber.__new__(WhisperTranscriber)
+    t.audio = np.zeros(16000, dtype=np.float32)
     t.task = "translate"
-    t.transcription_device = "cpu"
+    t.src_lang = "de"
+    t.transcription_result = None
 
-    result = t._load_transcription_model(SimpleNamespace())
+    t.transcription()
+    assert acquired_keys == ["whisper_large"]
 
-    assert result is replacement
-    assert loaded_names == ["large-v3"]
+    acquired_keys.clear()
+    t.task = "transcribe"
+    t.transcription()
+    assert acquired_keys == ["whisper_turbo"]
 
 
 # ---------------------------------------------------------------------------

@@ -28,6 +28,7 @@ from nextext.pipeline import (
 from nextext.utils.env_cfg import set_offline_env
 from nextext.utils.log_cfg import setup_logging
 from nextext.utils.mappings_loader import kv_to_vk, load_and_sort_mappings
+from nextext.utils.model_registry import flush_gpu
 
 set_offline_env()
 setup_logging()
@@ -488,6 +489,7 @@ def _process_uploaded_files(
         finally:
             if tmp_path is not None and tmp_path.exists():
                 tmp_path.unlink()
+            flush_gpu()
 
     progress_bar.progress(
         1.0,
