@@ -33,6 +33,7 @@ DEFAULT_SPACY_MODEL_DOWNLOAD_BASE_URL = (
 NLTK_RESOURCES = ("punkt_tab", "stopwords")
 LOCAL_WHISPER_MODEL_IDS: tuple[str, ...] = ("large-v3-turbo", "large-v3")
 GLINER_MODEL_ID = "gliner-community/gliner_large-v2.5"
+SILERO_VAD_REPO = "snakers4/silero-vad"
 DIARIZATION_MODEL_ID = "pyannote/speaker-diarization-3.1"
 DIARIZATION_DEPENDENCY_IDS = ("pyannote/segmentation-3.0",)
 
@@ -256,6 +257,13 @@ def preload_whisper_models(
         preload_whisper_model(model_id, device=device)
 
 
+def preload_silero_vad() -> None:
+    """Download and cache the Silero VAD model via ``torch.hub``."""
+    logger.info("Downloading Silero VAD model from '{}'.", SILERO_VAD_REPO)
+    torch.hub.load(SILERO_VAD_REPO, model="silero_vad", trust_repo=True)
+    logger.info("Silero VAD model cached.")
+
+
 def preload_diarization_model(
     auth_token: str | None,
     device: str = "cpu",
@@ -334,6 +342,11 @@ def main() -> None:
             preload_whisper_model(model_id, device=device)
         except Exception as exc:
             failures.append(f"Whisper {model_id} ({exc})")
+
+    try:
+        preload_silero_vad()
+    except Exception as exc:
+        failures.append(f"Silero VAD ({exc})")
 
     try:
         preload_diarization_model(os.getenv("HF_HUB_TOKEN"), device=device)

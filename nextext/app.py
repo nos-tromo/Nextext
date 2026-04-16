@@ -304,6 +304,7 @@ def _run_pipeline(
     tmp_file: Path,
     opts: dict[str, Any],
     status_callback: Callable[[str, int], None] | None = None,
+    stage_container: Any | None = None,
 ) -> dict[str, Any]:
     """Run the core pipeline for one file and return its result payload.
 
@@ -312,6 +313,9 @@ def _run_pipeline(
         opts (dict[str, Any]): Options for the pipeline.
         status_callback (Callable[[str, int], None] | None): Optional
             callback invoked before each pipeline stage.
+        stage_container: Optional Streamlit status container for rendering
+            inline previews as each stage completes. Only display-only APIs
+            (write, dataframe, text, warning) are safe here.
 
     Returns:
         dict[str, Any]: A result payload for one processed file.
@@ -343,6 +347,29 @@ def _run_pipeline(
     )
     file_opts["src_lang"] = updated_src_lang
 
+    # Guard: skip downstream stages when the transcript contains no speech
+    transcript_text = " ".join(df["text"].astype(str).tolist()).strip()
+    if df.empty or not transcript_text:
+        transcript_language = file_opts[
+            "trg_lang" if file_opts["task"] == "translate" else "src_lang"
+        ]
+        return {
+            "transcript": df,
+            "summary": None,
+            "word_counts": None,
+            "named_entities": None,
+            "wordcloud": None,
+            "hate_speech_findings": None,
+            "resolved_src_lang": file_opts["src_lang"],
+            "transcript_language": transcript_language,
+            "skipped": True,
+            "skip_reason": "No speech detected in audio file.",
+        }
+
+    if stage_container is not None:
+        stage_container.write(f"Transcript: {len(df)} segments")
+        stage_container.dataframe(df.head(5), hide_index=True)
+
     # Translation
     _notify(PIPELINE_STAGE_LABELS[1], 1)
     if file_opts["task"] == "translate" and file_opts["trg_lang"] != "en":
@@ -360,6 +387,8 @@ def _run_pipeline(
             src_lang=file_opts["src_lang"],
             inference_pipeline=inference_pipeline,
         )
+        if stage_container is not None:
+            stage_container.write("Translation complete")
     else:
         inference_pipeline = None
 
@@ -388,6 +417,10 @@ def _run_pipeline(
         result["word_counts"] = wc
         result["named_entities"] = ner
         result["wordcloud"] = cloud
+        if stage_container is not None:
+            stage_container.write(
+                f"Word analysis: {len(wc)} unique words, {len(ner)} entities"
+            )
 
     # Summarization
     _notify(PIPELINE_STAGE_LABELS[3], 3)
@@ -405,6 +438,12 @@ def _run_pipeline(
             " ".join(df["text"].astype(str).tolist()),
             inference_pipeline=inference_pipeline,
         )
+        if stage_container is not None and result["summary"]:
+            preview = result["summary"]
+            if len(preview) > 300:
+                preview = preview[:300] + "…"
+            stage_container.write("Summary preview:")
+            stage_container.text(preview)
 
     # Hate speech detection
     _notify(PIPELINE_STAGE_LABELS[4], 4)
@@ -422,19 +461,69 @@ def _run_pipeline(
             df=df,
             inference_pipeline=inference_pipeline,
         )
+        if stage_container is not None and result["hate_speech_findings"]:
+            n = len(result["hate_speech_findings"])
+            stage_container.warning(f"Hate speech: {n} segment(s) flagged")
 
     return result
+
+
+def _render_file_preview(container: Any, result: dict[str, Any]) -> None:
+    """Render a compact summary of one file's results inside a status container.
+
+    Called during the blocking processing loop. Only uses Streamlit APIs
+    that support direct websocket updates (write, dataframe, text, warning).
+    Interactive widgets (download_button, selectbox) must NOT be used here
+    as they would trigger a rerun and break the processing loop.
+
+    Args:
+        container: An ``st.status()`` container to write into.
+        result (dict[str, Any]): The completed result payload for one file.
+    """
+    try:
+        transcript = result.get("transcript")
+        if isinstance(transcript, pd.DataFrame) and not transcript.empty:
+            container.write(f"**Transcript:** {len(transcript)} segments")
+            container.dataframe(transcript.head(5), hide_index=True)
+
+        summary = result.get("summary")
+        if isinstance(summary, str) and summary.strip():
+            preview = summary if len(summary) <= 300 else summary[:300] + "…"
+            container.write("**Summary:**")
+            container.text(preview)
+
+        wc = result.get("word_counts")
+        ner = result.get("named_entities")
+        if isinstance(wc, pd.DataFrame) and not wc.empty:
+            parts = [f"{len(wc)} unique words"]
+            if isinstance(ner, pd.DataFrame) and not ner.empty:
+                parts.append(f"{len(ner)} named entities")
+            container.write(f"**Word analysis:** {', '.join(parts)}")
+
+        findings = result.get("hate_speech_findings")
+        if findings:
+            container.warning(f"**Hate speech:** {len(findings)} segment(s) flagged")
+    except Exception:
+        pass  # Preview rendering must never interrupt the processing loop
 
 
 def _process_uploaded_files(
     uploaded_files: Sequence[Any],
     opts: dict[str, Any],
+    results_container: Any | None = None,
 ) -> list[dict[str, Any]]:
     """Process uploaded files sequentially with shared settings.
+
+    Results are saved to ``st.session_state["results"]`` incrementally after
+    each file so that completed work survives if a later file fails. When
+    *results_container* is provided, each file gets an ``st.status`` block
+    with live previews of pipeline stage outputs.
 
     Args:
         uploaded_files (Sequence[Any]): Uploaded file objects from Streamlit.
         opts (dict[str, Any]): Shared pipeline settings for the run.
+        results_container: Optional Streamlit container for inline result
+            previews rendered during the processing loop.
 
     Returns:
         list[dict[str, Any]]: Result payloads in upload order.
@@ -446,6 +535,15 @@ def _process_uploaded_files(
 
     for file_index, uploaded_file in enumerate(uploaded_files, start=1):
         file_name = str(getattr(uploaded_file, "name", f"File {file_index}"))
+
+        # Create an st.status block for this file when streaming is enabled
+        file_status = None
+        if results_container is not None:
+            file_status = results_container.status(
+                f"Processing {file_name} ({file_index}/{total_files})",
+                expanded=True,
+                state="running",
+            )
 
         def _update_progress(stage_name: str, stage_index: int) -> None:
             """Update the multi-file progress bar.
@@ -479,13 +577,50 @@ def _process_uploaded_files(
                 tmp_path,
                 opts,
                 status_callback=_update_progress,
+                stage_container=file_status,
             )
             file_result["file_name"] = file_name
+            if file_result.get("skipped"):
+                if file_status is not None:
+                    file_status.update(
+                        label=(
+                            f"{file_name} — skipped "
+                            f"({file_result.get('skip_reason', 'No processable content.')})"
+                        ),
+                        state="complete",
+                        expanded=False,
+                    )
+                else:
+                    st.warning(
+                        f"File {file_index}/{total_files} skipped — "
+                        f"{file_name}: {file_result.get('skip_reason', 'No processable content.')}"
+                    )
+            else:
+                if file_status is not None:
+                    _render_file_preview(file_status, file_result)
+                    file_status.update(
+                        label=f"{file_name} — complete",
+                        state="complete",
+                        expanded=False,
+                    )
             results.append(file_result)
+            # Incremental save — completed work survives even if a later file fails
+            st.session_state["results"] = list(results)
             progress_bar.progress(
                 file_index / total_files,
                 text=f"Completed file {file_index}/{total_files}: {file_name}",
             )
+        except Exception as exc:
+            if file_status is not None:
+                file_status.update(
+                    label=f"{file_name} — failed: {exc}",
+                    state="error",
+                    expanded=False,
+                )
+            else:
+                st.warning(
+                    f"File {file_index}/{total_files} failed — {file_name}: {exc}"
+                )
         finally:
             if tmp_path is not None and tmp_path.exists():
                 tmp_path.unlink()
@@ -558,13 +693,33 @@ def _start_page() -> None:
     )
 
     if run and uploaded_files:
-        results = _process_uploaded_files(uploaded_files, st.session_state["opts"])
         st.session_state.pop("_results_archive", None)
-        st.session_state["results"] = results
-        st.session_state["result"] = results[0]
-        st.session_state["selected_result_file"] = results[0]["file_name"]
-        st.session_state["results_timestamp"] = datetime.now().strftime("%Y%m%d_%H%M%S")
-        st.success("Done! Select another tab to view results.")
+        with st.expander("Processing progress", expanded=True):
+            results_container = st.container()
+        results = _process_uploaded_files(
+            uploaded_files,
+            st.session_state["opts"],
+            results_container=results_container,
+        )
+        if results:
+            st.session_state["results"] = results
+            st.session_state["result"] = results[0]
+            st.session_state["selected_result_file"] = results[0]["file_name"]
+            st.session_state["results_timestamp"] = datetime.now().strftime(
+                "%Y%m%d_%H%M%S"
+            )
+            skipped_count = sum(1 for r in results if r.get("skipped"))
+            if skipped_count == len(results):
+                st.warning("All files were skipped — no speech detected.")
+            elif skipped_count > 0:
+                st.success(
+                    f"Done! {len(results) - skipped_count} of {len(results)} "
+                    f"file(s) produced results. Select another tab to view."
+                )
+            else:
+                st.success("Done! Select another tab to view results.")
+        else:
+            st.error("No files could be processed.")
 
 
 def main() -> None:
@@ -647,11 +802,19 @@ def main() -> None:
         st.subheader("📜 Transcript")
         if "file_name" in result:
             st.caption(f"Showing results for `{result['file_name']}`")
+        if result.get("skipped"):
+            st.warning(
+                result.get("skip_reason", "This file was skipped during processing.")
+            )
         st.dataframe(result["transcript"], hide_index=True)
 
     # ---------------- Summary tab -------------------
     with tab_summary:
-        if result["summary"] is None:
+        if result.get("skipped"):
+            st.warning(
+                result.get("skip_reason", "This file was skipped during processing.")
+            )
+        elif result["summary"] is None:
             st.warning("Summary not requested.")
         else:
             st.subheader("📝 Summary")
@@ -665,7 +828,11 @@ def main() -> None:
 
     # ------------ Word‑level analysis tab -----------
     with tab_words:
-        if result["word_counts"] is None:
+        if result.get("skipped"):
+            st.warning(
+                result.get("skip_reason", "This file was skipped during processing.")
+            )
+        elif result["word_counts"] is None:
             st.warning("Word statistics not requested.")
         else:
             st.subheader("🔠 Top Words")
@@ -756,8 +923,11 @@ def main() -> None:
 
     # ------------ Hate Speech tab -------------------
     with tab_hate:
-        findings = result.get("hate_speech_findings")
-        if findings is None:
+        if result.get("skipped"):
+            st.warning(
+                result.get("skip_reason", "This file was skipped during processing.")
+            )
+        elif (findings := result.get("hate_speech_findings")) is None:
             st.warning("Hate speech detection not requested.")
         elif not findings:
             st.success("No hate speech detected.")

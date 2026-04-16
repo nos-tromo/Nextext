@@ -71,6 +71,17 @@ class MemoryConfig:
     default_strategy: str
 
 
+@dataclass(frozen=True)
+class VadConfig:
+    """Dataclass for Voice Activity Detection configuration.
+
+    Attributes:
+        enabled: Whether Silero VAD pre-screening is active.
+    """
+
+    enabled: bool
+
+
 EXTERNAL_WHISPER_DEFAULTS: dict[str, str] = {
     "openai": "whisper-1",
     "vllm": "openai/whisper-large-v3",
@@ -138,6 +149,18 @@ def load_memory_env() -> MemoryConfig:
         )
         raw = "offload"
     return MemoryConfig(default_strategy=raw)
+
+
+def load_vad_env() -> VadConfig:
+    """Loads Voice Activity Detection configuration from environment variables.
+
+    Returns:
+        VadConfig: Dataclass containing the VAD toggle.
+        - enabled (bool): ``True`` (default) when ``VAD_ENABLED`` is ``1``,
+          ``true``, or ``yes``.
+    """
+    enabled = str(os.getenv("VAD_ENABLED", "1")).lower() in {"1", "true", "yes"}
+    return VadConfig(enabled=enabled)
 
 
 def load_path_env() -> PathConfig:

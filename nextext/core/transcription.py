@@ -5,7 +5,7 @@ from datetime import timedelta
 from importlib import import_module
 from pathlib import Path
 from types import ModuleType
-from typing import Any, Optional
+from typing import Any, Optional, cast
 
 import numpy as np
 import pandas as pd  # type: ignore[import]
@@ -15,7 +15,7 @@ from dotenv import load_dotenv
 from loguru import logger
 from openai import APIStatusError, OpenAI
 from pyannote.audio import Pipeline as DiarizationPipeline  # type: ignore[import]
-from nextext.utils.env_cfg import load_inference_env
+from nextext.utils.env_cfg import load_inference_env, load_vad_env
 from nextext.utils.mappings_loader import load_mappings
 from nextext.utils.model_registry import REGISTRY, ModelSpec, Strategy
 
@@ -59,6 +59,68 @@ _WHISPER_REGISTRY_KEYS: dict[str, str] = {
 _DIARIZATION_MODEL_ID: str = "pyannote/speaker-diarization-3.1"
 
 OPENAI_WHISPER_MAX_UPLOAD_BYTES: int = 25 * 1024 * 1024
+
+# Segments with ``no_speech_prob`` above this threshold are discarded.
+# Whisper's built-in filter requires *both* high ``no_speech_prob`` and low
+# ``avg_logprob``, which lets confident hallucinations on silent audio slip
+# through.  Filtering on ``no_speech_prob`` alone catches them.
+NO_SPEECH_THRESHOLD: float = 0.6
+
+# Audio with an RMS energy below this value is treated as silence and skipped
+# before Whisper runs.  0.01 ≈ −40 dB; normal speech sits well above 0.03.
+# This catches cases where ``no_speech_prob`` filtering alone is insufficient
+# because Whisper can hallucinate with low ``no_speech_prob`` on quiet noise.
+SILENCE_RMS_THRESHOLD: float = 0.01
+
+SILERO_VAD_REPO: str = "snakers4/silero-vad"
+
+# Three-state lazy cache: False = not attempted, None = failed, tuple = ready.
+_vad_cache: tuple[Any, Any] | None | bool = False
+
+
+def _get_vad() -> tuple[Any, Any] | None:
+    """Lazily load the Silero VAD model via ``torch.hub``.
+
+    Returns:
+        A ``(model, get_speech_timestamps)`` tuple, or ``None`` when the
+        model could not be loaded (network error, missing cache, etc.).
+        Failure is cached so ``torch.hub.load`` is not retried on every file.
+    """
+    global _vad_cache
+    if _vad_cache is not False:
+        return cast(Optional[tuple[Any, Any]], _vad_cache)
+    try:
+        model, utils = torch.hub.load(
+            SILERO_VAD_REPO,
+            model="silero_vad",
+            trust_repo=True,
+        )
+        _vad_cache = (model, utils[0])  # utils[0] = get_speech_timestamps
+        logger.info("Silero VAD model loaded.")
+    except Exception as exc:
+        logger.warning("Could not load Silero VAD ({}). Falling back to RMS-only.", exc)
+        _vad_cache = None
+    return cast(Optional[tuple[Any, Any]], _vad_cache)
+
+
+def _detect_speech_vad(audio: np.ndarray, sample_rate: int = 16000) -> bool | None:
+    """Check whether *audio* contains human speech using Silero VAD.
+
+    Args:
+        audio: Float32 waveform (mono, 16 kHz).
+        sample_rate: Sample rate of *audio*.
+
+    Returns:
+        ``True`` if speech is found, ``False`` if no speech is detected,
+        or ``None`` when the VAD model is unavailable (graceful fallback).
+    """
+    vad = _get_vad()
+    if vad is None:
+        return None
+    model, get_speech_timestamps = vad
+    tensor = torch.from_numpy(audio).float()
+    timestamps = get_speech_timestamps(tensor, model, sampling_rate=sample_rate)
+    return len(timestamps) > 0
 
 
 def _configure_torch_safe_globals() -> None:
@@ -416,14 +478,59 @@ class WhisperTranscriber:
         return detected_lang
 
     def transcription(self) -> None:
-        """Run the transcription process on the loaded audio file using openai-whisper."""
+        """Run the transcription process on the loaded audio file using openai-whisper.
+
+        Three pre-/post-transcription guards prevent Whisper hallucinations:
+
+        1. **RMS energy** — audio below :data:`SILENCE_RMS_THRESHOLD` is
+           digital silence and is skipped instantly.
+        2. **Silero VAD** — when enabled via ``VAD_ENABLED``, audio that
+           contains energy but no human speech is skipped before Whisper
+           runs.
+        3. **no_speech_prob** — segments whose ``no_speech_prob`` exceeds
+           :data:`NO_SPEECH_THRESHOLD` are discarded after transcription.
+        """
+        # Layer 1: RMS energy (instant — catches digital silence)
+        rms = float(np.sqrt(np.mean(self.audio**2)))
+        if rms < SILENCE_RMS_THRESHOLD:
+            logger.info(
+                "Audio RMS ({:.6f}) below silence threshold ({});  skipping transcription.",
+                rms,
+                SILENCE_RMS_THRESHOLD,
+            )
+            self.transcription_result = {"segments": []}
+            return
+
+        # Layer 2: Silero VAD (catches noisy audio without speech)
+        if load_vad_env().enabled:
+            has_speech = _detect_speech_vad(self.audio)
+            if has_speech is False:
+                logger.info("VAD detected no speech; skipping transcription.")
+                self.transcription_result = {"segments": []}
+                return
+
+        # Layer 3: Whisper transcription + no_speech_prob filter
         key = _WHISPER_REGISTRY_KEYS.get(self.task, "whisper_turbo")
         try:
             with REGISTRY.acquire(key) as model:
                 result = model.transcribe(
                     self.audio, task=self.task, language=self.src_lang
                 )
-            self.transcription_result = {"segments": result["segments"]}
+            raw_segments = result["segments"]
+            filtered = [
+                seg
+                for seg in raw_segments
+                if seg.get("no_speech_prob", 0) <= NO_SPEECH_THRESHOLD
+            ]
+            dropped = len(raw_segments) - len(filtered)
+            if dropped:
+                logger.info(
+                    "Dropped {}/{} segments with no_speech_prob > {}.",
+                    dropped,
+                    len(raw_segments),
+                    NO_SPEECH_THRESHOLD,
+                )
+            self.transcription_result = {"segments": filtered}
         except Exception as e:
             logger.error("Error during transcription: {}", e, exc_info=True)
             raise

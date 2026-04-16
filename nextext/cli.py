@@ -192,6 +192,16 @@ def _run_main(args: argparse.Namespace) -> None:
             n_speakers=args.speakers,
         )
         args.src_lang = updated_src_lang  # Update source language if detected
+
+        # Guard: stop early when the transcript contains no speech
+        transcript_text = " ".join(transcript_df["text"].astype(str).tolist()).strip()
+        if transcript_df.empty or not transcript_text:
+            logger.warning(
+                "No speech detected in '{}'. Writing empty transcript and skipping analysis.",
+                args.file_path,
+            )
+            file_processor.write_file_output(transcript_df, "transcript")
+            return
     else:
         logger.error("Invalid task specified: {}", args.task)
         raise ValueError("Invalid task. Please specify 'transcribe' or 'translate'.")

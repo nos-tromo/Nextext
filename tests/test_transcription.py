@@ -390,9 +390,11 @@ def test_transcription_acquires_task_specific_registry_key(
             return _FakeCtx()
 
     monkeypatch.setattr(transcription, "REGISTRY", _FakeRegistry())
+    # Disable VAD so the test reaches the Whisper model registry
+    monkeypatch.setattr(transcription, "_get_vad", lambda: None)
 
     t = WhisperTranscriber.__new__(WhisperTranscriber)
-    t.audio = np.zeros(16000, dtype=np.float32)
+    t.audio = np.full(16000, 0.05, dtype=np.float32)
     t.task = "translate"
     t.src_lang = "de"
     t.transcription_result = None
