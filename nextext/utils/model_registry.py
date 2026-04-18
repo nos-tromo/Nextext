@@ -51,6 +51,13 @@ class ModelSpec:
         default_strategy: Fallback when no env override is set.
         gpu_capable: Set ``False`` for CPU-only caches (e.g. spaCy); disables
             device moves and forces an effective strategy of ``OFFLOAD``.
+        mps_compatible: Set ``False`` for models whose ops are not supported
+            on the Apple Silicon MPS backend (notably Whisper and pyannote,
+            which rely on sparse-tensor constructors that raise
+            ``NotImplementedError`` on SparseMPS even with
+            ``PYTORCH_ENABLE_MPS_FALLBACK=1``). When ``False`` the default
+            device picker skips MPS and falls back to CPU. Ignored when
+            ``gpu_capable`` is ``False``.
     """
 
     name: str
@@ -58,6 +65,7 @@ class ModelSpec:
     mover: Callable[[Any, str], Any]
     default_strategy: Strategy = Strategy.OFFLOAD
     gpu_capable: bool = True
+    mps_compatible: bool = True
 
 
 @dataclass
@@ -69,18 +77,26 @@ class _HandleState:
     lock: threading.RLock = field(default_factory=threading.RLock)
 
 
-def _default_device() -> str:
+def _default_device(*, allow_mps: bool = True) -> str:
     """Return the preferred GPU device name or ``"cpu"``.
+
+    Args:
+        allow_mps: When ``False``, the Apple Silicon MPS backend is skipped
+            and CPU is returned instead. Set by the registry for specs that
+            declare ``mps_compatible=False`` (e.g. Whisper, pyannote), whose
+            sparse-tensor paths crash on SparseMPS.
 
     Returns:
         str: ``"cuda"`` if a CUDA GPU is available, ``"mps"`` if an Apple
-            Silicon GPU is available, or ``"cpu"`` otherwise.
+            Silicon GPU is available and ``allow_mps`` is ``True``, or
+            ``"cpu"`` otherwise.
     """
     if hasattr(torch, "cuda") and torch.cuda.is_available():
         return "cuda"
-    mps = getattr(torch.backends, "mps", None)
-    if mps is not None and mps.is_available():
-        return "mps"
+    if allow_mps:
+        mps = getattr(torch.backends, "mps", None)
+        if mps is not None and mps.is_available():
+            return "mps"
     return "cpu"
 
 
@@ -192,7 +208,12 @@ class ModelRegistry:
         spec = self._specs.get(name)
         if spec is None:
             raise KeyError(f"No registered model named '{name}'.")
-        target = device or (_default_device() if spec.gpu_capable else "cpu")
+        if device is not None:
+            target = device
+        elif spec.gpu_capable:
+            target = _default_device(allow_mps=spec.mps_compatible)
+        else:
+            target = "cpu"
         return ModelHandle(self, spec, target)
 
     def evict(self, name: str) -> None:

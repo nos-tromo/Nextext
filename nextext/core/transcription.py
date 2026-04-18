@@ -123,6 +123,95 @@ def _detect_speech_vad(audio: np.ndarray, sample_rate: int = 16000) -> bool | No
     return len(timestamps) > 0
 
 
+def _load_audio_waveform(file_path: Path) -> np.ndarray:
+    """Decode *file_path* into a float32 mono 16 kHz waveform.
+
+    Thin wrapper over :func:`whisper.load_audio` so every caller in this
+    module — both the local and the external transcriber — shares the
+    exact same decoding step (same sample rate, same normalisation).
+
+    Args:
+        file_path: Path to the audio file to decode.
+
+    Returns:
+        Float32 mono waveform sampled at 16 kHz.
+    """
+    return whisper.load_audio(str(file_path))
+
+
+def _audio_has_speech(audio: np.ndarray) -> tuple[bool, str | None]:
+    """Gate an audio waveform against the pre-Whisper hallucination guards.
+
+    Combines the two pre-transcription checks that both the local and
+    external transcribers run. Keeping them in one helper ensures the two
+    paths cannot drift:
+
+    1. **RMS energy** — waveforms below :data:`SILENCE_RMS_THRESHOLD` are
+       treated as digital silence and rejected without invoking Silero.
+    2. **Silero VAD** — when ``VAD_ENABLED`` is set (the default, via
+       :func:`load_vad_env`), waveforms that carry energy but no
+       detectable human speech are rejected. VAD returning ``None``
+       (graceful fallback when the model could not be loaded) is treated
+       as a pass: the RMS check has already run.
+
+    Args:
+        audio: Float32 mono waveform sampled at 16 kHz (the format
+            returned by :func:`_load_audio_waveform`).
+
+    Returns:
+        ``(True, None)`` when the audio should be sent to Whisper;
+        ``(False, reason)`` when it should be skipped. *reason* is a
+        short, log-friendly explanation.
+    """
+    rms = float(np.sqrt(np.mean(audio**2)))
+    if rms < SILENCE_RMS_THRESHOLD:
+        return (
+            False,
+            f"Audio RMS ({rms:.6f}) below silence threshold ({SILENCE_RMS_THRESHOLD})",
+        )
+    if load_vad_env().enabled:
+        has_speech = _detect_speech_vad(audio)
+        if has_speech is False:
+            return False, "VAD detected no speech"
+    return True, None
+
+
+def _filter_no_speech_segments(
+    segments: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Drop segments whose ``no_speech_prob`` exceeds the threshold.
+
+    Whisper's built-in filter is conservative (it also requires a low
+    ``avg_logprob``) and lets confident hallucinations on quiet or
+    silent audio through. Filtering on ``no_speech_prob`` alone catches
+    those; the same threshold is applied to the local and external paths
+    so downstream output is consistent regardless of provider.
+
+    Args:
+        segments: Raw Whisper segment dicts; missing ``no_speech_prob`` is
+            treated as ``0.0``.
+
+    Returns:
+        The filtered segment list. When nothing is dropped the original
+        list object is returned unchanged (identity preserved).
+    """
+    filtered = [
+        seg
+        for seg in segments
+        if float(seg.get("no_speech_prob", 0.0)) <= NO_SPEECH_THRESHOLD
+    ]
+    dropped = len(segments) - len(filtered)
+    if dropped:
+        logger.info(
+            "Dropped {}/{} segments with no_speech_prob > {}.",
+            dropped,
+            len(segments),
+            NO_SPEECH_THRESHOLD,
+        )
+        return filtered
+    return segments
+
+
 def _configure_torch_safe_globals() -> None:
     """Register safe globals needed for Pyannote checkpoints on Torch 2.6+."""
     add_safe_globals = getattr(torch.serialization, "add_safe_globals", None)
@@ -318,12 +407,18 @@ def _load_diarization_pipeline() -> DiarizationPipeline:
     )
 
 
+# Whisper and pyannote use sparse-tensor ops that are not implemented on
+# the Apple Silicon SparseMPS backend; PYTORCH_ENABLE_MPS_FALLBACK=1 only
+# covers the regular MPS backend, so promoting these models to MPS raises
+# NotImplementedError mid-move. Mark them mps_compatible=False so acquire()
+# pins them to CPU on Mac while CUDA is still used where available.
 REGISTRY.register(
     ModelSpec(
         name="whisper_turbo",
         loader=lambda: _load_whisper(LOCAL_WHISPER_MODELS["transcribe"]),
         mover=_move_torch_module,
         default_strategy=Strategy.OFFLOAD,
+        mps_compatible=False,
     )
 )
 REGISTRY.register(
@@ -332,6 +427,7 @@ REGISTRY.register(
         loader=lambda: _load_whisper(LOCAL_WHISPER_MODELS["translate"]),
         mover=_move_torch_module,
         default_strategy=Strategy.OFFLOAD,
+        mps_compatible=False,
     )
 )
 REGISTRY.register(
@@ -340,6 +436,7 @@ REGISTRY.register(
         loader=_load_diarization_pipeline,
         mover=_move_torch_module,
         default_strategy=Strategy.OFFLOAD,
+        mps_compatible=False,
     )
 )
 
@@ -408,9 +505,17 @@ class WhisperTranscriber:
 
         self.transcription_device = "cuda" if torch.cuda.is_available() else "cpu"
         self.audio = self._load_audio(file_path)
+        # Run the silence/VAD guard once, up-front. If the file has no speech
+        # we skip language detection entirely: there is no point promoting
+        # Whisper to its accelerator for audio we know we will not transcribe.
+        self._speech_check: tuple[bool, str | None] = _audio_has_speech(self.audio)
 
         whisper_languages = load_mappings(whisper_language_file)
-        det_lang = self._detect_language() or "en"
+        if self._speech_check[0]:
+            det_lang = self._detect_language() or "en"
+        else:
+            logger.info("{}; skipping language detection.", self._speech_check[1])
+            det_lang = src_lang or "en"
         self.src_lang = src_lang if src_lang in whisper_languages.keys() else det_lang
         self.task = "transcribe" if det_lang == trg_lang else task
         logger.info("Using language '{}' for task '{}'", self.src_lang, self.task)
@@ -433,6 +538,10 @@ class WhisperTranscriber:
     def _load_audio(file: Path, sample_rate: int = 16000) -> np.ndarray:
         """Load the audio file as a numpy array using the whisper library.
 
+        Thin delegate over :func:`_load_audio_waveform` kept so existing
+        callers and tests that reach into ``WhisperTranscriber._load_audio``
+        keep working.
+
         Args:
             file (Path): The path to the audio file.
             sample_rate (int): Unused; whisper always resamples to 16000 Hz.
@@ -440,7 +549,7 @@ class WhisperTranscriber:
         Returns:
             np.ndarray: The loaded audio as a float32 array at 16 kHz.
         """
-        return whisper.load_audio(str(file))
+        return _load_audio_waveform(file)
 
     def _detect_language(
         self, duration_sec: float = 30.0, sample_rate: int = 16000
@@ -480,7 +589,9 @@ class WhisperTranscriber:
     def transcription(self) -> None:
         """Run the transcription process on the loaded audio file using openai-whisper.
 
-        Three pre-/post-transcription guards prevent Whisper hallucinations:
+        Three pre-/post-transcription guards prevent Whisper hallucinations.
+        Layers 1 & 2 run once in :meth:`__init__` (so silent files never
+        promote a model to GPU); the cached verdict is consulted here:
 
         1. **RMS energy** — audio below :data:`SILENCE_RMS_THRESHOLD` is
            digital silence and is skipped instantly.
@@ -490,24 +601,12 @@ class WhisperTranscriber:
         3. **no_speech_prob** — segments whose ``no_speech_prob`` exceeds
            :data:`NO_SPEECH_THRESHOLD` are discarded after transcription.
         """
-        # Layer 1: RMS energy (instant — catches digital silence)
-        rms = float(np.sqrt(np.mean(self.audio**2)))
-        if rms < SILENCE_RMS_THRESHOLD:
-            logger.info(
-                "Audio RMS ({:.6f}) below silence threshold ({});  skipping transcription.",
-                rms,
-                SILENCE_RMS_THRESHOLD,
-            )
+        # Layers 1 & 2: RMS + Silero VAD (computed once in __init__).
+        has_speech, skip_reason = self._speech_check
+        if not has_speech:
+            logger.info("{}; skipping transcription.", skip_reason)
             self.transcription_result = {"segments": []}
             return
-
-        # Layer 2: Silero VAD (catches noisy audio without speech)
-        if load_vad_env().enabled:
-            has_speech = _detect_speech_vad(self.audio)
-            if has_speech is False:
-                logger.info("VAD detected no speech; skipping transcription.")
-                self.transcription_result = {"segments": []}
-                return
 
         # Layer 3: Whisper transcription + no_speech_prob filter
         key = _WHISPER_REGISTRY_KEYS.get(self.task, "whisper_turbo")
@@ -516,21 +615,9 @@ class WhisperTranscriber:
                 result = model.transcribe(
                     self.audio, task=self.task, language=self.src_lang
                 )
-            raw_segments = result["segments"]
-            filtered = [
-                seg
-                for seg in raw_segments
-                if seg.get("no_speech_prob", 0) <= NO_SPEECH_THRESHOLD
-            ]
-            dropped = len(raw_segments) - len(filtered)
-            if dropped:
-                logger.info(
-                    "Dropped {}/{} segments with no_speech_prob > {}.",
-                    dropped,
-                    len(raw_segments),
-                    NO_SPEECH_THRESHOLD,
-                )
-            self.transcription_result = {"segments": filtered}
+            self.transcription_result = {
+                "segments": _filter_no_speech_segments(result["segments"])
+            }
         except Exception as e:
             logger.error("Error during transcription: {}", e, exc_info=True)
             raise
@@ -710,10 +797,33 @@ class ExternalWhisperTranscriber:
     def transcription(self) -> None:
         """Call the external Whisper API and store the segment results.
 
-        Whisper's built-in ``translate`` task always targets English and is
-        exposed by OpenAI-compatible servers as a separate ``/v1/audio/translations``
-        endpoint. ``task`` itself is not accepted on either endpoint.
+        The same three-layer hallucination guard the local transcriber
+        uses is applied here:
+
+        1. **RMS energy + Silero VAD** (see :func:`_audio_has_speech`) —
+           the audio is decoded locally once and the guard runs before
+           any remote request, so silent / noise-only files never reach
+           the paid endpoint.
+        2. **no_speech_prob post-filter** — segments whose
+           ``no_speech_prob`` exceeds :data:`NO_SPEECH_THRESHOLD` are
+           dropped from the returned payload.
+
+        Whisper's built-in ``translate`` task always targets English and
+        is exposed by OpenAI-compatible servers as a separate
+        ``/v1/audio/translations`` endpoint. ``task`` itself is not
+        accepted on either endpoint.
         """
+        audio = _load_audio_waveform(self.file_path)
+        has_speech, skip_reason = _audio_has_speech(audio)
+        if not has_speech:
+            logger.warning(
+                "{} for {}; skipping external transcription request.",
+                skip_reason,
+                self.file_path.name,
+            )
+            self.transcription_result = {"segments": []}
+            return
+
         client = self._get_client
         file_size = self.file_path.stat().st_size
         logger.info(
@@ -762,15 +872,16 @@ class ExternalWhisperTranscriber:
                 body_text or exc.message,
             )
             raise
-        segments = []
-        for seg in response.segments:
-            segments.append(
-                {
-                    "start": seg.start,
-                    "end": seg.end,
-                    "text": seg.text,
-                }
-            )
+        raw_segments = [
+            {
+                "start": seg.start,
+                "end": seg.end,
+                "text": seg.text,
+                "no_speech_prob": float(getattr(seg, "no_speech_prob", 0.0) or 0.0),
+            }
+            for seg in response.segments
+        ]
+        segments = _filter_no_speech_segments(raw_segments)
         self.transcription_result = {"segments": segments}
         if self.src_lang is None:
             self.src_lang = getattr(response, "language", None)

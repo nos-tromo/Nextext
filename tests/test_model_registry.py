@@ -31,6 +31,7 @@ def _make_spec(
     *,
     default_strategy: Strategy = Strategy.OFFLOAD,
     gpu_capable: bool = True,
+    mps_compatible: bool = True,
     move_fn: Any = None,
     loaded_models: list[_FakeModel] | None = None,
 ) -> ModelSpec:
@@ -52,7 +53,24 @@ def _make_spec(
         mover=move_fn or default_mover,
         default_strategy=default_strategy,
         gpu_capable=gpu_capable,
+        mps_compatible=mps_compatible,
     )
+
+
+def _force_apple_silicon(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make ``_default_device`` pick MPS unless the spec opts out.
+
+    Simulates the Apple Silicon case (no CUDA, MPS available) so tests
+    can assert routing based purely on ``mps_compatible``.
+    """
+    monkeypatch.setattr(model_registry.torch.cuda, "is_available", lambda: False)
+
+    class _FakeBackend:
+        @staticmethod
+        def is_available() -> bool:
+            return True
+
+    monkeypatch.setattr(model_registry.torch.backends, "mps", _FakeBackend)
 
 
 # ---------------------------------------------------------------------------
@@ -130,6 +148,56 @@ def test_gpu_capable_false_skips_device_moves() -> None:
         assert model.device == "cpu"
 
     assert moves == []
+
+
+# ---------------------------------------------------------------------------
+# MPS compatibility gate (Apple Silicon)
+# ---------------------------------------------------------------------------
+
+
+def test_mps_compatible_true_uses_mps_when_cuda_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """MPS-compatible specs ride MPS on Apple Silicon (no CUDA)."""
+    _force_apple_silicon(monkeypatch)
+    registry = ModelRegistry()
+    registry.register(_make_spec(mps_compatible=True))
+
+    with registry.acquire("fake") as model:
+        assert model.device == "mps"
+
+
+def test_mps_compatible_false_falls_back_to_cpu_on_apple_silicon(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Specs declaring mps_compatible=False pin to CPU even when MPS is the
+    only accelerator. This is the Whisper/pyannote path: their sparse-tensor
+    ops crash on the SparseMPS backend, so they must never be auto-targeted
+    at MPS regardless of ``_default_device``'s preference order.
+    """
+    _force_apple_silicon(monkeypatch)
+    registry = ModelRegistry()
+    registry.register(_make_spec(mps_compatible=False))
+
+    with registry.acquire("fake") as model:
+        assert model.device == "cpu"
+
+
+def test_explicit_device_override_beats_mps_gate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An explicit ``device=`` argument to acquire bypasses the MPS gate.
+
+    The gate only kicks in for auto device resolution; callers that
+    deliberately want a model on MPS (e.g. an out-of-band test) must
+    still be able to force it.
+    """
+    _force_apple_silicon(monkeypatch)
+    registry = ModelRegistry()
+    registry.register(_make_spec(mps_compatible=False))
+
+    with registry.acquire("fake", device="mps") as model:
+        assert model.device == "mps"
 
 
 # ---------------------------------------------------------------------------

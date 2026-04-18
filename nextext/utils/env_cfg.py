@@ -27,6 +27,10 @@ def set_offline_env() -> None:
     else:
         logger.info("Hugging Face libraries are in online mode.")
 
+    # Apple Silicon: route MPS-unsupported ops (e.g. sparse_coo paths used
+    # by Whisper / pyannote) to CPU instead of crashing.
+    os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
+
 
 set_offline_env()  # Apply offline settings at module load time
 
