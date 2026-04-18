@@ -13,6 +13,7 @@ import altair as alt
 import pandas as pd  # type: ignore[import-untyped]
 import pycountry
 import streamlit as st
+from loguru import logger
 from matplotlib.figure import Figure
 from streamlit.web import cli as st_cli
 
@@ -611,6 +612,12 @@ def _process_uploaded_files(
                 text=f"Completed file {file_index}/{total_files}: {file_name}",
             )
         except Exception as exc:
+            logger.exception(
+                "Failed to process file {}/{} ({}).",
+                file_index,
+                total_files,
+                file_name,
+            )
             if file_status is not None:
                 file_status.update(
                     label=f"{file_name} — failed: {exc}",
