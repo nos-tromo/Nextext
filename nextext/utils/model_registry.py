@@ -145,7 +145,12 @@ class ModelHandle(AbstractContextManager[Any]):
 
     @property
     def device(self) -> str:
-        """Actual device of the underlying model (reflects any OOM fallback)."""
+        """Return the actual device of the underlying model.
+
+        Returns:
+            str: The live device string (``"cuda"``, ``"mps"``, or
+                ``"cpu"``), reflecting any OOM fallback that occurred.
+        """
         return self._registry._state(self._spec.name).device
 
     def __enter__(self) -> Any:
@@ -180,27 +185,45 @@ class ModelRegistry:
     """Process-wide manager for GPU-resident models."""
 
     def __init__(self) -> None:
+        """Initialize empty spec and state dictionaries."""
         self._specs: dict[str, ModelSpec] = {}
         self._states: dict[str, _HandleState] = {}
         self._registry_lock = threading.RLock()
 
     def register(self, spec: ModelSpec) -> None:
-        """Register a model spec. Silently overwrites an existing entry."""
+        """Register a model spec, silently overwriting an existing entry.
+
+        Args:
+            spec (ModelSpec): Model specification to register under
+                ``spec.name``.
+        """
         with self._registry_lock:
             self._specs[spec.name] = spec
             self._states.setdefault(spec.name, _HandleState())
 
     def is_registered(self, name: str) -> bool:
-        """Return True if a spec is registered under ``name``."""
+        """Return ``True`` if a spec is registered under ``name``.
+
+        Args:
+            name (str): Registry key to look up.
+
+        Returns:
+            bool: ``True`` when a spec with ``name`` has been registered.
+        """
         return name in self._specs
 
     def acquire(self, name: str, *, device: str | None = None) -> ModelHandle:
         """Return a context manager that yields the moved model.
 
         Args:
-            name: Registered spec name.
-            device: Optional device override. Defaults to the preferred GPU
-                device when ``spec.gpu_capable``; ``"cpu"`` otherwise.
+            name (str): Registered spec name.
+            device (str | None): Optional device override. Defaults to the
+                preferred GPU device when ``spec.gpu_capable``; ``"cpu"``
+                otherwise.
+
+        Returns:
+            ModelHandle: Context manager that moves the model to ``device``
+                on entry and releases it on exit.
 
         Raises:
             KeyError: If ``name`` is not registered.
@@ -217,7 +240,12 @@ class ModelRegistry:
         return ModelHandle(self, spec, target)
 
     def evict(self, name: str) -> None:
-        """Drop the cached instance for a single model and flush GPU memory."""
+        """Drop the cached instance for a single model and flush GPU memory.
+
+        Args:
+            name (str): Registry key whose cached instance should be
+                dropped. No-op when ``name`` is not registered.
+        """
         state = self._states.get(name)
         if state is None:
             return
@@ -414,5 +442,9 @@ REGISTRY = ModelRegistry()
 
 
 def flush_gpu() -> None:
-    """Convenience wrapper for :attr:`REGISTRY.flush_gpu`."""
+    """Run ``gc.collect()`` and flush GPU allocator reservations.
+
+    Convenience wrapper for :meth:`ModelRegistry.flush_gpu` on the
+    process-wide :data:`REGISTRY`.
+    """
     REGISTRY.flush_gpu()

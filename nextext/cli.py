@@ -1,7 +1,7 @@
 import argparse
 from pathlib import Path
 
-import pandas as pd
+import pandas as pd  # type: ignore[import]
 from loguru import logger
 import pycountry
 
@@ -40,25 +40,22 @@ def _language_name(lang_code: str | None) -> str:
 
 def parse_arguments(args_list: list | None = None) -> argparse.Namespace:
     """Parse command-line arguments for the Nextext CLI.
-    This function sets up the argument parser with various options for file processing,
-    language settings, model selection, and analysis features.
-    It returns the parsed arguments as an `argparse.Namespace` object.
-    This function allows users to specify the audio file to be processed, the source and target languages,
-    the model size for Whisper, the task to perform (transcription or translation),
-    and various analysis options such as word statistics and summarization.
-    It also supports a full analysis mode that combines the remaining analysis features into one command.
-    It is designed to be flexible and user-friendly, providing default values for most options
-    while allowing users to customize their processing pipeline as needed.
+
+    Sets up the argument parser with options for file processing, language
+    settings, model selection, and analysis features. Supports a full-analysis
+    shortcut that enables word statistics and summarization at once.
 
     Args:
-        args_list (list | None, optional): Drop-in list of arguments to parse.
-        If None, uses `sys.argv` to parse command-line arguments. Defaults to None.
+        args_list (list | None): Drop-in list of arguments to parse. If
+            ``None``, uses ``sys.argv`` to parse command-line arguments.
+            Defaults to ``None``.
+
+    Returns:
+        argparse.Namespace: Parsed command-line arguments as a namespace
+            object.
 
     Raises:
         argparse.ArgumentError: If there is an error in argument parsing.
-
-    Returns:
-        argparse.Namespace: Parsed command-line arguments as a namespace object.
     """
     parser = argparse.ArgumentParser(
         description="Audio transcription and analysis.",
@@ -148,13 +145,16 @@ def parse_arguments(args_list: list | None = None) -> argparse.Namespace:
 
 def main() -> None:
     """Run the Nextext pipeline for transcription, translation, and analysis.
-    This function orchestrates the entire process, including transcription, translation,
-    word statistics, and summarization.
-    It handles the command-line arguments and manages the flow of data through the various modules.
+
+    Orchestrates the entire process, including transcription, translation,
+    word statistics, and summarization. Handles the command-line arguments
+    and manages the flow of data through the various modules.
 
     Raises:
-        ValueError: If an invalid task is specified or if the source language cannot be resolved for analysis.
-        ConnectionError: If the configured inference provider is not reachable for analysis tasks.
+        ValueError: If an invalid task is specified or if the source language
+            cannot be resolved for analysis.
+        ConnectionError: If the configured inference provider is not
+            reachable for analysis tasks.
     """
     logger.info("\n\nInitiating Nextext...\n")
 

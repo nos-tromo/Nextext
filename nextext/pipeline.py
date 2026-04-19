@@ -110,8 +110,10 @@ def translation_pipeline(
     src_lang: str | None = None,
     inference_pipeline: InferencePipeline | None = None,
 ) -> pd.DataFrame:
-    """Translate the transcribed text using a machine translation model. Translation is performed
-    only if the target language is different from the detected source language.
+    """Translate the transcribed text using a machine translation model.
+
+    Translation is performed only if the target language is different from
+    the detected source language.
 
     Args:
         df (pd.DataFrame): DataFrame containing the transcribed text.
@@ -163,18 +165,17 @@ def wordlevel_pipeline(
     data: pd.DataFrame,
     language: str,
 ) -> tuple[pd.DataFrame, pd.DataFrame, Figure | None]:
-    """Calculates word statistics, named entities, and creates a word cloud from the provided text data.
+    """Calculate word statistics, named entities, and create a word cloud.
 
     Args:
         data (pd.DataFrame): DataFrame containing the text data to analyze.
         language (str): Language code of the text data.
 
     Returns:
-        tuple: A tuple containing:
-            - pd.DataFrame: DataFrame with word counts.
-            - pd.DataFrame: DataFrame with named entities.
-            - Figure | None: Word cloud figure, or ``None`` when there are no
-              word counts to plot.
+        tuple[pd.DataFrame, pd.DataFrame, Figure | None]: A tuple containing
+            the word-counts DataFrame, the named-entities DataFrame, and the
+            word-cloud figure (or ``None`` when there are no word counts to
+            plot).
     """
     word_analysis = WordCounter(
         text=" ".join(data["text"].astype(str).tolist()),

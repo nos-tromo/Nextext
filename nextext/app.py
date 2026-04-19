@@ -314,9 +314,10 @@ def _run_pipeline(
         opts (dict[str, Any]): Options for the pipeline.
         status_callback (Callable[[str, int], None] | None): Optional
             callback invoked before each pipeline stage.
-        stage_container: Optional Streamlit status container for rendering
-            inline previews as each stage completes. Only display-only APIs
-            (write, dataframe, text, warning) are safe here.
+        stage_container (Any | None): Optional Streamlit status container for
+            rendering inline previews as each stage completes. Only
+            display-only APIs (write, dataframe, text, warning) are safe
+            here.
 
     Returns:
         dict[str, Any]: A result payload for one processed file.
@@ -478,7 +479,7 @@ def _render_file_preview(container: Any, result: dict[str, Any]) -> None:
     as they would trigger a rerun and break the processing loop.
 
     Args:
-        container: An ``st.status()`` container to write into.
+        container (Any): An ``st.status()`` container to write into.
         result (dict[str, Any]): The completed result payload for one file.
     """
     try:
@@ -523,8 +524,8 @@ def _process_uploaded_files(
     Args:
         uploaded_files (Sequence[Any]): Uploaded file objects from Streamlit.
         opts (dict[str, Any]): Shared pipeline settings for the run.
-        results_container: Optional Streamlit container for inline result
-            previews rendered during the processing loop.
+        results_container (Any | None): Optional Streamlit container for
+            inline result previews rendered during the processing loop.
 
     Returns:
         list[dict[str, Any]]: Result payloads in upload order.
@@ -730,7 +731,7 @@ def _start_page() -> None:
 
 
 def main() -> None:
-    """Main function to run the Streamlit app (tab‑based navigation)."""
+    """Run the Streamlit app with tab-based navigation."""
     st.set_page_config(page_title="Nextext", layout="wide")
     st.title("Nextext")
     st.subheader("Transcribe, translate, and analyze audio/video files")
@@ -965,9 +966,10 @@ def main() -> None:
 
 # ---- Streamlit CLI wrapper ----------------------------------------------- #
 def cli() -> None:
-    """CLI entry point for the Streamlit app. This function is used to run the app from the command
-    line. It sets up the command line arguments as if the user typed them. For example: `streamlit
-    run app.py <any extra args>`.
+    """Run the Streamlit app as if invoked from the command line.
+
+    Sets up the command line arguments as if the user typed them, e.g.
+    ``streamlit run app.py <any extra args>``.
     """
     sys.argv = ["streamlit", "run", __file__] + sys.argv[1:]
     sys.exit(st_cli.main())

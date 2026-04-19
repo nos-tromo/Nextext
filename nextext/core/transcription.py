@@ -21,7 +21,15 @@ from nextext.utils.model_registry import REGISTRY, ModelSpec, Strategy
 
 
 def _load_optional_module(module_name: str) -> ModuleType | None:
-    """Load an optional module and return None when unavailable."""
+    """Load an optional module and return None when unavailable.
+
+    Args:
+        module_name (str): Fully qualified module name.
+
+    Returns:
+        ModuleType | None: The imported module, or ``None`` when the import
+            fails.
+    """
     try:
         return import_module(module_name)
     except ImportError:  # pragma: no cover - optional dependency
@@ -108,10 +116,12 @@ def _normalize_whisper_language(value: str | None) -> str | None:
 def _get_vad() -> tuple[Any, Any] | None:
     """Lazily load the Silero VAD model via ``torch.hub``.
 
+    Failure is cached so ``torch.hub.load`` is not retried on every file.
+
     Returns:
-        A ``(model, get_speech_timestamps)`` tuple, or ``None`` when the
-        model could not be loaded (network error, missing cache, etc.).
-        Failure is cached so ``torch.hub.load`` is not retried on every file.
+        tuple[Any, Any] | None: A ``(model, get_speech_timestamps)`` tuple,
+            or ``None`` when the model could not be loaded (network error,
+            missing cache, etc.).
     """
     global _vad_cache
     if _vad_cache is not False:
@@ -131,15 +141,16 @@ def _get_vad() -> tuple[Any, Any] | None:
 
 
 def _detect_speech_vad(audio: np.ndarray, sample_rate: int = 16000) -> bool | None:
-    """Check whether *audio* contains human speech using Silero VAD.
+    """Check whether ``audio`` contains human speech using Silero VAD.
 
     Args:
-        audio: Float32 waveform (mono, 16 kHz).
-        sample_rate: Sample rate of *audio*.
+        audio (np.ndarray): Float32 waveform (mono, 16 kHz).
+        sample_rate (int): Sample rate of ``audio``.
 
     Returns:
-        ``True`` if speech is found, ``False`` if no speech is detected,
-        or ``None`` when the VAD model is unavailable (graceful fallback).
+        bool | None: ``True`` if speech is found, ``False`` if no speech is
+            detected, or ``None`` when the VAD model is unavailable
+            (graceful fallback).
     """
     vad = _get_vad()
     if vad is None:
@@ -151,17 +162,17 @@ def _detect_speech_vad(audio: np.ndarray, sample_rate: int = 16000) -> bool | No
 
 
 def _load_audio_waveform(file_path: Path) -> np.ndarray:
-    """Decode *file_path* into a float32 mono 16 kHz waveform.
+    """Decode ``file_path`` into a float32 mono 16 kHz waveform.
 
     Thin wrapper over :func:`whisper.load_audio` so every caller in this
     module — both the local and the external transcriber — shares the
     exact same decoding step (same sample rate, same normalisation).
 
     Args:
-        file_path: Path to the audio file to decode.
+        file_path (Path): Path to the audio file to decode.
 
     Returns:
-        Float32 mono waveform sampled at 16 kHz.
+        np.ndarray: Float32 mono waveform sampled at 16 kHz.
     """
     return whisper.load_audio(str(file_path))
 
@@ -182,13 +193,13 @@ def _audio_has_speech(audio: np.ndarray) -> tuple[bool, str | None]:
        as a pass: the RMS check has already run.
 
     Args:
-        audio: Float32 mono waveform sampled at 16 kHz (the format
-            returned by :func:`_load_audio_waveform`).
+        audio (np.ndarray): Float32 mono waveform sampled at 16 kHz (the
+            format returned by :func:`_load_audio_waveform`).
 
     Returns:
-        ``(True, None)`` when the audio should be sent to Whisper;
-        ``(False, reason)`` when it should be skipped. *reason* is a
-        short, log-friendly explanation.
+        tuple[bool, str | None]: ``(True, None)`` when the audio should be
+            sent to Whisper; ``(False, reason)`` when it should be skipped.
+            ``reason`` is a short, log-friendly explanation.
     """
     rms = float(np.sqrt(np.mean(audio**2)))
     if rms < SILENCE_RMS_THRESHOLD:
@@ -215,12 +226,13 @@ def _filter_no_speech_segments(
     so downstream output is consistent regardless of provider.
 
     Args:
-        segments: Raw Whisper segment dicts; missing ``no_speech_prob`` is
-            treated as ``0.0``.
+        segments (list[dict[str, Any]]): Raw Whisper segment dicts; missing
+            ``no_speech_prob`` is treated as ``0.0``.
 
     Returns:
-        The filtered segment list. When nothing is dropped the original
-        list object is returned unchanged (identity preserved).
+        list[dict[str, Any]]: The filtered segment list. When nothing is
+            dropped the original list object is returned unchanged (identity
+            preserved).
     """
     filtered = [
         seg
@@ -650,10 +662,11 @@ class WhisperTranscriber:
             raise
 
     def _assign_speakers(self, diarization_result: Any) -> None:
-        """Assign speaker labels to transcription segments based on maximum overlap.
+        """Assign speaker labels to transcription segments by maximum overlap.
 
         Args:
-            diarization_result: A pyannote Annotation object from the diarization pipeline.
+            diarization_result (Any): A pyannote Annotation object from the
+                diarization pipeline.
         """
         if self.transcription_result is None:
             return
@@ -701,13 +714,37 @@ class WhisperTranscriber:
 
     @staticmethod
     def _ends_with_punctuation(text: str) -> bool:
+        """Delegate to the module-level sentence-terminator check.
+
+        Args:
+            text (str): The text string to check.
+
+        Returns:
+            bool: ``True`` if ``text`` ends with sentence-ending punctuation.
+        """
         return _ends_with_punctuation(text)
 
     @staticmethod
     def _seconds_to_time(seconds: float) -> str:
+        """Delegate to the module-level ``HH:MM:SS`` formatter.
+
+        Args:
+            seconds (float): The number of seconds to convert.
+
+        Returns:
+            str: The formatted ``HH:MM:SS`` string.
+        """
         return _seconds_to_time(seconds)
 
     def _merge_transcriptions_by_sentence(self, data: pd.DataFrame) -> pd.DataFrame:
+        """Merge transcription rows into sentences using instance column names.
+
+        Args:
+            data (pd.DataFrame): The original DataFrame with per-segment rows.
+
+        Returns:
+            pd.DataFrame: A new DataFrame with rows merged by sentence.
+        """
         return _merge_transcriptions_by_sentence(
             data,
             self.start_column,
@@ -812,7 +849,11 @@ class ExternalWhisperTranscriber:
 
     @property
     def _get_client(self) -> Any:
-        """Lazily create the OpenAI-compatible client from environment variables."""
+        """Lazily create the OpenAI-compatible client from environment variables.
+
+        Returns:
+            Any: The cached OpenAI client instance.
+        """
         if self._client is None:
             client_kwargs: dict[str, Any] = {"api_key": os.getenv("OPENAI_API_KEY", "")}
             base_url = os.getenv("OPENAI_API_BASE", "").rstrip("/")

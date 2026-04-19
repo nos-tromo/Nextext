@@ -10,7 +10,14 @@ from nextext.core.openai_cfg import InferencePipeline
 
 
 class HateSpeechDetection(TypedDict):
-    """Structured result from hate speech detection."""
+    """Structured result from hate speech detection.
+
+    Attributes:
+        hate_speech (bool): Whether the segment was flagged as hate speech.
+        category (str): Normalised hate-speech category label.
+        confidence (str): One of ``"high"``, ``"medium"``, or ``"low"``.
+        reason (str): Short free-text rationale from the LLM.
+    """
 
     hate_speech: bool
     category: str
@@ -21,14 +28,23 @@ class HateSpeechDetection(TypedDict):
 class HateSpeechDetector:
     """Detect hate speech in text segments using an LLM.
 
-    Args:
+    Attributes:
         inference_pipeline (InferencePipeline): Shared inference client.
-        max_chars (int): Maximum characters of input text sent for detection. Defaults to 2048.
+        max_chars (int): Maximum characters of input text sent for detection.
+        prompt_template (str): Hate-speech prompt template loaded at
+            construction time.
     """
 
     def __init__(
         self, inference_pipeline: InferencePipeline, max_chars: int = 2048
     ) -> None:
+        """Initialize the detector with a shared inference client.
+
+        Args:
+            inference_pipeline (InferencePipeline): Shared inference client.
+            max_chars (int): Maximum characters of input text sent for
+                detection. Defaults to ``2048``.
+        """
         self.inference_pipeline = inference_pipeline
         self.max_chars = max_chars
         self.prompt_template = inference_pipeline.load_prompt("hate_speech")
@@ -84,7 +100,12 @@ def _parse_hate_speech_payload(raw: str) -> HateSpeechDetection:
 
 
 def _default_detection() -> HateSpeechDetection:
-    """Return a safe default detection when parsing fails."""
+    """Return a safe default detection when parsing fails.
+
+    Returns:
+        HateSpeechDetection: A detection flagged as non-hate with low
+            confidence and a ``"Parse error"`` reason.
+    """
     return HateSpeechDetection(
         hate_speech=False,
         category="none",

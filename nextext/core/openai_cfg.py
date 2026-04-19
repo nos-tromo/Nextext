@@ -27,7 +27,13 @@ PROMPT_DIR: Path = Path(__file__).parent.parent / "utils" / "prompts"
 
 @dataclass
 class InferencePipeline:
-    """Inference pipeline for OpenAI-compatible chat completions."""
+    """Inference pipeline for OpenAI-compatible chat completions.
+
+    Attributes:
+        out_language (str): Human-readable language name used in the system
+            prompt. Defaults to ``"German"``.
+        prompt_dir (Path): Directory where prompt template files live.
+    """
 
     out_language: str = "German"
     _default_model: str | None = field(default=None, init=False)

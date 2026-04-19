@@ -59,7 +59,11 @@ _SENTENCE_RE = re.compile(
 
 
 def _resolve_hf_cache_dir() -> Path:
-    """Return the Hugging Face hub cache directory."""
+    """Return the Hugging Face hub cache directory.
+
+    Returns:
+        Path: Resolved HF hub cache directory from environment or default.
+    """
     hf_cache = os.getenv("HF_HUB_CACHE") or os.getenv("HUGGINGFACE_HUB_CACHE")
     if hf_cache:
         return Path(hf_cache)
@@ -70,11 +74,14 @@ def _resolve_hf_cache_path(cache_dir: Path, repo_id: str) -> Path | None:
     """Find a locally cached HF snapshot directory for repo_id.
 
     Args:
-        cache_dir: HF hub cache directory (e.g. ~/.cache/huggingface/hub).
-        repo_id: HuggingFace repository ID (e.g. "gliner-community/gliner_large-v2.5").
+        cache_dir (Path): HF hub cache directory (e.g.
+            ``~/.cache/huggingface/hub``).
+        repo_id (str): HuggingFace repository ID (e.g.
+            ``"gliner-community/gliner_large-v2.5"``).
 
     Returns:
-        Path to the snapshot directory if found, otherwise None.
+        Path | None: Path to the snapshot directory if found, otherwise
+            ``None``.
     """
     model_dir_name = f"models--{repo_id.replace('/', '--')}"
     model_cache_dir = cache_dir / model_dir_name
@@ -92,10 +99,10 @@ def _load_gliner_config(model_dir: Path) -> dict[str, Any]:
     """Load the GLiNER config for a local model directory.
 
     Args:
-        model_dir: Directory containing ``gliner_config.json``.
+        model_dir (Path): Directory containing ``gliner_config.json``.
 
     Returns:
-        Parsed GLiNER configuration payload.
+        dict[str, Any]: Parsed GLiNER configuration payload.
 
     Raises:
         FileNotFoundError: If the config file does not exist.
@@ -107,7 +114,12 @@ def _load_gliner_config(model_dir: Path) -> dict[str, Any]:
 
 
 def _link_or_copy_path(source: Path, destination: Path) -> None:
-    """Materialize a file or directory at ``destination`` from ``source``."""
+    """Materialize a file or directory at ``destination`` from ``source``.
+
+    Args:
+        source (Path): Existing file or directory to link or copy.
+        destination (Path): Target path that should mirror ``source``.
+    """
     if destination.exists():
         return
     try:
@@ -123,11 +135,12 @@ def _resolve_local_gliner_dependency(cache_dir: Path, dependency: str) -> Path:
     """Resolve a GLiNER dependency path without allowing network access.
 
     Args:
-        cache_dir: Hugging Face hub cache directory.
-        dependency: Repo ID or local filesystem path referenced by GLiNER config.
+        cache_dir (Path): Hugging Face hub cache directory.
+        dependency (str): Repo ID or local filesystem path referenced by
+            GLiNER config.
 
     Returns:
-        Local filesystem path for the dependency.
+        Path: Local filesystem path for the dependency.
 
     Raises:
         FileNotFoundError: If the dependency is unavailable locally.
@@ -148,11 +161,13 @@ def _materialize_offline_gliner_dir(model_dir: Path, config: dict[str, Any]) -> 
     """Create a local-only GLiNER directory with patched config references.
 
     Args:
-        model_dir: Original local GLiNER model directory.
-        config: GLiNER config payload to write into the offline runtime directory.
+        model_dir (Path): Original local GLiNER model directory.
+        config (dict[str, Any]): GLiNER config payload to write into the
+            offline runtime directory.
 
     Returns:
-        Local runtime directory with patched config and links to model assets.
+        Path: Local runtime directory with patched config and links to model
+            assets.
     """
     digest = hashlib.sha256(
         f"{model_dir.resolve()}\0{json.dumps(config, sort_keys=True)}".encode("utf-8")
@@ -177,11 +192,12 @@ def _prepare_local_gliner_model_dir(model_dir: Path, cache_dir: Path) -> Path:
     trigger outbound hub resolution.
 
     Args:
-        model_dir: Local GLiNER model directory or snapshot path.
-        cache_dir: Hugging Face hub cache directory.
+        model_dir (Path): Local GLiNER model directory or snapshot path.
+        cache_dir (Path): Hugging Face hub cache directory.
 
     Returns:
-        A local model directory safe to hand to ``GLiNER.from_pretrained``.
+        Path: A local model directory safe to hand to
+            ``GLiNER.from_pretrained``.
     """
     config = _load_gliner_config(model_dir)
     patched = False
@@ -207,14 +223,16 @@ def _resolve_gliner_load_target(model_id: str, cache_dir: Path) -> tuple[str, bo
     """Resolve the load target for GLiNER without allowing accidental hub access.
 
     Args:
-        model_id: GLiNER repo ID or local filesystem path.
-        cache_dir: Hugging Face hub cache directory.
+        model_id (str): GLiNER repo ID or local filesystem path.
+        cache_dir (Path): Hugging Face hub cache directory.
 
     Returns:
-        Tuple of ``(load_target, local_only)`` for ``GLiNER.from_pretrained``.
+        tuple[str, bool]: ``(load_target, local_only)`` suitable for
+            ``GLiNER.from_pretrained``.
 
     Raises:
-        FileNotFoundError: If offline mode is enabled and the model is not cached.
+        FileNotFoundError: If offline mode is enabled and the model is not
+            cached.
     """
     local_dir = Path(model_id).expanduser()
     if local_dir.exists():
@@ -313,11 +331,12 @@ def _chunk_text(text: str, word_budget: int = _GLINER_WORD_BUDGET) -> list[str]:
     """Split text into sentence-packed chunks within a word budget.
 
     Args:
-        text: Raw input text.
-        word_budget: Maximum whitespace-delimited words per chunk.
+        text (str): Raw input text.
+        word_budget (int): Maximum whitespace-delimited words per chunk.
 
     Returns:
-        Ordered list of text chunks suitable for repeated GLiNER inference.
+        list[str]: Ordered list of text chunks suitable for repeated GLiNER
+            inference.
     """
     sentences = [
         m.group(0).strip()
@@ -454,8 +473,8 @@ class WordCounter:
     def lemmatize_doc(self) -> None:
         """Tokenize and lemmatize the text.
 
-        Returns:
-            list[str]: List of tokenized and lemmatized words.
+        Populates ``self.tokenized_doc`` and ``self.tokenized_nouns`` as a
+        side effect; returns nothing.
         """
         if self.doc is None:
             logger.error("spaCy doc is None. Please run text_to_doc() first.")

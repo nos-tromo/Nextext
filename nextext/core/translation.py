@@ -17,8 +17,12 @@ class Translator:
         """Initialize the Translator.
 
         Args:
-            translation_language_file (str, optional): _description_. Defaults to "translategemma_languages.json".
-            inference_pipeline (InferencePipeline | None, optional): _description_. Defaults to None.
+            translation_language_file (str): Name of the JSON mapping file
+                that lists supported TranslateGemma languages. Defaults to
+                ``"translategemma_languages.json"``.
+            inference_pipeline (InferencePipeline | None): Shared inference
+                client. A new :class:`InferencePipeline` is created when
+                ``None``. Defaults to ``None``.
         """
         self.languages = load_mappings(translation_language_file)
         self.inference_pipeline = inference_pipeline or InferencePipeline()
