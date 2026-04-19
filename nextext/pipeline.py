@@ -208,14 +208,16 @@ def hate_speech_pipeline(
 
     Returns:
         list[dict]: Flagged segments, each containing hate_speech, category,
-            confidence, reason, and text.
+            confidence, reason, text, and start (segment timestamp when available).
     """
     detector = HateSpeechDetector(inference_pipeline, max_chars)
+    has_start = "start" in df.columns
     results: list[dict] = []
     for _, row in df.iterrows():
         detection = detector.detect(str(row["text"]))
         if detection["hate_speech"]:
             entry = dict(detection)
             entry["text"] = str(row["text"])
+            entry["start"] = str(row["start"]) if has_start else ""
             results.append(entry)
     return results

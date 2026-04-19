@@ -946,7 +946,7 @@ def main() -> None:
             st.subheader("🚨 Hate Speech Findings")
             for item in findings:
                 with st.expander(
-                    f"{item['category'].title()} — {item['confidence']} confidence"
+                    f"{item.get('start', '')} – {item['category'].title()}"
                 ):
                     st.write(f"**Reason:** {item['reason']}")
                     st.write(f"**Flagged text:** {item['text']}")

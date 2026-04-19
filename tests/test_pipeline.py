@@ -456,7 +456,9 @@ def test_hate_speech_pipeline_returns_flagged_rows(
 
     monkeypatch.setattr(pipeline, "HateSpeechDetector", DummyDetector)
 
-    df = pd.DataFrame({"text": ["bad text", "good text"]})
+    df = pd.DataFrame(
+        {"start": ["00:00:01", "00:00:05"], "text": ["bad text", "good text"]}
+    )
     dummy_ip = InferencePipeline.__new__(InferencePipeline)
 
     results = pipeline.hate_speech_pipeline(df, dummy_ip)
@@ -464,6 +466,7 @@ def test_hate_speech_pipeline_returns_flagged_rows(
     assert len(results) == 1
     assert results[0]["category"] == "racism"
     assert results[0]["text"] == "bad text"
+    assert results[0]["start"] == "00:00:01"
 
 
 def test_wordlevel_pipeline_invokes_all_steps(monkeypatch: pytest.MonkeyPatch) -> None:
