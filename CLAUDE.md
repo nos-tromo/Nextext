@@ -6,6 +6,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Nextext is a modular audio analysis toolkit that transcribes, translates, and analyzes natural language from audio/video files. It uses openai-whisper for transcription, pyannote-audio for diarization, GLiNER for named-entity recognition, spaCy/NLTK for word-level NLP, and LLMs (Ollama, vLLM, or OpenAI-compatible endpoints) for translation, summarization, and hate-speech detection.
 
+## Project Context
+
+- WhisperX has been removed from this project; use openai-whisper + pyannote.
+- Target torch install is split by extras (cpu/cuda) via conflicts in pyproject.toml.
+- Docker base image is pinned to `python:3.11.12-slim-bookworm` across all Dockerfiles.
+
 ## Commands
 
 ```bash
@@ -30,6 +36,19 @@ ruff check --fix           # lint with auto-fix
 ruff format                # format code
 mypy --no-incremental --ignore-missing-imports --disable-error-code=import-untyped --disable-error-code=attr-defined --disable-error-code=assignment nextext/
 ```
+
+## Testing
+
+- Always run the full test suite (`pytest`) after making changes and report pass/fail counts.
+- When tests fail, fix the root cause rather than patching tests to match stale/removed code.
+- Verify with `pre-commit run --all-files` (mypy, lint, docstrings) before declaring work complete.
+
+Tests are in `tests/` using pytest with monkeypatch fixtures for mocking ML models and inference. Tests simulate Docker detection and environment configuration. No GPU or model downloads required for tests.
+
+## Docstrings & Style
+
+- All new/modified Python functions must have Google-style docstrings.
+- Python 3.11 is the target; prefer explicit types and distinct variable names across branches to satisfy mypy.
 
 ## Architecture
 
@@ -76,10 +95,11 @@ Key env vars (see `.env.example`):
 
 GPU-resident models (`whisper_turbo`, `whisper_large`, `diarization`, `gliner`) are owned by a process-wide registry in `nextext/utils/model_registry.py`. Callers wrap model use in `with REGISTRY.acquire(name) as model:` so the model is on GPU only for the duration of the block; the registry releases it (offload or evict) on exit. The Streamlit and CLI entry points call `flush_gpu()` between files to reclaim PyTorch allocator reservations. Adding a new GPU model means registering a `ModelSpec` with a `loader` (CPU construction) and `mover` (`.to(device)`).
 
-## Testing
-
-Tests are in `tests/` using pytest with monkeypatch fixtures for mocking ML models and inference. Tests simulate Docker detection and environment configuration. No GPU or model downloads required for tests.
-
 ## Docker
 
 `docker-compose.yml` defines CPU and CUDA profiles for both Nextext and Ollama services. Multi-stage Dockerfiles (`Dockerfile.cpu`, `Dockerfile.cuda`) use `uv` for dependency installation.
+
+## Commits
+
+- Prefer multiple small topical commits over a single catch-all commit.
+- Each commit message should describe a single logical change (refactor, fix, feat, docs, test).
