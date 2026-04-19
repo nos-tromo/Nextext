@@ -258,7 +258,8 @@ def _run_main(args: argparse.Namespace) -> None:
             (wordcloud_fig, "wordcloud"),
         ]
         for export, name in exports:
-            file_processor.write_file_output(export, name)
+            if export is not None:
+                file_processor.write_file_output(export, name)
 
     if args.summarize:
         if inference_pipeline is None:
