@@ -926,7 +926,11 @@ def main() -> None:
                 st.info("No named entities found.")
 
             st.subheader("☁️ Word Cloud")
-            st.pyplot(result["wordcloud"])
+            _wc_fig = result.get("wordcloud")
+            if isinstance(_wc_fig, Figure):
+                st.pyplot(_wc_fig)
+            else:
+                st.info("Not enough content for a word cloud.")
 
     # ------------ Hate Speech tab -------------------
     with tab_hate:

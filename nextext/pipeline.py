@@ -162,7 +162,7 @@ def summarization_pipeline(
 def wordlevel_pipeline(
     data: pd.DataFrame,
     language: str,
-) -> tuple[pd.DataFrame, pd.DataFrame, Figure]:
+) -> tuple[pd.DataFrame, pd.DataFrame, Figure | None]:
     """Calculates word statistics, named entities, and creates a word cloud from the provided text data.
 
     Args:
@@ -173,7 +173,8 @@ def wordlevel_pipeline(
         tuple: A tuple containing:
             - pd.DataFrame: DataFrame with word counts.
             - pd.DataFrame: DataFrame with named entities.
-            - Figure: Word cloud figure.
+            - Figure | None: Word cloud figure, or ``None`` when there are no
+              word counts to plot.
     """
     word_analysis = WordCounter(
         text=" ".join(data["text"].astype(str).tolist()),

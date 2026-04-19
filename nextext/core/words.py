@@ -292,12 +292,19 @@ def _move_gliner(model: Any, device: str) -> Any:
     return model
 
 
+# GLiNER runs on Apple Silicon MPS without raising, but on realistic
+# ~512-word chunks the backend silently returns zero predictions while
+# the CPU path returns the correct entities (observed with
+# gliner_large-v2.5 on torch 2.8, 2026-04-19). A silent wrong answer is
+# worse than a crash, so pin to CPU on Mac; CUDA is still used when
+# available.
 REGISTRY.register(
     ModelSpec(
         name="gliner",
         loader=_load_gliner,
         mover=_move_gliner,
         default_strategy=Strategy.OFFLOAD,
+        mps_compatible=False,
     )
 )
 
@@ -548,14 +555,16 @@ class WordCounter:
             columns=pd.Index(columns),
         ).reset_index(drop=True)
 
-    def create_wordcloud(self) -> Figure:
+    def create_wordcloud(self) -> Figure | None:
         """Create a wordcloud of the most frequent words.
 
         Returns:
-            Figure: A matplotlib figure containing a wordcloud of the most frequent words.
+            Figure | None: A matplotlib figure containing a wordcloud of the
+            most frequent words, or ``None`` when there are no word counts to
+            plot (e.g. very short transcripts that consist only of stopwords).
 
         Raises:
-            ValueError: If word counts are not available.
+            ValueError: If ``count_words()`` has not been run yet.
         """
         # Create a string of words for the wordcloud
         if self.word_counts is None:
@@ -565,6 +574,9 @@ class WordCounter:
             raise ValueError(
                 "Word counts are not available. Please run count_words() first."
             )
+        if not self.word_counts:
+            logger.info("Word counts are empty; skipping word cloud generation.")
+            return None
         text = " ".join(
             [
                 str(word)
