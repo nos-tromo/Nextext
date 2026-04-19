@@ -78,6 +78,33 @@ SILERO_VAD_REPO: str = "snakers4/silero-vad"
 _vad_cache: tuple[Any, Any] | None | bool = False
 
 
+def _normalize_whisper_language(value: str | None) -> str | None:
+    """Coerce a Whisper API ``language`` field to an ISO 639-1 code.
+
+    OpenAI's ``/v1/audio/transcriptions`` endpoint returns the lowercased full
+    language name (e.g. ``"german"``), while the local ``openai-whisper``
+    package returns the ISO code (e.g. ``"de"``). Downstream consumers
+    (spaCy model selection, language pickers) expect the ISO form, so
+    normalize here using ``whisper_languages.json`` as the source of truth.
+
+    Args:
+        value (str | None): The raw ``language`` field from the Whisper
+            response, either an ISO code or a full English language name.
+
+    Returns:
+        str | None: The ISO 639-1/2 code if ``value`` matches a known Whisper
+        language name; the original ``value`` if it was already an ISO code,
+        empty, ``None``, or unrecognized.
+    """
+    if not value:
+        return value
+    if len(value) <= 3 and value.islower():
+        return value
+    code_to_name = load_mappings("whisper_languages.json")
+    name_to_code = {name.lower(): code for code, name in code_to_name.items()}
+    return name_to_code.get(value.lower(), value)
+
+
 def _get_vad() -> tuple[Any, Any] | None:
     """Lazily load the Silero VAD model via ``torch.hub``.
 
@@ -884,7 +911,9 @@ class ExternalWhisperTranscriber:
         segments = _filter_no_speech_segments(raw_segments)
         self.transcription_result = {"segments": segments}
         if self.src_lang is None:
-            self.src_lang = getattr(response, "language", None)
+            self.src_lang = _normalize_whisper_language(
+                getattr(response, "language", None)
+            )
         logger.info(
             "External transcription complete: {} segments, language={}",
             len(segments),

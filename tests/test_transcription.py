@@ -535,6 +535,46 @@ def test_external_transcriber_transcription_populates_src_lang(
     assert len(transcriber.transcription_result["segments"]) == 1
 
 
+def test_external_transcriber_normalizes_full_language_name(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """OpenAI returns full language names; ``src_lang`` must normalize to ISO.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): The pytest monkeypatch fixture for
+            patching the lazy client and the audio guard.
+    """
+    seg = SimpleNamespace(start=0.0, end=1.0, text="Hallo.", no_speech_prob=0.1)
+    fake_response = SimpleNamespace(segments=[seg], language="german")
+
+    fake_client = MagicMock()
+    fake_client.audio.transcriptions.create.return_value = fake_response
+
+    transcriber = ExternalWhisperTranscriber.__new__(ExternalWhisperTranscriber)
+    transcriber.file_path = transcription.Path(__file__)
+    transcriber.src_lang = None
+    transcriber.task = "transcribe"
+    transcriber._model_id = "whisper-1"
+    transcriber._client = None
+    transcriber.transcription_result = None
+
+    monkeypatch.setattr(
+        type(transcriber),
+        "_get_client",
+        property(lambda self: fake_client),
+    )
+    monkeypatch.setattr(
+        transcription,
+        "_load_audio_waveform",
+        lambda _path: np.zeros(1, dtype=np.float32),
+    )
+    monkeypatch.setattr(transcription, "_audio_has_speech", lambda _audio: (True, None))
+
+    transcriber.transcription()
+
+    assert transcriber.src_lang == "de"
+
+
 # ---------------------------------------------------------------------------
 # Shared VAD / no_speech_prob helpers
 # ---------------------------------------------------------------------------
