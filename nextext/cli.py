@@ -1,10 +1,16 @@
 import argparse
+import hashlib
+import os
 from pathlib import Path
 
 import pandas as pd  # type: ignore[import]
 from loguru import logger
-import pycountry
 
+from nextext.core.docint_transcript import (
+    build_docint_jsonl,
+    language_name as _language_name,
+    transcript_segments_from_df as _transcript_segments_from_df,
+)
 from nextext.core.openai_cfg import InferencePipeline
 from nextext.core.processing import FileProcessor
 from nextext.pipeline import (
@@ -21,21 +27,6 @@ from nextext.utils.model_registry import flush_gpu
 
 set_offline_env()
 setup_logging()
-
-
-def _language_name(lang_code: str | None) -> str:
-    """Convert an ISO language code to a human-readable name for LLM output settings.
-
-    Args:
-        lang_code (str | None): The ISO 639-1 language code.
-
-    Returns:
-        str: The human-readable language name, or "German" if the code is None.
-    """
-    if not lang_code:
-        return "German"
-    lang = pycountry.languages.get(alpha_2=normalize_language_code(lang_code))
-    return lang.name if lang is not None else lang_code
 
 
 def parse_arguments(args_list: list | None = None) -> argparse.Namespace:
@@ -130,6 +121,28 @@ def parse_arguments(args_list: list | None = None) -> argparse.Namespace:
         action="store_true",
         help="Enable full analysis, equivalent to using -w -sum (default: False).",
     )
+    parser.add_argument(
+        "-ed",
+        "--emit-docint-jsonl",
+        dest="emit_docint_jsonl",
+        type=Path,
+        default=None,
+        help=(
+            "Write a docint-compatible JSONL transcript to this path. If the "
+            "path points to an existing directory, the file is saved as "
+            "'<source_stem>.jsonl' inside it."
+        ),
+    )
+    parser.add_argument(
+        "-fd",
+        "--force-docint-jsonl",
+        dest="force_docint_jsonl",
+        action="store_true",
+        help=(
+            "Overwrite the --emit-docint-jsonl target when it already "
+            "exists (default: False)."
+        ),
+    )
 
     if args_list:
         args = parser.parse_args(args_list)
@@ -139,8 +152,120 @@ def parse_arguments(args_list: list | None = None) -> argparse.Namespace:
     if args.full_analysis:
         args.words = True
         args.summarize = True
+        args.hate_speech = True
 
     return args
+
+
+def _resolve_docint_output_path(
+    output_path: Path,
+    source_path: Path,
+) -> Path:
+    """Resolve the JSONL output path for the ``--emit-docint-jsonl`` flag.
+
+    When ``output_path`` is an existing directory, the file is written as
+    ``<source_stem>.jsonl`` inside it; otherwise ``output_path`` is taken
+    verbatim. The returned path is resolved to an absolute form so callers
+    can perform symlink / overwrite checks without surprises from
+    relative-path lookups.
+
+    Args:
+        output_path (Path): The CLI-provided target path.
+        source_path (Path): The input audio file path.
+
+    Returns:
+        Path: Absolute path to the JSONL file to write.
+
+    Raises:
+        ValueError: If either the target itself or its parent directory is
+            a symlink; we refuse to follow symlinks at the write boundary.
+    """
+    if output_path.is_dir():
+        target = output_path / f"{source_path.stem}.jsonl"
+    else:
+        target = output_path
+    target = target.resolve(strict=False)
+    if target.is_symlink():
+        raise ValueError(
+            f"Refusing to write docint JSONL via symlink target '{target}'."
+        )
+    if target.parent.is_symlink():
+        raise ValueError(
+            "Refusing to write docint JSONL through a symlinked parent "
+            f"directory '{target.parent}'."
+        )
+    return target
+
+
+def _emit_docint_jsonl(
+    transcript_df: "pd.DataFrame",
+    source_path: Path,
+    output_path: Path,
+    task: str,
+    language: str | None,
+    force_overwrite: bool = False,
+) -> None:
+    """Write a docint JSONL payload for a completed transcription run.
+
+    The write is atomic: the payload is materialized to ``<target>.tmp``
+    and then :func:`os.replace` swaps it into place, so partial writes are
+    never observable.
+
+    Args:
+        transcript_df (pd.DataFrame): Sentence-merged transcript.
+        source_path (Path): Original input audio path.
+        output_path (Path): Target JSONL path or parent directory.
+        task (str): Whisper task, ``"transcribe"`` or ``"translate"``.
+        language (str | None): Normalized ISO 639-1 language code.
+        force_overwrite (bool): When ``True``, overwrite an existing
+            target file. When ``False`` (default), refuse and raise
+            :class:`FileExistsError`.
+
+    Raises:
+        FileExistsError: If the resolved target already exists and
+            ``force_overwrite`` is ``False``.
+        ValueError: If the resolved target or its parent is a symlink.
+    """
+    segments = _transcript_segments_from_df(transcript_df)
+    if not segments:
+        logger.warning(
+            "No transcript segments available; skipping docint JSONL export."
+        )
+        return
+    try:
+        file_hash = f"sha256:{hashlib.sha256(source_path.read_bytes()).hexdigest()}"
+    except OSError as exc:
+        logger.warning("Could not hash source file ({}); omitting hash.", exc)
+        file_hash = None
+    payload = build_docint_jsonl(
+        source_file=source_path.name,
+        source_file_hash=file_hash,
+        language=language,
+        task=task,
+        segments=segments,
+    )
+    target = _resolve_docint_output_path(output_path, source_path)
+    if target.exists() and not force_overwrite:
+        raise FileExistsError(
+            f"Refusing to overwrite existing docint JSONL at '{target}'. "
+            "Remove the file or pass --force-docint-jsonl to overwrite."
+        )
+    # Record which parent directories we had to create so the user can
+    # audit any new filesystem layout introduced by the export.
+    missing_parents: list[Path] = []
+    if not target.parent.exists():
+        for ancestor in reversed(target.parent.parents):
+            if not ancestor.exists():
+                missing_parents.append(ancestor)
+        missing_parents.append(target.parent)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        for created in missing_parents:
+            logger.info("Created directory '{}' for docint JSONL output.", created)
+    # Atomic write: render to a tmp sibling then replace in one syscall.
+    tmp = target.with_suffix(target.suffix + ".tmp")
+    tmp.write_bytes(payload)
+    os.replace(tmp, target)
+    logger.info("Wrote docint JSONL to '{}'.", target)
 
 
 def main() -> None:
@@ -308,6 +433,20 @@ def _run_main(args: argparse.Namespace) -> None:
 
     # Save final transcript
     file_processor.write_file_output(transcript_df, "transcript")
+
+    # Optional: emit a docint-compatible JSONL payload next to the transcript.
+    # ``_transcript_segments_from_df`` returns integer-valued floats for
+    # ``start_seconds`` / ``end_seconds`` — they parse the already-rounded
+    # ``HH:MM:SS`` strings produced by ``_seconds_to_time``.
+    if getattr(args, "emit_docint_jsonl", None) is not None:
+        _emit_docint_jsonl(
+            transcript_df=transcript_df,
+            source_path=args.file_path,
+            output_path=args.emit_docint_jsonl,
+            task=args.task,
+            language=transcript_lang,
+            force_overwrite=getattr(args, "force_docint_jsonl", False),
+        )
 
     logger.info("The end of our elaborate plans, the end of everything that stands.")
 
