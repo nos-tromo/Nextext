@@ -674,6 +674,15 @@ def _process_uploaded_files(
                 state="running",
             )
 
+        # Create an st.status block for this file when streaming is enabled
+        file_status = None
+        if results_container is not None:
+            file_status = results_container.status(
+                f"Processing {file_name} ({file_index}/{total_files})",
+                expanded=True,
+                state="running",
+            )
+
         def _update_progress(stage_name: str, stage_index: int) -> None:
             """Update the multi-file progress bar.
 
