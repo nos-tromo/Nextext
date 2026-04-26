@@ -945,7 +945,7 @@ def main() -> None:
         docint_archive_stem,
     )
     st.download_button(
-        label="Download docint transcripts (JSONL)",
+        label="⬇️ Download docint-compatible output(JSONL)",
         data=docint_data,
         file_name=docint_file_name,
         mime=docint_mime,

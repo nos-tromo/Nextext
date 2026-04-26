@@ -54,13 +54,24 @@ class TranscriptionConfig:
 
 VALID_INFERENCE_PROVIDERS: frozenset[str] = frozenset({"ollama", "vllm", "openai"})
 VALID_RESIDENCY_STRATEGIES: frozenset[str] = frozenset({"offload", "evict"})
+_TRUE_TOKENS: frozenset[str] = frozenset({"1", "true", "yes", "on"})
+_FALSE_TOKENS: frozenset[str] = frozenset({"0", "false", "no", "off"})
 
 
 @dataclass(frozen=True)
 class InferenceConfig:
-    """Dataclass for inference provider configuration."""
+    """Dataclass for inference provider configuration.
 
-    provider: str  # one of VALID_INFERENCE_PROVIDERS
+    Attributes:
+        provider: One of :data:`VALID_INFERENCE_PROVIDERS`.
+        think: Tri-state default for the Ollama ``think`` request field. ``None``
+            means the field is omitted from outgoing requests (model default);
+            ``True``/``False`` is forwarded via ``extra_body`` and is a no-op for
+            vLLM and OpenAI providers.
+    """
+
+    provider: str
+    think: bool | None = None
 
 
 @dataclass(frozen=True)
@@ -117,6 +128,29 @@ def load_transcription_env() -> TranscriptionConfig:
     )
 
 
+def _parse_tristate_bool(name: str) -> bool | None:
+    """Parses a tri-state boolean environment variable.
+
+    Args:
+        name: Environment variable name to read.
+
+    Returns:
+        ``True`` for ``1``/``true``/``yes``/``on``, ``False`` for
+        ``0``/``false``/``no``/``off``, and ``None`` when unset, empty, or
+        unrecognised. Unrecognised values emit a ``logger.warning`` and resolve
+        to ``None`` so callers fall back to the model default.
+    """
+    raw = os.getenv(name, "").strip().lower()
+    if not raw:
+        return None
+    if raw in _TRUE_TOKENS:
+        return True
+    if raw in _FALSE_TOKENS:
+        return False
+    logger.warning("Unknown {} value (length={}). Ignoring.", name, len(raw))
+    return None
+
+
 def load_inference_env() -> InferenceConfig:
     """Loads inference provider configuration from environment variables.
 
@@ -124,6 +158,10 @@ def load_inference_env() -> InferenceConfig:
         InferenceConfig: Dataclass containing the resolved provider.
         - provider (str): One of ``ollama`` (default), ``vllm``, or ``openai``.
             Unknown values fall back to ``ollama`` with a warning.
+        - think (bool | None): Resolved from ``OLLAMA_THINK``. ``None`` when
+            unset/invalid, otherwise the parsed boolean. Forwarded by
+            ``InferencePipeline.call_model`` via ``extra_body`` for Ollama; a
+            no-op for vLLM/OpenAI providers.
     """
     raw = os.getenv("INFERENCE_PROVIDER", "ollama").strip().lower()
     if raw not in VALID_INFERENCE_PROVIDERS:
@@ -131,7 +169,7 @@ def load_inference_env() -> InferenceConfig:
             "Unknown INFERENCE_PROVIDER '{}'. Falling back to 'ollama'.", raw
         )
         raw = "ollama"
-    return InferenceConfig(provider=raw)
+    return InferenceConfig(provider=raw, think=_parse_tristate_bool("OLLAMA_THINK"))
 
 
 def load_memory_env() -> MemoryConfig:

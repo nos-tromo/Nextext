@@ -272,3 +272,136 @@ def test_load_inference_env_returns_dataclass(
     cfg = load_inference_env()
 
     assert cfg.provider == "vllm"
+
+
+# ---------------------------------------------------------------------------
+# think parameter — call_model forwarding
+# ---------------------------------------------------------------------------
+
+
+def test_call_model_forwards_think_false_via_extra_body(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """call_model with think=False must attach extra_body={"think": False}.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): The pytest fixture for patching
+            environment variables and pipeline internals.
+    """
+    monkeypatch.setenv("TEXT_MODEL", "llama3.1:8b")
+    monkeypatch.delenv("OLLAMA_THINK", raising=False)
+    pipeline = InferencePipeline()
+    completions = _install_recording_client(monkeypatch, pipeline)
+
+    pipeline.call_model("hi", think=False)
+
+    assert completions.calls[0]["extra_body"] == {"think": False}
+
+
+def test_call_model_forwards_think_true_via_extra_body(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """call_model with think=True must attach extra_body={"think": True}.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): The pytest fixture for patching
+            environment variables and pipeline internals.
+    """
+    monkeypatch.setenv("TEXT_MODEL", "llama3.1:8b")
+    monkeypatch.delenv("OLLAMA_THINK", raising=False)
+    pipeline = InferencePipeline()
+    completions = _install_recording_client(monkeypatch, pipeline)
+
+    pipeline.call_model("hi", think=True)
+
+    assert completions.calls[0]["extra_body"] == {"think": True}
+
+
+def test_call_model_omits_extra_body_when_think_none_and_env_unset(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No think arg and OLLAMA_THINK unset must leave extra_body absent entirely.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): The pytest fixture for patching
+            environment variables and pipeline internals.
+    """
+    monkeypatch.setenv("TEXT_MODEL", "llama3.1:8b")
+    monkeypatch.delenv("OLLAMA_THINK", raising=False)
+    pipeline = InferencePipeline()
+    completions = _install_recording_client(monkeypatch, pipeline)
+
+    pipeline.call_model("hi")
+
+    assert "extra_body" not in completions.calls[0]
+
+
+def test_call_model_uses_ollama_think_env_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """OLLAMA_THINK=0 with no per-call think arg must produce extra_body={"think": False}.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): The pytest fixture for patching
+            environment variables and pipeline internals.
+    """
+    monkeypatch.setenv("TEXT_MODEL", "llama3.1:8b")
+    monkeypatch.setenv("OLLAMA_THINK", "0")
+    pipeline = InferencePipeline()
+    completions = _install_recording_client(monkeypatch, pipeline)
+
+    pipeline.call_model("hi")
+
+    assert completions.calls[0]["extra_body"] == {"think": False}
+
+
+def test_call_model_per_call_think_overrides_env_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Per-call think=True must win over OLLAMA_THINK=0 env default.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): The pytest fixture for patching
+            environment variables and pipeline internals.
+    """
+    monkeypatch.setenv("TEXT_MODEL", "llama3.1:8b")
+    monkeypatch.setenv("OLLAMA_THINK", "0")
+    pipeline = InferencePipeline()
+    completions = _install_recording_client(monkeypatch, pipeline)
+
+    pipeline.call_model("hi", think=True)
+
+    assert completions.calls[0]["extra_body"] == {"think": True}
+
+
+def test_call_model_preserves_existing_kwargs_when_think_set(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """All standard request kwargs survive alongside extra_body when think is set.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): The pytest fixture for patching
+            environment variables and pipeline internals.
+    """
+    monkeypatch.setenv("TEXT_MODEL", "llama3.1:8b")
+    monkeypatch.delenv("OLLAMA_THINK", raising=False)
+    pipeline = InferencePipeline()
+    completions = _install_recording_client(monkeypatch, pipeline)
+
+    pipeline.call_model(
+        "payload",
+        temperature=0.5,
+        seed=7,
+        num_predict=128,
+        top_p=0.9,
+        stop=["END"],
+        think=False,
+    )
+
+    recorded = completions.calls[0]
+    assert recorded["temperature"] == 0.5
+    assert recorded["seed"] == 7
+    assert recorded["max_tokens"] == 128
+    assert recorded["top_p"] == 0.9
+    assert recorded["stop"] == ["END"]
+    assert recorded["extra_body"] == {"think": False}
