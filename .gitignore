@@ -1,8 +1,6 @@
 # -----------------
 # Global
 # -----------------
-.DS_Store
-.env
 *.code-workspace
 *.bin
 *.env
@@ -12,6 +10,8 @@
 *.pyo
 *.so
 *Zone.Identifier
+.DS_Store
+.env
 
 # directories
 .*
@@ -51,6 +51,7 @@
 *.m4a
 *.ogg
 *.sh
+*.txt
 *.wav
 *.webm
 *.xlsx
@@ -59,15 +60,20 @@
 # ==================================
 # Exceptions
 # ==================================
+!**/.github/
+!**/.github/workflows/
+!**/.github/workflows/ci.yml
+!**/.github/workflows/codeql.yml
+!**/prompts/
+!**/prompts/hate_speech.txt
+!**/prompts/summary.txt
+!**/prompts/system.txt
+!**/prompts/translation.txt
+!**/scripts/
+!**/scripts/create_docker_volumes.sh
 !.dockerignore
 !.env.example
 !.gitignore
-!.github/
-!.github/workflows/
-!.github/workflows/ci.yml
-!.github/workflows/codeql.yml
 !.pre-commit-config.yaml
 !AGENTS.md
 !CLAUDE.md
-!scripts/
-!scripts/create_docker_volumes.sh

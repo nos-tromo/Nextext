@@ -1,65 +1,93 @@
 """Shared pipeline entry points for Nextext processing stages."""
 
 from pathlib import Path
+from typing import Any
 
-import pandas as pd
+import pandas as pd  # type: ignore[import-untyped]
 from matplotlib.figure import Figure
 
+from nextext.core.hate_speech import HateSpeechDetector
 from nextext.core.openai_cfg import InferencePipeline
 from nextext.core.translation import Translator
 from nextext.core.words import WordCounter
+from nextext.utils.env_cfg import load_transcription_env
 
-WhisperTranscriber = None
+WhisperTranscriber: Any = None
+ExternalWhisperTranscriber: Any = None
 
 try:
-    from nextext.core.transcription import WhisperTranscriber as _WhisperTranscriber
+    from nextext.core.transcription import (
+        WhisperTranscriber as _WhisperTranscriber,
+        ExternalWhisperTranscriber as _ExternalWhisperTranscriber,
+    )
 except Exception:  # pragma: no cover - environment-specific optional dependency failure
     pass
 else:
     WhisperTranscriber = _WhisperTranscriber
+    ExternalWhisperTranscriber = _ExternalWhisperTranscriber
 
 
 def transcription_pipeline(
     file_path: Path,
     trg_lang: str,
     src_lang: str,
-    model_id: str,
     task: str,
     n_speakers: int,
 ) -> tuple[pd.DataFrame, str]:
-    """Transcribe and diarize the audio file using WhisperX.
+    """Transcribe the audio file using either a local Whisper model or an external API.
+
+    The transcription provider is derived from ``INFERENCE_PROVIDER``: ``ollama``
+    runs the bundled ``openai-whisper`` locally, while ``openai`` and ``vllm``
+    forward the audio to an OpenAI-compatible ``/v1/audio/transcriptions``
+    endpoint. External transcription does not support diarization.
 
     Args:
         file_path (Path): Path to the audio file.
         trg_lang (str): Target language code for translation check.
         src_lang (str): Source language code.
-        model_id (str): Model ID for WhisperX.
         task (str): Task to perform (transcribe or translate).
-        n_speakers (int): Number of speakers for diarization.
+        n_speakers (int): Number of speakers for diarization (local provider only).
 
     Returns:
         tuple[pd.DataFrame, str]: The transcript DataFrame and the
             resolved source language code.
     """
-    if WhisperTranscriber is None:
-        raise RuntimeError(
-            "Transcription dependencies could not be imported. Please verify the WhisperX and torchaudio installation."
+    config = load_transcription_env()
+
+    if config.provider == "external":
+        if ExternalWhisperTranscriber is None:
+            raise RuntimeError(
+                "Transcription dependencies could not be imported. Please verify the openai package installation."
+            )
+        external_transcriber = ExternalWhisperTranscriber(
+            file_path=file_path,
+            trg_lang=trg_lang,
+            src_lang=src_lang,
+            model_id=config.whisper_model,
+            task=task,
         )
-    transcriber = WhisperTranscriber(
-        file_path=file_path,
-        trg_lang=trg_lang,
-        src_lang=src_lang,
-        model_id=model_id,
-        task=task,
-        n_speakers=n_speakers,
-    )
-    transcriber.transcription()
-    if n_speakers > 1:
-        transcriber.diarization()
-    df = transcriber.transcript_output()
-    updated_src_lang = transcriber.src_lang
-    updated_src_lang = updated_src_lang if updated_src_lang else src_lang
-    return df, updated_src_lang
+        external_transcriber.transcription()
+        df = external_transcriber.transcript_output()
+        updated_src_lang = external_transcriber.src_lang or src_lang
+        return df, updated_src_lang
+    else:
+        if WhisperTranscriber is None:
+            raise RuntimeError(
+                "Transcription dependencies could not be imported. Please verify the openai-whisper and torchaudio installation."
+            )
+        local_transcriber = WhisperTranscriber(
+            file_path=file_path,
+            trg_lang=trg_lang,
+            src_lang=src_lang,
+            task=task,
+            n_speakers=n_speakers,
+        )
+        local_transcriber.transcription()
+        if n_speakers > 1:
+            local_transcriber.diarization()
+        df = local_transcriber.transcript_output()
+        updated_src_lang = local_transcriber.src_lang or src_lang
+        return df, updated_src_lang
 
 
 def normalize_language_code(lang_code: str | None) -> str | None:
@@ -82,8 +110,10 @@ def translation_pipeline(
     src_lang: str | None = None,
     inference_pipeline: InferencePipeline | None = None,
 ) -> pd.DataFrame:
-    """Translate the transcribed text using a machine translation model. Translation is performed
-    only if the target language is different from the detected source language.
+    """Translate the transcribed text using a machine translation model.
+
+    Translation is performed only if the target language is different from
+    the detected source language.
 
     Args:
         df (pd.DataFrame): DataFrame containing the transcribed text.
@@ -134,18 +164,18 @@ def summarization_pipeline(
 def wordlevel_pipeline(
     data: pd.DataFrame,
     language: str,
-) -> tuple[pd.DataFrame, pd.DataFrame, Figure]:
-    """Calculates word statistics, named entities, and creates a word cloud from the provided text data.
+) -> tuple[pd.DataFrame, pd.DataFrame, Figure | None]:
+    """Calculate word statistics, named entities, and create a word cloud.
 
     Args:
         data (pd.DataFrame): DataFrame containing the text data to analyze.
         language (str): Language code of the text data.
 
     Returns:
-        tuple: A tuple containing:
-            - pd.DataFrame: DataFrame with word counts.
-            - pd.DataFrame: DataFrame with named entities.
-            - Figure: Word cloud figure.
+        tuple[pd.DataFrame, pd.DataFrame, Figure | None]: A tuple containing
+            the word-counts DataFrame, the named-entities DataFrame, and the
+            word-cloud figure (or ``None`` when there are no word counts to
+            plot).
     """
     word_analysis = WordCounter(
         text=" ".join(data["text"].astype(str).tolist()),
@@ -159,3 +189,36 @@ def wordlevel_pipeline(
     wordcloud = word_analysis.create_wordcloud()
 
     return word_counts, named_entities, wordcloud
+
+
+def hate_speech_pipeline(
+    df: pd.DataFrame,
+    inference_pipeline: InferencePipeline,
+    max_chars: int = 2048,
+) -> list[dict]:
+    """Detect hate speech in each transcript segment using an LLM.
+
+    Only segments flagged as hate speech are included in the returned list.
+    Each entry in the list is a :class:`HateSpeechDetection` dict extended with
+    the original ``text`` field for display purposes.
+
+    Args:
+        df (pd.DataFrame): Transcript DataFrame with a ``text`` column.
+        inference_pipeline (InferencePipeline): Shared inference client.
+        max_chars (int): Maximum characters per segment sent for detection. Defaults to 2048.
+
+    Returns:
+        list[dict]: Flagged segments, each containing hate_speech, category,
+            confidence, reason, text, and start (segment timestamp when available).
+    """
+    detector = HateSpeechDetector(inference_pipeline, max_chars)
+    has_start = "start" in df.columns
+    results: list[dict] = []
+    for _, row in df.iterrows():
+        detection = detector.detect(str(row["text"]))
+        if detection["hate_speech"]:
+            entry = dict(detection)
+            entry["text"] = str(row["text"])
+            entry["start"] = str(row["start"]) if has_start else ""
+            results.append(entry)
+    return results

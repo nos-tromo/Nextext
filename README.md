@@ -180,7 +180,6 @@ Running `uv run nextext-cli [ARGS]` from the command line supports the following
 -f, --file            Specify the file path and name of the audio file to be transcribed.
 -sl, --src-lang       Specify the language code (ISO 639-1) of the source audio (default: None).
 -tl, --trg-lang       Specify the language code (ISO 639-1) of the target language (default: 'de').
--m, --model           Specify the model size for Whisper (default: 'default' = 'turbo').
 -t, --task            Specify the task to perform: 'transcribe' (default), or 'translate'.
 -s, --speakers        Specify the maximum number of speakers for diarization (default: 1).
 -w, --words           Show most frequently used words (default: False).

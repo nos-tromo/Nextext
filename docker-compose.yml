@@ -15,7 +15,6 @@ x-proxy-env: &proxy-env
 x-base-image-build-env: &base-image-build-env
   PYTHON_IMAGE: ${PYTHON_IMAGE:-python:3.12.10-slim-bookworm}
   NVIDIA_CUDA_RUNTIME_IMAGE: ${NVIDIA_CUDA_RUNTIME_IMAGE:-nvidia/cuda:13.0.2-cudnn-runtime-ubuntu22.04}
-  VLLM_OPENAI_IMAGE: ${VLLM_OPENAI_IMAGE:-vllm/vllm-openai:v0.17.1}
 
 x-build-args: &build-args
   <<: [*proxy-env, *base-image-build-env]
@@ -24,7 +23,7 @@ services:
   ##########################################################
   # Nextext (CPU)
   ##########################################################
-  nextext:
+  nextext-cpu:
     profiles: ["cpu"]
     build:
       context: .
@@ -32,12 +31,15 @@ services:
       args:
         <<: *build-args
     ports: &nextext-ports
-      - ${NEXTEXT_PORT:-8501:8501}
-    environment: &backend-env
+      - ${NEXTEXT_HOST_PORT:-8501}:8501
+    environment: &nextext-env
       <<: *proxy-env
       HF_HUB_OFFLINE: ${HF_HUB_OFFLINE:-false}
       HF_HUB_TOKEN: $HF_HUB_TOKEN
+      INFERENCE_PROVIDER: ${INFERENCE_PROVIDER:-ollama}
       LOG_PATH: /var/log/nextext/nextext.log
+      NER_MODEL: ${NER_MODEL:-}
+      NEXTEXT_OFFLINE: ${NEXTEXT_OFFLINE:-1}
       OPENAI_API_BASE: ${OPENAI_API_BASE}
       OPENAI_API_KEY: ${OPENAI_API_KEY}
       PRELOAD_MODELS: ${PRELOAD_MODELS:-false}
@@ -46,15 +48,18 @@ services:
       STREAMLIT_SERVER_MAX_UPLOAD_SIZE: 8192
       TEXT_MODEL: ${TEXT_MODEL:-}
       TRANSLATION_MODEL: ${TRANSLATION_MODEL:-}
-    volumes: &backend-volumes
+      WHISPER_MODEL: ${WHISPER_MODEL:-}
+    volumes: &nextext-volumes
       - huggingface-cache:/root/.cache/huggingface/hub
       - nextext-logs:/var/log/nextext
       - nltk-cache:/root/nltk_data
       - spacy-cache:/root/.cache/spacy
       - torch-cache:/root/.cache/torch
-    networks:
-      nextext-net:
+      - whisper-cache:/root/.cache/whisper
+    networks: &nextext-networks
       inference-net:
+        aliases:
+          - nextext
 
   ##########################################################
   # Nextext (CUDA)
@@ -68,18 +73,16 @@ services:
         <<: *build-args
     ports: *nextext-ports
     environment:
-      <<: *backend-env
+      <<: *nextext-env
       NVIDIA_VISIBLE_DEVICES: all
-    volumes: *backend-volumes
+    volumes: *nextext-volumes
     deploy:
       resources:
         reservations:
           devices:
             - driver: nvidia
               capabilities: [gpu]
-    networks:
-      nextext-net:
-      inference-net:
+    networks: *nextext-networks
 
 ##########################################################
 # Volumes
@@ -94,12 +97,13 @@ volumes:
     external: true
   torch-cache:
     external: true
+  whisper-cache:
+    external: true
 
 ##########################################################
 # Networks
 ##########################################################
 networks:
-  nextext-net:
   inference-net:
     external: true
     name: ${INFERENCE_NETWORK:-inference-net}

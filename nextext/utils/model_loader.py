@@ -9,12 +9,16 @@ from collections.abc import Iterable
 from importlib.metadata import PackageNotFoundError, version as package_version
 from pathlib import Path
 
-import nltk
+import nltk  # type: ignore[import-untyped]
+import torch
+import whisper  # type: ignore[import-untyped]
 from dotenv import load_dotenv
-from gliner import GLiNER
+from gliner import GLiNER  # type: ignore[import-untyped]
 from loguru import logger
+from pyannote.audio import Pipeline as DiarizationPipeline  # type: ignore[import-untyped]
 
 from nextext.utils.mappings_loader import load_mappings
+from nextext.core.transcription import _configure_torch_safe_globals
 
 
 load_dotenv()
@@ -27,9 +31,9 @@ DEFAULT_SPACY_MODEL_DOWNLOAD_BASE_URL = (
     "https://github.com/explosion/spacy-models/releases/download"
 )
 NLTK_RESOURCES = ("punkt_tab", "stopwords")
-WHISPER_LANGUAGE_DETECTION_MODEL = "small"
-WHISPER_VAD_METHOD = "silero"
-GLINER_MODEL_ID = "urchade/gliner_multi-v2.1"
+LOCAL_WHISPER_MODEL_IDS: tuple[str, ...] = ("large-v3-turbo", "large-v3")
+GLINER_MODEL_ID = "gliner-community/gliner_large-v2.5"
+SILERO_VAD_REPO = "snakers4/silero-vad"
 DIARIZATION_MODEL_ID = "pyannote/speaker-diarization-3.1"
 DIARIZATION_DEPENDENCY_IDS = ("pyannote/segmentation-3.0",)
 
@@ -147,36 +151,6 @@ def get_spacy_model_ids(
     return sorted(set(spacy_models.values()))
 
 
-def get_whisper_model_ids(
-    whisper_models_file: str = "whisper_models.json",
-) -> list[str]:
-    """Return the distinct Whisper model IDs used by Nextext.
-
-    Args:
-        whisper_models_file (str): Mapping file containing model aliases.
-
-    Returns:
-        list[str]: Sorted Whisper model IDs including the detection model.
-    """
-    whisper_models = load_mappings(whisper_models_file)
-    model_ids = set(whisper_models.values())
-    model_ids.add(WHISPER_LANGUAGE_DETECTION_MODEL)
-    return sorted(model_ids)
-
-
-def get_alignment_model_ids() -> dict[str, str]:
-    """Return the default WhisperX alignment model per language code.
-
-    Returns:
-        dict[str, str]: Language-code to alignment-model mapping.
-    """
-    import whisperx.alignment as alignment
-
-    alignment_models: dict[str, str] = dict(alignment.DEFAULT_ALIGN_MODELS_TORCH)
-    alignment_models.update(alignment.DEFAULT_ALIGN_MODELS_HF)
-    return dict(sorted(alignment_models.items()))
-
-
 def ensure_nltk_resources(resources: Iterable[str] = NLTK_RESOURCES) -> None:
     """Download the NLTK resources required by Nextext.
 
@@ -234,100 +208,67 @@ def preload_spacy_models(model_ids: Iterable[str] | None = None) -> None:
 
 def _cleanup_torch_resources() -> None:
     """Release transient Torch resources after model preloading."""
-    import torch
-
     if hasattr(torch, "cuda") and torch.cuda.is_available():
         torch.cuda.empty_cache()
     gc.collect()
 
 
 def preload_whisper_model(model_id: str, device: str = "cpu") -> None:
-    """Preload a WhisperX speech model into the local cache.
+    """Download an openai-whisper checkpoint into the local cache.
+
+    The weights are fetched to ``~/.cache/whisper`` (or ``XDG_CACHE_HOME``)
+    without being loaded into host memory, so preloading large checkpoints
+    does not require the RAM needed at inference time.
 
     Args:
         model_id (str): The Whisper model ID to preload.
-        device (str): Device used for the preload step.
+        device (str): Unused; retained for call-site compatibility.
     """
-    import whisperx
+    del device
 
-    compute_type = "float16" if device == "cuda" else "int8"
-    logger.info("Loading Whisper model '{}'.", model_id)
-    pipeline = whisperx.load_model(
-        whisper_arch=model_id,
-        device=device,
-        compute_type=compute_type,
-        language="en",
-        vad_method=WHISPER_VAD_METHOD,
+    if model_id not in whisper._MODELS:
+        raise ValueError(
+            f"Unknown Whisper model '{model_id}'. Available: {sorted(whisper._MODELS)}."
+        )
+
+    default_cache = os.path.join(os.path.expanduser("~"), ".cache")
+    download_root = os.path.join(os.getenv("XDG_CACHE_HOME", default_cache), "whisper")
+
+    logger.info("Downloading Whisper model '{}' to '{}'.", model_id, download_root)
+    checkpoint_path = whisper._download(
+        whisper._MODELS[model_id], download_root, in_memory=False
     )
-    del pipeline
-    _cleanup_torch_resources()
+    logger.info("Whisper model '{}' cached at '{}'.", model_id, checkpoint_path)
 
 
 def preload_whisper_models(
     model_ids: Iterable[str] | None = None,
     device: str = "cpu",
 ) -> None:
-    """Preload the WhisperX ASR models used by Nextext.
+    """Preload the local openai-whisper models used by Nextext.
 
     Args:
         model_ids (Iterable[str] | None): Optional explicit model IDs to
-            preload.
+            preload. Defaults to :data:`LOCAL_WHISPER_MODEL_IDS`.
         device (str): Device used for the preload step.
     """
-    resolved_model_ids = list(model_ids or get_whisper_model_ids())
+    resolved_model_ids = list(model_ids or LOCAL_WHISPER_MODEL_IDS)
     for model_id in resolved_model_ids:
         preload_whisper_model(model_id, device=device)
 
 
-def preload_alignment_model(
-    language_code: str,
-    model_id: str,
-    device: str = "cpu",
-) -> None:
-    """Preload one WhisperX alignment model.
-
-    Args:
-        language_code (str): Language code supported by WhisperX alignment.
-        model_id (str): Exact alignment model ID.
-        device (str): Device used for the preload step.
-    """
-    import whisperx
-
-    logger.info(
-        "Loading alignment model '{}' for language '{}'.",
-        model_id,
-        language_code,
-    )
-    align_model, _ = whisperx.load_align_model(
-        language_code=language_code,
-        device=device,
-        model_name=model_id,
-    )
-    del align_model
-    _cleanup_torch_resources()
-
-
-def preload_alignment_models(
-    alignment_models: dict[str, str] | None = None,
-    device: str = "cpu",
-) -> None:
-    """Preload all default WhisperX alignment models.
-
-    Args:
-        alignment_models (dict[str, str] | None): Optional explicit
-            language-to-model mapping.
-        device (str): Device used for the preload step.
-    """
-    resolved_alignment_models = alignment_models or get_alignment_model_ids()
-    for language_code, model_id in resolved_alignment_models.items():
-        preload_alignment_model(language_code, model_id, device=device)
+def preload_silero_vad() -> None:
+    """Download and cache the Silero VAD model via ``torch.hub``."""
+    logger.info("Downloading Silero VAD model from '{}'.", SILERO_VAD_REPO)
+    torch.hub.load(SILERO_VAD_REPO, model="silero_vad", trust_repo=True)
+    logger.info("Silero VAD model cached.")
 
 
 def preload_diarization_model(
     auth_token: str | None,
     device: str = "cpu",
 ) -> None:
-    """Preload the default WhisperX diarization pipeline.
+    """Preload the pyannote speaker diarization pipeline.
 
     Args:
         auth_token (str | None): Hugging Face token used for private gated
@@ -342,17 +283,13 @@ def preload_diarization_model(
         )
         return
 
-    from whisperx.diarize import DiarizationPipeline
-
-    from nextext.core.transcription import _configure_torch_safe_globals
-
     _configure_torch_safe_globals()
     logger.info("Loading diarization model '{}'.", DIARIZATION_MODEL_ID)
-    pipeline = DiarizationPipeline(
-        model_name=DIARIZATION_MODEL_ID,
+    pipeline = DiarizationPipeline.from_pretrained(
+        DIARIZATION_MODEL_ID,
         use_auth_token=auth_token,
-        device=device,
     )
+    pipeline.to(torch.device(device))
     del pipeline
     _cleanup_torch_resources()
 
@@ -376,8 +313,6 @@ def _get_default_device() -> str:
     Returns:
         str: ``cuda`` when available, otherwise ``cpu``.
     """
-    import torch
-
     return "cuda" if torch.cuda.is_available() else "cpu"
 
 
@@ -402,21 +337,16 @@ def main() -> None:
         except Exception as exc:
             failures.append(f"spaCy {model_id} ({exc})")
 
-    for model_id in get_whisper_model_ids():
+    for model_id in LOCAL_WHISPER_MODEL_IDS:
         try:
             preload_whisper_model(model_id, device=device)
         except Exception as exc:
             failures.append(f"Whisper {model_id} ({exc})")
 
-    for language_code, model_id in get_alignment_model_ids().items():
-        try:
-            preload_alignment_model(
-                language_code=language_code,
-                model_id=model_id,
-                device=device,
-            )
-        except Exception as exc:
-            failures.append(f"Alignment {language_code}:{model_id} ({exc})")
+    try:
+        preload_silero_vad()
+    except Exception as exc:
+        failures.append(f"Silero VAD ({exc})")
 
     try:
         preload_diarization_model(os.getenv("HF_HUB_TOKEN"), device=device)

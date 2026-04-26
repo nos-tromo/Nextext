@@ -2,12 +2,10 @@
 
 from pathlib import Path
 
-import pandas as pd
+import pandas as pd  # type: ignore[import-untyped]
 import pytest
 
 from nextext import pipeline
-
-pytest.importorskip("pandas")
 
 
 @pytest.fixture
@@ -60,6 +58,7 @@ def test_transcription_pipeline_invokes_transcriber(
     Args:
         monkeypatch (pytest.MonkeyPatch): The monkeypatch fixture for modifying behavior.
     """
+    monkeypatch.setenv("INFERENCE_PROVIDER", "ollama")
 
     class DummyTranscriber:
         """A dummy transcriber class to test the transcription pipeline without relying
@@ -74,7 +73,6 @@ def test_transcription_pipeline_invokes_transcriber(
             file_path: Path,
             trg_lang: str,
             src_lang: str,
-            model_id: str,
             task: str,
             n_speakers: int,
         ) -> None:
@@ -84,7 +82,6 @@ def test_transcription_pipeline_invokes_transcriber(
                 file_path (Path): Path to the audio file.
                 trg_lang (str): Target language code.
                 src_lang (str): Source language code.
-                model_id (str): Model ID for the transcription model.
                 task (str): Task to perform (transcribe or translate).
                 n_speakers (int): Number of speakers for diarization.
             """
@@ -92,7 +89,6 @@ def test_transcription_pipeline_invokes_transcriber(
                 "file_path": file_path,
                 "trg_lang": trg_lang,
                 "src_lang": src_lang,
-                "model_id": model_id,
                 "task": task,
                 "n_speakers": n_speakers,
             }
@@ -123,7 +119,6 @@ def test_transcription_pipeline_invokes_transcriber(
         file_path=Path("/tmp/audio.wav"),
         trg_lang="en",
         src_lang="auto",
-        model_id="base",
         task="transcribe",
         n_speakers=2,
     )
@@ -145,6 +140,7 @@ def test_transcription_pipeline_falls_back_to_original_language(
     Args:
         monkeypatch (pytest.MonkeyPatch): The monkeypatch fixture for modifying behavior.
     """
+    monkeypatch.setenv("INFERENCE_PROVIDER", "ollama")
 
     class DummyTranscriber:
         """A dummy transcriber class to test the transcription pipeline's language fallback
@@ -185,7 +181,6 @@ def test_transcription_pipeline_falls_back_to_original_language(
         file_path=Path("/tmp/audio.wav"),
         trg_lang="en",
         src_lang="es",
-        model_id="base",
         task="transcribe",
         n_speakers=1,
     )
@@ -367,6 +362,7 @@ def test_summarization_pipeline_formats_prompt(monkeypatch: pytest.MonkeyPatch) 
             num_predict: int | None = None,
             top_p: float | None = None,
             system_prompt: str | None = None,
+            include_system_prompt: bool = True,
         ) -> str:
             """Simulate calling the model with the given prompt.
 
@@ -379,11 +375,21 @@ def test_summarization_pipeline_formats_prompt(monkeypatch: pytest.MonkeyPatch) 
                 num_predict (int | None): Unused test double argument.
                 top_p (float | None): Unused test double argument.
                 system_prompt (str | None): Unused test double argument.
+                include_system_prompt (bool): Unused test double argument.
 
             Returns:
                 str: The model's response.
             """
-            del model, temperature, seed, stop, num_predict, top_p, system_prompt
+            del (
+                model,
+                temperature,
+                seed,
+                stop,
+                num_predict,
+                top_p,
+                system_prompt,
+                include_system_prompt,
+            )
             self.prompts.append(prompt)
             return "summary result"
 
@@ -412,6 +418,55 @@ def test_summarization_pipeline_rejects_empty_text(
     dummy_pipeline = InferencePipeline()
     with pytest.raises(ValueError):
         pipeline.summarization_pipeline("", dummy_pipeline)
+
+
+def test_hate_speech_pipeline_returns_flagged_rows(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test that hate_speech_pipeline returns only rows flagged as hate speech.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): The monkeypatch fixture for modifying behavior.
+    """
+    from nextext.core.openai_cfg import InferencePipeline
+
+    responses = iter(
+        [
+            {
+                "hate_speech": True,
+                "category": "racism",
+                "confidence": "high",
+                "reason": "Contains slurs",
+            },
+            {
+                "hate_speech": False,
+                "category": "none",
+                "confidence": "low",
+                "reason": "",
+            },
+        ]
+    )
+
+    class DummyDetector:
+        def __init__(self, inference_pipeline, max_chars):
+            pass
+
+        def detect(self, text: str) -> dict:
+            return next(responses)
+
+    monkeypatch.setattr(pipeline, "HateSpeechDetector", DummyDetector)
+
+    df = pd.DataFrame(
+        {"start": ["00:00:01", "00:00:05"], "text": ["bad text", "good text"]}
+    )
+    dummy_ip = InferencePipeline.__new__(InferencePipeline)
+
+    results = pipeline.hate_speech_pipeline(df, dummy_ip)
+
+    assert len(results) == 1
+    assert results[0]["category"] == "racism"
+    assert results[0]["text"] == "bad text"
+    assert results[0]["start"] == "00:00:01"
 
 
 def test_wordlevel_pipeline_invokes_all_steps(monkeypatch: pytest.MonkeyPatch) -> None:

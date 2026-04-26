@@ -1,12 +1,14 @@
 import argparse
 from pathlib import Path
 
+import pandas as pd  # type: ignore[import]
 from loguru import logger
 import pycountry
 
 from nextext.core.openai_cfg import InferencePipeline
 from nextext.core.processing import FileProcessor
 from nextext.pipeline import (
+    hate_speech_pipeline,
     normalize_language_code,
     summarization_pipeline,
     transcription_pipeline,
@@ -15,6 +17,7 @@ from nextext.pipeline import (
 )
 from nextext.utils.env_cfg import set_offline_env
 from nextext.utils.log_cfg import setup_logging
+from nextext.utils.model_registry import flush_gpu
 
 set_offline_env()
 setup_logging()
@@ -37,25 +40,22 @@ def _language_name(lang_code: str | None) -> str:
 
 def parse_arguments(args_list: list | None = None) -> argparse.Namespace:
     """Parse command-line arguments for the Nextext CLI.
-    This function sets up the argument parser with various options for file processing,
-    language settings, model selection, and analysis features.
-    It returns the parsed arguments as an `argparse.Namespace` object.
-    This function allows users to specify the audio file to be processed, the source and target languages,
-    the model size for Whisper, the task to perform (transcription or translation),
-    and various analysis options such as word statistics and summarization.
-    It also supports a full analysis mode that combines the remaining analysis features into one command.
-    It is designed to be flexible and user-friendly, providing default values for most options
-    while allowing users to customize their processing pipeline as needed.
+
+    Sets up the argument parser with options for file processing, language
+    settings, model selection, and analysis features. Supports a full-analysis
+    shortcut that enables word statistics and summarization at once.
 
     Args:
-        args_list (list | None, optional): Drop-in list of arguments to parse.
-        If None, uses `sys.argv` to parse command-line arguments. Defaults to None.
+        args_list (list | None): Drop-in list of arguments to parse. If
+            ``None``, uses ``sys.argv`` to parse command-line arguments.
+            Defaults to ``None``.
+
+    Returns:
+        argparse.Namespace: Parsed command-line arguments as a namespace
+            object.
 
     Raises:
         argparse.ArgumentError: If there is an error in argument parsing.
-
-    Returns:
-        argparse.Namespace: Parsed command-line arguments as a namespace object.
     """
     parser = argparse.ArgumentParser(
         description="Audio transcription and analysis.",
@@ -85,14 +85,6 @@ def parse_arguments(args_list: list | None = None) -> argparse.Namespace:
         type=str,
         default="de",
         help="Specify the language code (ISO 639-1) of the target language (default: 'de').",
-    )
-    parser.add_argument(
-        "-m",
-        "--model",
-        dest="model_id",
-        type=str,
-        default="default",
-        help="Specify the model size for Whisper (default: 'default' = 'turbo').",
     )
     parser.add_argument(
         "-t",
@@ -125,6 +117,13 @@ def parse_arguments(args_list: list | None = None) -> argparse.Namespace:
         help="Additional transcript summarization (default: False).",
     )
     parser.add_argument(
+        "-hs",
+        "--hate-speech",
+        dest="hate_speech",
+        action="store_true",
+        help="Detect hate speech in transcript segments via LLM (default: False).",
+    )
+    parser.add_argument(
         "-F",
         "--full-analysis",
         dest="full_analysis",
@@ -146,19 +145,40 @@ def parse_arguments(args_list: list | None = None) -> argparse.Namespace:
 
 def main() -> None:
     """Run the Nextext pipeline for transcription, translation, and analysis.
-    This function orchestrates the entire process, including transcription, translation,
-    word statistics, and summarization.
-    It handles the command-line arguments and manages the flow of data through the various modules.
+
+    Orchestrates the entire process, including transcription, translation,
+    word statistics, and summarization. Handles the command-line arguments
+    and manages the flow of data through the various modules.
 
     Raises:
-        ValueError: If an invalid task is specified or if the source language cannot be resolved for analysis.
-        ConnectionError: If the configured inference provider is not reachable for analysis tasks.
+        ValueError: If an invalid task is specified or if the source language
+            cannot be resolved for analysis.
+        ConnectionError: If the configured inference provider is not
+            reachable for analysis tasks.
     """
     logger.info("\n\nInitiating Nextext...\n")
 
     # Parse command-line arguments
     args = parse_arguments()
 
+    try:
+        _run_main(args)
+    finally:
+        flush_gpu()
+
+
+def _run_main(args: argparse.Namespace) -> None:
+    """Execute the main Nextext pipeline on the parsed CLI arguments.
+
+    Args:
+        args (argparse.Namespace): Parsed CLI arguments from
+            :func:`parse_arguments`.
+
+    Raises:
+        ValueError: If ``args.task`` is not ``"transcribe"`` or
+            ``"translate"``, or if the source language cannot be resolved.
+        ConnectionError: If the configured inference provider is not reachable.
+    """
     # Set up input/output directories and file paths
     file_processor = FileProcessor(args.file_path)
 
@@ -168,11 +188,20 @@ def main() -> None:
             file_path=args.file_path,
             trg_lang=args.trg_lang,
             src_lang=args.src_lang,
-            model_id=args.model_id,
             task=args.task,
             n_speakers=args.speakers,
         )
         args.src_lang = updated_src_lang  # Update source language if detected
+
+        # Guard: stop early when the transcript contains no speech
+        transcript_text = " ".join(transcript_df["text"].astype(str).tolist()).strip()
+        if transcript_df.empty or not transcript_text:
+            logger.warning(
+                "No speech detected in '{}'. Writing empty transcript and skipping analysis.",
+                args.file_path,
+            )
+            file_processor.write_file_output(transcript_df, "transcript")
+            return
     else:
         logger.error("Invalid task specified: {}", args.task)
         raise ValueError("Invalid task. Please specify 'transcribe' or 'translate'.")
@@ -229,7 +258,8 @@ def main() -> None:
             (wordcloud_fig, "wordcloud"),
         ]
         for export, name in exports:
-            file_processor.write_file_output(export, name)
+            if export is not None:
+                file_processor.write_file_output(export, name)
 
     if args.summarize:
         if inference_pipeline is None:
@@ -250,6 +280,31 @@ def main() -> None:
             )
             if transcript_summary is not None:
                 file_processor.write_file_output(transcript_summary, "summary")
+
+    # Hate speech detection
+    if args.hate_speech:
+        if inference_pipeline is None:
+            inference_pipeline = InferencePipeline(
+                out_language=_language_name(transcript_lang)
+            )
+        if not inference_pipeline.get_health():
+            logger.error("The configured inference provider is not reachable.")
+            raise ConnectionError(
+                "The configured inference provider is not reachable. Please ensure it is running and accessible."
+            )
+        hate_speech_findings = hate_speech_pipeline(
+            df=transcript_df,
+            inference_pipeline=inference_pipeline,
+        )
+        if hate_speech_findings:
+            file_processor.write_file_output(
+                pd.DataFrame(hate_speech_findings), "hate_speech"
+            )
+            logger.info(
+                "Hate speech detected in {} segment(s).", len(hate_speech_findings)
+            )
+        else:
+            logger.info("No hate speech detected.")
 
     # Save final transcript
     file_processor.write_file_output(transcript_df, "transcript")

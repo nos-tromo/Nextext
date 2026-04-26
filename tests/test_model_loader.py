@@ -2,7 +2,6 @@
 
 import sys
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
@@ -155,47 +154,6 @@ def test_get_spacy_model_download_url_uses_override_base_url(
     )
 
 
-def test_get_whisper_model_ids_includes_detection_model(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Test that Whisper preload includes the language-detection model.
-
-    Args:
-        monkeypatch (pytest.MonkeyPatch): The pytest fixture for modifying environment variables and functions.
-    """
-    monkeypatch.setattr(
-        model_loader,
-        "load_mappings",
-        lambda _: {"default_transcribe": "turbo", "default_translate": "large-v3"},
-    )
-
-    model_ids = model_loader.get_whisper_model_ids()
-
-    assert model_ids == ["large-v3", "small", "turbo"]
-
-
-def test_get_alignment_model_ids_combines_torch_and_hf_models(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Test that alignment model discovery merges Torch and HF defaults.
-
-    Args:
-        monkeypatch (pytest.MonkeyPatch): The pytest fixture for modifying environment variables and functions.
-    """
-    fake_alignment = SimpleNamespace(
-        DEFAULT_ALIGN_MODELS_TORCH={"en": "WAV2VEC2_ASR_BASE_960H"},
-        DEFAULT_ALIGN_MODELS_HF={"de": "VOXPOPULI_ASR_BASE_10K_DE"},
-    )
-    monkeypatch.setitem(sys.modules, "whisperx.alignment", fake_alignment)
-
-    alignment_models = model_loader.get_alignment_model_ids()
-
-    assert alignment_models == {
-        "de": "VOXPOPULI_ASR_BASE_10K_DE",
-        "en": "WAV2VEC2_ASR_BASE_960H",
-    }
-
-
 def test_main_preloads_expected_model_groups(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -228,8 +186,8 @@ def test_main_preloads_expected_model_groups(
     )
     monkeypatch.setattr(
         model_loader,
-        "get_whisper_model_ids",
-        lambda: ["small", "turbo"],
+        "LOCAL_WHISPER_MODEL_IDS",
+        ("large-v3-turbo", "large-v3"),
     )
     monkeypatch.setattr(
         model_loader,
@@ -238,22 +196,15 @@ def test_main_preloads_expected_model_groups(
     )
     monkeypatch.setattr(
         model_loader,
-        "get_alignment_model_ids",
-        lambda: {"en": "WAV2VEC2_ASR_BASE_960H"},
-    )
-    monkeypatch.setattr(
-        model_loader,
-        "preload_alignment_model",
-        lambda language_code, model_id, device: calls.append(
-            (f"alignment:{device}", f"{language_code}:{model_id}")
-        ),
-    )
-    monkeypatch.setattr(
-        model_loader,
         "preload_diarization_model",
         lambda auth_token, device: calls.append(
             (f"diarization:{device}", auth_token or "")
         ),
+    )
+    monkeypatch.setattr(
+        model_loader,
+        "preload_gliner_model",
+        lambda: calls.append(("gliner", model_loader.GLINER_MODEL_ID)),
     )
     monkeypatch.setenv("HF_HUB_TOKEN", "secret-token")
 
@@ -262,8 +213,8 @@ def test_main_preloads_expected_model_groups(
     assert calls == [
         ("nltk", "all"),
         ("spacy", "en_core_web_sm"),
-        ("whisper:cpu", "small"),
-        ("whisper:cpu", "turbo"),
-        ("alignment:cpu", "en:WAV2VEC2_ASR_BASE_960H"),
+        ("whisper:cpu", "large-v3-turbo"),
+        ("whisper:cpu", "large-v3"),
         ("diarization:cpu", "secret-token"),
+        ("gliner", model_loader.GLINER_MODEL_ID),
     ]

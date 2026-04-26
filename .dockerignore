@@ -1,7 +1,4 @@
-# Ignore Git and local metadata
-.git
-.vscode
-.idea
+# Local metadata
 *.code-workspace
 .DS_Store
 
@@ -9,7 +6,9 @@
 **/__pycache__/
 **/*.egg-info/
 **/.claude/
+**/.git/
 **/.github/
+**/.idea/
 **/.logs/
 **/.mypy_cache/
 **/.pre-commit-cache/
@@ -17,6 +16,7 @@
 **/.ruff_cache/
 **/.uv-cache/
 **/.venv/
+**/.vscode/
 **/build/
 **/data/
 **/dist/
@@ -35,13 +35,11 @@
 *.pyc
 *.pyo
 *.so
-.dockerignore
 .gitignore
 .env*
 .pre-commit-config.yaml
 AGENTS.md
-docker-compose.yml
-Dockerfile*
+CLAUDE.md
 LICENSE
 README.md
 
@@ -74,7 +72,14 @@ README.md
 # Docker-specific
 *.pid
 *.sock
+.dockerignore
+docker-compose.yml
 docker-compose.override.yml
+Dockerfile*
 
 # Exceptions
-!**/prompts/*.txt
+!**/prompts/
+!**/prompts/hate_speech.txt
+!**/prompts/summary.txt
+!**/prompts/system.txt
+!**/prompts/translation.txt

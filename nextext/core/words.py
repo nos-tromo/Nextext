@@ -4,24 +4,24 @@ import os
 import re
 import shutil
 import tempfile
-import threading
 import warnings
 from collections import Counter
 from pathlib import Path
 from typing import Any
 
-import arabic_reshaper
-import matplotlib.pyplot as plt
-import pandas as pd
+import arabic_reshaper  # type: ignore[import-untyped]
+import matplotlib.pyplot as plt  # type: ignore[import-untyped]
+import pandas as pd  # type: ignore[import-untyped]
 import spacy
-from bidi.algorithm import get_display
-from camel_tools.tokenizers.word import simple_word_tokenize
+from bidi.algorithm import get_display  # type: ignore[import-untyped]
+from camel_tools.tokenizers.word import simple_word_tokenize  # type: ignore[import-untyped]
 from dotenv import load_dotenv
+from gliner import GLiNER  # type: ignore[import-untyped]
 from loguru import logger
 from matplotlib.figure import Figure
 from spacy.language import Language
 from spacy.tokens import Doc
-from wordcloud import WordCloud
+from wordcloud import WordCloud  # type: ignore[import-untyped]
 
 from nextext.utils.font_loader import load_font_file
 from nextext.utils.mappings_loader import load_mappings
@@ -29,6 +29,7 @@ from nextext.utils.model_loader import (
     download_spacy_model,
     ensure_spacy_model_path,
 )
+from nextext.utils.model_registry import REGISTRY, ModelSpec, Strategy
 
 load_dotenv()
 
@@ -42,13 +43,11 @@ _GLINER_LABELS = [
     "event",
     "fac",
     "group",
-    "lang",
     "loc",
     "money",
     "org",
     "person",
     "time",
-    "weapon",
 ]
 _GLINER_THRESHOLD = 0.3
 _GLINER_WORD_BUDGET = 512
@@ -57,12 +56,14 @@ _SENTENCE_RE = re.compile(
     r".+?(?:[.!?]+[\"')\]]*(?=\s+|$)|\n{2,}|$)",
     re.DOTALL,
 )
-_gliner_model: Any = None
-_gliner_lock = threading.Lock()
 
 
 def _resolve_hf_cache_dir() -> Path:
-    """Return the Hugging Face hub cache directory."""
+    """Return the Hugging Face hub cache directory.
+
+    Returns:
+        Path: Resolved HF hub cache directory from environment or default.
+    """
     hf_cache = os.getenv("HF_HUB_CACHE") or os.getenv("HUGGINGFACE_HUB_CACHE")
     if hf_cache:
         return Path(hf_cache)
@@ -73,11 +74,14 @@ def _resolve_hf_cache_path(cache_dir: Path, repo_id: str) -> Path | None:
     """Find a locally cached HF snapshot directory for repo_id.
 
     Args:
-        cache_dir: HF hub cache directory (e.g. ~/.cache/huggingface/hub).
-        repo_id: HuggingFace repository ID (e.g. "urchade/gliner_multi-v2.1").
+        cache_dir (Path): HF hub cache directory (e.g.
+            ``~/.cache/huggingface/hub``).
+        repo_id (str): HuggingFace repository ID (e.g.
+            ``"gliner-community/gliner_large-v2.5"``).
 
     Returns:
-        Path to the snapshot directory if found, otherwise None.
+        Path | None: Path to the snapshot directory if found, otherwise
+            ``None``.
     """
     model_dir_name = f"models--{repo_id.replace('/', '--')}"
     model_cache_dir = cache_dir / model_dir_name
@@ -95,10 +99,10 @@ def _load_gliner_config(model_dir: Path) -> dict[str, Any]:
     """Load the GLiNER config for a local model directory.
 
     Args:
-        model_dir: Directory containing ``gliner_config.json``.
+        model_dir (Path): Directory containing ``gliner_config.json``.
 
     Returns:
-        Parsed GLiNER configuration payload.
+        dict[str, Any]: Parsed GLiNER configuration payload.
 
     Raises:
         FileNotFoundError: If the config file does not exist.
@@ -110,7 +114,12 @@ def _load_gliner_config(model_dir: Path) -> dict[str, Any]:
 
 
 def _link_or_copy_path(source: Path, destination: Path) -> None:
-    """Materialize a file or directory at ``destination`` from ``source``."""
+    """Materialize a file or directory at ``destination`` from ``source``.
+
+    Args:
+        source (Path): Existing file or directory to link or copy.
+        destination (Path): Target path that should mirror ``source``.
+    """
     if destination.exists():
         return
     try:
@@ -126,11 +135,12 @@ def _resolve_local_gliner_dependency(cache_dir: Path, dependency: str) -> Path:
     """Resolve a GLiNER dependency path without allowing network access.
 
     Args:
-        cache_dir: Hugging Face hub cache directory.
-        dependency: Repo ID or local filesystem path referenced by GLiNER config.
+        cache_dir (Path): Hugging Face hub cache directory.
+        dependency (str): Repo ID or local filesystem path referenced by
+            GLiNER config.
 
     Returns:
-        Local filesystem path for the dependency.
+        Path: Local filesystem path for the dependency.
 
     Raises:
         FileNotFoundError: If the dependency is unavailable locally.
@@ -151,11 +161,13 @@ def _materialize_offline_gliner_dir(model_dir: Path, config: dict[str, Any]) -> 
     """Create a local-only GLiNER directory with patched config references.
 
     Args:
-        model_dir: Original local GLiNER model directory.
-        config: GLiNER config payload to write into the offline runtime directory.
+        model_dir (Path): Original local GLiNER model directory.
+        config (dict[str, Any]): GLiNER config payload to write into the
+            offline runtime directory.
 
     Returns:
-        Local runtime directory with patched config and links to model assets.
+        Path: Local runtime directory with patched config and links to model
+            assets.
     """
     digest = hashlib.sha256(
         f"{model_dir.resolve()}\0{json.dumps(config, sort_keys=True)}".encode("utf-8")
@@ -180,11 +192,12 @@ def _prepare_local_gliner_model_dir(model_dir: Path, cache_dir: Path) -> Path:
     trigger outbound hub resolution.
 
     Args:
-        model_dir: Local GLiNER model directory or snapshot path.
-        cache_dir: Hugging Face hub cache directory.
+        model_dir (Path): Local GLiNER model directory or snapshot path.
+        cache_dir (Path): Hugging Face hub cache directory.
 
     Returns:
-        A local model directory safe to hand to ``GLiNER.from_pretrained``.
+        Path: A local model directory safe to hand to
+            ``GLiNER.from_pretrained``.
     """
     config = _load_gliner_config(model_dir)
     patched = False
@@ -210,14 +223,16 @@ def _resolve_gliner_load_target(model_id: str, cache_dir: Path) -> tuple[str, bo
     """Resolve the load target for GLiNER without allowing accidental hub access.
 
     Args:
-        model_id: GLiNER repo ID or local filesystem path.
-        cache_dir: Hugging Face hub cache directory.
+        model_id (str): GLiNER repo ID or local filesystem path.
+        cache_dir (Path): Hugging Face hub cache directory.
 
     Returns:
-        Tuple of ``(load_target, local_only)`` for ``GLiNER.from_pretrained``.
+        tuple[str, bool]: ``(load_target, local_only)`` suitable for
+            ``GLiNER.from_pretrained``.
 
     Raises:
-        FileNotFoundError: If offline mode is enabled and the model is not cached.
+        FileNotFoundError: If offline mode is enabled and the model is not
+            cached.
     """
     local_dir = Path(model_id).expanduser()
     if local_dir.exists():
@@ -246,40 +261,82 @@ def _resolve_gliner_load_target(model_id: str, cache_dir: Path) -> tuple[str, bo
     return model_id, False
 
 
-def _get_gliner_model() -> Any:
-    """Return the GLiNER singleton, loading it on first call (thread-safe)."""
-    global _gliner_model
-    if _gliner_model is not None:
-        return _gliner_model
-    with _gliner_lock:
-        if _gliner_model is None:
-            from gliner import GLiNER  # noqa: PLC0415
+def _load_gliner() -> Any:
+    """Build the GLiNER model fresh from the local HF cache (registry loader).
 
-            cache_dir = _resolve_hf_cache_dir()
-            load_target, local_only = _resolve_gliner_load_target(
-                _GLINER_MODEL_ID, cache_dir
-            )
-            logger.info(
-                "Loading GLiNER model '{}' (local_only={}).",
-                _GLINER_MODEL_ID,
-                local_only,
-            )
-            _gliner_model = GLiNER.from_pretrained(
-                load_target, local_files_only=local_only
-            )
-            logger.info("GLiNER model loaded.")
-    return _gliner_model
+    Returns:
+        Any: A ``GLiNER`` model instance on CPU.
+
+    Raises:
+        FileNotFoundError: If ``NEXTEXT_OFFLINE=1`` and the model is not
+            present in the local HF Hub cache.
+    """
+    cache_dir = _resolve_hf_cache_dir()
+    load_target, local_only = _resolve_gliner_load_target(_GLINER_MODEL_ID, cache_dir)
+    logger.info(
+        "Loading GLiNER model '{}' (local_only={}).",
+        _GLINER_MODEL_ID,
+        local_only,
+    )
+    model = GLiNER.from_pretrained(load_target, local_files_only=local_only)
+    logger.info("GLiNER model loaded.")
+    return model
+
+
+def _move_gliner(model: Any, device: str) -> Any:
+    """Move a GLiNER model to ``device``.
+
+    GLiNER's own ``.to()`` covers the wrapped transformer in recent versions,
+    but older releases only move the inner ``.model`` attribute.  The public
+    API is tried first; if it raises, the inner module is moved directly.
+
+    Args:
+        model (Any): A ``GLiNER`` model instance to move.
+        device (str): Target device string, e.g. ``"cuda"`` or ``"cpu"``.
+
+    Returns:
+        Any: The same ``GLiNER`` model instance after the move.
+    """
+    to_method = getattr(model, "to", None)
+    if callable(to_method):
+        try:
+            to_method(device)
+            return model
+        except (AttributeError, TypeError, NotImplementedError):
+            pass
+    inner = getattr(model, "model", None)
+    if inner is not None and hasattr(inner, "to"):
+        inner.to(device)
+    return model
+
+
+# GLiNER runs on Apple Silicon MPS without raising, but on realistic
+# ~512-word chunks the backend silently returns zero predictions while
+# the CPU path returns the correct entities (observed with
+# gliner_large-v2.5 on torch 2.8, 2026-04-19). A silent wrong answer is
+# worse than a crash, so pin to CPU on Mac; CUDA is still used when
+# available.
+REGISTRY.register(
+    ModelSpec(
+        name="gliner",
+        loader=_load_gliner,
+        mover=_move_gliner,
+        default_strategy=Strategy.OFFLOAD,
+        mps_compatible=False,
+    )
+)
 
 
 def _chunk_text(text: str, word_budget: int = _GLINER_WORD_BUDGET) -> list[str]:
     """Split text into sentence-packed chunks within a word budget.
 
     Args:
-        text: Raw input text.
-        word_budget: Maximum whitespace-delimited words per chunk.
+        text (str): Raw input text.
+        word_budget (int): Maximum whitespace-delimited words per chunk.
 
     Returns:
-        Ordered list of text chunks suitable for repeated GLiNER inference.
+        list[str]: Ordered list of text chunks suitable for repeated GLiNER
+            inference.
     """
     sentences = [
         m.group(0).strip()
@@ -416,8 +473,8 @@ class WordCounter:
     def lemmatize_doc(self) -> None:
         """Tokenize and lemmatize the text.
 
-        Returns:
-            list[str]: List of tokenized and lemmatized words.
+        Populates ``self.tokenized_doc`` and ``self.tokenized_nouns`` as a
+        side effect; returns nothing.
         """
         if self.doc is None:
             logger.error("spaCy doc is None. Please run text_to_doc() first.")
@@ -484,30 +541,29 @@ class WordCounter:
             logger.error("Text is empty. Cannot run NER.")
             return pd.DataFrame(columns=pd.Index(columns)).reset_index(drop=True)
 
+        all_entities: list[tuple[str, str]] = []
         try:
-            model = _get_gliner_model()
+            with REGISTRY.acquire("gliner") as model:
+                with warnings.catch_warnings():
+                    warnings.filterwarnings(
+                        "ignore",
+                        message=".*truncat.*max_length.*no maximum length.*",
+                    )
+                    for chunk in _chunk_text(self.text):
+                        try:
+                            preds = model.predict_entities(
+                                chunk, _GLINER_LABELS, threshold=_GLINER_THRESHOLD
+                            )
+                            for pred in preds:
+                                text_val = pred.get("text", "").strip()
+                                label = pred.get("label", "").strip()
+                                if text_val and label and len(text_val) >= 3:
+                                    all_entities.append((label.upper(), text_val))
+                        except Exception as exc:
+                            logger.warning("GLiNER chunk inference failed: {}", exc)
         except Exception as exc:
             logger.error("Failed to load GLiNER model: {}", exc)
             return pd.DataFrame(columns=pd.Index(columns)).reset_index(drop=True)
-
-        all_entities: list[tuple[str, str]] = []
-        with warnings.catch_warnings():
-            warnings.filterwarnings(
-                "ignore",
-                message=".*truncat.*max_length.*no maximum length.*",
-            )
-            for chunk in _chunk_text(self.text):
-                try:
-                    preds = model.predict_entities(
-                        chunk, _GLINER_LABELS, threshold=_GLINER_THRESHOLD
-                    )
-                    for pred in preds:
-                        text_val = pred.get("text", "").strip()
-                        label = pred.get("label", "").strip()
-                        if text_val and label and len(text_val) >= 3:
-                            all_entities.append((label.upper(), text_val))
-                except Exception as exc:
-                    logger.warning("GLiNER chunk inference failed: {}", exc)
 
         if not all_entities:
             return pd.DataFrame(columns=pd.Index(columns)).reset_index(drop=True)
@@ -518,14 +574,16 @@ class WordCounter:
             columns=pd.Index(columns),
         ).reset_index(drop=True)
 
-    def create_wordcloud(self) -> Figure:
+    def create_wordcloud(self) -> Figure | None:
         """Create a wordcloud of the most frequent words.
 
         Returns:
-            Figure: A matplotlib figure containing a wordcloud of the most frequent words.
+            Figure | None: A matplotlib figure containing a wordcloud of the
+            most frequent words, or ``None`` when there are no word counts to
+            plot (e.g. very short transcripts that consist only of stopwords).
 
         Raises:
-            ValueError: If word counts are not available.
+            ValueError: If ``count_words()`` has not been run yet.
         """
         # Create a string of words for the wordcloud
         if self.word_counts is None:
@@ -535,6 +593,9 @@ class WordCounter:
             raise ValueError(
                 "Word counts are not available. Please run count_words() first."
             )
+        if not self.word_counts:
+            logger.info("Word counts are empty; skipping word cloud generation.")
+            return None
         text = " ".join(
             [
                 str(word)

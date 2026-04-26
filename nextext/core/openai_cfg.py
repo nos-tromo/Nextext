@@ -5,9 +5,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-import requests
+import requests  # type: ignore[import-untyped]
 from dotenv import load_dotenv
 from loguru import logger
+
+from nextext.utils.env_cfg import load_inference_env
 
 load_dotenv()
 
@@ -25,7 +27,13 @@ PROMPT_DIR: Path = Path(__file__).parent.parent / "utils" / "prompts"
 
 @dataclass
 class InferencePipeline:
-    """Inference pipeline for OpenAI-compatible chat completions."""
+    """Inference pipeline for OpenAI-compatible chat completions.
+
+    Attributes:
+        out_language (str): Human-readable language name used in the system
+            prompt. Defaults to ``"German"``.
+        prompt_dir (Path): Directory where prompt template files live.
+    """
 
     out_language: str = "German"
     _default_model: str | None = field(default=None, init=False)
@@ -157,6 +165,17 @@ class InferencePipeline:
             self._translation_model = configured_model
         return self._translation_model
 
+    @property
+    def provider(self) -> str:
+        """Resolve the configured inference provider.
+
+        Returns:
+            str: One of ``ollama`` (default), ``vllm``, or ``openai``. Read
+                lazily from ``INFERENCE_PROVIDER`` each call so tests can
+                patch the environment without re-instantiating the pipeline.
+        """
+        return load_inference_env().provider
+
     def load_prompt(self, keyword: str = "system") -> str:
         """Load a prompt from the prompts directory based on the given keyword.
 
@@ -186,6 +205,7 @@ class InferencePipeline:
         num_predict: int | None = None,
         top_p: float | None = None,
         system_prompt: str | None = None,
+        include_system_prompt: bool = True,
     ) -> str:
         """Call the configured inference provider via an OpenAI-compatible chat completions API.
 
@@ -198,6 +218,10 @@ class InferencePipeline:
             num_predict (int | None): Maximum number of tokens to generate.
             top_p (float | None): Nucleus sampling parameter.
             system_prompt (str | None): Override the default system prompt for this call.
+            include_system_prompt (bool): When False, no ``system`` role is
+                sent at all — the request is a single ``user`` message. Used by
+                the vLLM TranslateGemma path, whose model card specifies that
+                the model accepts only ``user``/``assistant`` roles.
 
         Returns:
             str: The generated response from the model.
@@ -210,17 +234,21 @@ class InferencePipeline:
                 "Inference provider is not reachable. Please check your configuration."
             )
 
-        request_kwargs: dict[str, Any] = {
-            "model": model or self.default_model,
-            "messages": [
+        messages: list[dict[str, str]] = []
+        if include_system_prompt:
+            messages.append(
                 {
                     "role": "system",
                     "content": self.sys_prompt
                     if system_prompt is None
                     else system_prompt,
-                },
-                {"role": "user", "content": prompt},
-            ],
+                }
+            )
+        messages.append({"role": "user", "content": prompt})
+
+        request_kwargs: dict[str, Any] = {
+            "model": model or self.default_model,
+            "messages": messages,
             "temperature": temperature,
             "seed": seed,
         }

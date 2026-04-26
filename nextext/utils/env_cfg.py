@@ -27,6 +27,10 @@ def set_offline_env() -> None:
     else:
         logger.info("Hugging Face libraries are in online mode.")
 
+    # Apple Silicon: route MPS-unsupported ops (e.g. sparse_coo paths used
+    # by Whisper / pyannote) to CPU instead of crashing.
+    os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
+
 
 set_offline_env()  # Apply offline settings at module load time
 
@@ -38,6 +42,129 @@ class PathConfig:
     logs: Path
     prompts: Path
     hf_hub_cache: Path
+
+
+@dataclass(frozen=True)
+class TranscriptionConfig:
+    """Dataclass for transcription provider configuration."""
+
+    provider: str
+    whisper_model: str
+
+
+VALID_INFERENCE_PROVIDERS: frozenset[str] = frozenset({"ollama", "vllm", "openai"})
+VALID_RESIDENCY_STRATEGIES: frozenset[str] = frozenset({"offload", "evict"})
+
+
+@dataclass(frozen=True)
+class InferenceConfig:
+    """Dataclass for inference provider configuration."""
+
+    provider: str  # one of VALID_INFERENCE_PROVIDERS
+
+
+@dataclass(frozen=True)
+class MemoryConfig:
+    """Dataclass for model residency configuration.
+
+    Attributes:
+        default_strategy: Global fallback strategy applied when no per-model
+            override is set. One of :data:`VALID_RESIDENCY_STRATEGIES`.
+    """
+
+    default_strategy: str
+
+
+@dataclass(frozen=True)
+class VadConfig:
+    """Dataclass for Voice Activity Detection configuration.
+
+    Attributes:
+        enabled: Whether Silero VAD pre-screening is active.
+    """
+
+    enabled: bool
+
+
+EXTERNAL_WHISPER_DEFAULTS: dict[str, str] = {
+    "openai": "whisper-1",
+    "vllm": "openai/whisper-large-v3",
+}
+
+
+def load_transcription_env() -> TranscriptionConfig:
+    """Loads transcription provider configuration derived from ``INFERENCE_PROVIDER``.
+
+    Returns:
+        TranscriptionConfig: Dataclass containing transcription configuration.
+        - provider (str): ``"local"`` when ``INFERENCE_PROVIDER=ollama`` (the
+          default), otherwise ``"external"``.
+        - whisper_model (str): Model name used by the external Whisper API.
+          Empty string in local mode. Defaults to ``whisper-1`` for ``openai``
+          and ``openai/whisper-large-v3`` for ``vllm``; ``WHISPER_MODEL``
+          overrides the default when set to a non-empty value.
+    """
+    inference_provider = load_inference_env().provider
+
+    if inference_provider == "ollama":
+        return TranscriptionConfig(provider="local", whisper_model="")
+
+    default_model = EXTERNAL_WHISPER_DEFAULTS[inference_provider]
+    override = os.getenv("WHISPER_MODEL", "").strip()
+    return TranscriptionConfig(
+        provider="external",
+        whisper_model=override or default_model,
+    )
+
+
+def load_inference_env() -> InferenceConfig:
+    """Loads inference provider configuration from environment variables.
+
+    Returns:
+        InferenceConfig: Dataclass containing the resolved provider.
+        - provider (str): One of ``ollama`` (default), ``vllm``, or ``openai``.
+            Unknown values fall back to ``ollama`` with a warning.
+    """
+    raw = os.getenv("INFERENCE_PROVIDER", "ollama").strip().lower()
+    if raw not in VALID_INFERENCE_PROVIDERS:
+        logger.warning(
+            "Unknown INFERENCE_PROVIDER '{}'. Falling back to 'ollama'.", raw
+        )
+        raw = "ollama"
+    return InferenceConfig(provider=raw)
+
+
+def load_memory_env() -> MemoryConfig:
+    """Loads model residency configuration from environment variables.
+
+    Returns:
+        MemoryConfig: Dataclass containing the resolved residency settings.
+        - default_strategy (str): ``"offload"`` (default) or ``"evict"``. Read
+          from ``MODEL_RESIDENCY_STRATEGY``. Unknown values fall back to
+          ``"offload"`` with a warning. Per-model overrides
+          (``MODEL_RESIDENCY_<NAME>``) are resolved inside the model registry
+          and are not surfaced here.
+    """
+    raw = os.getenv("MODEL_RESIDENCY_STRATEGY", "offload").strip().lower()
+    if raw not in VALID_RESIDENCY_STRATEGIES:
+        logger.warning(
+            "Unknown MODEL_RESIDENCY_STRATEGY '{}'. Falling back to 'offload'.",
+            raw,
+        )
+        raw = "offload"
+    return MemoryConfig(default_strategy=raw)
+
+
+def load_vad_env() -> VadConfig:
+    """Loads Voice Activity Detection configuration from environment variables.
+
+    Returns:
+        VadConfig: Dataclass containing the VAD toggle.
+        - enabled (bool): ``True`` (default) when ``VAD_ENABLED`` is ``1``,
+          ``true``, or ``yes``.
+    """
+    enabled = str(os.getenv("VAD_ENABLED", "1")).lower() in {"1", "true", "yes"}
+    return VadConfig(enabled=enabled)
 
 
 def load_path_env() -> PathConfig:
@@ -55,7 +182,7 @@ def load_path_env() -> PathConfig:
     utils_dir: Path = Path(__file__).parent.resolve()
     default_prompts_dir: Path = utils_dir / "prompts"
     project_root: Path = utils_dir.parents[1]
-    default_log_dir = project_root / ".logs" / "nextext.log"
+    default_log_dir = project_root / ".log" / "nextext.log"
 
     return PathConfig(
         logs=Path(os.getenv("LOG_PATH", default_log_dir)).expanduser(),
