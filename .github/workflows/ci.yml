@@ -19,7 +19,7 @@ jobs:
           python-version: '3.12'
           enable-cache: true
       - name: Sync dev dependencies
-        run: uv sync --group dev
+        run: uv sync --group dev --extra cpu
       - name: Lint
         run: uv run ruff check .
       - name: Format check
@@ -36,6 +36,6 @@ jobs:
           python-version: '3.12'
           enable-cache: true
       - name: Sync dev dependencies
-        run: uv sync --group dev
+        run: uv sync --group dev --extra cpu
       - name: Run tests
-        run: uv run pytest
+        run: uv run --no-sync pytest
