@@ -10,7 +10,7 @@ Nextext is a modular audio analysis toolkit that transcribes, translates, and an
 
 - WhisperX has been removed from this project; use openai-whisper + pyannote.
 - Target torch install is split by extras (cpu/cuda) via conflicts in pyproject.toml.
-- Docker base image is pinned to `python:3.11.12-slim-bookworm` across all Dockerfiles.
+- Docker base image is pinned to `python:3.12.10-slim-bookworm` across all Dockerfiles.
 
 ## Commands
 
@@ -48,7 +48,7 @@ Tests are in `tests/` using pytest with monkeypatch fixtures for mocking ML mode
 ## Docstrings & Style
 
 - All new/modified Python functions must have Google-style docstrings.
-- Python 3.11 is the target; prefer explicit types and distinct variable names across branches to satisfy mypy.
+- Python 3.12 is the target; prefer explicit types and distinct variable names across branches to satisfy mypy.
 
 ## Architecture
 
