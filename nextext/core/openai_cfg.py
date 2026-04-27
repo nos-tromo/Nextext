@@ -206,6 +206,7 @@ class InferencePipeline:
         top_p: float | None = None,
         system_prompt: str | None = None,
         include_system_prompt: bool = True,
+        think: bool | None = None,
     ) -> str:
         """Call the configured inference provider via an OpenAI-compatible chat completions API.
 
@@ -222,12 +223,20 @@ class InferencePipeline:
                 sent at all — the request is a single ``user`` message. Used by
                 the vLLM TranslateGemma path, whose model card specifies that
                 the model accepts only ``user``/``assistant`` roles.
+            think (bool | None): Override the ``think`` field forwarded to the
+                provider via ``extra_body``. ``None`` (default) falls back to
+                the value resolved from ``OLLAMA_THINK`` by
+                :func:`load_inference_env`; if that is also ``None`` the field
+                is omitted entirely. Honoured by Ollama-hosted reasoning models
+                (e.g. Qwen3); a no-op for vLLM and OpenAI providers.
 
         Returns:
             str: The generated response from the model.
 
         Raises:
-            RuntimeError: If the configured inference provider is not reachable.
+            RuntimeError: If the configured inference provider is not reachable,
+                if the ``openai`` package is not installed, or if ``TEXT_MODEL``
+                is unset and no ``model`` argument is supplied.
         """
         if not self.get_health():
             raise RuntimeError(
@@ -258,6 +267,10 @@ class InferencePipeline:
             request_kwargs["max_tokens"] = num_predict
         if top_p is not None:
             request_kwargs["top_p"] = top_p
+
+        effective_think = think if think is not None else load_inference_env().think
+        if effective_think is not None:
+            request_kwargs["extra_body"] = {"think": effective_think}
 
         response = self.client.chat.completions.create(**request_kwargs)
         content = response.choices[0].message.content

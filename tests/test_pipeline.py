@@ -363,6 +363,7 @@ def test_summarization_pipeline_formats_prompt(monkeypatch: pytest.MonkeyPatch) 
             top_p: float | None = None,
             system_prompt: str | None = None,
             include_system_prompt: bool = True,
+            think: bool | None = None,
         ) -> str:
             """Simulate calling the model with the given prompt.
 

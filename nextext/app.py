@@ -1,5 +1,6 @@
 """Streamlit UI for the Nextext audio analysis workflow."""
 
+import hashlib
 import io
 import sys
 import tempfile
@@ -11,12 +12,17 @@ from typing import Any, cast
 
 import altair as alt
 import pandas as pd  # type: ignore[import-untyped]
-import pycountry
 import streamlit as st
 from loguru import logger
 from matplotlib.figure import Figure
 from streamlit.web import cli as st_cli
 
+from nextext.core.docint_transcript import (
+    build_docint_jsonl,
+    language_name as _language_name,
+    parse_hhmmss_to_seconds as _parse_hhmmss_to_seconds,  # noqa: F401 — re-exported for tests
+    transcript_segments_from_df as _transcript_segments_from_df,
+)
 from nextext.core.openai_cfg import InferencePipeline
 from nextext.pipeline import (
     hate_speech_pipeline,
@@ -169,19 +175,137 @@ def _results_archive_bytes(
     return payload
 
 
-def _language_name(lang_code: str | None) -> str:
-    """Convert an ISO language code to a human-readable name for LLM output settings.
+def _docint_language_for_result(result: dict[str, Any]) -> str | None:
+    """Resolve the transcript language code for a single result entry.
 
     Args:
-        lang_code (str | None): The ISO 639-1 language code.
+        result (dict[str, Any]): Stored result payload.
 
     Returns:
-        str: The human-readable language name, or "German" if the code is None.
+        str | None: Normalized ISO 639-1 language code, or ``None`` when
+            the language cannot be resolved.
     """
-    if not lang_code:
-        return "German"
-    lang = pycountry.languages.get(alpha_2=normalize_language_code(lang_code))
-    return lang.name if lang is not None else lang_code
+    lang = result.get("transcript_language") or result.get("resolved_src_lang")
+    if not lang:
+        return None
+    return normalize_language_code(str(lang))
+
+
+def _docint_task_for_result(result: dict[str, Any]) -> str:
+    """Resolve the Whisper task label for a single result entry.
+
+    Every result produced by :func:`_process_uploaded_files` already has
+    ``result["task"]`` set, so we never need to fall back to the UI-side
+    ``st.session_state["opts"]`` value — that would leak whatever the user
+    currently has selected in the Parameters tab, which is not necessarily
+    the task under which the stored result was produced.
+
+    Args:
+        result (dict[str, Any]): Stored result payload.
+
+    Returns:
+        str: ``"transcribe"`` or ``"translate"``.
+    """
+    task = result.get("task") or "transcribe"
+    return "translate" if str(task).lower() == "translate" else "transcribe"
+
+
+def _docint_result_jsonl(result: dict[str, Any]) -> bytes:
+    """Build the JSONL payload for a single processed result entry.
+
+    Args:
+        result (dict[str, Any]): Stored result payload for one file.
+
+    Returns:
+        bytes: UTF-8 JSONL bytes; ``b""`` when the transcript has no rows.
+    """
+    transcript = result.get("transcript")
+    if not isinstance(transcript, pd.DataFrame):
+        return b""
+    # ``start_seconds`` / ``end_seconds`` on each emitted segment are
+    # integer-valued floats — they come from ``parse_hhmmss_to_seconds``
+    # parsing the already-rounded ``HH:MM:SS`` strings produced by
+    # :func:`nextext.core.transcription._seconds_to_time`.
+    segments = _transcript_segments_from_df(transcript)
+    if not segments:
+        return b""
+    return build_docint_jsonl(
+        source_file=str(result.get("file_name", "")),
+        source_file_hash=result.get("source_file_hash"),
+        language=_docint_language_for_result(result),
+        task=_docint_task_for_result(result),
+        segments=segments,
+    )
+
+
+def _build_docint_jsonl_archive(
+    results: Sequence[dict[str, Any]],
+    archive_stem: str,
+) -> tuple[bytes, str, str]:
+    """Bundle docint-flavoured JSONL output for every processed file.
+
+    When the session contains exactly one processable result, the payload
+    is a single ``.jsonl`` file; otherwise the per-file payloads are
+    zipped under ``{archive_stem}/{stem}.jsonl``. Files whose transcript
+    produced no segments are skipped.
+
+    Args:
+        results (Sequence[dict[str, Any]]): Stored result entries.
+        archive_stem (str): Top-level directory name inside the ZIP,
+            matching the download filename stem.
+
+    Returns:
+        tuple[bytes, str, str]: ``(data, file_name, mime)`` ready to pass
+            to :func:`st.download_button`.
+    """
+    per_file: list[tuple[str, bytes]] = []
+    for index, result in enumerate(results, start=1):
+        payload = _docint_result_jsonl(result)
+        if not payload:
+            continue
+        original_name = str(result.get("file_name", f"result_{index}"))
+        stem = Path(original_name).stem or f"result_{index}"
+        per_file.append((stem, payload))
+
+    if not per_file:
+        return b"", f"{archive_stem}.jsonl", "application/x-ndjson"
+
+    if len(per_file) == 1:
+        stem, payload = per_file[0]
+        return payload, f"{stem}.docint.jsonl", "application/x-ndjson"
+
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for stem, payload in per_file:
+            zf.writestr(f"{archive_stem}/{stem}.jsonl", payload)
+    return buffer.getvalue(), f"{archive_stem}_docint.zip", "application/zip"
+
+
+def _docint_jsonl_bytes(
+    results: Sequence[dict[str, Any]],
+    archive_stem: str,
+) -> tuple[bytes, str, str]:
+    """Return cached docint JSONL bytes for the current results list.
+
+    Mirrors the memoization pattern in :func:`_results_archive_bytes` so
+    switching tabs or selectors does not rebuild the payload on every
+    Streamlit rerun.
+
+    Args:
+        results (Sequence[dict[str, Any]]): Stored result entries.
+        archive_stem (str): Download filename stem used for the ZIP case.
+
+    Returns:
+        tuple[bytes, str, str]: ``(data, file_name, mime)`` for
+            :func:`st.download_button`.
+    """
+    cache_key = (id(results), archive_stem)
+    cached = st.session_state.get("_docint_jsonl")
+    if isinstance(cached, tuple) and cached[0] == cache_key:
+        return cast(tuple[bytes, str, str], cached[1])
+    payload = _build_docint_jsonl_archive(results, archive_stem)
+    st.session_state["_docint_jsonl"] = (cache_key, payload)
+    return payload
 
 
 def _default_target_language(
@@ -536,7 +660,19 @@ def _process_uploaded_files(
     results: list[dict[str, Any]] = []
 
     for file_index, uploaded_file in enumerate(uploaded_files, start=1):
-        file_name = str(getattr(uploaded_file, "name", f"File {file_index}"))
+        # Basename-strip at the trust boundary — ``uploaded_file.name`` is
+        # client-controlled and may otherwise carry directory components.
+        raw_name = str(getattr(uploaded_file, "name", f"File {file_index}"))
+        file_name = Path(raw_name).name or f"File {file_index}"
+
+        # Create an st.status block for this file when streaming is enabled
+        file_status = None
+        if results_container is not None:
+            file_status = results_container.status(
+                f"Processing {file_name} ({file_index}/{total_files})",
+                expanded=True,
+                state="running",
+            )
 
         # Create an st.status block for this file when streaming is enabled
         file_status = None
@@ -569,19 +705,43 @@ def _process_uploaded_files(
 
         tmp_path: Path | None = None
         try:
+            # Stream-hash the upload: we never hold the full payload in memory.
+            # ``UploadedFile`` is seekable; rewind before reading in chunks so
+            # the loop starts at the head even if something else already read it.
+            if hasattr(uploaded_file, "seek"):
+                uploaded_file.seek(0)
+            hasher = hashlib.sha256()
+            chunk_size = 1 << 20  # 1 MiB
             with tempfile.NamedTemporaryFile(
                 delete=False,
                 suffix=Path(file_name).suffix,
             ) as tmp:
-                tmp.write(uploaded_file.read())
                 tmp_path = Path(tmp.name)
+                # Prefer iteration when the upload object yields bytes; fall
+                # back to a read-loop for stream shims that only implement read.
+                iterator = getattr(uploaded_file, "__iter__", None)
+                if callable(iterator):
+                    for chunk in uploaded_file:
+                        if not chunk:
+                            continue
+                        hasher.update(chunk)
+                        tmp.write(chunk)
+                else:
+                    while chunk := uploaded_file.read(chunk_size):
+                        hasher.update(chunk)
+                        tmp.write(chunk)
+            source_file_hash = f"sha256:{hasher.hexdigest()}"
             file_result = _run_pipeline(
                 tmp_path,
                 opts,
                 status_callback=_update_progress,
                 stage_container=file_status,
             )
-            file_result["file_name"] = file_name
+            # Strip any directory components that a crafty client could embed
+            # in the upload name before storing it in the result payload.
+            file_result["file_name"] = Path(file_name).name
+            file_result["source_file_hash"] = source_file_hash
+            file_result["task"] = opts.get("task", "transcribe")
             if file_result.get("skipped"):
                 if file_status is not None:
                     file_status.update(
@@ -702,6 +862,7 @@ def _start_page() -> None:
 
     if run and uploaded_files:
         st.session_state.pop("_results_archive", None)
+        st.session_state.pop("_docint_jsonl", None)
         with st.expander("Processing progress", expanded=True):
             results_container = st.container()
         results = _process_uploaded_files(
@@ -784,6 +945,25 @@ def main() -> None:
             "Bundles every produced output (transcripts, summaries, word "
             "tables, named entities, word clouds, hate-speech findings) for "
             "every processed file."
+        ),
+    )
+
+    docint_archive_stem = f"{archive_timestamp}_nextext_docint"
+    docint_data, docint_file_name, docint_mime = _docint_jsonl_bytes(
+        results,
+        docint_archive_stem,
+    )
+    st.download_button(
+        label="⬇️ Download docint-compatible output(JSONL)",
+        data=docint_data,
+        file_name=docint_file_name,
+        mime=docint_mime,
+        disabled=not docint_data,
+        key="docint_jsonl_download",
+        help=(
+            "Sentence-level transcripts formatted as JSON Lines for "
+            "ingestion by the docint RAG pipeline. One file per upload "
+            "when multiple files were processed."
         ),
     )
 
