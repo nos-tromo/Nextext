@@ -14,7 +14,7 @@ x-proxy-env: &proxy-env
 
 x-base-image-build-env: &base-image-build-env
   PYTHON_IMAGE: ${PYTHON_IMAGE:-python:3.12.10-slim-bookworm}
-  NVIDIA_CUDA_RUNTIME_IMAGE: ${NVIDIA_CUDA_RUNTIME_IMAGE:-nvidia/cuda:13.0.2-cudnn-runtime-ubuntu22.04}
+  NVIDIA_CUDA_RUNTIME_IMAGE: ${NVIDIA_CUDA_RUNTIME_IMAGE:-nvidia/cuda:12.8.1-cudnn-runtime-ubuntu22.04}
 
 x-build-args: &build-args
   <<: [*proxy-env, *base-image-build-env]
