@@ -206,6 +206,11 @@ def test_main_preloads_expected_model_groups(
         "preload_gliner_model",
         lambda: calls.append(("gliner", model_loader.GLINER_MODEL_ID)),
     )
+    monkeypatch.setattr(
+        model_loader,
+        "preload_translation_model",
+        lambda **kwargs: calls.append(("translation", "")),
+    )
     monkeypatch.setenv("HF_HUB_TOKEN", "secret-token")
 
     model_loader.main()
@@ -217,4 +222,121 @@ def test_main_preloads_expected_model_groups(
         ("whisper:cpu", "large-v3"),
         ("diarization:cpu", "secret-token"),
         ("gliner", model_loader.GLINER_MODEL_ID),
+        ("translation", ""),
     ]
+
+
+def test_preload_translation_model_skips_when_no_model_set(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test that translation model preload is skipped when TRANSLATION_MODEL is unset.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): The pytest fixture for modifying environment
+            variables and functions.
+    """
+    monkeypatch.delenv(model_loader.TRANSLATION_MODEL_ENV, raising=False)
+
+    def should_not_be_called(*args: object, **kwargs: object) -> None:
+        """Raise if called.
+
+        Raises:
+            AssertionError: Always, to signal an unexpected call.
+        """
+        raise AssertionError("Should not be called when TRANSLATION_MODEL is unset")
+
+    monkeypatch.setattr(model_loader.subprocess, "run", should_not_be_called)
+    monkeypatch.setattr(
+        model_loader.huggingface_hub, "snapshot_download", should_not_be_called
+    )
+
+    model_loader.preload_translation_model()
+
+
+def test_preload_translation_model_ollama_pulls_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test that the Ollama provider pulls the translation model via the CLI.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): The pytest fixture for modifying environment
+            variables and functions.
+    """
+    monkeypatch.setenv("INFERENCE_PROVIDER", "ollama")
+    monkeypatch.setenv(model_loader.TRANSLATION_MODEL_ENV, "llama3")
+    captured: list[tuple[list[str], bool]] = []
+
+    def fake_run(cmd: list[str], check: bool) -> None:
+        """Capture the subprocess command.
+
+        Args:
+            cmd (list[str]): The command passed to subprocess.run.
+            check (bool): The check flag passed to subprocess.run.
+        """
+        captured.append((cmd, check))
+
+    monkeypatch.setattr(model_loader.subprocess, "run", fake_run)
+
+    model_loader.preload_translation_model()
+
+    assert captured == [(["ollama", "pull", "llama3"], True)]
+
+
+def test_preload_translation_model_vllm_downloads_from_hf(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test that the vLLM provider downloads the translation model from Hugging Face Hub.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): The pytest fixture for modifying environment
+            variables and functions.
+    """
+    model = "Infomaniak-AI/vllm-translategemma-4b-it"
+    monkeypatch.setenv("INFERENCE_PROVIDER", "vllm")
+    monkeypatch.setenv(model_loader.TRANSLATION_MODEL_ENV, model)
+    captured: list[dict[str, object]] = []
+
+    def fake_snapshot_download(model_id: str, token: str | None = None) -> None:
+        """Capture the snapshot_download call.
+
+        Args:
+            model_id (str): The model ID passed to snapshot_download.
+            token (str | None): The token passed to snapshot_download.
+        """
+        captured.append({"model_id": model_id, "token": token})
+
+    monkeypatch.setattr(
+        model_loader.huggingface_hub, "snapshot_download", fake_snapshot_download
+    )
+
+    model_loader.preload_translation_model(hf_token="hf-token")
+
+    assert captured == [{"model_id": model, "token": "hf-token"}]
+
+
+def test_preload_translation_model_openai_is_noop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test that the OpenAI provider does not trigger any local download.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): The pytest fixture for modifying environment
+            variables and functions.
+    """
+    monkeypatch.setenv("INFERENCE_PROVIDER", "openai")
+    monkeypatch.setenv(model_loader.TRANSLATION_MODEL_ENV, "gpt-4o")
+
+    def should_not_be_called(*args: object, **kwargs: object) -> None:
+        """Raise if called.
+
+        Raises:
+            AssertionError: Always, to signal an unexpected call.
+        """
+        raise AssertionError("No local download should occur for the OpenAI provider")
+
+    monkeypatch.setattr(model_loader.subprocess, "run", should_not_be_called)
+    monkeypatch.setattr(
+        model_loader.huggingface_hub, "snapshot_download", should_not_be_called
+    )
+
+    model_loader.preload_translation_model()
