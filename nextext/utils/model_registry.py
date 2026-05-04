@@ -18,7 +18,6 @@ from __future__ import annotations
 import gc
 import os
 import threading
-import warnings
 from collections.abc import Callable
 from contextlib import AbstractContextManager
 from dataclasses import dataclass, field
@@ -26,17 +25,8 @@ from enum import Enum
 from types import TracebackType
 from typing import Any
 
-# Suppress the NNPACK initialisation failure warning that PyTorch emits on
-# hardware where NNPACK is unavailable (e.g. CUDA-only Docker containers).
-# The filter is applied before `import torch` so it catches the warning even
-# on the very first import; `torch.backends.nnpack.enabled = False` below
-# additionally prevents any dispatch path from invoking NNPACK.
-warnings.filterwarnings("ignore", message="Could not initialize NNPACK")
-
 import torch
 from loguru import logger
-
-torch.backends.nnpack.enabled = False
 
 
 class Strategy(str, Enum):
