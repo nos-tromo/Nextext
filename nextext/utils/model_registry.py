@@ -28,6 +28,12 @@ from typing import Any
 import torch
 from loguru import logger
 
+# NNPACK is a CPU convolution library that is not supported on all hardware
+# (e.g. certain ARM or virtualised x86 CPUs inside Docker containers).
+# Disable it proactively so PyTorch never attempts initialisation and the
+# resulting C++ warning is never emitted.
+torch.backends.nnpack.enabled = False
+
 
 class Strategy(str, Enum):
     """Residency strategy for a model after a caller releases it."""
