@@ -23,4 +23,4 @@ def test_nnpack_disabled_at_import() -> None:
     ``nextext/__init__.py`` calls). We assert the C++-side flag directly
     because that is what the conv dispatcher actually reads.
     """
-    assert torch._C._get_nnpack_enabled() is False
+    assert not torch._C._get_nnpack_enabled()
