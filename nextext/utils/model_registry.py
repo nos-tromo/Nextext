@@ -18,6 +18,7 @@ from __future__ import annotations
 import gc
 import os
 import threading
+import warnings
 from collections.abc import Callable
 from contextlib import AbstractContextManager
 from dataclasses import dataclass, field
@@ -25,13 +26,16 @@ from enum import Enum
 from types import TracebackType
 from typing import Any
 
+# Suppress the NNPACK initialisation failure warning that PyTorch emits on
+# hardware where NNPACK is unavailable (e.g. CUDA-only Docker containers).
+# The filter is applied before `import torch` so it catches the warning even
+# on the very first import; `torch.backends.nnpack.enabled = False` below
+# additionally prevents any dispatch path from invoking NNPACK.
+warnings.filterwarnings("ignore", message="Could not initialize NNPACK")
+
 import torch
 from loguru import logger
 
-# NNPACK is a CPU convolution library that is not supported on all hardware
-# (e.g. certain ARM or virtualised x86 CPUs inside Docker containers).
-# Disable it proactively so PyTorch never attempts initialisation and the
-# resulting C++ warning is never emitted.
 torch.backends.nnpack.enabled = False
 
 
