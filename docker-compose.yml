@@ -4,20 +4,13 @@
 # and Ollama (for language model hosting). Each service has both CPU and CUDA
 # profiles to allow for flexible deployment based on available hardware.
 #############################################################
-x-proxy-env: &proxy-env
+x-proxy-build-args: &proxy-build-args
   HTTP_PROXY: ${HTTP_PROXY:-}
   HTTPS_PROXY: ${HTTPS_PROXY:-}
   NO_PROXY: ${NO_PROXY:-}
   http_proxy: ${http_proxy:-}
   https_proxy: ${https_proxy:-}
   no_proxy: ${no_proxy:-}
-
-x-base-image-build-env: &base-image-build-env
-  PYTHON_IMAGE: ${PYTHON_IMAGE:-python:3.12.10-slim-bookworm}
-  NVIDIA_CUDA_RUNTIME_IMAGE: ${NVIDIA_CUDA_RUNTIME_IMAGE:-nvidia/cuda:12.8.1-cudnn-runtime-ubuntu22.04}
-
-x-build-args: &build-args
-  <<: [*proxy-env, *base-image-build-env]
 
 services:
   ##########################################################
@@ -29,11 +22,11 @@ services:
       context: .
       dockerfile: Dockerfile.cpu
       args:
-        <<: *build-args
+        <<: *proxy-build-args
     ports: &nextext-ports
       - ${NEXTEXT_HOST_PORT:-8501}:8501
     environment: &nextext-env
-      <<: *proxy-env
+      <<: *proxy-build-args
       HF_HUB_OFFLINE: ${HF_HUB_OFFLINE:-false}
       HF_HUB_TOKEN: $HF_HUB_TOKEN
       INFERENCE_PROVIDER: ${INFERENCE_PROVIDER:-ollama}
@@ -70,7 +63,7 @@ services:
       context: .
       dockerfile: Dockerfile.cuda
       args:
-        <<: *build-args
+        <<: *proxy-build-args
     ports: *nextext-ports
     environment:
       <<: *nextext-env
