@@ -45,7 +45,7 @@ container recreation:
 The helper script creates them with `docker volume create`:
 
 ```bash
-sh scripts/create_docker_volumes.sh
+make volumes
 ```
 
 The compose stack loads `.env` into each Nextext container via
