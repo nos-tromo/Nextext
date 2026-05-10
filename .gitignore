@@ -3,6 +3,7 @@
 # -----------------
 *.code-workspace
 *.bin
+*.bundle
 *.env
 *.ipynb
 *.log
@@ -51,6 +52,7 @@
 *.m4a
 *.ogg
 *.sh
+*.tar.gz
 *.txt
 *.wav
 *.webm
@@ -70,6 +72,7 @@
 !**/prompts/system.txt
 !**/prompts/translation.txt
 !**/scripts/
+!**/scripts/bundle_images.sh
 !**/scripts/create_docker_volumes.sh
 !.dockerignore
 !.env.example

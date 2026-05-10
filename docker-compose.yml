@@ -1,39 +1,20 @@
-#############################################################
-# Docker Compose configuration for Nextext and Ollama services
-# This configuration defines two main services: Nextext (for text processing)
-# and Ollama (for language model hosting). Each service has both CPU and CUDA
-# profiles to allow for flexible deployment based on available hardware.
-#############################################################
-x-proxy-env: &proxy-env
-  HTTP_PROXY: ${HTTP_PROXY:-}
-  HTTPS_PROXY: ${HTTPS_PROXY:-}
-  NO_PROXY: ${NO_PROXY:-}
-  http_proxy: ${http_proxy:-}
-  https_proxy: ${https_proxy:-}
-  no_proxy: ${no_proxy:-}
+name: nextext
 
-x-base-image-build-env: &base-image-build-env
-  PYTHON_IMAGE: ${PYTHON_IMAGE:-python:3.12.10-slim-bookworm}
-  NVIDIA_CUDA_RUNTIME_IMAGE: ${NVIDIA_CUDA_RUNTIME_IMAGE:-nvidia/cuda:12.8.1-cudnn-runtime-ubuntu22.04}
-
-x-build-args: &build-args
-  <<: [*proxy-env, *base-image-build-env]
+x-env-file: &env-file
+  - .env
 
 services:
   ##########################################################
   # Nextext (CPU)
   ##########################################################
   nextext-cpu:
-    profiles: ["cpu"]
+    image: nextext-cpu:${NEXTEXT_VERSION:-latest}
     build:
       context: .
       dockerfile: Dockerfile.cpu
-      args:
-        <<: *build-args
     ports: &nextext-ports
       - ${NEXTEXT_HOST_PORT:-8501}:8501
     environment: &nextext-env
-      <<: *proxy-env
       HF_HUB_OFFLINE: ${HF_HUB_OFFLINE:-false}
       HF_HUB_TOKEN: $HF_HUB_TOKEN
       INFERENCE_PROVIDER: ${INFERENCE_PROVIDER:-ollama}
@@ -49,6 +30,7 @@ services:
       TEXT_MODEL: ${TEXT_MODEL:-}
       TRANSLATION_MODEL: ${TRANSLATION_MODEL:-}
       WHISPER_MODEL: ${WHISPER_MODEL:-}
+    env_file: *env-file
     volumes: &nextext-volumes
       - huggingface-cache:/root/.cache/huggingface/hub
       - nextext-logs:/var/log/nextext
@@ -60,29 +42,31 @@ services:
       inference-net:
         aliases:
           - nextext
+    profiles: ["cpu"]
 
   ##########################################################
   # Nextext (CUDA)
   ##########################################################
   nextext-cuda:
-    profiles: ["cuda"]
+    image: nextext-cuda:${NEXTEXT_VERSION:-latest}
     build:
       context: .
       dockerfile: Dockerfile.cuda
-      args:
-        <<: *build-args
     ports: *nextext-ports
     environment:
       <<: *nextext-env
       NVIDIA_VISIBLE_DEVICES: all
+    env_file: *env-file
     volumes: *nextext-volumes
+    networks: *nextext-networks
+    gpus: all
     deploy:
       resources:
         reservations:
           devices:
             - driver: nvidia
               capabilities: [gpu]
-    networks: *nextext-networks
+    profiles: ["cuda"]
 
 ##########################################################
 # Volumes

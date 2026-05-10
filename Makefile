@@ -1,0 +1,44 @@
+# Build-host helpers for nextext.
+
+.PHONY: volumes build-cpu build-cuda bundle-cpu bundle-cuda no-build no-build-cuda up-cpu up-cuda
+
+# Versioned image tag: YYYY-MM-DD-<short-sha>. Override by exporting
+# NEXTEXT_VERSION before invoking make. Mirrors scripts/bundle_images.sh.
+NEXTEXT_VERSION ?= $(shell date +%Y-%m-%d)-$(shell git rev-parse --short HEAD)
+export NEXTEXT_VERSION
+
+# Create the external Docker volumes (one-time per host; idempotent).
+volumes:
+	./scripts/create_docker_volumes.sh
+
+# Build the CPU profile
+build-cpu:
+	DOCKER_BUILDKIT=1 docker compose --profile cpu build
+
+# Build the CUDA profile
+build-cuda:
+	DOCKER_BUILDKIT=1 docker compose --profile cuda build
+
+# Build CPU stack and ship as versioned .tar.gz pair (built + pulled).
+bundle-cpu:
+	./scripts/bundle_images.sh cpu
+
+# Build CUDA stack and ship as versioned .tar.gz pair (built + pulled).
+bundle-cuda:
+	./scripts/bundle_images.sh cuda
+
+# Run the CPU profile (backend-cpu, frontend-cpu, qdrant-cpu) without building.
+no-build:
+	docker compose up -d --no-build
+
+# Run the CUDA profile (backend-cuda, frontend-cuda) without building.
+no-build-cuda:
+	docker compose --profile cuda up -d --no-build
+
+# Build and run the CPU profile (backend-cpu, frontend-cpu, qdrant-cpu).
+up-cpu:
+	DOCKER_BUILDKIT=1 docker compose --profile cpu up
+
+# Build and run the CUDA profile (backend-cuda, frontend-cuda, qdrant-cuda).
+up-cuda:
+	DOCKER_BUILDKIT=1 docker compose --profile cuda up
