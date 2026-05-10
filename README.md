@@ -48,10 +48,8 @@ The helper script creates them with `docker volume create`:
 sh scripts/create_docker_volumes.sh
 ```
 
-If your environment requires an outbound proxy, place
-`HTTP_PROXY`, `HTTPS_PROXY`, and `NO_PROXY` in the project's `.env`
-file. The compose setup uses them for both image builds and runtime
-model downloads in Nextext.
+The compose stack loads `.env` into each Nextext container via
+`env_file`, so runtime model downloads pick them up.
 
 #### Inference provider
 
@@ -101,6 +99,53 @@ docker compose --profile cuda up  # CUDA
 ```
 
 Launch the app: `http://localhost:8501/`
+
+Each build is tagged `nextext-{cpu|cuda}:${NEXTEXT_VERSION}`, where
+`NEXTEXT_VERSION` defaults to `latest`. Override it (e.g. for releases)
+by exporting `NEXTEXT_VERSION` before running `docker compose` or `make`.
+
+#### Make shortcuts 🧰
+
+A `Makefile` wraps the most common compose flows so you don't have to
+remember profile flags:
+
+| Target | Action |
+|--------|--------|
+| `make volumes` | Create the external Docker volumes (one-time per host; idempotent). |
+| `make build-cpu` / `make build-cuda` | Build the chosen profile's image. |
+| `make up-cpu` / `make up-cuda` | Build and run the chosen profile in the foreground. |
+| `make no-build` / `make no-build-cuda` | Run the stack from already-built (or freshly loaded) images, skipping the build step. |
+| `make bundle-cpu` / `make bundle-cuda` | Build a profile and write versioned `.tar.gz` archives for offline transfer (see below). |
+
+When invoked through `make`, `NEXTEXT_VERSION` defaults to
+`YYYY-MM-DD-<short-sha>` so each build gets a traceable tag. Export
+`NEXTEXT_VERSION=…` beforehand to pin a specific version.
+
+#### Offline / air-gapped distribution 📦
+
+To ship Nextext to a host without internet access, run the bundler on a
+machine that *does* have access:
+
+```bash
+make bundle-cpu   # or: make bundle-cuda
+```
+
+The script builds the local Nextext image, pulls any externally hosted
+images referenced by the compose file, and writes them to two versioned
+tarballs in the project root:
+
+- `nextext-built-{profile}-{version}.tar.gz` — locally built Nextext images
+- `nextext-pulled-{profile}-{version}.tar.gz` — images pulled from registries
+
+Copy the tarballs (and your `.env`) to the target host, load them, and
+bring up the stack without rebuilding:
+
+```bash
+docker load < nextext-built-cpu-<version>.tar.gz
+docker load < nextext-pulled-cpu-<version>.tar.gz   # may be empty for the default compose
+export NEXTEXT_VERSION=<version>
+make no-build   # or: make no-build-cuda
+```
 
 ### Model downloads 📥
 
