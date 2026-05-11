@@ -1,6 +1,6 @@
 # Build-host helpers for nextext.
 
-.PHONY: volumes build-cpu build-cuda bundle-cpu bundle-cuda no-build-cpu no-build-cuda up-cpu up-cuda
+.PHONY: volumes build-cpu build-cuda bundle-cpu bundle-cuda no-build-cpu no-build-cuda up-cpu up-cuda stop-cpu stop-cuda
 
 # Versioned image tag.
 # On production: read from .nextext-version written by bundle_images.sh.
@@ -47,3 +47,11 @@ up-cpu:
 # Build and run the CUDA profile (backend-cuda, frontend-cuda, qdrant-cuda).
 up-cuda:
 	DOCKER_BUILDKIT=1 docker compose --profile cuda up
+
+# Stop the CPU profile containers.
+stop-cpu:
+	docker compose --profile cpu stop
+
+# Stop the CUDA profile containers.
+stop-cuda:
+	docker compose --profile cuda stop
