@@ -59,7 +59,7 @@ services:
       dockerfile: Dockerfile.cuda
     ports: *nextext-ports
     environment:
-      <<: [*no-proxy-env, *nextext-env]
+      <<: *nextext-env
       NVIDIA_VISIBLE_DEVICES: all
     env_file: *env-file
     volumes: *nextext-volumes
