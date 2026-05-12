@@ -12,6 +12,7 @@ from __future__ import annotations
 import io
 import re
 import sys
+import uuid
 import zipfile
 from collections.abc import Sequence
 from datetime import datetime
@@ -21,7 +22,6 @@ from typing import Any, cast
 import altair as alt
 import pandas as pd  # type: ignore[import-untyped]
 import streamlit as st
-import streamlit.components.v1 as components
 from loguru import logger
 from streamlit.web import cli as st_cli
 
@@ -46,62 +46,42 @@ PIPELINE_STAGE_LABELS: tuple[str, ...] = (
 )
 
 OWNER_PARAM = "owner"
-LOCAL_STORAGE_KEY = "nextext_owner_id"
 _UUID4_HEX_RE = re.compile(r"^[0-9a-f]{32}$")
 
-_OWNER_BOOTSTRAP_JS = """
-<script>
-(function () {
-    const key = %(key)r;
-    const param = %(param)r;
-    let id = window.localStorage.getItem(key);
-    if (!id || !/^[0-9a-f]{32}$/.test(id)) {
-        const fallback = () =>
-            Array.from(crypto.getRandomValues(new Uint8Array(16)))
-                .map((b) => b.toString(16).padStart(2, "0"))
-                .join("");
-        id =
-            (crypto.randomUUID && crypto.randomUUID().replace(/-/g, "")) ||
-            fallback();
-        window.localStorage.setItem(key, id);
-    }
-    const target = window.parent || window;
-    const url = new URL(target.location.href);
-    if (url.searchParams.get(param) !== id) {
-        url.searchParams.set(param, id);
-        target.location.replace(url.toString());
-    }
-})();
-</script>
-"""
 
+def _ensure_owner_id() -> str:
+    """Resolve the per-browser owner identifier, persisting it in the URL.
 
-def _ensure_owner_id() -> str | None:
-    """Resolve the per-browser owner identifier, syncing localStorage and URL.
+    The URL query parameter ``?owner=<uuid>`` is the canonical carrier
+    for the per-browser identity. On first visit (no param present) the
+    function mints a fresh UUID4 hex and writes it into ``st.query_params``
+    so Streamlit updates the address bar; subsequent reloads, browser
+    history navigations, and bookmarks all re-supply the value via the
+    URL without any client-side state.
 
-    On first visit (no ``?owner=`` query param) renders a tiny JS shim
-    that reads/creates a UUID4 hex in ``localStorage`` and reloads the
-    page with the value appended as a query param. Subsequent visits
-    have the value in the URL, so Python reads it directly. On a
-    visit from a browser that already has the value in storage but
-    arrived via a clean URL (e.g. a bookmark stripped of params), the
-    same shim restores the param without minting a new identity.
+    This approach was chosen over a ``localStorage`` shim because
+    ``streamlit.components.v1.html`` iframes are sandboxed without
+    ``allow-top-navigation``: a JS bootstrap attempting
+    ``window.parent.location.replace(...)`` is silently blocked, which
+    leaves the page stuck on the "Initializing session…" gate forever.
 
     Returns:
-        str | None: The validated UUID4 hex on success; ``None`` on the
-            very first render before the JS reload completes (the
-            caller should ``st.stop()`` in that case).
+        str: The validated UUID4 hex identifier for the current browser.
     """
     owner_param = st.query_params.get(OWNER_PARAM)
     if isinstance(owner_param, str) and _UUID4_HEX_RE.match(owner_param):
         st.session_state["owner_id"] = owner_param
         return owner_param
 
-    components.html(
-        _OWNER_BOOTSTRAP_JS % {"key": LOCAL_STORAGE_KEY, "param": OWNER_PARAM},
-        height=0,
-    )
-    return None
+    new_id = st.session_state.get("owner_id")
+    if not (isinstance(new_id, str) and _UUID4_HEX_RE.match(new_id)):
+        new_id = uuid.uuid4().hex
+        st.session_state["owner_id"] = new_id
+    # Persist into the URL so a reload (or a returning visit via the
+    # browser's history) keeps the same identity. Setting an entry on
+    # ``st.query_params`` updates the URL bar without an extra rerun.
+    st.query_params[OWNER_PARAM] = new_id
+    return new_id
 
 
 @st.cache_resource(show_spinner=False, scope="session")
@@ -794,13 +774,11 @@ def main() -> None:
     """Run the Streamlit app with tab-based navigation."""
     st.set_page_config(page_title="Nextext", layout="wide")
     # Establish the per-browser owner identity before any backend call.
-    # On the very first visit the helper renders a JS shim that mints a
-    # UUID in localStorage and reloads the page with ``?owner=<id>``; on
-    # that first run we short-circuit so no requests fly without a header.
-    owner_id = _ensure_owner_id()
-    if owner_id is None:
-        st.info("Initializing session…")
-        st.stop()
+    # The helper mints a UUID4 on first visit and stamps it into the
+    # URL via ``st.query_params`` so the identity survives reloads and
+    # browser-history navigations. There is no client-side bootstrap;
+    # every run returns a usable id immediately.
+    _ensure_owner_id()
     st.title("Nextext")
     st.subheader("Transcribe, translate, and analyze audio/video files")
 

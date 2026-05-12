@@ -82,13 +82,13 @@ Tests are in `tests/` using pytest with monkeypatch fixtures for mocking ML mode
 - `DELETE /jobs/{id}` — cleanup (owner-scoped).
 - `GET /health`, `GET /languages` — meta endpoints.
 
-Every request carries an `X-Owner-Id` header (UUID4 hex) the browser stores in `localStorage`. The header is the only thing the backend uses to scope rows; clearing site data produces a fresh identity, and any persistent rows owned by the previous identity become unreachable to the new one. The identity survives tab close and browser restart, since `localStorage` outlives the page. There is still no authentication — the backend trusts whoever can reach `inference-net`.
+Every request carries an `X-Owner-Id` header (UUID4 hex). The frontend stamps the identifier into its URL via `st.query_params` (`?owner=<uuid>`) on first visit and reads it back on every rerun, so the value survives page reloads, bookmarks, and any navigation that preserves the URL. The header is the only thing the backend uses to scope rows; visiting the bare host produces a fresh identity and prior persistent rows become unreachable to it. There is still no authentication — the backend trusts whoever can reach `inference-net`.
 
 **Key modules:**
 
 - `nextext/api/main.py` — FastAPI factory, lifespan (boots `JobManager` + persistence repository).
 - `nextext/api/jobs.py` — `JobManager`, async worker (single in-flight job via `asyncio.Semaphore(1)`), SSE event broker. Owns the bridge to durable storage when a job opts in.
-- `nextext/api/identity.py` — Header-based `get_owner_id` FastAPI dependency. Reads the `X-Owner-Id` request header (UUID4 hex), rejects missing/malformed values with 400. The browser owns the identity (kept in `localStorage` by the Streamlit frontend); there are no server-managed cookies.
+- `nextext/api/identity.py` — Header-based `get_owner_id` FastAPI dependency. Reads the `X-Owner-Id` request header (UUID4 hex), rejects missing/malformed values with 400. The Streamlit frontend carries the identity in its URL (`?owner=<uuid>`); there are no server-managed cookies.
 - `nextext/api/persistence.py` — `JobRepository` protocol + `SqliteJobRepository` implementation (WAL mode), `ArtifactStore` filesystem helper. Postgres-ready by design — replace the implementation, keep the protocol.
 - `nextext/api/routes/` — `health`, `jobs` routers. Per-route ownership checks return `404` on cross-owner access so existence never leaks.
 - `nextext/api/artifacts.py` — Per-job artifact byte materializers (CSV/XLSX/PNG/JSONL/ZIP). Lazily hydrates from disk for persistent jobs rehydrated at startup.
