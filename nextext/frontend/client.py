@@ -176,6 +176,18 @@ class BackendClient:
         if response.status_code not in (204, 404):
             response.raise_for_status()
 
+    def list_jobs(self) -> list[dict[str, Any]]:
+        """Return the caller's persistent jobs, newest first.
+
+        Returns:
+            list[dict[str, Any]]: One entry per saved job. The list is
+                empty when the caller has never opted in to persistence.
+        """
+        response = self.client.get("/api/v1/jobs")
+        response.raise_for_status()
+        body = response.json()
+        return list(body.get("jobs", []))
+
     # ----------------------------------------------------------------- meta
     def get_health(self) -> dict[str, Any]:
         """Return the backend health payload.

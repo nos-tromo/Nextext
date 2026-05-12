@@ -448,6 +448,17 @@ def _start_page() -> None:
         )
         speakers = st.number_input("Max speakers", 1, 10, value=1, step=1)
 
+    persist = st.checkbox(
+        "Save results across browser sessions",
+        value=False,
+        help=(
+            "Stored on the server until you delete them via the Saved jobs "
+            "sidebar. Leave this off when the audio is sensitive — by "
+            "default, results live only in memory and disappear after the "
+            "configured TTL."
+        ),
+    )
+
     src_lang_code = _name_to_code(src_lang_maps).get(src_lang_name)
     trg_lang_code = _name_to_code(trg_lang_maps).get(
         trg_lang_name,
@@ -464,6 +475,7 @@ def _start_page() -> None:
         words=words,
         summarization=summarization,
         hate_speech=hate_speech,
+        persist=persist,
     )
 
     if run and uploaded_files:
@@ -623,11 +635,82 @@ def _render_hate_tab(result: dict[str, Any]) -> None:
             st.write(f"**Flagged text:** {item.get('text', '')}")
 
 
+def _load_saved_job(job_id: str) -> None:
+    """Load a persisted snapshot into ``st.session_state["results"]``.
+
+    Used by the Saved-jobs sidebar to re-open a previously stored run
+    inside the result tabs without re-running the pipeline.
+
+    Args:
+        job_id: Job identifier returned by ``client.list_jobs``.
+    """
+    try:
+        snapshot = _get_client().get_snapshot(job_id)
+    except Exception as exc:  # noqa: BLE001
+        st.sidebar.error(f"Could not load job {job_id}: {exc}")
+        return
+    if snapshot.get("status") != "completed":
+        st.sidebar.warning(
+            f"Job {snapshot.get('file_name', job_id)} is "
+            f"{snapshot.get('status', 'unknown')}; only completed jobs can be reloaded."
+        )
+        return
+    result = _normalize_snapshot_result(snapshot)
+    result["file_name"] = snapshot.get("file_name") or job_id
+    st.session_state["results"] = [result]
+    st.session_state["result"] = result
+    st.session_state["selected_result_file"] = result["file_name"]
+    st.session_state["results_timestamp"] = datetime.now().strftime("%Y%m%d_%H%M%S")
+    st.session_state.pop("_results_archive", None)
+    st.session_state.pop("_docint_jsonl", None)
+
+
+def _render_saved_jobs_sidebar() -> None:
+    """Populate the sidebar with the caller's persistent jobs.
+
+    Lets users reopen previously-saved work and delete entries they no
+    longer need. Silently skips when the backend is unreachable so the
+    main UI stays usable.
+    """
+    with st.sidebar:
+        st.markdown("### 💾 Saved jobs")
+        try:
+            jobs = _get_client().list_jobs()
+        except Exception:  # noqa: BLE001
+            st.caption("Backend unreachable — saved jobs unavailable.")
+            return
+        if not jobs:
+            st.caption(
+                "Tick **Save results across browser sessions** before "
+                "running to keep results here."
+            )
+            return
+        for job in jobs:
+            status_label = str(job.get("status", "unknown"))
+            file_name = str(job.get("file_name", job["job_id"]))
+            label = f"📄 {file_name} — {status_label}"
+            cols = st.columns([4, 1])
+            with cols[0]:
+                if st.button(label, key=f"saved_open_{job['job_id']}"):
+                    _load_saved_job(job["job_id"])
+                    st.rerun()
+            with cols[1]:
+                if st.button("🗑", key=f"saved_delete_{job['job_id']}"):
+                    try:
+                        _get_client().delete_job(job["job_id"])
+                    except Exception as exc:  # noqa: BLE001
+                        st.error(f"Delete failed: {exc}")
+                    else:
+                        st.rerun()
+
+
 def main() -> None:
     """Run the Streamlit app with tab-based navigation."""
     st.set_page_config(page_title="Nextext", layout="wide")
     st.title("Nextext")
     st.subheader("Transcribe, translate, and analyze audio/video files")
+
+    _render_saved_jobs_sidebar()
 
     tab_params, tab_transcript, tab_summary, tab_words, tab_hate = st.tabs(
         ["Parameters", "Transcript", "Summary", "Word-level Analysis", "Hate Speech"]

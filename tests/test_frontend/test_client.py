@@ -176,3 +176,56 @@ def test_stage_event_holds_name_and_data() -> None:
     event = StageEvent(name="stage_started", data={"stage": "Transcribing"})
     assert event.name == "stage_started"
     assert event.data["stage"] == "Transcribing"
+
+
+def test_list_jobs_returns_jobs_array() -> None:
+    """``list_jobs`` should return the backend's ``jobs`` list."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/api/v1/jobs"
+        return httpx.Response(
+            200,
+            json={
+                "jobs": [
+                    {
+                        "job_id": "abc",
+                        "status": "completed",
+                        "file_name": "clip.wav",
+                        "progress": 1.0,
+                        "created_at": "2026-05-01T00:00:00Z",
+                        "task": "transcribe",
+                    }
+                ]
+            },
+        )
+
+    with _make_client(handler) as client:
+        jobs = client.list_jobs()
+
+    assert len(jobs) == 1
+    assert jobs[0]["job_id"] == "abc"
+
+
+def test_submit_job_threads_persist_flag_into_options() -> None:
+    """The persist flag should reach the backend inside ``options``."""
+    seen: dict[str, bytes] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["body"] = request.content
+        return httpx.Response(
+            201,
+            json={
+                "job_id": "p1",
+                "status": "queued",
+                "created_at": "2026-05-01T00:00:00Z",
+            },
+        )
+
+    with _make_client(handler) as client:
+        client.submit_job(
+            "clip.wav",
+            b"AUDIO",
+            {"task": "transcribe", "persist": True},
+        )
+
+    assert b'"persist": true' in seen["body"]
