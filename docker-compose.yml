@@ -25,9 +25,12 @@ services:
       NER_MODEL: ${NER_MODEL:-}
       NEXTEXT_API_HOST: ${NEXTEXT_API_HOST:-0.0.0.0}
       NEXTEXT_API_PORT: ${NEXTEXT_API_PORT:-8000}
+      NEXTEXT_DATA_DIR: ${NEXTEXT_DATA_DIR:-/var/lib/nextext}
       NEXTEXT_JOB_TTL_SECONDS: ${NEXTEXT_JOB_TTL_SECONDS:-3600}
       NEXTEXT_MAX_UPLOAD_MB: ${NEXTEXT_MAX_UPLOAD_MB:-8192}
       NEXTEXT_OFFLINE: ${NEXTEXT_OFFLINE:-1}
+      NEXTEXT_SESSION_COOKIE_SECURE: ${NEXTEXT_SESSION_COOKIE_SECURE:-false}
+      NEXTEXT_SESSION_COOKIE_TTL_DAYS: ${NEXTEXT_SESSION_COOKIE_TTL_DAYS:-365}
       OPENAI_API_BASE: ${OPENAI_API_BASE}
       OPENAI_API_KEY: ${OPENAI_API_KEY}
       PRELOAD_MODELS: ${PRELOAD_MODELS:-false}
@@ -37,6 +40,7 @@ services:
     env_file: *env-file
     volumes: &backend-volumes
       - huggingface-cache:/root/.cache/huggingface/hub
+      - nextext-data:/var/lib/nextext
       - nextext-logs:/var/log/nextext
       - nltk-cache:/root/nltk_data
       - spacy-cache:/root/.cache/spacy
@@ -125,6 +129,8 @@ services:
 ##########################################################
 volumes:
   huggingface-cache:
+    external: true
+  nextext-data:
     external: true
   nextext-logs:
   nltk-cache:

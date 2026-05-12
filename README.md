@@ -38,6 +38,7 @@ The compose file uses external cache volumes so model artifacts survive
 container recreation:
 
 - `huggingface-cache`
+- `nextext-data` (persistent job index + artifacts; survives `docker compose down -v`)
 - `nltk-cache`
 - `spacy-cache`
 - `torch-cache`
@@ -100,8 +101,10 @@ docker compose --profile cuda up  # CUDA — starts backend-cuda + frontend-cuda
 
 Each profile brings up two containers:
 
-- **Backend** (`backend-cpu` / `backend-cuda`) — FastAPI on port 8000 (internal). Owns the pipeline and model caches. Exposes `/api/v1/health`, `/api/v1/languages`, `/api/v1/jobs/*`. Not published to the host by default.
+- **Backend** (`backend-cpu` / `backend-cuda`) — FastAPI on port 8000 (internal). Owns the pipeline, model caches, and (optionally) the persistent job index. Exposes `/api/v1/health`, `/api/v1/languages`, `/api/v1/jobs/*`. Not published to the host by default.
 - **Frontend** (`frontend-cpu` / `frontend-cuda`) — Streamlit on port 8501. A thin HTTP client over the backend; ships only the `frontend` dependency group (no torch / whisper / pyannote).
+
+By default every job runs ephemerally — uploads stream through RAM and disappear when the sweeper evicts them. Tick **Save results across browser sessions** in the Parameters tab to opt into persistent storage: the backend then writes the job index to SQLite under `/var/lib/nextext` (the `nextext-data` Docker volume) and per-job artifacts to a directory beside it. Persistent jobs survive container restarts; an anonymous `nextext_session` cookie scopes them to the browser that submitted them.
 
 Launch the UI: `http://localhost:8501/`. The frontend reaches the backend via `BACKEND_HOST` (default `http://backend:8000` inside the compose network).
 
