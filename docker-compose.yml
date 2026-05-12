@@ -46,7 +46,7 @@ services:
     networks: &nextext-networks
       inference-net:
         aliases:
-          - nextext
+          - nextext-backend
     profiles: ["cpu"]
 
   ##########################################################
