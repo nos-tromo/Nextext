@@ -335,8 +335,7 @@ async def download_artifact(
         media_type=content_type,
         headers={
             "Content-Disposition": (
-                f'attachment; filename="{download_name}"; '
-                f"filename*=UTF-8''{quoted}"
+                f"attachment; filename=\"{download_name}\"; filename*=UTF-8''{quoted}"
             ),
             "Cache-Control": "no-store",
         },
