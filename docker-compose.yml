@@ -1,5 +1,9 @@
 name: nextext
 
+x-no-proxy-env: &no-proxy-env
+  NO_PROXY: "nextext,localhost,127.0.0.1,172.16.0.0/12,10.0.0.0/8${EXTRA_NO_PROXY:-}"
+  no_proxy: "nextext,localhost,127.0.0.1,172.16.0.0/12,10.0.0.0/8${EXTRA_NO_PROXY:-}"
+
 x-env-file: &env-file
   - .env
 
@@ -15,6 +19,7 @@ services:
     ports: &nextext-ports
       - ${NEXTEXT_HOST_PORT:-8501}:8501
     environment: &nextext-env
+      <<: *no-proxy-env
       HF_HUB_OFFLINE: ${HF_HUB_OFFLINE:-false}
       HF_HUB_TOKEN: $HF_HUB_TOKEN
       INFERENCE_PROVIDER: ${INFERENCE_PROVIDER:-ollama}
