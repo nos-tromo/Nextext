@@ -1,6 +1,6 @@
 # Build-host helpers for nextext.
 
-.PHONY: volumes bundle-cpu bundle-cuda build-cpu build-cuda no-build-cpu no-build-cuda up-cpu up-cuda stop-cpu stop-cuda
+.PHONY: volumes bundle-cpu bundle-cuda build-cpu build-cuda no-build-cpu no-build-cuda up-cpu up-cuda stop-cpu stop-cuda logs-cpu logs-cuda
 
 # Versioned image tag.
 # On production: read from .nextext-version written by bundle_images.sh.
@@ -24,27 +24,27 @@ bundle-cpu:
 bundle-cuda:
 	./scripts/bundle_images.sh cuda
 
-# Build the CPU profile
+# Build the CPU profile (backend-cpu + frontend-cpu).
 build-cpu:
 	DOCKER_BUILDKIT=1 docker compose --profile cpu build
 
-# Build the CUDA profile
+# Build the CUDA profile (backend-cuda + frontend-cuda).
 build-cuda:
 	DOCKER_BUILDKIT=1 docker compose --profile cuda build
 
-# Run the CPU profile (backend-cpu, frontend-cpu, qdrant-cpu) without building.
+# Run the CPU profile (backend-cpu + frontend-cpu) without rebuilding images.
 no-build-cpu:
 	DOCKER_BUILDKIT=1 docker compose --profile cpu up -d --no-build
 
-# Run the CUDA profile (backend-cuda, frontend-cuda) without building.
+# Run the CUDA profile (backend-cuda + frontend-cuda) without rebuilding images.
 no-build-cuda:
 	DOCKER_BUILDKIT=1 docker compose --profile cuda up -d --no-build
 
-# Build and run the CPU profile (backend-cpu, frontend-cpu, qdrant-cpu).
+# Build and run the CPU profile (backend-cpu + frontend-cpu).
 up-cpu:
 	DOCKER_BUILDKIT=1 docker compose --profile cpu up
 
-# Build and run the CUDA profile (backend-cuda, frontend-cuda, qdrant-cuda).
+# Build and run the CUDA profile (backend-cuda + frontend-cuda).
 up-cuda:
 	DOCKER_BUILDKIT=1 docker compose --profile cuda up
 
@@ -55,3 +55,11 @@ stop-cpu:
 # Stop the CUDA profile containers.
 stop-cuda:
 	docker compose --profile cuda stop
+
+# Tail combined logs from both services in the CPU profile.
+logs-cpu:
+	docker compose --profile cpu logs -f --tail=100
+
+# Tail combined logs from both services in the CUDA profile.
+logs-cuda:
+	docker compose --profile cuda logs -f --tail=100

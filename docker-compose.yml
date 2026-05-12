@@ -1,69 +1,70 @@
 name: nextext
 
 x-no-proxy-env: &no-proxy-env
-  NO_PROXY: "nextext,localhost,127.0.0.1,172.16.0.0/12,10.0.0.0/8${EXTRA_NO_PROXY:-}"
-  no_proxy: "nextext,localhost,127.0.0.1,172.16.0.0/12,10.0.0.0/8${EXTRA_NO_PROXY:-}"
+  NO_PROXY: "backend,frontend,nextext,localhost,127.0.0.1,172.16.0.0/12,10.0.0.0/8${EXTRA_NO_PROXY:-}"
+  no_proxy: "backend,frontend,nextext,localhost,127.0.0.1,172.16.0.0/12,10.0.0.0/8${EXTRA_NO_PROXY:-}"
 
 x-env-file: &env-file
   - .env
 
 services:
   ##########################################################
-  # Nextext (CPU)
+  # Nextext backend (CPU) — FastAPI + pipeline + CLI
   ##########################################################
-  nextext-cpu:
-    image: nextext-cpu:${NEXTEXT_VERSION:-latest}
+  backend-cpu:
+    image: nextext-backend-cpu:${NEXTEXT_VERSION:-latest}
     build:
       context: .
-      dockerfile: Dockerfile.cpu
-    ports: &nextext-ports
-      - ${NEXTEXT_HOST_PORT:-8501}:8501
-    environment: &nextext-env
+      dockerfile: Dockerfile.backend.cpu
+    environment: &backend-env
       <<: *no-proxy-env
       HF_HUB_OFFLINE: ${HF_HUB_OFFLINE:-false}
       HF_HUB_TOKEN: $HF_HUB_TOKEN
       INFERENCE_PROVIDER: ${INFERENCE_PROVIDER:-ollama}
-      LOG_PATH: /var/log/nextext/nextext.log
+      LOG_PATH: /var/log/nextext/backend-cpu.log
       NER_MODEL: ${NER_MODEL:-}
+      NEXTEXT_API_HOST: ${NEXTEXT_API_HOST:-0.0.0.0}
+      NEXTEXT_API_PORT: ${NEXTEXT_API_PORT:-8000}
+      NEXTEXT_JOB_TTL_SECONDS: ${NEXTEXT_JOB_TTL_SECONDS:-3600}
+      NEXTEXT_MAX_UPLOAD_MB: ${NEXTEXT_MAX_UPLOAD_MB:-8192}
       NEXTEXT_OFFLINE: ${NEXTEXT_OFFLINE:-1}
       OPENAI_API_BASE: ${OPENAI_API_BASE}
       OPENAI_API_KEY: ${OPENAI_API_KEY}
       PRELOAD_MODELS: ${PRELOAD_MODELS:-false}
-      STREAMLIT_BROWSER_GATHER_USAGE_STATS: false
-      STREAMLIT_SERVER_FILE_WATCHER_TYPE: none
-      STREAMLIT_SERVER_MAX_UPLOAD_SIZE: 8192
       TEXT_MODEL: ${TEXT_MODEL:-}
       TRANSLATION_MODEL: ${TRANSLATION_MODEL:-}
       WHISPER_MODEL: ${WHISPER_MODEL:-}
     env_file: *env-file
-    volumes: &nextext-volumes
+    volumes: &backend-volumes
       - huggingface-cache:/root/.cache/huggingface/hub
       - nextext-logs:/var/log/nextext
       - nltk-cache:/root/nltk_data
       - spacy-cache:/root/.cache/spacy
       - torch-cache:/root/.cache/torch
       - whisper-cache:/root/.cache/whisper
-    networks: &nextext-networks
+    networks: &backend-networks
       inference-net:
         aliases:
+          - backend
+          - nextext-backend
           - nextext
     profiles: ["cpu"]
 
   ##########################################################
-  # Nextext (CUDA)
+  # Nextext backend (CUDA)
   ##########################################################
-  nextext-cuda:
-    image: nextext-cuda:${NEXTEXT_VERSION:-latest}
+  backend-cuda:
+    image: nextext-backend-cuda:${NEXTEXT_VERSION:-latest}
     build:
       context: .
-      dockerfile: Dockerfile.cuda
-    ports: *nextext-ports
+      dockerfile: Dockerfile.backend.cuda
     environment:
-      <<: *nextext-env
+      <<: *backend-env
+      LOG_PATH: /var/log/nextext/backend-cuda.log
       NVIDIA_VISIBLE_DEVICES: all
     env_file: *env-file
-    volumes: *nextext-volumes
-    networks: *nextext-networks
+    volumes: *backend-volumes
+    networks: *backend-networks
     gpus: all
     deploy:
       resources:
@@ -73,8 +74,54 @@ services:
               capabilities: [gpu]
     profiles: ["cuda"]
 
+  ##########################################################
+  # Nextext frontend (CPU) — Streamlit only, talks to backend
+  ##########################################################
+  frontend-cpu:
+    image: nextext-frontend-cpu:${NEXTEXT_VERSION:-latest}
+    build: &frontend-build
+      context: .
+      dockerfile: Dockerfile.frontend
+    ports: &frontend-ports
+      - ${NEXTEXT_HOST_PORT:-8501}:8501
+    environment: &frontend-env
+      <<: *no-proxy-env
+      BACKEND_HOST: ${BACKEND_HOST:-http://backend:8000}
+      BACKEND_PUBLIC_HOST: ${BACKEND_PUBLIC_HOST:-http://localhost:8000}
+      LOG_PATH: /var/log/nextext/frontend-cpu.log
+      STREAMLIT_BROWSER_GATHER_USAGE_STATS: "false"
+      STREAMLIT_SERVER_FILE_WATCHER_TYPE: none
+      STREAMLIT_SERVER_MAX_UPLOAD_SIZE: 8192
+    env_file: *env-file
+    volumes: &frontend-volumes
+      - nextext-logs:/var/log/nextext
+    networks: &frontend-networks
+      inference-net:
+        aliases:
+          - frontend
+    depends_on:
+      - backend-cpu
+    profiles: ["cpu"]
+
+  ##########################################################
+  # Nextext frontend (CUDA) — same image, pointing at CUDA backend
+  ##########################################################
+  frontend-cuda:
+    image: nextext-frontend-cuda:${NEXTEXT_VERSION:-latest}
+    build: *frontend-build
+    ports: *frontend-ports
+    environment:
+      <<: *frontend-env
+      LOG_PATH: /var/log/nextext/frontend-cuda.log
+    env_file: *env-file
+    volumes: *frontend-volumes
+    networks: *frontend-networks
+    depends_on:
+      - backend-cuda
+    profiles: ["cuda"]
+
 ##########################################################
-# Volumes
+# Volumes — model caches live on the backend only.
 ##########################################################
 volumes:
   huggingface-cache:
