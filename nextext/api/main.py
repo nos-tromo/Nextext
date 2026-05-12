@@ -9,7 +9,6 @@ from typing import AsyncIterator
 from fastapi import FastAPI
 from loguru import logger
 
-from nextext.api.identity import IdentityMiddleware
 from nextext.api.jobs import JobManager
 from nextext.api.persistence import init_repository
 from nextext.api.routes import router as api_router
@@ -77,7 +76,6 @@ def create_app() -> FastAPI:
         version="0.8.0",
         lifespan=lifespan,
     )
-    application.add_middleware(IdentityMiddleware)
     application.include_router(api_router)
     return application
 

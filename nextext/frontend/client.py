@@ -13,6 +13,7 @@ from loguru import logger
 
 
 DEFAULT_BACKEND_URL = "http://backend:8000"
+OWNER_HEADER = "X-Owner-Id"
 
 
 @dataclass(frozen=True)
@@ -36,6 +37,7 @@ class BackendClient:
         base_url: str | None = None,
         timeout: httpx.Timeout | None = None,
         transport: httpx.BaseTransport | None = None,
+        owner_id: str | None = None,
     ) -> None:
         """Initialize the client.
 
@@ -46,12 +48,21 @@ class BackendClient:
                 long-lived configuration suited to long uploads and streamed
                 events.
             transport: Optional transport (mainly used by tests).
+            owner_id: Per-browser identifier sent in the ``X-Owner-Id``
+                header on every request. The backend uses this to scope
+                persistent rows. Sourced from the browser's
+                ``localStorage`` in production; tests pass a stable value.
         """
         self.base_url = (
             base_url or os.getenv("BACKEND_HOST") or DEFAULT_BACKEND_URL
         ).rstrip("/")
+        self.owner_id = owner_id
+        headers: dict[str, str] = {}
+        if owner_id:
+            headers[OWNER_HEADER] = owner_id
         self.client = httpx.Client(
             base_url=self.base_url,
+            headers=headers,
             timeout=timeout
             or httpx.Timeout(connect=10.0, read=None, write=300.0, pool=10.0),
             transport=transport,

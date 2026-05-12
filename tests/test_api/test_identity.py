@@ -1,94 +1,76 @@
-"""Tests for :class:`nextext.api.identity.IdentityMiddleware`."""
+"""Tests for the ``X-Owner-Id`` header dependency."""
 
 from __future__ import annotations
 
-import uuid
-
 import pytest
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
 
-from nextext.api.identity import COOKIE_NAME, IdentityMiddleware, get_owner_id
+from nextext.api.identity import OWNER_HEADER, get_owner_id
 
 
 def _build_app() -> FastAPI:
-    """Build a tiny FastAPI app that echoes the resolved owner id.
+    """Return a tiny FastAPI app that echoes the resolved owner id.
 
     Returns:
-        FastAPI: An app with :class:`IdentityMiddleware` installed and a
-            single ``GET /whoami`` endpoint.
+        FastAPI: An app with one ``GET /whoami`` route protected by the
+            :func:`get_owner_id` dependency.
     """
     app = FastAPI()
-    app.add_middleware(IdentityMiddleware)
 
     @app.get("/whoami")
-    def whoami(request: Request) -> dict[str, str]:
-        return {"owner": get_owner_id(request)}
+    def whoami(owner_id: str = Depends(get_owner_id)) -> dict[str, str]:
+        return {"owner": owner_id}
 
     return app
 
 
-def test_first_request_mints_cookie_and_returns_owner() -> None:
-    """The first request from a clean browser should mint a session cookie."""
+def test_valid_header_returns_owner() -> None:
+    """A well-formed header value should reach the handler unchanged."""
     app = _build_app()
+    valid_id = "a" * 32
     with TestClient(app) as client:
-        response = client.get("/whoami")
+        response = client.get("/whoami", headers={OWNER_HEADER: valid_id})
         assert response.status_code == 200
-        owner = response.json()["owner"]
-        assert uuid.UUID(hex=owner)
-        assert COOKIE_NAME in response.cookies
-        assert response.cookies[COOKIE_NAME] == owner
+        assert response.json() == {"owner": valid_id}
 
 
-def test_repeated_requests_reuse_same_cookie_value() -> None:
-    """Subsequent requests on the same TestClient must not rotate the id."""
+def test_missing_header_returns_400() -> None:
+    """Requests without the header must be rejected with 400."""
     app = _build_app()
-    with TestClient(app) as client:
-        first = client.get("/whoami").json()["owner"]
-        second = client.get("/whoami").json()["owner"]
-        assert first == second
-
-
-def test_two_clients_get_distinct_owner_ids() -> None:
-    """Separate clients (browsers) must receive distinct owner ids."""
-    app = _build_app()
-    with TestClient(app) as alice, TestClient(app) as bob:
-        alice_id = alice.get("/whoami").json()["owner"]
-        bob_id = bob.get("/whoami").json()["owner"]
-    assert alice_id != bob_id
-
-
-def test_malformed_cookie_is_replaced(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Spoofed or malformed cookies must not poison the owner_id."""
-    app = _build_app()
-    with TestClient(app) as client:
-        response = client.get(
-            "/whoami",
-            cookies={COOKIE_NAME: "not-a-uuid"},
-        )
-        owner = response.json()["owner"]
-        assert uuid.UUID(hex=owner)
-        # The server replaced the cookie on its way out.
-        assert COOKIE_NAME in response.cookies
-        assert response.cookies[COOKIE_NAME] != "not-a-uuid"
-
-
-def test_secure_flag_can_be_enabled_via_env(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """``NEXTEXT_SESSION_COOKIE_SECURE`` should propagate to the Set-Cookie header."""
-    monkeypatch.setenv("NEXTEXT_SESSION_COOKIE_SECURE", "1")
-    app = FastAPI()
-    app.add_middleware(IdentityMiddleware)
-
-    @app.get("/whoami")
-    def whoami(request: Request) -> dict[str, str]:
-        return {"owner": get_owner_id(request)}
-
     with TestClient(app) as client:
         response = client.get("/whoami")
-        set_cookie = response.headers.get("set-cookie", "")
-        lowered = set_cookie.lower()
-        assert "secure" in lowered
-        assert "httponly" in lowered
-        assert "samesite=lax" in lowered
+        assert response.status_code == 400
+        assert "X-Owner-Id" in response.json()["detail"]
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "",
+        "not-a-uuid",
+        "g" * 32,  # 32 chars but not hex.
+        "a" * 31,  # too short.
+        "a" * 33,  # too long.
+        "A" * 32,  # uppercase hex is also rejected — keeps DB rows consistent.
+    ],
+)
+def test_invalid_header_returns_400(value: str) -> None:
+    """Malformed header values must be rejected with 400."""
+    app = _build_app()
+    with TestClient(app) as client:
+        response = client.get("/whoami", headers={OWNER_HEADER: value})
+        assert response.status_code == 400
+
+
+def test_two_browsers_resolve_to_distinct_owners() -> None:
+    """Two clients sending different headers see different owners."""
+    app = _build_app()
+    alice = "a" * 32
+    bob = "b" * 32
+    with TestClient(app) as client:
+        first = client.get("/whoami", headers={OWNER_HEADER: alice}).json()["owner"]
+        second = client.get("/whoami", headers={OWNER_HEADER: bob}).json()["owner"]
+    assert first == alice
+    assert second == bob
+    assert first != second

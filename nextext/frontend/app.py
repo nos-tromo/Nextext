@@ -10,6 +10,7 @@ chains to it, so the Streamlit Docker image can ship with only the
 from __future__ import annotations
 
 import io
+import re
 import sys
 import zipfile
 from collections.abc import Sequence
@@ -20,6 +21,7 @@ from typing import Any, cast
 import altair as alt
 import pandas as pd  # type: ignore[import-untyped]
 import streamlit as st
+import streamlit.components.v1 as components
 from loguru import logger
 from streamlit.web import cli as st_cli
 
@@ -43,15 +45,100 @@ PIPELINE_STAGE_LABELS: tuple[str, ...] = (
     "Detecting hate speech",
 )
 
+OWNER_PARAM = "owner"
+LOCAL_STORAGE_KEY = "nextext_owner_id"
+_UUID4_HEX_RE = re.compile(r"^[0-9a-f]{32}$")
 
-@st.cache_resource(show_spinner=False)
-def _get_client() -> BackendClient:
-    """Return a session-cached :class:`BackendClient` instance.
+_OWNER_BOOTSTRAP_JS = """
+<script>
+(function () {
+    const key = %(key)r;
+    const param = %(param)r;
+    let id = window.localStorage.getItem(key);
+    if (!id || !/^[0-9a-f]{32}$/.test(id)) {
+        const fallback = () =>
+            Array.from(crypto.getRandomValues(new Uint8Array(16)))
+                .map((b) => b.toString(16).padStart(2, "0"))
+                .join("");
+        id =
+            (crypto.randomUUID && crypto.randomUUID().replace(/-/g, "")) ||
+            fallback();
+        window.localStorage.setItem(key, id);
+    }
+    const target = window.parent || window;
+    const url = new URL(target.location.href);
+    if (url.searchParams.get(param) !== id) {
+        url.searchParams.set(param, id);
+        target.location.replace(url.toString());
+    }
+})();
+</script>
+"""
+
+
+def _ensure_owner_id() -> str | None:
+    """Resolve the per-browser owner identifier, syncing localStorage and URL.
+
+    On first visit (no ``?owner=`` query param) renders a tiny JS shim
+    that reads/creates a UUID4 hex in ``localStorage`` and reloads the
+    page with the value appended as a query param. Subsequent visits
+    have the value in the URL, so Python reads it directly. On a
+    visit from a browser that already has the value in storage but
+    arrived via a clean URL (e.g. a bookmark stripped of params), the
+    same shim restores the param without minting a new identity.
 
     Returns:
-        BackendClient: A long-lived client reused across reruns.
+        str | None: The validated UUID4 hex on success; ``None`` on the
+            very first render before the JS reload completes (the
+            caller should ``st.stop()`` in that case).
     """
-    return BackendClient()
+    owner_param = st.query_params.get(OWNER_PARAM)
+    if isinstance(owner_param, str) and _UUID4_HEX_RE.match(owner_param):
+        st.session_state["owner_id"] = owner_param
+        return owner_param
+
+    components.html(
+        _OWNER_BOOTSTRAP_JS % {"key": LOCAL_STORAGE_KEY, "param": OWNER_PARAM},
+        height=0,
+    )
+    return None
+
+
+@st.cache_resource(show_spinner=False, scope="session")
+def _get_client(owner_id: str) -> BackendClient:
+    """Return a session-cached :class:`BackendClient` for one owner.
+
+    The cache is session-scoped *and* keyed on the owner_id so two
+    browser tabs that happen to land on the same Streamlit session
+    cannot accidentally share a client (and therefore an identity).
+
+    Args:
+        owner_id: Stable UUID4 hex from the browser's ``localStorage``.
+
+    Returns:
+        BackendClient: A long-lived client with the ``X-Owner-Id``
+            header pre-bound.
+    """
+    return BackendClient(owner_id=owner_id)
+
+
+def _get_owner_id() -> str:
+    """Return the owner_id stashed by :func:`_ensure_owner_id`.
+
+    Returns:
+        str: The current owner_id.
+
+    Raises:
+        RuntimeError: If called before ``_ensure_owner_id`` populated
+            the session state — indicates a Streamlit script-flow bug.
+    """
+    owner_id = st.session_state.get("owner_id")
+    if not isinstance(owner_id, str):
+        raise RuntimeError(
+            "owner_id is not in session state; "
+            "_ensure_owner_id must run before any backend call."
+        )
+    return owner_id
 
 
 @st.cache_data(show_spinner=False, ttl=300)
@@ -61,7 +148,7 @@ def _fetch_languages() -> dict[str, list[dict[str, str]]]:
     Returns:
         dict[str, list[dict[str, str]]]: ``{"whisper": [...], "target": [...]}``.
     """
-    client = _get_client()
+    client = _get_client(_get_owner_id())
     return client.get_languages()
 
 
@@ -173,7 +260,7 @@ def _process_uploaded_files(
     Returns:
         list[dict[str, Any]]: Result payloads in upload order.
     """
-    client = _get_client()
+    client = _get_client(_get_owner_id())
     total_files = len(uploaded_files)
     total_stages = len(PIPELINE_STAGE_LABELS)
     progress_bar = st.progress(0.0, text="Preparing files…")
@@ -325,7 +412,7 @@ def _results_archive_bytes(
     if isinstance(cached, tuple) and cached[0] == cache_key:
         return cast(bytes, cached[1])
 
-    client = _get_client()
+    client = _get_client(_get_owner_id())
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, mode="w", compression=zipfile.ZIP_DEFLATED) as outer:
         for result in results:
@@ -371,7 +458,7 @@ def _docint_jsonl_bytes(
     if isinstance(cached, tuple) and cached[0] == cache_key:
         return cast(tuple[bytes, str, str], cached[1])
 
-    client = _get_client()
+    client = _get_client(_get_owner_id())
     per_file: list[tuple[str, bytes]] = []
     for result in results:
         job_id = result.get("job_id")
@@ -598,7 +685,7 @@ def _render_word_tab(result: dict[str, Any]) -> None:
     st.subheader("☁️ Word Cloud")
     if result.get("wordcloud_url") and result.get("job_id"):
         try:
-            client = _get_client()
+            client = _get_client(_get_owner_id())
             png_bytes, _ = client.download_artifact(result["job_id"], "wordcloud.png")
             st.image(io.BytesIO(png_bytes))
         except Exception:
@@ -644,7 +731,7 @@ def _load_saved_job(job_id: str) -> None:
         job_id: Job identifier returned by ``client.list_jobs``.
     """
     try:
-        snapshot = _get_client().get_snapshot(job_id)
+        snapshot = _get_client(_get_owner_id()).get_snapshot(job_id)
     except Exception as exc:  # noqa: BLE001
         st.sidebar.error(f"Could not load job {job_id}: {exc}")
         return
@@ -674,7 +761,7 @@ def _render_saved_jobs_sidebar() -> None:
     with st.sidebar:
         st.markdown("### 💾 Saved jobs")
         try:
-            jobs = _get_client().list_jobs()
+            jobs = _get_client(_get_owner_id()).list_jobs()
         except Exception:  # noqa: BLE001
             st.caption("Backend unreachable — saved jobs unavailable.")
             return
@@ -696,7 +783,7 @@ def _render_saved_jobs_sidebar() -> None:
             with cols[1]:
                 if st.button("🗑", key=f"saved_delete_{job['job_id']}"):
                     try:
-                        _get_client().delete_job(job["job_id"])
+                        _get_client(_get_owner_id()).delete_job(job["job_id"])
                     except Exception as exc:  # noqa: BLE001
                         st.error(f"Delete failed: {exc}")
                     else:
@@ -706,6 +793,14 @@ def _render_saved_jobs_sidebar() -> None:
 def main() -> None:
     """Run the Streamlit app with tab-based navigation."""
     st.set_page_config(page_title="Nextext", layout="wide")
+    # Establish the per-browser owner identity before any backend call.
+    # On the very first visit the helper renders a JS shim that mints a
+    # UUID in localStorage and reloads the page with ``?owner=<id>``; on
+    # that first run we short-circuit so no requests fly without a header.
+    owner_id = _ensure_owner_id()
+    if owner_id is None:
+        st.info("Initializing session…")
+        st.stop()
     st.title("Nextext")
     st.subheader("Transcribe, translate, and analyze audio/video files")
 

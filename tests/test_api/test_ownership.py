@@ -16,7 +16,12 @@ from nextext.api.jobs import JobManager
 from nextext.api.main import create_app
 from nextext.api.persistence import init_repository
 
-from .conftest import stub_pipeline_runner
+from .conftest import (
+    ALICE_OWNER_ID,
+    BOB_OWNER_ID,
+    _client_with_owner,
+    stub_pipeline_runner,
+)
 
 
 @pytest.fixture
@@ -62,7 +67,10 @@ def persistent_app_clients(
 
     app.router.lifespan_context = _patched_lifespan
     try:
-        with TestClient(app) as alice, TestClient(app) as bob:
+        with (
+            _client_with_owner(app, ALICE_OWNER_ID) as alice,
+            _client_with_owner(app, BOB_OWNER_ID) as bob,
+        ):
             yield alice, bob
     finally:
         app.router.lifespan_context = original_lifespan
@@ -313,19 +321,6 @@ def test_rehydration_skips_poisoned_artifact_dir(tmp_path: Path) -> None:
         assert sentinel.read_text() == "do-not-delete"
     finally:
         repo2.close()
-
-
-def test_cookie_ttl_is_clamped_to_ten_years(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """``NEXTEXT_SESSION_COOKIE_TTL_DAYS`` must never exceed ~10 years."""
-    from nextext.api.identity import _resolve_ttl_seconds
-
-    monkeypatch.setenv("NEXTEXT_SESSION_COOKIE_TTL_DAYS", "999999")
-    assert _resolve_ttl_seconds() == 3650 * 86400
-
-    monkeypatch.setenv("NEXTEXT_SESSION_COOKIE_TTL_DAYS", "0")
-    assert _resolve_ttl_seconds() == 86400
 
 
 def test_rehydration_marks_running_rows_as_interrupted(tmp_path: Path) -> None:

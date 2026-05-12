@@ -10,6 +10,7 @@ import pandas as pd  # type: ignore[import-untyped]
 import pytest
 from fastapi.testclient import TestClient
 
+from nextext.api.identity import OWNER_HEADER
 from nextext.api.jobs import (
     JobManager,
     JobState,
@@ -18,17 +19,42 @@ from nextext.api.jobs import (
 )
 from nextext.api.main import create_app
 
+# Two stable, distinct owner ids for fixtures that need to model two
+# different browsers without minting random values inside tests.
+ALICE_OWNER_ID = "a" * 32
+BOB_OWNER_ID = "b" * 32
+
+
+def _client_with_owner(app, owner_id: str) -> TestClient:  # type: ignore[no-untyped-def]
+    """Build a TestClient that sends ``owner_id`` on every request.
+
+    Args:
+        app: The FastAPI application to wrap.
+        owner_id: 32-character hex UUID value used as the ``X-Owner-Id``
+            header on outgoing requests.
+
+    Returns:
+        TestClient: A client preconfigured with the owner header.
+    """
+    client = TestClient(app)
+    client.headers[OWNER_HEADER] = owner_id
+    return client
+
 
 @pytest.fixture
 def api_client() -> Iterator[TestClient]:
     """Provide a TestClient backed by a fresh FastAPI app instance.
+
+    Every request from this client carries a fixed ``X-Owner-Id`` header
+    so the ownership-aware routes resolve successfully without each test
+    having to wire it manually.
 
     Yields:
         TestClient: A client that exercises the full app including the
             lifespan startup hook (logging + offline-mode env).
     """
     app = create_app()
-    with TestClient(app) as client:
+    with _client_with_owner(app, ALICE_OWNER_ID) as client:
         yield client
 
 
@@ -118,7 +144,7 @@ def stub_app_client() -> Iterator[tuple[TestClient, JobManager]]:
 
     app.router.lifespan_context = _patched_lifespan
     try:
-        with TestClient(app) as client:
+        with _client_with_owner(app, ALICE_OWNER_ID) as client:
             yield client, client.app.state.job_manager  # type: ignore[union-attr]
     finally:
         app.router.lifespan_context = original_lifespan

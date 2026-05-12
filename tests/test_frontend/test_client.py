@@ -6,20 +6,28 @@ from __future__ import annotations
 import httpx
 import pytest
 
-from nextext.frontend.client import BackendClient, StageEvent
+from nextext.frontend.client import OWNER_HEADER, BackendClient, StageEvent
+
+_TEST_OWNER_ID = "a" * 32
 
 
-def _make_client(handler) -> BackendClient:  # type: ignore[no-untyped-def]
+def _make_client(handler, *, owner_id: str | None = _TEST_OWNER_ID) -> BackendClient:  # type: ignore[no-untyped-def]
     """Build a :class:`BackendClient` backed by an ``httpx.MockTransport``.
 
     Args:
         handler: A function ``(httpx.Request) -> httpx.Response``.
+        owner_id: Value sent in the ``X-Owner-Id`` header. Defaults to a
+            32-char hex sentinel used across the frontend test suite.
 
     Returns:
         BackendClient: A client wired to the mock transport.
     """
     transport = httpx.MockTransport(handler)
-    return BackendClient(base_url="http://backend.test", transport=transport)
+    return BackendClient(
+        base_url="http://backend.test",
+        transport=transport,
+        owner_id=owner_id,
+    )
 
 
 def test_submit_job_sends_multipart_and_returns_id() -> None:
@@ -229,3 +237,53 @@ def test_submit_job_threads_persist_flag_into_options() -> None:
         )
 
     assert b'"persist": true' in seen["body"]
+
+
+def test_owner_id_is_sent_as_x_owner_id_header() -> None:
+    """Every request must carry the configured ``X-Owner-Id`` header."""
+    captured: list[str | None] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request.headers.get(OWNER_HEADER))
+        return httpx.Response(200, json={"jobs": []})
+
+    with _make_client(handler) as client:
+        client.list_jobs()
+        client.list_jobs()
+
+    assert captured == [_TEST_OWNER_ID, _TEST_OWNER_ID]
+
+
+def test_distinct_owner_ids_produce_distinct_headers() -> None:
+    """Two clients with different owner_ids send distinct headers."""
+    seen: list[str | None] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.headers.get(OWNER_HEADER))
+        return httpx.Response(200, json={"jobs": []})
+
+    with (
+        _make_client(handler, owner_id="a" * 32) as alice,
+        _make_client(handler, owner_id="b" * 32) as bob,
+    ):
+        alice.list_jobs()
+        bob.list_jobs()
+
+    assert seen == ["a" * 32, "b" * 32]
+
+
+def test_client_without_owner_id_omits_header() -> None:
+    """When the caller skips owner_id, no header is sent (test convenience)."""
+    seen: list[str | None] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.headers.get(OWNER_HEADER))
+        return httpx.Response(
+            200,
+            json={"status": "ok", "inference": False, "version": "x"},
+        )
+
+    with _make_client(handler, owner_id=None) as client:
+        client.get_health()
+
+    assert seen == [None]
