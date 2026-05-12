@@ -1,6 +1,6 @@
 # Build-host helpers for nextext.
 
-.PHONY: volumes bundle bundle-cuda build build-cuda up up-cuda stop stop-cuda
+.PHONY: network volumes bundle bundle-cuda build build-cuda up up-cuda stop stop-cuda
 
 # Versioned image tag.
 # On production: read from .nextext-version written by bundle_images.sh.
@@ -11,6 +11,10 @@ NEXTEXT_VERSION ?= $(shell \
     { _s=$$(git rev-parse --short HEAD 2>/dev/null); \
       echo "$$(date +%Y-%m-%d)$${_s:+-$$_s}"; } )
 export NEXTEXT_VERSION
+
+# Create the external Docker network (one-time per host; idempotent)
+network:
+	DOCKER_BUILDKIT=1 docker network create inference-net
 
 # Create the external Docker volumes (one-time per host; idempotent).
 volumes:
