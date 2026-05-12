@@ -1,6 +1,10 @@
 # Build-host helpers for nextext.
 
+<<<<<<< feat/fastapi-backend-split
 .PHONY: volumes bundle-cpu bundle-cuda build-cpu build-cuda no-build-cpu no-build-cuda up-cpu up-cuda stop-cpu stop-cuda logs-cpu logs-cuda
+=======
+.PHONY: network volumes bundle bundle-cuda build build-cuda up up-cuda stop stop-cuda
+>>>>>>> main
 
 # Versioned image tag.
 # On production: read from .nextext-version written by bundle_images.sh.
@@ -12,18 +16,23 @@ NEXTEXT_VERSION ?= $(shell \
       echo "$$(date +%Y-%m-%d)$${_s:+-$$_s}"; } )
 export NEXTEXT_VERSION
 
+# Create the external Docker network (one-time per host; idempotent)
+network:
+	DOCKER_BUILDKIT=1 docker network create inference-net
+
 # Create the external Docker volumes (one-time per host; idempotent).
 volumes:
 	./scripts/create_docker_volumes.sh
 
 # Build CPU stack and ship as versioned .tar.gz pair (built + pulled).
-bundle-cpu:
+bundle:
 	./scripts/bundle_images.sh cpu
 
 # Build CUDA stack and ship as versioned .tar.gz pair (built + pulled).
 bundle-cuda:
 	./scripts/bundle_images.sh cuda
 
+<<<<<<< feat/fastapi-backend-split
 # Build the CPU profile (backend-cpu + frontend-cpu).
 build-cpu:
 	DOCKER_BUILDKIT=1 docker compose --profile cpu build
@@ -50,10 +59,31 @@ up-cuda:
 
 # Stop the CPU profile containers.
 stop-cpu:
+=======
+# Build the CPU profile
+build:
+	DOCKER_BUILDKIT=1 docker compose --profile cpu build
+
+# Build the CUDA profile
+build-cuda:
+	DOCKER_BUILDKIT=1 docker compose --profile cuda build
+
+# Run the CPU profile (backend, frontend, qdrant) without building.
+up:
+	DOCKER_BUILDKIT=1 docker compose --profile cpu up -d --no-build
+
+# Run the CUDA profile (backend-cuda, frontend-cuda) without building.
+up-cuda:
+	DOCKER_BUILDKIT=1 docker compose --profile cuda up -d --no-build
+
+# Stop the CPU profile containers.
+stop:
+>>>>>>> main
 	docker compose --profile cpu stop
 
 # Stop the CUDA profile containers.
 stop-cuda:
+<<<<<<< feat/fastapi-backend-split
 	docker compose --profile cuda stop
 
 # Tail combined logs from both services in the CPU profile.
@@ -63,3 +93,6 @@ logs-cpu:
 # Tail combined logs from both services in the CUDA profile.
 logs-cuda:
 	docker compose --profile cuda logs -f --tail=100
+=======
+	docker compose --profile cuda stop
+>>>>>>> main

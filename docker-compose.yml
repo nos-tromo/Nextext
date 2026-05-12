@@ -1,8 +1,13 @@
 name: nextext
 
 x-no-proxy-env: &no-proxy-env
+<<<<<<< feat/fastapi-backend-split
   NO_PROXY: "backend,frontend,nextext,localhost,127.0.0.1,172.16.0.0/12,10.0.0.0/8${EXTRA_NO_PROXY:-}"
   no_proxy: "backend,frontend,nextext,localhost,127.0.0.1,172.16.0.0/12,10.0.0.0/8${EXTRA_NO_PROXY:-}"
+=======
+  NO_PROXY: "nextext,localhost,127.0.0.1,172.16.0.0/12,10.0.0.0/8${EXTRA_NO_PROXY:-}"
+  no_proxy: "nextext,localhost,127.0.0.1,172.16.0.0/12,10.0.0.0/8${EXTRA_NO_PROXY:-}"
+>>>>>>> main
 
 x-env-file: &env-file
   - .env
@@ -15,8 +20,15 @@ services:
     image: nextext-backend-cpu:${NEXTEXT_VERSION:-latest}
     build:
       context: .
+<<<<<<< feat/fastapi-backend-split
       dockerfile: Dockerfile.backend.cpu
     environment: &backend-env
+=======
+      dockerfile: Dockerfile.cpu
+    ports: &nextext-ports
+      - ${NEXTEXT_HOST_PORT:-8501}:8501
+    environment: &nextext-env
+>>>>>>> main
       <<: *no-proxy-env
       HF_HUB_OFFLINE: ${HF_HUB_OFFLINE:-false}
       HF_HUB_TOKEN: $HF_HUB_TOKEN
@@ -45,9 +57,13 @@ services:
     networks: &backend-networks
       inference-net:
         aliases:
+<<<<<<< feat/fastapi-backend-split
           - backend
           - nextext-backend
           - nextext
+=======
+          - nextext-backend
+>>>>>>> main
     profiles: ["cpu"]
 
   ##########################################################
