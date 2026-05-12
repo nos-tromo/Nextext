@@ -453,9 +453,8 @@ def _start_page() -> None:
         value=False,
         help=(
             "Stored on the server until you delete them via the Saved jobs "
-            "sidebar. Leave this off when the audio is sensitive — by "
-            "default, results live only in memory and disappear after the "
-            "configured TTL."
+            "sidebar. Leave this off so results live only in memory and "
+            "disappear after the configured TTL."
         ),
     )
 
@@ -808,7 +807,7 @@ def main() -> None:
         """
         <hr style="margin-top:2rem;margin-bottom:1rem;">
         <p style="text-align:center;">
-            🔗 <a href="https://github.com/nos-tromo/nextext" target="_blank">GitHub&nbsp;Repository</a>
+            🔗 <a href="https://github.com/nos-tromo/nextext" target="_blank">Nextext</a>
         </p>
         """,
         unsafe_allow_html=True,
