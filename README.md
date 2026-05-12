@@ -1,6 +1,6 @@
 # Nextext 🎙️
 
-**Nextext** is a modular toolkit for transcribing, translating, and analyzing natural language from audio and video files using state-of-the-art machine learning models. Designed for flexibility, it supports both a user-friendly Streamlit web interface and command-line operation. The results are compiled into structured output files featuring transcriptions, summaries, and word-level statistics.
+**Nextext** is a modular toolkit for transcribing, translating, and analyzing natural language from audio and video files using state-of-the-art machine learning models. It ships as two cooperating services: a FastAPI **backend** that owns the pipeline and GPU model registry, and a Streamlit **frontend** that talks to the backend over HTTP. The same toolkit also exposes a CLI for in-process batch processing.
 
 > This is a personal project that is under heavy development. It could, and likely does, contain bugs, incomplete code,
 > or other unintended issues. As such, the software is provided as-is, without warranty of any kind.
@@ -94,13 +94,18 @@ Any other OpenAI-compatible endpoint (vLLM, LiteLLM, etc.) works the same way �
 Clone the repository and run either for CPU or GPU usage (requires a CUDA compatible GPU and the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html) for the CUDA profile):
 
 ```bash
-docker compose --profile cpu up  # CPU
-docker compose --profile cuda up  # CUDA
+docker compose --profile cpu up  # CPU — starts backend-cpu + frontend-cpu
+docker compose --profile cuda up  # CUDA — starts backend-cuda + frontend-cuda
 ```
 
-Launch the app: `http://localhost:8501/`
+Each profile brings up two containers:
 
-Each build is tagged `nextext-{cpu|cuda}:${NEXTEXT_VERSION}`, where
+- **Backend** (`backend-cpu` / `backend-cuda`) — FastAPI on port 8000 (internal). Owns the pipeline and model caches. Exposes `/api/v1/health`, `/api/v1/languages`, `/api/v1/jobs/*`. Not published to the host by default.
+- **Frontend** (`frontend-cpu` / `frontend-cuda`) — Streamlit on port 8501. A thin HTTP client over the backend; ships only the `frontend` dependency group (no torch / whisper / pyannote).
+
+Launch the UI: `http://localhost:8501/`. The frontend reaches the backend via `BACKEND_HOST` (default `http://backend:8000` inside the compose network).
+
+Each build is tagged `nextext-{backend,frontend}-{cpu|cuda}:${NEXTEXT_VERSION}`, where
 `NEXTEXT_VERSION` defaults to `latest`. Override it (e.g. for releases)
 by exporting `NEXTEXT_VERSION` before running `docker compose` or `make`.
 
@@ -112,9 +117,11 @@ remember profile flags:
 | Target | Action |
 |--------|--------|
 | `make volumes` | Create the external Docker volumes (one-time per host; idempotent). |
-| `make build-cpu` / `make build-cuda` | Build the chosen profile's image. |
-| `make up-cpu` / `make up-cuda` | Build and run the chosen profile in the foreground. |
-| `make no-build` / `make no-build-cuda` | Run the stack from already-built (or freshly loaded) images, skipping the build step. |
+| `make build-cpu` / `make build-cuda` | Build both backend and frontend images for the chosen profile. |
+| `make up-cpu` / `make up-cuda` | Build and run both services for the chosen profile in the foreground. |
+| `make no-build-cpu` / `make no-build-cuda` | Run the stack from already-built (or freshly loaded) images, skipping the build step. |
+| `make stop-cpu` / `make stop-cuda` | Stop the chosen profile's containers. |
+| `make logs-cpu` / `make logs-cuda` | Tail combined logs from backend and frontend. |
 | `make bundle-cpu` / `make bundle-cuda` | Build a profile and write versioned `.tar.gz` archives for offline transfer (see below). |
 
 When invoked through `make`, `NEXTEXT_VERSION` defaults to
@@ -197,13 +204,19 @@ echo 'export HF_HUB_OFFLINE=1' >> .venv/bin/activate
 
 ### Streamlit 🌈
 
-To launch the Streamlit web interface, run the following command from the project root:
+The Streamlit frontend talks to the FastAPI backend over HTTP. Start both in two terminals:
 
 ```bash
-uv run nextext
+# Terminal 1 — FastAPI backend on http://localhost:8000
+uv run nextext-api
+
+# Terminal 2 — Streamlit frontend on http://localhost:8501
+BACKEND_HOST=http://localhost:8000 uv run nextext
 ```
 
-This will start the app locally and provide a URL (typically `http://localhost:8501`) in your terminal. Open this URL in your browser to access the Nextext interface.
+Open `http://localhost:8501` in your browser. The `BACKEND_HOST` env var defaults to the Docker-internal alias `http://backend:8000`; override it as shown when running outside compose.
+
+The backend exposes the same workflow as the UI under `/api/v1/jobs` (multipart upload + SSE event stream + per-artifact downloads) so any HTTP client — `curl`, scripts, other services — can drive the pipeline directly. See `docker-compose.yml` and `Dockerfile.backend.{cpu,cuda}` for production deployment.
 
 #### Increasing file upload size limit 📂
 

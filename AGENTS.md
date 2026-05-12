@@ -1,6 +1,12 @@
 # Nextext Agents
 
-Nextext breaks the speech-to-insight workflow into specialized agents (self-contained modules) coordinated by the shared pipelines in `nextext/pipeline.py`. Each agent consumes a narrow input, produces a deterministic artifact, and can be toggled on/off from both the CLI (`nextext/cli.py`) and the Streamlit UI (`nextext/app.py`). This document describes every agent, how they interact, and what they expect from the runtime environment.
+Nextext breaks the speech-to-insight workflow into specialized agents (self-contained modules) coordinated by the shared pipelines in `nextext/pipeline.py`. Each agent consumes a narrow input, produces a deterministic artifact, and can be toggled on/off from three orchestrators:
+
+- The CLI (`nextext/cli.py`) — runs the pipeline in-process; no backend required.
+- The FastAPI backend (`nextext/api/`) — wraps the same pipeline behind a job-based HTTP API (`POST /api/v1/jobs` → SSE `/events` → `/artifacts/{name}`).
+- The Streamlit frontend (`nextext/frontend/app.py`) — a thin HTTP client over the backend; never imports the pipeline directly.
+
+This document describes every agent, how they interact, and what they expect from the runtime environment.
 
 ## Agent Directory
 

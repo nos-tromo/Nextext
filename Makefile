@@ -1,6 +1,10 @@
 # Build-host helpers for nextext.
 
+<<<<<<< feat/fastapi-backend-split
+.PHONY: volumes bundle-cpu bundle-cuda build-cpu build-cuda no-build-cpu no-build-cuda up-cpu up-cuda stop-cpu stop-cuda logs-cpu logs-cuda
+=======
 .PHONY: network volumes bundle bundle-cuda build build-cuda up up-cuda stop stop-cuda
+>>>>>>> main
 
 # Versioned image tag.
 # On production: read from .nextext-version written by bundle_images.sh.
@@ -28,6 +32,34 @@ bundle:
 bundle-cuda:
 	./scripts/bundle_images.sh cuda
 
+<<<<<<< feat/fastapi-backend-split
+# Build the CPU profile (backend-cpu + frontend-cpu).
+build-cpu:
+	DOCKER_BUILDKIT=1 docker compose --profile cpu build
+
+# Build the CUDA profile (backend-cuda + frontend-cuda).
+build-cuda:
+	DOCKER_BUILDKIT=1 docker compose --profile cuda build
+
+# Run the CPU profile (backend-cpu + frontend-cpu) without rebuilding images.
+no-build-cpu:
+	DOCKER_BUILDKIT=1 docker compose --profile cpu up -d --no-build
+
+# Run the CUDA profile (backend-cuda + frontend-cuda) without rebuilding images.
+no-build-cuda:
+	DOCKER_BUILDKIT=1 docker compose --profile cuda up -d --no-build
+
+# Build and run the CPU profile (backend-cpu + frontend-cpu).
+up-cpu:
+	DOCKER_BUILDKIT=1 docker compose --profile cpu up
+
+# Build and run the CUDA profile (backend-cuda + frontend-cuda).
+up-cuda:
+	DOCKER_BUILDKIT=1 docker compose --profile cuda up
+
+# Stop the CPU profile containers.
+stop-cpu:
+=======
 # Build the CPU profile
 build:
 	DOCKER_BUILDKIT=1 docker compose --profile cpu build
@@ -46,8 +78,21 @@ up-cuda:
 
 # Stop the CPU profile containers.
 stop:
+>>>>>>> main
 	docker compose --profile cpu stop
 
 # Stop the CUDA profile containers.
 stop-cuda:
+<<<<<<< feat/fastapi-backend-split
 	docker compose --profile cuda stop
+
+# Tail combined logs from both services in the CPU profile.
+logs-cpu:
+	docker compose --profile cpu logs -f --tail=100
+
+# Tail combined logs from both services in the CUDA profile.
+logs-cuda:
+	docker compose --profile cuda logs -f --tail=100
+=======
+	docker compose --profile cuda stop
+>>>>>>> main

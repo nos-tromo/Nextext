@@ -15,6 +15,12 @@ imports under ``nextext.*``.
 
 from __future__ import annotations
 
-import torch
+# The frontend Docker image installs only the "frontend" dependency group,
+# which intentionally excludes torch. Guard the NNPACK toggle so the package
+# remains importable in that lightweight environment.
+try:
+    import torch
 
-torch.backends.nnpack.set_flags(_enabled=False)
+    torch.backends.nnpack.set_flags(_enabled=False)
+except ImportError:  # pragma: no cover - frontend-only image path
+    pass
