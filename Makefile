@@ -1,6 +1,6 @@
 # Build-host helpers for nextext.
 
-.PHONY: volumes bundle-cpu bundle-cuda build-cpu build-cuda no-build-cpu no-build-cuda up-cpu up-cuda stop-cpu stop-cuda
+.PHONY: volumes bundle bundle-cuda build build-cuda up up-cuda stop stop-cuda
 
 # Versioned image tag.
 # On production: read from .nextext-version written by bundle_images.sh.
@@ -17,7 +17,7 @@ volumes:
 	./scripts/create_docker_volumes.sh
 
 # Build CPU stack and ship as versioned .tar.gz pair (built + pulled).
-bundle-cpu:
+bundle:
 	./scripts/bundle_images.sh cpu
 
 # Build CUDA stack and ship as versioned .tar.gz pair (built + pulled).
@@ -25,31 +25,23 @@ bundle-cuda:
 	./scripts/bundle_images.sh cuda
 
 # Build the CPU profile
-build-cpu:
+build:
 	DOCKER_BUILDKIT=1 docker compose --profile cpu build
 
 # Build the CUDA profile
 build-cuda:
 	DOCKER_BUILDKIT=1 docker compose --profile cuda build
 
-# Run the CPU profile (backend-cpu, frontend-cpu, qdrant-cpu) without building.
-no-build-cpu:
+# Run the CPU profile (backend, frontend, qdrant) without building.
+up:
 	DOCKER_BUILDKIT=1 docker compose --profile cpu up -d --no-build
 
 # Run the CUDA profile (backend-cuda, frontend-cuda) without building.
-no-build-cuda:
+up-cuda:
 	DOCKER_BUILDKIT=1 docker compose --profile cuda up -d --no-build
 
-# Build and run the CPU profile (backend-cpu, frontend-cpu, qdrant-cpu).
-up-cpu:
-	DOCKER_BUILDKIT=1 docker compose --profile cpu up
-
-# Build and run the CUDA profile (backend-cuda, frontend-cuda, qdrant-cuda).
-up-cuda:
-	DOCKER_BUILDKIT=1 docker compose --profile cuda up
-
 # Stop the CPU profile containers.
-stop-cpu:
+stop:
 	docker compose --profile cpu stop
 
 # Stop the CUDA profile containers.
