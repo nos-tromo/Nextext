@@ -9,7 +9,9 @@ from typing import AsyncIterator
 from fastapi import FastAPI
 from loguru import logger
 
+from nextext.api.identity import IdentityMiddleware
 from nextext.api.jobs import JobManager
+from nextext.api.persistence import init_repository
 from nextext.api.routes import router as api_router
 from nextext.utils.env_cfg import set_offline_env
 from nextext.utils.log_cfg import setup_logging
@@ -42,15 +44,21 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """
     set_offline_env()
     log_path = setup_logging()
-    job_manager = JobManager(ttl_seconds=_resolve_job_ttl())
+    repository = init_repository()
+    job_manager = JobManager(
+        ttl_seconds=_resolve_job_ttl(),
+        repository=repository,
+    )
     await job_manager.start()
     app.state.job_manager = job_manager
+    app.state.repository = repository
     logger.info("Nextext API started — logs at {}", log_path)
     try:
         yield
     finally:
         logger.info("Nextext API shutting down.")
         await job_manager.stop()
+        repository.close()
 
 
 def create_app() -> FastAPI:
@@ -69,6 +77,7 @@ def create_app() -> FastAPI:
         version="0.8.0",
         lifespan=lifespan,
     )
+    application.add_middleware(IdentityMiddleware)
     application.include_router(api_router)
     return application
 

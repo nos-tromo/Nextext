@@ -1,6 +1,9 @@
-"""Job lifecycle routes: ``POST``, ``GET``, ``DELETE`` under ``/api/v1/jobs``.
+"""Job lifecycle routes under ``/api/v1/jobs``.
 
-The SSE event stream and per-artifact downloads are wired in by step 4.
+Per-route ownership checks enforce the privacy boundary established by
+:class:`nextext.api.identity.IdentityMiddleware`: any read or mutation
+on a job other than the caller's own is reported as ``404 Not Found``
+so the existence of the row never leaks across owners.
 """
 
 from __future__ import annotations
@@ -28,8 +31,16 @@ from loguru import logger
 from pydantic import ValidationError
 
 from nextext.api.artifacts import SUPPORTED_ARTIFACTS, render_artifact
+from nextext.api.identity import get_owner_id
 from nextext.api.jobs import JobManager, JobState
-from nextext.api.schemas import JobCreateResponse, JobOptions, JobSnapshot, JobStatus
+from nextext.api.schemas import (
+    JobCreateResponse,
+    JobListItem,
+    JobListResponse,
+    JobOptions,
+    JobSnapshot,
+    JobStatus,
+)
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
 
@@ -167,6 +178,7 @@ async def create_job(
         description="JSON-encoded `JobOptions` payload.",
     ),
     manager: JobManager = Depends(get_job_manager),
+    owner_id: str = Depends(get_owner_id),
 ) -> JobCreateResponse:
     """Accept a multipart upload and queue a new pipeline job.
 
@@ -174,6 +186,7 @@ async def create_job(
         file: Multipart audio/video upload.
         options: JSON-encoded ``JobOptions`` form field.
         manager: Job manager dependency.
+        owner_id: Cookie-derived owner identifier.
 
     Returns:
         JobCreateResponse: Identifier and timestamps for the new job.
@@ -189,12 +202,18 @@ async def create_job(
         manager._unlink_job_dir(file_path)
         raise
     state = await manager.create_job(
+        owner_id=owner_id,
         file_name=raw_name,
         file_path=file_path,
         source_file_hash=digest,
         options=parsed_options,
     )
-    logger.info("Accepted job {} ({} bytes).", state.job_id, file_path.stat().st_size)
+    logger.info(
+        "Accepted job {} (persist={}, {} bytes).",
+        state.job_id,
+        state.persistent,
+        file_path.stat().st_size,
+    )
     return JobCreateResponse(
         job_id=state.job_id,
         status=state.status,
@@ -202,21 +221,67 @@ async def create_job(
     )
 
 
-async def _require_job(job_id: str, manager: JobManager) -> JobState:
-    """Fetch a job by id or raise 404.
+@router.get("", response_model=JobListResponse)
+async def list_jobs(
+    manager: JobManager = Depends(get_job_manager),
+    owner_id: str = Depends(get_owner_id),
+) -> JobListResponse:
+    """Return the caller's persistent jobs, newest first.
+
+    Ephemeral jobs intentionally do not show up — the frontend already
+    holds their identifiers in ``st.session_state`` and reaping them
+    when the browser closes is the privacy contract.
+
+    Args:
+        manager: Job manager dependency.
+        owner_id: Cookie-derived owner identifier.
+
+    Returns:
+        JobListResponse: Owned persistent jobs.
+    """
+    states = await manager.list_persistent(owner_id)
+    items = [
+        JobListItem(
+            job_id=state.job_id,
+            status=state.status,
+            file_name=state.file_name,
+            stage=state.stage,
+            progress=state.progress,
+            error=state.error,
+            created_at=state.created_at,
+            started_at=state.started_at,
+            finished_at=state.finished_at,
+            task=state.options.task,
+        )
+        for state in states
+    ]
+    return JobListResponse(jobs=items)
+
+
+async def _require_job(
+    job_id: str,
+    manager: JobManager,
+    owner_id: str,
+) -> JobState:
+    """Fetch a job and verify the caller owns it, or 404.
+
+    Cross-owner access deliberately returns ``404`` rather than ``403``
+    so the existence of the row stays private.
 
     Args:
         job_id: Job identifier.
         manager: Job manager dependency.
+        owner_id: Cookie-derived owner identifier.
 
     Returns:
         JobState: The matching state.
 
     Raises:
-        HTTPException: 404 when the job does not exist.
+        HTTPException: 404 when the job does not exist or belongs to a
+            different owner.
     """
     state = await manager.get(job_id)
-    if state is None:
+    if state is None or state.owner_id != owner_id:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Job '{job_id}' not found.",
@@ -228,17 +293,19 @@ async def _require_job(job_id: str, manager: JobManager) -> JobState:
 async def get_job(
     job_id: str,
     manager: JobManager = Depends(get_job_manager),
+    owner_id: str = Depends(get_owner_id),
 ) -> JobSnapshot:
     """Return a point-in-time view of one job.
 
     Args:
         job_id: Job identifier.
         manager: Job manager dependency.
+        owner_id: Cookie-derived owner identifier.
 
     Returns:
         JobSnapshot: Current job state.
     """
-    state = await _require_job(job_id, manager)
+    state = await _require_job(job_id, manager, owner_id)
     return state.snapshot()
 
 
@@ -246,17 +313,19 @@ async def get_job(
 async def delete_job(
     job_id: str,
     manager: JobManager = Depends(get_job_manager),
+    owner_id: str = Depends(get_owner_id),
 ) -> Response:
     """Remove a job, its tempfile, and signal SSE subscribers.
 
     Args:
         job_id: Job identifier.
         manager: Job manager dependency.
+        owner_id: Cookie-derived owner identifier.
 
     Returns:
         Response: Empty 204 response.
     """
-    removed = await manager.delete(job_id)
+    removed = await manager.delete(job_id, owner_id=owner_id)
     if not removed:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -269,18 +338,20 @@ async def delete_job(
 async def stream_job_events(
     job_id: str,
     manager: JobManager = Depends(get_job_manager),
+    owner_id: str = Depends(get_owner_id),
 ) -> StreamingResponse:
     """Stream SSE events for one job.
 
     Args:
         job_id: Job identifier.
         manager: Job manager dependency.
+        owner_id: Cookie-derived owner identifier.
 
     Returns:
         StreamingResponse: ``text/event-stream`` connection that closes when
             the job reaches a terminal state.
     """
-    state = await _require_job(job_id, manager)
+    state = await _require_job(job_id, manager, owner_id)
     headers = {
         "Cache-Control": "no-cache",
         "X-Accel-Buffering": "no",
@@ -298,6 +369,7 @@ async def download_artifact(
     job_id: str,
     name: str,
     manager: JobManager = Depends(get_job_manager),
+    owner_id: str = Depends(get_owner_id),
 ) -> Response:
     """Return one artifact byte stream for a completed job.
 
@@ -305,6 +377,7 @@ async def download_artifact(
         job_id: Job identifier.
         name: Artifact name (e.g. ``transcript.csv``).
         manager: Job manager dependency.
+        owner_id: Cookie-derived owner identifier.
 
     Returns:
         Response: Binary payload with the appropriate media type.
@@ -314,7 +387,7 @@ async def download_artifact(
             status_code=404,
             detail=f"Unsupported artifact '{name}'.",
         )
-    state = await _require_job(job_id, manager)
+    state = await _require_job(job_id, manager, owner_id)
     if state.status != JobStatus.COMPLETED:
         raise HTTPException(
             status_code=409,

@@ -30,6 +30,12 @@ import pandas as pd  # type: ignore[import-untyped]
 from loguru import logger
 from matplotlib.figure import Figure
 
+from nextext.api.persistence import (
+    ArtifactStore,
+    JobRecord,
+    JobRepository,
+    resolve_data_dir,
+)
 from nextext.api.schemas import (
     HateSpeechFinding,
     JobOptions,
@@ -81,13 +87,22 @@ def _format_sse(event_name: str, payload: dict[str, Any]) -> bytes:
 
 @dataclass
 class JobState:
-    """Mutable state for one in-flight or completed job."""
+    """Mutable state for one in-flight or completed job.
+
+    ``owner_id`` is the cookie-derived identifier injected by
+    :class:`nextext.api.identity.IdentityMiddleware`. ``persistent`` is
+    ``True`` when ``JobOptions.persist`` was set on submission; the
+    worker writes artifacts to ``artifact_store`` on completion and the
+    routes consult ``owner_id`` to enforce per-user access.
+    """
 
     job_id: str
+    owner_id: str
     file_name: str
     file_path: Path
     source_file_hash: str
     options: JobOptions
+    persistent: bool = False
     status: JobStatus = JobStatus.QUEUED
     stage: str | None = None
     stage_index: int = 0
@@ -100,6 +115,8 @@ class JobState:
     event_history: list[tuple[str, bytes]] = field(default_factory=list)
     subscribers: list[asyncio.Queue[bytes | None]] = field(default_factory=list)
     archive_cache: bytes | None = None
+    artifact_store: ArtifactStore | None = None
+    hydrated_from_disk: bool = False
 
     def snapshot(self) -> JobSnapshot:
         """Return a Pydantic snapshot suitable for JSON serialization.
@@ -479,23 +496,39 @@ def _run_pipeline_blocking(state: JobState, push_event: PushEvent) -> dict[str, 
 
 
 class JobManager:
-    """In-memory job store and worker dispatcher."""
+    """In-memory job store and worker dispatcher.
+
+    When constructed with a :class:`JobRepository`, jobs whose options
+    set ``persist=True`` also write to the database (status transitions)
+    and to per-job artifact directories (completed outputs). Ephemeral
+    jobs ignore the repository entirely, preserving the privacy-by-default
+    contract: nothing user-uploaded touches durable storage unless the
+    caller explicitly opts in.
+    """
 
     def __init__(
         self,
         tmp_root: Path | None = None,
         ttl_seconds: int = 3600,
         pipeline_runner: Callable[[JobState, PushEvent], dict[str, Any]] | None = None,
+        repository: JobRepository | None = None,
+        data_root: Path | None = None,
     ) -> None:
         """Initialize the manager.
 
         Args:
             tmp_root: Directory where per-job upload tempfiles are stored.
                 Defaults to ``<system tmp>/nextext-jobs``.
-            ttl_seconds: Lifetime in seconds for completed jobs before the
-                sweeper evicts them.
+            ttl_seconds: Lifetime in seconds for completed ephemeral jobs
+                before the sweeper evicts them. Persistent jobs are not
+                affected by this TTL.
             pipeline_runner: Optional override for the blocking pipeline call,
                 used by tests to substitute a deterministic stub.
+            repository: Optional persistent storage backend. When ``None``
+                (the default), ``persist=True`` on a submission falls back
+                to ephemeral behaviour and emits a warning.
+            data_root: Optional override for the artifact root directory.
+                Defaults to :func:`resolve_data_dir`.
         """
         self._jobs: dict[str, JobState] = {}
         self._lock = asyncio.Lock()
@@ -505,11 +538,15 @@ class JobManager:
         self.tmp_root.mkdir(parents=True, exist_ok=True)
         self.ttl_seconds = ttl_seconds
         self._pipeline_runner = pipeline_runner or _run_pipeline_blocking
+        self.repository = repository
+        self.data_root = data_root or resolve_data_dir()
 
     async def start(self) -> None:
         """Launch the background sweeper task on app startup."""
         if self._sweeper_task is None:
             self._sweeper_task = asyncio.create_task(self._sweeper_loop())
+        if self.repository is not None:
+            await asyncio.to_thread(self._rehydrate_from_repository)
 
     async def stop(self) -> None:
         """Cancel the sweeper and clean up tempdirs on shutdown."""
@@ -525,6 +562,8 @@ class JobManager:
 
     async def create_job(
         self,
+        *,
+        owner_id: str,
         file_name: str,
         file_path: Path,
         source_file_hash: str,
@@ -533,22 +572,57 @@ class JobManager:
         """Register a new job and dispatch its async worker.
 
         Args:
+            owner_id: Cookie-derived owner identifier from
+                :class:`nextext.api.identity.IdentityMiddleware`.
             file_name: Original upload filename (basename, no directories).
             file_path: Path to the streamed upload on disk.
             source_file_hash: ``sha256:...`` digest of the upload.
-            options: Parsed pipeline options.
-
+            options: Parsed pipeline options. ``options.persist`` toggles
+                durable storage; persistent jobs are only written when a
+                repository is configured.
         Returns:
             JobState: The newly registered state.
         """
         job_id = uuid.uuid4().hex
+        persistent = bool(options.persist and self.repository is not None)
+        if options.persist and self.repository is None:
+            logger.warning(
+                "Job {} requested persist=true but no repository is configured;"
+                " falling back to ephemeral storage.",
+                job_id,
+            )
+        artifact_store: ArtifactStore | None = None
+        if persistent:
+            artifact_store = ArtifactStore.for_job(self.data_root, job_id)
+            artifact_store.ensure()
         state = JobState(
             job_id=job_id,
+            owner_id=owner_id,
             file_name=file_name,
             file_path=file_path,
             source_file_hash=source_file_hash,
             options=options,
+            persistent=persistent,
+            artifact_store=artifact_store,
         )
+        if persistent and self.repository is not None and artifact_store is not None:
+            record = JobRecord(
+                job_id=job_id,
+                owner_id=owner_id,
+                status=state.status,
+                stage=None,
+                stage_index=0,
+                progress=0.0,
+                error=None,
+                file_name=file_name,
+                source_file_hash=source_file_hash,
+                options=options,
+                created_at=state.created_at,
+                started_at=None,
+                finished_at=None,
+                artifact_dir=artifact_store.relative,
+            )
+            await asyncio.to_thread(self.repository.create, record)
         async with self._lock:
             self._jobs[job_id] = state
         asyncio.create_task(self._worker(state))
@@ -566,24 +640,37 @@ class JobManager:
         async with self._lock:
             return self._jobs.get(job_id)
 
-    async def delete(self, job_id: str) -> bool:
+    async def delete(self, job_id: str, owner_id: str | None = None) -> bool:
         """Remove a job, its tempfile, and signal any SSE subscribers to close.
 
         Args:
             job_id: Job identifier.
+            owner_id: When provided, the deletion only succeeds if the job
+                belongs to ``owner_id``. Allows the routes to enforce the
+                ownership boundary without re-fetching the state.
 
         Returns:
             bool: ``True`` if the job existed and was removed, ``False`` otherwise.
         """
         async with self._lock:
-            state = self._jobs.pop(job_id, None)
-        if state is None:
-            return False
+            state = self._jobs.get(job_id)
+            if state is None or (owner_id is not None and state.owner_id != owner_id):
+                return False
+            self._jobs.pop(job_id, None)
         await self._delete_state(state)
+        if state.persistent and self.repository is not None:
+            try:
+                await asyncio.to_thread(
+                    self.repository.delete, state.job_id, state.owner_id
+                )
+            except Exception:  # pragma: no cover - defensive
+                logger.exception(
+                    "Failed to delete persistent row for job {}.", state.job_id
+                )
         return True
 
     async def _delete_state(self, state: JobState) -> None:
-        """Tear down a single ``JobState`` (tempdir + subscribers).
+        """Tear down a single ``JobState`` (tempdir + subscribers + disk).
 
         Args:
             state: The state to dispose.
@@ -592,6 +679,8 @@ class JobManager:
             queue.put_nowait(None)
         state.subscribers.clear()
         await asyncio.to_thread(self._unlink_job_dir, state.file_path)
+        if state.artifact_store is not None:
+            await asyncio.to_thread(state.artifact_store.remove)
 
     @staticmethod
     def _unlink_job_dir(file_path: Path) -> None:
@@ -667,6 +756,10 @@ class JobManager:
         async with self._workers_semaphore:
             state.status = JobStatus.RUNNING
             state.started_at = _utcnow()
+            if state.persistent and self.repository is not None:
+                await asyncio.to_thread(
+                    self.repository.mark_running, state.job_id, state.started_at
+                )
             loop = asyncio.get_running_loop()
 
             def _push(event_name: str, payload: dict[str, Any]) -> None:
@@ -684,10 +777,20 @@ class JobManager:
             try:
                 result = await asyncio.to_thread(self._pipeline_runner, state, _push)
                 state.result = result
+                state.finished_at = _utcnow()
+                # Persist artifacts BEFORE flipping status to COMPLETED so
+                # clients polling /jobs/{id} never see "completed" before
+                # the on-disk artifacts are ready to download.
+                if state.persistent and self.repository is not None:
+                    await asyncio.to_thread(self._flush_artifacts, state)
+                    await asyncio.to_thread(
+                        self.repository.mark_completed,
+                        state.job_id,
+                        state.finished_at,
+                    )
                 state.status = JobStatus.COMPLETED
                 state.progress = 1.0
                 state.stage = None
-                state.finished_at = _utcnow()
                 _push(
                     "job_completed",
                     {
@@ -701,6 +804,18 @@ class JobManager:
                 state.status = JobStatus.FAILED
                 state.error = str(exc)
                 state.finished_at = _utcnow()
+                if state.persistent and self.repository is not None:
+                    try:
+                        await asyncio.to_thread(
+                            self.repository.mark_failed,
+                            state.job_id,
+                            error=str(exc),
+                            finished_at=state.finished_at,
+                        )
+                    except Exception:  # pragma: no cover - defensive
+                        logger.exception(
+                            "Failed to record job {} failure in DB.", state.job_id
+                        )
                 _push(
                     "job_failed",
                     {
@@ -746,14 +861,158 @@ class JobManager:
         progress = payload.get("progress")
         if isinstance(progress, (int, float)):
             state.progress = float(progress)
+        # Persist progress transitions (stage_started / stage_completed)
+        # for durable jobs so a UI rehydration after restart shows the
+        # last-known stage rather than the stale row.
+        if (
+            state.persistent
+            and self.repository is not None
+            and event_name in {"stage_started", "stage_completed"}
+        ):
+            try:
+                self.repository.update_progress(
+                    state.job_id,
+                    stage=state.stage,
+                    stage_index=state.stage_index,
+                    progress=state.progress,
+                )
+            except Exception:  # pragma: no cover - defensive
+                logger.exception("Failed to persist progress for job {}.", state.job_id)
         for queue in state.subscribers:
             queue.put_nowait(frame)
         if event_name in _TERMINAL_EVENT_NAMES:
             for queue in list(state.subscribers):
                 queue.put_nowait(None)
 
+    def _flush_artifacts(self, state: JobState) -> None:
+        """Write the in-memory result to ``state.artifact_store``.
+
+        DataFrames go to Parquet (efficient and self-describing), the
+        wordcloud figure to PNG, the summary to plain text, and the
+        scalar metadata to ``meta.json``. Stages that were skipped do
+        not produce files — matching the in-memory result-dict semantics.
+
+        Args:
+            state: A completed persistent job.
+        """
+        if state.artifact_store is None:
+            return
+        store = state.artifact_store
+        store.ensure()
+        result = state.result
+
+        meta = {
+            "transcript_language": result.get("transcript_language"),
+            "resolved_src_lang": result.get("resolved_src_lang"),
+            "task": result.get("task", state.options.task),
+            "skipped": bool(result.get("skipped", False)),
+            "skip_reason": result.get("skip_reason"),
+            "summary": result.get("summary"),
+            "hate_speech_findings": result.get("hate_speech_findings"),
+            "stage_count": state.stage_index,
+        }
+        store.path("meta.json").write_text(json.dumps(meta), encoding="utf-8")
+
+        transcript = result.get("transcript")
+        if isinstance(transcript, pd.DataFrame) and not transcript.empty:
+            transcript.to_parquet(store.path("transcript.parquet"), index=False)
+
+        summary = result.get("summary")
+        if isinstance(summary, str) and summary.strip():
+            store.path("summary.txt").write_text(summary, encoding="utf-8")
+
+        word_counts = result.get("word_counts")
+        if isinstance(word_counts, pd.DataFrame) and not word_counts.empty:
+            word_counts.to_parquet(store.path("word_counts.parquet"), index=False)
+
+        named_entities = result.get("named_entities")
+        if isinstance(named_entities, pd.DataFrame) and not named_entities.empty:
+            named_entities.to_parquet(store.path("named_entities.parquet"), index=False)
+
+        wordcloud = result.get("wordcloud")
+        if isinstance(wordcloud, Figure):
+            wordcloud.savefig(
+                store.path("wordcloud.png"), format="png", bbox_inches="tight"
+            )
+
+        findings = result.get("hate_speech_findings")
+        if findings:
+            pd.DataFrame(findings).to_parquet(
+                store.path("hate_speech.parquet"), index=False
+            )
+
+    def _rehydrate_from_repository(self) -> None:
+        """Load persistent rows from the repository on startup.
+
+        Any row that was ``queued`` or ``running`` is rewritten to
+        ``interrupted`` so the UI shows a deterministic failure instead
+        of pretending work is still in progress. The result body is
+        *not* loaded into memory; callers materialise it on demand from
+        the artifact store.
+
+        Persisted rows are recreated as ``JobState`` entries flagged
+        ``hydrated_from_disk=True`` so the worker pool does not try to
+        re-run them.
+        """
+        if self.repository is None:
+            return
+        interrupted = self.repository.reset_running_to_interrupted()
+        if interrupted:
+            logger.warning(
+                "Marked {} previously-running job(s) as interrupted on startup.",
+                interrupted,
+            )
+        for record in self.repository.iter_all():
+            artifact_store = ArtifactStore(
+                job_id=record.job_id,
+                root=self.data_root / record.artifact_dir,
+            )
+            state = JobState(
+                job_id=record.job_id,
+                owner_id=record.owner_id,
+                file_name=record.file_name,
+                file_path=artifact_store.root / "upload",
+                source_file_hash=record.source_file_hash or "",
+                options=record.options,
+                persistent=True,
+                status=record.status,
+                stage=record.stage,
+                stage_index=record.stage_index,
+                progress=record.progress,
+                error=record.error,
+                created_at=record.created_at,
+                started_at=record.started_at,
+                finished_at=record.finished_at,
+                artifact_store=artifact_store,
+                hydrated_from_disk=True,
+            )
+            self._jobs[state.job_id] = state
+
+    async def list_persistent(self, owner_id: str) -> list[JobState]:
+        """Return persistent jobs visible to ``owner_id``, newest first.
+
+        Args:
+            owner_id: Cookie-derived owner identifier.
+
+        Returns:
+            list[JobState]: In-memory states whose owner matches.
+        """
+        async with self._lock:
+            states = [
+                state
+                for state in self._jobs.values()
+                if state.persistent and state.owner_id == owner_id
+            ]
+        states.sort(key=lambda s: s.created_at, reverse=True)
+        return states
+
     async def _sweeper_loop(self) -> None:
-        """Evict completed jobs older than ``ttl_seconds`` every 5 minutes."""
+        """Evict completed ephemeral jobs older than ``ttl_seconds``.
+
+        Persistent jobs are immune to the TTL sweeper; they live until
+        the owner explicitly deletes them (or wipes their cookie, which
+        orphans the row but leaves it on disk).
+        """
         try:
             while True:
                 await asyncio.sleep(300)
@@ -762,7 +1021,8 @@ class JobManager:
                     stale = [
                         state
                         for state in self._jobs.values()
-                        if state.finished_at is not None
+                        if not state.persistent
+                        and state.finished_at is not None
                         and state.finished_at.timestamp() < cutoff_ts
                         and not state.subscribers
                     ]
@@ -771,6 +1031,6 @@ class JobManager:
                 for state in stale:
                     await self._delete_state(state)
                 if stale:
-                    logger.info("Evicted {} stale job(s).", len(stale))
+                    logger.info("Evicted {} stale ephemeral job(s).", len(stale))
         except asyncio.CancelledError:  # pragma: no cover - shutdown path
             raise
