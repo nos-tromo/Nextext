@@ -80,3 +80,5 @@
 !.pre-commit-config.yaml
 !AGENTS.md
 !CLAUDE.md
+# Per-host job persistence (created by NEXTEXT_DATA_DIR default)
+.nextext-data/
