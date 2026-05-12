@@ -12,12 +12,11 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from nextext.api.identity import IdentityMiddleware
 from nextext.api.jobs import JobManager
 from nextext.api.main import create_app
 from nextext.api.persistence import init_repository
 
-from tests.test_api.conftest import stub_pipeline_runner
+from .conftest import stub_pipeline_runner
 
 
 @pytest.fixture
@@ -218,6 +217,117 @@ def test_delete_removes_db_row_and_disk_dir(
     assert alice.get(f"/api/v1/jobs/{job_id}").status_code == 404
 
 
+def test_rehydration_skips_poisoned_artifact_dir(tmp_path: Path) -> None:
+    """A poisoned ``artifact_dir`` must not let DELETE rmtree outside data_root.
+
+    The original implementation joined the DB-stored ``artifact_dir``
+    onto ``data_root`` without validation; a malicious row containing
+    ``artifact_dir = "../../etc"`` would cause a subsequent ``DELETE``
+    to ``rmtree`` outside the data directory (CWE-22). The fix
+    reconstructs the path from ``job_id`` only and validates that the
+    resolved per-job directory stays under ``data_root``.
+    """
+    import asyncio as _asyncio
+    from datetime import datetime, timezone
+
+    from nextext.api.jobs import JobManager
+    from nextext.api.persistence import JobRecord, SqliteJobRepository, init_repository
+    from nextext.api.schemas import JobOptions, JobStatus
+
+    data_root = tmp_path / "data"
+    data_root.mkdir()
+    # Sentinel file outside the data root — must NOT be touched by any
+    # subsequent DELETE or sweep.
+    sentinel = tmp_path / "outside_secret.txt"
+    sentinel.write_text("do-not-delete")
+
+    db_path = data_root / "jobs.db"
+    repo = init_repository(db_path=db_path)
+    # A row with a UUID4 job_id but a poisoned artifact_dir column —
+    # the rehydration logic must rebuild the path from job_id alone.
+    repo.create(
+        JobRecord(
+            job_id="cafef00dcafef00dcafef00dcafef00d",
+            owner_id="attacker",
+            status=JobStatus.COMPLETED,
+            stage=None,
+            stage_index=4,
+            progress=1.0,
+            error=None,
+            file_name="x.wav",
+            source_file_hash=None,
+            options=JobOptions(persist=True),
+            created_at=datetime(2026, 5, 1, tzinfo=timezone.utc),
+            started_at=None,
+            finished_at=datetime(2026, 5, 1, 1, tzinfo=timezone.utc),
+            artifact_dir="../../outside_secret_dir",
+        )
+    )
+    # And a row with a non-UUID job_id — should be skipped entirely.
+    repo.create(
+        JobRecord(
+            job_id="../../traversal-attempt",
+            owner_id="attacker",
+            status=JobStatus.COMPLETED,
+            stage=None,
+            stage_index=4,
+            progress=1.0,
+            error=None,
+            file_name="y.wav",
+            source_file_hash=None,
+            options=JobOptions(persist=True),
+            created_at=datetime(2026, 5, 1, tzinfo=timezone.utc),
+            started_at=None,
+            finished_at=datetime(2026, 5, 1, 1, tzinfo=timezone.utc),
+            artifact_dir="../../outside",
+        )
+    )
+    repo.close()
+
+    repo2 = SqliteJobRepository(db_path)
+    repo2.init()
+    manager = JobManager(repository=repo2, data_root=data_root)
+    try:
+
+        async def _bootstrap() -> list:  # type: ignore[type-arg]
+            await manager.start()
+            return await manager.list_persistent("attacker")
+
+        states = _asyncio.run(_bootstrap())
+        # The non-UUID row was skipped; only the UUID4 row survives.
+        assert [state.job_id for state in states] == [
+            "cafef00dcafef00dcafef00dcafef00d"
+        ]
+        state = states[0]
+        assert state.artifact_store is not None
+        # The reconstructed path lives strictly under data_root.
+        resolved = state.artifact_store.root.resolve()
+        assert resolved.is_relative_to(data_root.resolve())
+        # DELETE must not touch anything outside data_root.
+
+        async def _delete() -> None:  # type: ignore[no-untyped-def]
+            await manager.delete(state.job_id, owner_id="attacker")
+
+        _asyncio.run(_delete())
+        assert sentinel.is_file()
+        assert sentinel.read_text() == "do-not-delete"
+    finally:
+        repo2.close()
+
+
+def test_cookie_ttl_is_clamped_to_ten_years(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``NEXTEXT_SESSION_COOKIE_TTL_DAYS`` must never exceed ~10 years."""
+    from nextext.api.identity import _resolve_ttl_seconds
+
+    monkeypatch.setenv("NEXTEXT_SESSION_COOKIE_TTL_DAYS", "999999")
+    assert _resolve_ttl_seconds() == 3650 * 86400
+
+    monkeypatch.setenv("NEXTEXT_SESSION_COOKIE_TTL_DAYS", "0")
+    assert _resolve_ttl_seconds() == 86400
+
+
 def test_rehydration_marks_running_rows_as_interrupted(tmp_path: Path) -> None:
     """A backend restart must surface stuck rows as ``interrupted``."""
     from datetime import datetime, timezone
@@ -230,11 +340,14 @@ def test_rehydration_marks_running_rows_as_interrupted(tmp_path: Path) -> None:
     from nextext.api.schemas import JobOptions, JobStatus
 
     # Simulate "previous boot" — a row that was running when the container died.
+    # Job ids must be UUID4 hex; otherwise rehydration skips them by design.
+    stuck_id = "11111111111111111111111111111111"
+    done_id = "22222222222222222222222222222222"
     db_path = tmp_path / "jobs.db"
     first_repo = init_repository(db_path=db_path)
     first_repo.create(
         JobRecord(
-            job_id="stuck-1",
+            job_id=stuck_id,
             owner_id="alice",
             status=JobStatus.RUNNING,
             stage="Transcribing",
@@ -247,12 +360,12 @@ def test_rehydration_marks_running_rows_as_interrupted(tmp_path: Path) -> None:
             created_at=datetime(2026, 5, 1, tzinfo=timezone.utc),
             started_at=datetime(2026, 5, 1, tzinfo=timezone.utc),
             finished_at=None,
-            artifact_dir="jobs/stuck-1",
+            artifact_dir=f"jobs/{stuck_id}",
         )
     )
     first_repo.create(
         JobRecord(
-            job_id="done-1",
+            job_id=done_id,
             owner_id="alice",
             status=JobStatus.COMPLETED,
             stage=None,
@@ -265,7 +378,7 @@ def test_rehydration_marks_running_rows_as_interrupted(tmp_path: Path) -> None:
             created_at=datetime(2026, 5, 1, tzinfo=timezone.utc),
             started_at=datetime(2026, 5, 1, tzinfo=timezone.utc),
             finished_at=datetime(2026, 5, 1, 1, tzinfo=timezone.utc),
-            artifact_dir="jobs/done-1",
+            artifact_dir=f"jobs/{done_id}",
         )
     )
     first_repo.close()
@@ -287,9 +400,9 @@ def test_rehydration_marks_running_rows_as_interrupted(tmp_path: Path) -> None:
         states = _asyncio.run(_bootstrap())
         # Both rows are visible, but the running one is now interrupted.
         by_id = {state.job_id: state for state in states}
-        assert by_id["stuck-1"].status.value == "interrupted"
-        assert by_id["stuck-1"].error is not None
-        assert "restart" in by_id["stuck-1"].error.lower()
-        assert by_id["done-1"].status.value == "completed"
+        assert by_id[stuck_id].status.value == "interrupted"
+        assert by_id[stuck_id].error is not None
+        assert "restart" in by_id[stuck_id].error.lower()
+        assert by_id[done_id].status.value == "completed"
     finally:
         second_repo.close()

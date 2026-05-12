@@ -35,7 +35,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Protocol, runtime_checkable
 
 from loguru import logger
 
@@ -119,6 +119,7 @@ class JobRecord:
     artifact_dir: str
 
 
+@runtime_checkable
 class JobRepository(Protocol):
     """Durable storage surface for opt-in persistent jobs.
 
@@ -480,10 +481,7 @@ class SqliteJobRepository:
             )
             params: tuple[Any, ...] = (owner_id, *(s.value for s in statuses))
         else:
-            sql = (
-                "SELECT * FROM jobs WHERE owner_id = ? "
-                "ORDER BY created_at DESC"
-            )
+            sql = "SELECT * FROM jobs WHERE owner_id = ? ORDER BY created_at DESC"
             params = (owner_id,)
         with self._lock:
             rows = self._conn.execute(sql, params).fetchall()

@@ -209,6 +209,18 @@ def build_archive_for_job(state: JobState) -> bytes:
         wordcloud = result.get("wordcloud")
         if isinstance(wordcloud, Figure):
             zf.writestr(f"{base}_wordcloud.png", _figure_to_png(wordcloud))
+        elif (
+            state.persistent
+            and state.artifact_store is not None
+            and state.artifact_store.exists("wordcloud.png")
+        ):
+            # Rehydrated persistent jobs no longer hold the Figure in
+            # memory; serve the PNG bytes that were written to disk at
+            # completion time so archive.zip stays complete.
+            zf.writestr(
+                f"{base}_wordcloud.png",
+                state.artifact_store.path("wordcloud.png").read_bytes(),
+            )
 
         findings = result.get("hate_speech_findings")
         if findings:

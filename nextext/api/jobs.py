@@ -53,6 +53,26 @@ _TERMINAL_EVENT_NAMES: frozenset[str] = frozenset(
 )
 
 
+def _is_valid_job_id(value: str) -> bool:
+    """Return whether ``value`` is a UUID4 hex string suitable for a path.
+
+    Args:
+        value: Candidate job identifier (typically read from the DB row
+            during rehydration).
+
+    Returns:
+        bool: ``True`` only when ``value`` is exactly 32 hex characters
+            that parse as a UUID4.
+    """
+    if len(value) != 32:
+        return False
+    try:
+        uuid.UUID(hex=value)
+    except (TypeError, ValueError):
+        return False
+    return True
+
+
 PIPELINE_STAGE_LABELS: tuple[str, ...] = (
     "Transcribing",
     "Translating",
@@ -863,21 +883,50 @@ class JobManager:
             state.progress = float(progress)
         # Persist progress transitions (stage_started / stage_completed)
         # for durable jobs so a UI rehydration after restart shows the
-        # last-known stage rather than the stale row.
+        # last-known stage rather than the stale row. The SQLite write
+        # is dispatched to the default executor so the event-loop thread
+        # is never blocked by disk I/O — even WAL-mode writes can stall
+        # under slow storage and would otherwise delay SSE heartbeats
+        # and fan-out to other subscribers.
         if (
             state.persistent
             and self.repository is not None
             and event_name in {"stage_started", "stage_completed"}
         ):
-            try:
-                self.repository.update_progress(
-                    state.job_id,
-                    stage=state.stage,
-                    stage_index=state.stage_index,
-                    progress=state.progress,
-                )
-            except Exception:  # pragma: no cover - defensive
-                logger.exception("Failed to persist progress for job {}.", state.job_id)
+            repo_ref = self.repository
+            job_id_snapshot = state.job_id
+            stage_snapshot = state.stage
+            stage_index_snapshot = state.stage_index
+            progress_snapshot = state.progress
+            loop = asyncio.get_running_loop()
+
+            def _write_progress(
+                repo: JobRepository = repo_ref,
+                job_id: str = job_id_snapshot,
+                stage: str | None = stage_snapshot,
+                stage_index: int = stage_index_snapshot,
+                progress_value: float = progress_snapshot,
+            ) -> None:
+                """Persist the row update from a worker thread.
+
+                Args:
+                    repo: Repository captured at dispatch time.
+                    job_id: Identifier of the row to update.
+                    stage: Stage label captured at dispatch.
+                    stage_index: Stage index captured at dispatch.
+                    progress_value: Progress value captured at dispatch.
+                """
+                try:
+                    repo.update_progress(
+                        job_id,
+                        stage=stage,
+                        stage_index=stage_index,
+                        progress=progress_value,
+                    )
+                except Exception:  # pragma: no cover - defensive
+                    logger.exception("Failed to persist progress for job {}.", job_id)
+
+            loop.run_in_executor(None, _write_progress)
         for queue in state.subscribers:
             queue.put_nowait(frame)
         if event_name in _TERMINAL_EVENT_NAMES:
@@ -950,9 +999,19 @@ class JobManager:
         *not* loaded into memory; callers materialise it on demand from
         the artifact store.
 
-        Persisted rows are recreated as ``JobState`` entries flagged
-        ``hydrated_from_disk=True`` so the worker pool does not try to
-        re-run them.
+        The on-disk path is reconstructed from ``record.job_id`` only —
+        the ``artifact_dir`` column is informational and intentionally
+        ignored at hydration time, so a poisoned DB row cannot drive
+        an arbitrary ``rmtree`` on a subsequent ``DELETE`` (CWE-22).
+        Rows whose ``job_id`` is not a UUID4 hex are skipped with a
+        warning rather than allowed to construct a path.
+
+        Thread-safety: ``self._jobs`` is mutated without acquiring
+        ``self._lock`` because ``start()`` is awaited before
+        ``app.state.job_manager`` is exposed to request handlers in
+        ``nextext.api.main.lifespan``; no concurrent reader exists at
+        this point. If the call site is ever refactored to run during
+        request handling, this method must be revisited.
         """
         if self.repository is None:
             return
@@ -962,11 +1021,26 @@ class JobManager:
                 "Marked {} previously-running job(s) as interrupted on startup.",
                 interrupted,
             )
+        resolved_root = self.data_root.resolve()
         for record in self.repository.iter_all():
-            artifact_store = ArtifactStore(
-                job_id=record.job_id,
-                root=self.data_root / record.artifact_dir,
-            )
+            if not _is_valid_job_id(record.job_id):
+                logger.warning(
+                    "Skipping job {!r}: identifier is not a UUID4 hex.",
+                    record.job_id,
+                )
+                continue
+            artifact_store = ArtifactStore.for_job(self.data_root, record.job_id)
+            # Defence in depth: even with a UUID4-only path, confirm the
+            # resolved per-job directory really sits under data_root
+            # before we ever issue an ``rmtree`` against it.
+            try:
+                artifact_store.root.resolve().relative_to(resolved_root)
+            except ValueError:
+                logger.warning(
+                    "Skipping job {}: artifact path escapes data root.",
+                    record.job_id,
+                )
+                continue
             state = JobState(
                 job_id=record.job_id,
                 owner_id=record.owner_id,

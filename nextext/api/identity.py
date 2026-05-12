@@ -34,6 +34,7 @@ from starlette.types import ASGIApp
 
 COOKIE_NAME = "nextext_session"
 _DEFAULT_TTL_DAYS = 365
+_MAX_TTL_DAYS = 3650  # 10 years — matches modern browser cookie cap.
 
 
 def _env_bool(name: str, default: bool = False) -> bool:
@@ -61,7 +62,9 @@ def _resolve_ttl_seconds() -> int:
     """Return the cookie ``Max-Age`` in seconds.
 
     Reads ``NEXTEXT_SESSION_COOKIE_TTL_DAYS`` (default 365 days, clamped
-    to one day minimum).
+    to ``[1, _MAX_TTL_DAYS]``). The upper bound matches what modern
+    browsers will accept; values above it provide no practical benefit
+    and risk producing surprising configurations.
 
     Returns:
         int: Cookie lifetime in seconds.
@@ -71,7 +74,7 @@ def _resolve_ttl_seconds() -> int:
         days = int(raw)
     except ValueError:
         days = _DEFAULT_TTL_DAYS
-    return max(days, 1) * 86400
+    return max(1, min(days, _MAX_TTL_DAYS)) * 86400
 
 
 def _is_valid_token(value: str | None) -> bool:
