@@ -38,11 +38,11 @@ build-cuda:
 
 # Run the CPU profile (backend-cpu + frontend-cpu) without rebuilding images.
 up:
-	DOCKER_BUILDKIT=1 docker compose --profile cpu up -d --no-build
+	DOCKER_BUILDKIT=1 docker compose --profile cpu up --no-build
 
 # Run the CUDA profile (backend-cuda + frontend-cuda) without rebuilding images.
 up-cuda:
-	DOCKER_BUILDKIT=1 docker compose --profile cuda up -d --no-build
+	DOCKER_BUILDKIT=1 docker compose --profile cuda up --no-build
 
 # Stop the CPU profile containers.
 stop:
