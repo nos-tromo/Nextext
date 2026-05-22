@@ -1,6 +1,16 @@
 # Build-host helpers for nextext.
+#
+# The Docker profile (cpu/cuda) is read from PROFILE in .env, so plain
+# `make up` follows the host's hardware. Override per-invocation with
+# `make up PROFILE=cuda`.
 
-.PHONY: network volumes bundle bundle-cuda build build-cuda up up-cuda stop stop-cuda logs logs-cuda
+.DEFAULT_GOAL := help
+
+.PHONY: help network volumes build bundle up stop logs pre-commit test
+
+# Docker profile (cpu/cuda). Read from .env, default cpu. Override on the
+# command line: make up PROFILE=cuda
+PROFILE ?= $(or $(strip $(shell test -f .env && grep -E '^PROFILE=' .env | cut -d= -f2)),cpu)
 
 # Versioned image tag.
 # On production: read from .nextext-version written by bundle_images.sh.
@@ -12,50 +22,56 @@ NEXTEXT_VERSION ?= $(shell \
       echo "$$(date +%Y-%m-%d)$${_s:+-$$_s}"; } )
 export NEXTEXT_VERSION
 
-# Create the external Docker network (one-time per host; idempotent)
+COMPOSE      := docker compose --env-file .env -f docker/compose.yaml -f docker/compose.override.yaml
+PROFILE_FLAG := --profile $(PROFILE)
+
+help:
+	@echo "nextext — build-host helpers. Active profile: $(PROFILE)"
+	@echo
+	@echo "  make network    create the external inference-net"
+	@echo "  make volumes    create the external Docker volumes"
+	@echo "  make build      build images for the $(PROFILE) profile"
+	@echo "  make bundle     ship images as a versioned .tar.gz pair ($(PROFILE))"
+	@echo "  make up         run the $(PROFILE) profile (no rebuild)"
+	@echo "  make stop       stop the $(PROFILE) profile containers"
+	@echo "  make logs       tail combined logs for the $(PROFILE) profile"
+	@echo "  make pre-commit run pre-commit hooks (ruff + mypy)"
+	@echo "  make test       run the test suite"
+	@echo
+	@echo "Set PROFILE=cpu|cuda in .env, or override: make up PROFILE=cuda"
+
+# Create the external Docker network (one-time per host; idempotent).
 network:
-	DOCKER_BUILDKIT=1 docker network create inference-net
+	docker network create inference-net >/dev/null 2>&1 || true
 
 # Create the external Docker volumes (one-time per host; idempotent).
 volumes:
 	./scripts/create_docker_volumes.sh
 
-# Build CPU stack and ship as versioned .tar.gz pair (built + pulled).
-bundle:
-	./scripts/bundle_images.sh cpu
-
-# Build CUDA stack and ship as versioned .tar.gz pair (built + pulled).
-bundle-cuda:
-	./scripts/bundle_images.sh cuda
-
-# Build the CPU profile (backend-cpu + frontend-cpu).
+# Build images for the active profile.
 build:
-	DOCKER_BUILDKIT=1 docker compose --profile cpu build
+	DOCKER_BUILDKIT=1 $(COMPOSE) $(PROFILE_FLAG) build
 
-# Build the CUDA profile (backend-cuda + frontend-cuda).
-build-cuda:
-	DOCKER_BUILDKIT=1 docker compose --profile cuda build
+# Build images and ship as a versioned .tar.gz pair (built + pulled).
+bundle:
+	./scripts/bundle_images.sh $(PROFILE)
 
-# Run the CPU profile (backend-cpu + frontend-cpu) without rebuilding images.
+# Run the active profile without rebuilding images.
 up:
-	DOCKER_BUILDKIT=1 docker compose --profile cpu up --no-build
+	DOCKER_BUILDKIT=1 $(COMPOSE) $(PROFILE_FLAG) up --no-build
 
-# Run the CUDA profile (backend-cuda + frontend-cuda) without rebuilding images.
-up-cuda:
-	DOCKER_BUILDKIT=1 docker compose --profile cuda up --no-build
-
-# Stop the CPU profile containers.
+# Stop the active profile's containers.
 stop:
-	docker compose --profile cpu stop
+	$(COMPOSE) $(PROFILE_FLAG) stop
 
-# Stop the CUDA profile containers.
-stop-cuda:
-	docker compose --profile cuda stop
-
-# Tail combined logs from both services in the CPU profile.
+# Tail combined logs for the active profile.
 logs:
-	docker compose --profile cpu logs -f --tail=100
+	$(COMPOSE) $(PROFILE_FLAG) logs -f --tail=100
 
-# Tail combined logs from both services in the CUDA profile.
-logs-cuda:
-	docker compose --profile cuda logs -f --tail=100
+# Run pre-commit hooks (ruff + mypy).
+pre-commit:
+	uv run pre-commit run --all-files
+
+# Run the test suite.
+test:
+	uv run pytest -q
