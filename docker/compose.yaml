@@ -5,7 +5,7 @@ x-no-proxy-env: &no-proxy-env
   no_proxy: "backend,frontend,localhost,127.0.0.1,172.16.0.0/12,10.0.0.0/8${EXTRA_NO_PROXY:-}"
 
 x-env-file: &env-file
-  - .env
+  - ../.env
 
 services:
   ##########################################################
@@ -14,8 +14,8 @@ services:
   backend-cpu:
     image: nextext-backend-cpu:${NEXTEXT_VERSION:-latest}
     build:
-      context: .
-      dockerfile: Dockerfile.backend.cpu
+      context: ..
+      dockerfile: docker/Dockerfile.backend.cpu
     environment: &backend-env
       <<: *no-proxy-env
       HF_HUB_OFFLINE: ${HF_HUB_OFFLINE:-false}
@@ -57,8 +57,8 @@ services:
   backend-cuda:
     image: nextext-backend-cuda:${NEXTEXT_VERSION:-latest}
     build:
-      context: .
-      dockerfile: Dockerfile.backend.cuda
+      context: ..
+      dockerfile: docker/Dockerfile.backend.cuda
     environment:
       <<: *backend-env
       LOG_PATH: /var/log/nextext/backend-cuda.log
@@ -81,10 +81,8 @@ services:
   frontend-cpu:
     image: nextext-frontend-cpu:${NEXTEXT_VERSION:-latest}
     build: &frontend-build
-      context: .
-      dockerfile: Dockerfile.frontend
-    ports: &frontend-ports
-      - ${NEXTEXT_HOST_PORT:-8501}:8501
+      context: ..
+      dockerfile: docker/Dockerfile.frontend
     environment: &frontend-env
       <<: *no-proxy-env
       BACKEND_HOST: ${BACKEND_HOST:-http://backend:8000}
@@ -108,7 +106,6 @@ services:
   frontend-cuda:
     image: nextext-frontend-cuda:${NEXTEXT_VERSION:-latest}
     build: *frontend-build
-    ports: *frontend-ports
     environment:
       <<: *frontend-env
       LOG_PATH: /var/log/nextext/frontend-cuda.log
