@@ -92,14 +92,14 @@ where = ["."]
 
 [project.optional-dependencies]
 cpu = [
-  "torch>=2.5.1,<2.12",
+  "torch>=2.5.1,<2.13",
   "torchaudio>=2.5.1,<2.12",
-  "torchvision>=0.20.1,<0.27",
+  "torchvision>=0.20.1,<0.28",
 ]
 cuda = [
-  "torch>=2.5.1,<2.12",
+  "torch>=2.5.1,<2.13",
   "torchaudio>=2.5.1,<2.12",
-  "torchvision>=0.20.1,<0.27",
+  "torchvision>=0.20.1,<0.28",
 ]
 
 [tool.mypy]
