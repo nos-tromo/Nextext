@@ -1,3 +1,5 @@
+"""Centralized environment-config dataclasses (every env var loader lives here)."""
+
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -165,9 +167,7 @@ def load_inference_env() -> InferenceConfig:
     """
     raw = os.getenv("INFERENCE_PROVIDER", "ollama").strip().lower()
     if raw not in VALID_INFERENCE_PROVIDERS:
-        logger.warning(
-            "Unknown INFERENCE_PROVIDER '{}'. Falling back to 'ollama'.", raw
-        )
+        logger.warning("Unknown INFERENCE_PROVIDER '{}'. Falling back to 'ollama'.", raw)
         raw = "ollama"
     return InferenceConfig(provider=raw, think=_parse_tristate_bool("OLLAMA_THINK"))
 

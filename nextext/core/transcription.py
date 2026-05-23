@@ -3,18 +3,19 @@
 import os
 from datetime import timedelta
 from importlib import import_module
-from pathlib import Path
+from pathlib import Path as Path  # re-exported for tests that monkeypatch nextext.core.transcription.Path
 from types import ModuleType
-from typing import Any, Optional, cast
+from typing import Any, cast
 
 import numpy as np
-import pandas as pd  # type: ignore[import]
-import torch
-import whisper  # type: ignore[import]
+import pandas as pd
+import torch as torch
+import whisper as whisper
 from dotenv import load_dotenv
 from loguru import logger
 from openai import APIStatusError, OpenAI
-from pyannote.audio import Pipeline as DiarizationPipeline  # type: ignore[import]
+from pyannote.audio import Pipeline as DiarizationPipeline
+
 from nextext.utils.env_cfg import load_inference_env, load_vad_env
 from nextext.utils.mappings_loader import load_mappings
 from nextext.utils.model_registry import REGISTRY, ModelSpec, Strategy
@@ -75,7 +76,7 @@ OPENAI_WHISPER_MAX_UPLOAD_BYTES: int = 25 * 1024 * 1024
 NO_SPEECH_THRESHOLD: float = 0.6
 
 # Audio with an RMS energy below this value is treated as silence and skipped
-# before Whisper runs.  0.01 ≈ −40 dB; normal speech sits well above 0.03.
+# before Whisper runs. 0.01 ~ -40 dB; normal speech sits well above 0.03.
 # This catches cases where ``no_speech_prob`` filtering alone is insufficient
 # because Whisper can hallucinate with low ``no_speech_prob`` on quiet noise.
 SILENCE_RMS_THRESHOLD: float = 0.01
@@ -125,9 +126,9 @@ def _get_vad() -> tuple[Any, Any] | None:
     """
     global _vad_cache
     if _vad_cache is not False:
-        return cast(Optional[tuple[Any, Any]], _vad_cache)
+        return cast(tuple[Any, Any] | None, _vad_cache)
     try:
-        model, utils = torch.hub.load(
+        model, utils = torch.hub.load(  # type: ignore[no-untyped-call]
             SILERO_VAD_REPO,
             model="silero_vad",
             trust_repo=True,
@@ -137,7 +138,7 @@ def _get_vad() -> tuple[Any, Any] | None:
     except Exception as exc:
         logger.warning("Could not load Silero VAD ({}). Falling back to RMS-only.", exc)
         _vad_cache = None
-    return cast(Optional[tuple[Any, Any]], _vad_cache)
+    return _vad_cache
 
 
 def _detect_speech_vad(audio: np.ndarray, sample_rate: int = 16000) -> bool | None:
@@ -174,7 +175,7 @@ def _load_audio_waveform(file_path: Path) -> np.ndarray:
     Returns:
         np.ndarray: Float32 mono waveform sampled at 16 kHz.
     """
-    return whisper.load_audio(str(file_path))
+    return cast(np.ndarray, whisper.load_audio(str(file_path)))
 
 
 def _audio_has_speech(audio: np.ndarray) -> tuple[bool, str | None]:
@@ -234,11 +235,7 @@ def _filter_no_speech_segments(
             dropped the original list object is returned unchanged (identity
             preserved).
     """
-    filtered = [
-        seg
-        for seg in segments
-        if float(seg.get("no_speech_prob", 0.0)) <= NO_SPEECH_THRESHOLD
-    ]
+    filtered = [seg for seg in segments if float(seg.get("no_speech_prob", 0.0)) <= NO_SPEECH_THRESHOLD]
     dropped = len(segments) - len(filtered)
     if dropped:
         logger.info(
@@ -262,23 +259,17 @@ def _configure_torch_safe_globals() -> None:
     if DictConfig is not None and ListConfig is not None:
         safe_globals.extend([DictConfig, ListConfig])
     else:
-        logger.debug(
-            "OmegaConf is unavailable; skipping Torch safe-global registration."
-        )
+        logger.debug("OmegaConf is unavailable; skipping Torch safe-global registration.")
 
     if TorchVersion is not None:
         safe_globals.append(TorchVersion)
     else:
-        logger.debug(
-            "TorchVersion is unavailable; skipping Torch safe-global registration."
-        )
+        logger.debug("TorchVersion is unavailable; skipping Torch safe-global registration.")
 
     if Problem is not None and Resolution is not None and Specifications is not None:
         safe_globals.extend([Problem, Resolution, Specifications])
     else:
-        logger.debug(
-            "Pyannote task classes are unavailable; skipping Torch safe-global registration."
-        )
+        logger.debug("Pyannote task classes are unavailable; skipping Torch safe-global registration.")
 
     if safe_globals:
         add_safe_globals(safe_globals)
@@ -305,7 +296,7 @@ def _ends_with_punctuation(text: str) -> bool:
     Returns:
         bool: True if the text ends with a supported sentence-ending punctuation mark, otherwise False.
     """
-    return text.strip().endswith((".", "!", "?", "؟", "۔"))
+    return text.strip().endswith((".", "!", "?", "؟", "۔"))  # noqa: RUF001 - Arabic full stop
 
 
 def _merge_transcriptions_by_sentence(
@@ -362,11 +353,7 @@ def _merge_transcriptions_by_sentence(
     for _, row in data.iterrows():
         row_speaker = row.get(speaker_column) if has_speaker else None
         current_text = str(current_row[text_column] or "").strip()
-        if (
-            has_speaker
-            and current_text
-            and current_row.get(speaker_column) != row_speaker
-        ):
+        if has_speaker and current_text and current_row.get(speaker_column) != row_speaker:
             _append_current_row(previous_end)
             current_row = _build_empty_row()
 
@@ -436,9 +423,7 @@ def _load_diarization_pipeline() -> DiarizationPipeline:
         RuntimeError: If ``HF_HUB_TOKEN`` is not set in the environment.
     """
     if not HF_HUB_TOKEN:
-        raise RuntimeError(
-            "Speaker diarization requires HF_HUB_TOKEN. Set it in your environment."
-        )
+        raise RuntimeError("Speaker diarization requires HF_HUB_TOKEN. Set it in your environment.")
     logger.info("Loading diarization pipeline '{}' on CPU.", _DIARIZATION_MODEL_ID)
     return DiarizationPipeline.from_pretrained(
         _DIARIZATION_MODEL_ID,
@@ -527,7 +512,8 @@ class WhisperTranscriber:
         Args:
             file_path (Path): The path to the input file.
             trg_lang (str): The target language for translation.
-            src_lang (str, optional): The source language of the file. Defaults to None, which triggers language detection.
+            src_lang (str, optional): The source language of the file. Defaults to None
+                (triggers language detection).
             task (str): Indicates whether the task is transcription or translation. Defaults to "transcribe".
             n_speakers (int): The maximum number of speakers to identify in the audio. Defaults to 1.
             start_column (str): The text column with the starting timestamp. Defaults to "start".
@@ -562,15 +548,13 @@ class WhisperTranscriber:
         self.diarize_model: Any = None
         if self.n_speakers > 1:
             if not HF_HUB_TOKEN:
-                logger.warning(
-                    "No Hugging Face token provided. Speaker diarization will be unavailable."
-                )
+                logger.warning("No Hugging Face token provided. Speaker diarization will be unavailable.")
             else:
                 # Sentinel: diarization is available; pipeline is acquired lazily
                 # via REGISTRY.acquire("diarization") inside diarization().
                 self.diarize_model = True
 
-        self.transcription_result: Optional[dict[str, Any]] = None
+        self.transcription_result: dict[str, Any] | None = None
         self.df: pd.DataFrame | None = None
 
     @staticmethod
@@ -590,9 +574,7 @@ class WhisperTranscriber:
         """
         return _load_audio_waveform(file)
 
-    def _detect_language(
-        self, duration_sec: float = 30.0, sample_rate: int = 16000
-    ) -> str | None:
+    def _detect_language(self, duration_sec: float = 30.0, sample_rate: int = 16000) -> str | None:
         """Detect the spoken language using ``large-v3-turbo``.
 
         The Whisper model is acquired via the process-wide model registry and
@@ -613,9 +595,7 @@ class WhisperTranscriber:
         sample_frames = int(duration_sec * sample_rate)
         audio_clip = whisper.pad_or_trim(self.audio[:sample_frames])
         with REGISTRY.acquire("whisper_turbo") as model:
-            mel = whisper.log_mel_spectrogram(audio_clip, n_mels=model.dims.n_mels).to(
-                model.device
-            )
+            mel = whisper.log_mel_spectrogram(audio_clip, n_mels=model.dims.n_mels).to(model.device)
             _, probs = model.detect_language(mel)
             detected_lang = max(probs, key=probs.get)
 
@@ -623,7 +603,7 @@ class WhisperTranscriber:
             raise RuntimeError("Language detection failed.")
 
         logger.info("Detected language: {}", detected_lang)
-        return detected_lang
+        return cast(str | None, detected_lang)
 
     def transcription(self) -> None:
         """Run the transcription process on the loaded audio file using openai-whisper.
@@ -651,12 +631,8 @@ class WhisperTranscriber:
         key = _WHISPER_REGISTRY_KEYS.get(self.task, "whisper_turbo")
         try:
             with REGISTRY.acquire(key) as model:
-                result = model.transcribe(
-                    self.audio, task=self.task, language=self.src_lang
-                )
-            self.transcription_result = {
-                "segments": _filter_no_speech_segments(result["segments"])
-            }
+                result = model.transcribe(self.audio, task=self.task, language=self.src_lang)
+            self.transcription_result = {"segments": _filter_no_speech_segments(result["segments"])}
         except Exception as e:
             logger.error("Error during transcription: {}", e, exc_info=True)
             raise
@@ -678,13 +654,9 @@ class WhisperTranscriber:
                 overlap_start = max(seg_start, turn.start)
                 overlap_end = min(seg_end, turn.end)
                 if overlap_end > overlap_start:
-                    speaker_durations[speaker] = speaker_durations.get(speaker, 0.0) + (
-                        overlap_end - overlap_start
-                    )
+                    speaker_durations[speaker] = speaker_durations.get(speaker, 0.0) + (overlap_end - overlap_start)
             if speaker_durations:
-                segment["speaker"] = max(
-                    speaker_durations, key=lambda s: speaker_durations[s]
-                )
+                segment["speaker"] = max(speaker_durations, key=lambda s: speaker_durations[s])
 
     def diarization(self) -> None:
         """Perform speaker diarization on the audio file and assign speaker labels to segments.
@@ -696,10 +668,7 @@ class WhisperTranscriber:
             logger.info("Skipping diarization as only one speaker is specified.")
             return
         if self.diarize_model is None:
-            raise RuntimeError(
-                "Speaker diarization requires a valid HF_HUB_TOKEN and "
-                "accepted pyannote model access."
-            )
+            raise RuntimeError("Speaker diarization requires a valid HF_HUB_TOKEN and accepted pyannote model access.")
         try:
             waveform = torch.tensor(self.audio).unsqueeze(0)
             with REGISTRY.acquire("diarization") as pipeline:
@@ -762,18 +731,11 @@ class WhisperTranscriber:
         Raises:
             ValueError: If the transcription result is not available or transcription has not been run.
         """
-        if (
-            self.transcription_result is None
-            or "segments" not in self.transcription_result
-        ):
-            raise ValueError(
-                "Transcription result is not available. Run transcription first."
-            )
+        if self.transcription_result is None or "segments" not in self.transcription_result:
+            raise ValueError("Transcription result is not available. Run transcription first.")
 
         segments = []
-        has_speaker = any(
-            "speaker" in item for item in self.transcription_result["segments"]
-        )
+        has_speaker = any("speaker" in item for item in self.transcription_result["segments"])
         for item in self.transcription_result["segments"]:
             row = [
                 _seconds_to_time(item["start"]),
@@ -844,7 +806,7 @@ class ExternalWhisperTranscriber:
         self.end_column = end_column
         self.speaker_column = speaker_column
         self.text_column = text_column
-        self.transcription_result: Optional[dict[str, Any]] = None
+        self.transcription_result: dict[str, Any] | None = None
         self._client: Any = None
 
     @property
@@ -952,9 +914,7 @@ class ExternalWhisperTranscriber:
         segments = _filter_no_speech_segments(raw_segments)
         self.transcription_result = {"segments": segments}
         if self.src_lang is None:
-            self.src_lang = _normalize_whisper_language(
-                getattr(response, "language", None)
-            )
+            self.src_lang = _normalize_whisper_language(getattr(response, "language", None))
         logger.info(
             "External transcription complete: {} segments, language={}",
             len(segments),
@@ -970,13 +930,8 @@ class ExternalWhisperTranscriber:
         Raises:
             ValueError: If transcription has not been run yet.
         """
-        if (
-            self.transcription_result is None
-            or "segments" not in self.transcription_result
-        ):
-            raise ValueError(
-                "Transcription result is not available. Run transcription first."
-            )
+        if self.transcription_result is None or "segments" not in self.transcription_result:
+            raise ValueError("Transcription result is not available. Run transcription first.")
 
         rows = []
         for item in self.transcription_result["segments"]:

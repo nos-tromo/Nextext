@@ -12,7 +12,7 @@ import zipfile
 from pathlib import Path
 from typing import Any, cast
 
-import pandas as pd  # type: ignore[import-untyped]
+import pandas as pd
 from matplotlib.figure import Figure
 
 from nextext.api.jobs import JobState
@@ -67,14 +67,8 @@ def build_docint_jsonl_for_job(state: JobState) -> bytes:
     segments = transcript_segments_from_df(transcript)
     if not segments:
         return b""
-    transcript_language = state.result.get("transcript_language") or state.result.get(
-        "resolved_src_lang"
-    )
-    language = (
-        normalize_language_code(str(transcript_language))
-        if transcript_language
-        else None
-    )
+    transcript_language = state.result.get("transcript_language") or state.result.get("resolved_src_lang")
+    language = normalize_language_code(str(transcript_language)) if transcript_language else None
     task = state.result.get("task") or state.options.task
     return build_docint_jsonl(
         source_file=state.file_name,
@@ -191,9 +185,7 @@ def render_artifact(state: JobState, name: str) -> tuple[bytes, str] | None:
         if _missing_dataframe(state, "transcript"):
             return None
         return (
-            cast(pd.DataFrame, result["transcript"])
-            .to_csv(index=False)
-            .encode("utf-8"),
+            cast(pd.DataFrame, result["transcript"]).to_csv(index=False).encode("utf-8"),
             _TEXT_CSV,
         )
     if name == "transcript.xlsx":
@@ -209,9 +201,7 @@ def render_artifact(state: JobState, name: str) -> tuple[bytes, str] | None:
         if _missing_dataframe(state, "word_counts"):
             return None
         return (
-            cast(pd.DataFrame, result["word_counts"])
-            .to_csv(index=False)
-            .encode("utf-8"),
+            cast(pd.DataFrame, result["word_counts"]).to_csv(index=False).encode("utf-8"),
             _TEXT_CSV,
         )
     if name == "wordcounts.xlsx":
@@ -222,9 +212,7 @@ def render_artifact(state: JobState, name: str) -> tuple[bytes, str] | None:
         if _missing_dataframe(state, "named_entities"):
             return None
         return (
-            cast(pd.DataFrame, result["named_entities"])
-            .to_csv(index=False)
-            .encode("utf-8"),
+            cast(pd.DataFrame, result["named_entities"]).to_csv(index=False).encode("utf-8"),
             _TEXT_CSV,
         )
     if name == "entities.xlsx":

@@ -1,14 +1,20 @@
+"""CLI entry point: single-file in-process pipeline runner (no backend required)."""
+
 import argparse
 import hashlib
 import os
 from pathlib import Path
 
-import pandas as pd  # type: ignore[import]
+import pandas as pd
 from loguru import logger
 
 from nextext.core.docint_transcript import (
     build_docint_jsonl,
+)
+from nextext.core.docint_transcript import (
     language_name as _language_name,
+)
+from nextext.core.docint_transcript import (
     transcript_segments_from_df as _transcript_segments_from_df,
 )
 from nextext.core.openai_cfg import InferencePipeline
@@ -29,7 +35,7 @@ set_offline_env()
 setup_logging()
 
 
-def parse_arguments(args_list: list | None = None) -> argparse.Namespace:
+def parse_arguments(args_list: list[str] | None = None) -> argparse.Namespace:
     """Parse command-line arguments for the Nextext CLI.
 
     Sets up the argument parser with options for file processing, language
@@ -138,10 +144,7 @@ def parse_arguments(args_list: list | None = None) -> argparse.Namespace:
         "--force-docint-jsonl",
         dest="force_docint_jsonl",
         action="store_true",
-        help=(
-            "Overwrite the --emit-docint-jsonl target when it already "
-            "exists (default: False)."
-        ),
+        help=("Overwrite the --emit-docint-jsonl target when it already exists (default: False)."),
     )
 
     if args_list:
@@ -186,14 +189,9 @@ def _resolve_docint_output_path(
         target = output_path
     target = target.resolve(strict=False)
     if target.is_symlink():
-        raise ValueError(
-            f"Refusing to write docint JSONL via symlink target '{target}'."
-        )
+        raise ValueError(f"Refusing to write docint JSONL via symlink target '{target}'.")
     if target.parent.is_symlink():
-        raise ValueError(
-            "Refusing to write docint JSONL through a symlinked parent "
-            f"directory '{target.parent}'."
-        )
+        raise ValueError(f"Refusing to write docint JSONL through a symlinked parent directory '{target.parent}'.")
     return target
 
 
@@ -228,9 +226,7 @@ def _emit_docint_jsonl(
     """
     segments = _transcript_segments_from_df(transcript_df)
     if not segments:
-        logger.warning(
-            "No transcript segments available; skipping docint JSONL export."
-        )
+        logger.warning("No transcript segments available; skipping docint JSONL export.")
         return
     try:
         file_hash = f"sha256:{hashlib.sha256(source_path.read_bytes()).hexdigest()}"
@@ -334,9 +330,7 @@ def _run_main(args: argparse.Namespace) -> None:
     # Machine translate the transcribed text
     inference_pipeline = None
     if args.task == "translate" and args.trg_lang != "en":
-        inference_pipeline = InferencePipeline(
-            out_language=_language_name(args.trg_lang)
-        )
+        inference_pipeline = InferencePipeline(out_language=_language_name(args.trg_lang))
         if not inference_pipeline.get_health():
             logger.error("The configured inference provider is not reachable.")
             raise ConnectionError(
@@ -353,22 +347,16 @@ def _run_main(args: argparse.Namespace) -> None:
     if args.task == "transcribe":
         if args.src_lang is None:
             logger.error("Unable to resolve source language for downstream analysis.")
-            raise ValueError(
-                "Source language could not be resolved for downstream analysis."
-            )
+            raise ValueError("Source language could not be resolved for downstream analysis.")
         normalized_lang = normalize_language_code(args.src_lang)
         if normalized_lang is None:
             logger.error("Unable to normalize source language for downstream analysis.")
-            raise ValueError(
-                "Source language could not be normalized for downstream analysis."
-            )
+            raise ValueError("Source language could not be normalized for downstream analysis.")
     else:
         normalized_lang = normalize_language_code(args.trg_lang)
         if normalized_lang is None:
             logger.error("Unable to normalize target language for downstream analysis.")
-            raise ValueError(
-                "Target language could not be normalized for downstream analysis."
-            )
+            raise ValueError("Target language could not be normalized for downstream analysis.")
     transcript_lang: str = normalized_lang
 
     # Calculate word statistics
@@ -388,9 +376,7 @@ def _run_main(args: argparse.Namespace) -> None:
 
     if args.summarize:
         if inference_pipeline is None:
-            inference_pipeline = InferencePipeline(
-                out_language=_language_name(transcript_lang)
-            )
+            inference_pipeline = InferencePipeline(out_language=_language_name(transcript_lang))
         if not inference_pipeline.get_health():
             logger.error("The configured inference provider is not reachable.")
             raise ConnectionError(
@@ -409,9 +395,7 @@ def _run_main(args: argparse.Namespace) -> None:
     # Hate speech detection
     if args.hate_speech:
         if inference_pipeline is None:
-            inference_pipeline = InferencePipeline(
-                out_language=_language_name(transcript_lang)
-            )
+            inference_pipeline = InferencePipeline(out_language=_language_name(transcript_lang))
         if not inference_pipeline.get_health():
             logger.error("The configured inference provider is not reachable.")
             raise ConnectionError(
@@ -422,12 +406,8 @@ def _run_main(args: argparse.Namespace) -> None:
             inference_pipeline=inference_pipeline,
         )
         if hate_speech_findings:
-            file_processor.write_file_output(
-                pd.DataFrame(hate_speech_findings), "hate_speech"
-            )
-            logger.info(
-                "Hate speech detected in {} segment(s).", len(hate_speech_findings)
-            )
+            file_processor.write_file_output(pd.DataFrame(hate_speech_findings), "hate_speech")
+            logger.info("Hate speech detected in {} segment(s).", len(hate_speech_findings))
         else:
             logger.info("No hate speech detected.")
 

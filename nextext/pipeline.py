@@ -3,7 +3,7 @@
 from pathlib import Path
 from typing import Any
 
-import pandas as pd  # type: ignore[import-untyped]
+import pandas as pd
 from matplotlib.figure import Figure
 
 from nextext.core.hate_speech import HateSpeechDetector
@@ -17,8 +17,10 @@ ExternalWhisperTranscriber: Any = None
 
 try:
     from nextext.core.transcription import (
-        WhisperTranscriber as _WhisperTranscriber,
         ExternalWhisperTranscriber as _ExternalWhisperTranscriber,
+    )
+    from nextext.core.transcription import (
+        WhisperTranscriber as _WhisperTranscriber,
     )
 except Exception:  # pragma: no cover - environment-specific optional dependency failure
     pass
@@ -73,7 +75,8 @@ def transcription_pipeline(
     else:
         if WhisperTranscriber is None:
             raise RuntimeError(
-                "Transcription dependencies could not be imported. Please verify the openai-whisper and torchaudio installation."
+                "Transcription dependencies could not be imported. Verify the openai-whisper "
+                "and torchaudio installation."
             )
         local_transcriber = WhisperTranscriber(
             file_path=file_path,
@@ -127,15 +130,11 @@ def translation_pipeline(
     translator = Translator(inference_pipeline=inference_pipeline)
     resolved_src_lang = src_lang
     if resolved_src_lang is None:
-        detected_lang = translator.detect_language(
-            " ".join(df["text"].astype(str).tolist())
-        )
+        detected_lang = translator.detect_language(" ".join(df["text"].astype(str).tolist()))
         resolved_src_lang = detected_lang.get("code")
     if normalize_language_code(resolved_src_lang) == normalize_language_code(trg_lang):
         return df
-    df["text"] = df["text"].apply(
-        lambda text: translator.translate(trg_lang, text, src_lang=resolved_src_lang)
-    )
+    df["text"] = df["text"].apply(lambda text: translator.translate(trg_lang, text, src_lang=resolved_src_lang))
     return df
 
 
@@ -195,7 +194,7 @@ def hate_speech_pipeline(
     df: pd.DataFrame,
     inference_pipeline: InferencePipeline,
     max_chars: int = 2048,
-) -> list[dict]:
+) -> list[dict[str, Any]]:
     """Detect hate speech in each transcript segment using an LLM.
 
     Only segments flagged as hate speech are included in the returned list.
@@ -213,7 +212,7 @@ def hate_speech_pipeline(
     """
     detector = HateSpeechDetector(inference_pipeline, max_chars)
     has_start = "start" in df.columns
-    results: list[dict] = []
+    results: list[dict[str, Any]] = []
     for _, row in df.iterrows():
         detection = detector.detect(str(row["text"]))
         if detection["hate_speech"]:

@@ -5,7 +5,7 @@ from typing import Any
 from unittest.mock import MagicMock
 
 import numpy as np
-import pandas as pd  # type: ignore[import-untyped]
+import pandas as pd
 import pytest
 import torch
 
@@ -40,12 +40,8 @@ def _build_transcriber() -> WhisperTranscriber:
 # ---------------------------------------------------------------------------
 
 
-def test_merge_transcriptions_keeps_final_sentence_without_terminal_punctuation() -> (
-    None
-):
-    """Test that `_merge_transcriptions_by_sentence` correctly merges transcriptions into sentences
-    even when the final sentence does not end with terminal punctuation.
-    """
+def test_merge_transcriptions_keeps_final_sentence_without_terminal_punctuation() -> None:
+    """_merge_transcriptions_by_sentence keeps the final sentence without terminal punctuation."""
     transcriber = _build_transcriber()
     data = pd.DataFrame(
         [
@@ -57,15 +53,11 @@ def test_merge_transcriptions_keeps_final_sentence_without_terminal_punctuation(
     merged = transcriber._merge_transcriptions_by_sentence(data)
 
     assert list(merged.columns) == ["start", "end", "text"]
-    assert merged.to_dict("records") == [
-        {"start": "0:00:00", "end": "0:00:02", "text": "hello world"}
-    ]
+    assert merged.to_dict("records") == [{"start": "0:00:00", "end": "0:00:02", "text": "hello world"}]
 
 
 def test_merge_transcriptions_handles_arabic_question_mark() -> None:
-    """Test that `_merge_transcriptions_by_sentence` correctly merges transcriptions into sentences
-    when the text contains Arabic question marks (؟) as terminal punctuation.
-    """
+    """_merge_transcriptions_by_sentence treats Arabic question marks (؟) as sentence terminators."""
     transcriber = _build_transcriber()
     data = pd.DataFrame(
         [
@@ -76,9 +68,7 @@ def test_merge_transcriptions_handles_arabic_question_mark() -> None:
 
     merged = transcriber._merge_transcriptions_by_sentence(data)
 
-    assert merged.to_dict("records") == [
-        {"start": "0:00:00", "end": "0:00:02", "text": "مرحبا كيف الحال؟"}
-    ]
+    assert merged.to_dict("records") == [{"start": "0:00:00", "end": "0:00:02", "text": "مرحبا كيف الحال؟"}]
 
 
 def test_merge_transcriptions_preserves_speaker_column() -> None:
@@ -175,9 +165,7 @@ def test_ends_with_punctuation_detects_terminal_marks() -> None:
 
 
 def test_module_level_merge_function_matches_instance_method() -> None:
-    """Test that the module-level _merge_transcriptions_by_sentence produces the same result
-    as calling the instance method on WhisperTranscriber.
-    """
+    """Module-level _merge_transcriptions_by_sentence matches the WhisperTranscriber instance method."""
     transcriber = _build_transcriber()
     data = pd.DataFrame(
         [
@@ -325,9 +313,7 @@ def test_diarization_requires_loaded_model() -> None:
 def test_assign_speakers_uses_maximum_overlap() -> None:
     """Test that _assign_speakers assigns the speaker with the longest overlap."""
     transcriber = WhisperTranscriber.__new__(WhisperTranscriber)
-    transcriber.transcription_result = {
-        "segments": [{"start": 0.0, "end": 2.0, "text": "hello world"}]
-    }
+    transcriber.transcription_result = {"segments": [{"start": 0.0, "end": 2.0, "text": "hello world"}]}
 
     # Build a fake diarization result using itertracks
     turn_a = SimpleNamespace(start=0.0, end=1.8)  # 1.8 s overlap
@@ -370,9 +356,7 @@ def test_detect_language_uses_whisper_mel_spectrogram(
             return self._device
 
         def to(self, device: Any) -> "DummyModel":
-            self._device = (
-                device if isinstance(device, torch.device) else torch.device(device)
-            )
+            self._device = device if isinstance(device, torch.device) else torch.device(device)
             return self
 
         def detect_language(self, mel: Any) -> tuple[Any, dict[str, float]]:
@@ -592,7 +576,6 @@ def _make_external_transcriber() -> ExternalWhisperTranscriber:
         at this test module. Callers always stub ``_load_audio_waveform``
         before ``transcription()`` so the path is never actually decoded.
     """
-
     transcriber = ExternalWhisperTranscriber.__new__(ExternalWhisperTranscriber)
     transcriber.file_path = transcription.Path(__file__)
     transcriber.src_lang = None
@@ -647,11 +630,8 @@ def test_audio_has_speech_rejects_non_speech_when_vad_enabled(
         monkeypatch (pytest.MonkeyPatch): Used to stub ``_detect_speech_vad``
             and pin ``load_vad_env`` to the enabled state.
     """
-
     monkeypatch.setattr(transcription, "_detect_speech_vad", lambda _audio: False)
-    monkeypatch.setattr(
-        transcription, "load_vad_env", lambda: SimpleNamespace(enabled=True)
-    )
+    monkeypatch.setattr(transcription, "load_vad_env", lambda: SimpleNamespace(enabled=True))
     loud = np.ones(16000, dtype=np.float32) * 0.5
 
     ok, reason = transcription._audio_has_speech(loud)
@@ -679,9 +659,7 @@ def test_audio_has_speech_passes_when_vad_disabled(
         raise AssertionError("VAD must not be consulted when VAD_ENABLED=0")
 
     monkeypatch.setattr(transcription, "_detect_speech_vad", _must_not_run)
-    monkeypatch.setattr(
-        transcription, "load_vad_env", lambda: SimpleNamespace(enabled=False)
-    )
+    monkeypatch.setattr(transcription, "load_vad_env", lambda: SimpleNamespace(enabled=False))
     loud = np.ones(16000, dtype=np.float32) * 0.5
 
     ok, reason = transcription._audio_has_speech(loud)
@@ -704,11 +682,8 @@ def test_audio_has_speech_passes_when_vad_model_unavailable(
         monkeypatch (pytest.MonkeyPatch): Stubs ``_detect_speech_vad`` to
             simulate the unavailable-model branch.
     """
-
     monkeypatch.setattr(transcription, "_detect_speech_vad", lambda _audio: None)
-    monkeypatch.setattr(
-        transcription, "load_vad_env", lambda: SimpleNamespace(enabled=True)
-    )
+    monkeypatch.setattr(transcription, "load_vad_env", lambda: SimpleNamespace(enabled=True))
     loud = np.ones(16000, dtype=np.float32) * 0.5
 
     ok, reason = transcription._audio_has_speech(loud)
@@ -725,7 +700,6 @@ def test_filter_no_speech_segments_drops_high_prob_entries() -> None:
     zero (kept). The assertion compares surviving segment texts in order,
     so it catches both incorrect drops and reordering.
     """
-
     segments = [
         {"start": 0.0, "end": 1.0, "text": "keep low", "no_speech_prob": 0.1},
         {"start": 1.0, "end": 2.0, "text": "drop high", "no_speech_prob": 0.9},
@@ -752,7 +726,6 @@ def test_filter_no_speech_segments_returns_input_when_nothing_dropped() -> None:
     pins that contract down so a well-meaning refactor cannot silently
     regress it.
     """
-
     segments = [
         {"start": 0.0, "end": 1.0, "text": "a", "no_speech_prob": 0.1},
         {"start": 1.0, "end": 2.0, "text": "b"},
@@ -785,7 +758,6 @@ def test_external_transcriber_skips_on_rms_silence(
         monkeypatch (pytest.MonkeyPatch): Overrides ``_load_audio_waveform``,
             ``_audio_has_speech``, and the client property.
     """
-
     transcriber = _make_external_transcriber()
     monkeypatch.setattr(
         transcription,
@@ -825,7 +797,6 @@ def test_external_transcriber_skips_on_vad(
         monkeypatch (pytest.MonkeyPatch): Overrides ``_load_audio_waveform``,
             ``_audio_has_speech``, and the client property.
     """
-
     transcriber = _make_external_transcriber()
     monkeypatch.setattr(
         transcription,
@@ -873,11 +844,8 @@ def test_external_transcriber_applies_no_speech_prob_filter(
         monkeypatch (pytest.MonkeyPatch): Overrides ``_load_audio_waveform``,
             ``_audio_has_speech``, and the client property.
     """
-
     kept = SimpleNamespace(start=0.0, end=1.0, text="Hello", no_speech_prob=0.1)
-    dropped = SimpleNamespace(
-        start=1.0, end=2.0, text="hallucinated.", no_speech_prob=0.95
-    )
+    dropped = SimpleNamespace(start=1.0, end=2.0, text="hallucinated.", no_speech_prob=0.95)
     fake_response = SimpleNamespace(segments=[kept, dropped], language="en")
 
     fake_client = MagicMock()
@@ -921,7 +889,6 @@ def test_external_transcriber_tolerates_missing_no_speech_prob(
         monkeypatch (pytest.MonkeyPatch): Overrides ``_load_audio_waveform``,
             ``_audio_has_speech``, and the client property.
     """
-
     seg = SimpleNamespace(start=0.0, end=1.0, text="Hola.")
     fake_response = SimpleNamespace(segments=[seg], language="es")
 

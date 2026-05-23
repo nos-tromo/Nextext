@@ -1,6 +1,6 @@
 """Tests for the inference client configuration helpers."""
 
-from typing import Any
+from typing import Any, ClassVar
 
 import pytest
 
@@ -25,7 +25,7 @@ class _RecordingCompletions:
             message = _Msg()
 
         class _Resp:
-            choices = [_Choice()]
+            choices: ClassVar[list[Any]] = [_Choice()]
 
         return _Resp()
 
@@ -41,9 +41,7 @@ class _RecordingClient:
         self.chat = _Chat(completions)
 
 
-def _install_recording_client(
-    monkeypatch: pytest.MonkeyPatch, pipeline: InferencePipeline
-) -> _RecordingCompletions:
+def _install_recording_client(monkeypatch: pytest.MonkeyPatch, pipeline: InferencePipeline) -> _RecordingCompletions:
     """Replace the pipeline's OpenAI client with a recording stub and bypass health."""
     completions = _RecordingCompletions()
     monkeypatch.setattr(pipeline, "_client", _RecordingClient(completions))
@@ -230,9 +228,7 @@ def test_inference_pipeline_provider_default(
 
 
 @pytest.mark.parametrize("value", ["ollama", "vllm", "openai"])
-def test_inference_pipeline_provider_all_three(
-    monkeypatch: pytest.MonkeyPatch, value: str
-) -> None:
+def test_inference_pipeline_provider_all_three(monkeypatch: pytest.MonkeyPatch, value: str) -> None:
     """All three valid providers round-trip through the env var."""
     monkeypatch.setenv("INFERENCE_PROVIDER", value)
 

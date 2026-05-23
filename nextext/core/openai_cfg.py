@@ -3,7 +3,7 @@
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import requests  # type: ignore[import-untyped]
 from dotenv import load_dotenv
@@ -66,9 +66,7 @@ class InferencePipeline:
         """
         key = os.getenv("OPENAI_API_KEY")
         if not key:
-            raise RuntimeError(
-                "OPENAI_API_KEY must be set in the environment or .env file."
-            )
+            raise RuntimeError("OPENAI_API_KEY must be set in the environment or .env file.")
         return key
 
     @property
@@ -82,9 +80,7 @@ class InferencePipeline:
             RuntimeError: If the 'openai' package is not installed.
         """
         if OpenAIClient is None:
-            raise RuntimeError(
-                "The 'openai' package is required for inference. Run `uv sync` to install it."
-            )
+            raise RuntimeError("The 'openai' package is required for inference. Run `uv sync` to install it.")
         if self._client is None:
             client_kwargs: dict[str, Any] = {"api_key": self.api_key}
             if self.base_url:
@@ -119,7 +115,7 @@ class InferencePipeline:
                 headers={"Authorization": f"Bearer {self.api_key}"},
                 timeout=5,
             )
-            return response.status_code < 500
+            return cast(bool, response.status_code < 500)
         except requests.RequestException as exc:
             logger.error("Inference health check failed: {}", exc)
             return False
@@ -137,10 +133,7 @@ class InferencePipeline:
         if self._default_model is None:
             configured_model = os.getenv("TEXT_MODEL")
             if not configured_model:
-                raise RuntimeError(
-                    "TEXT_MODEL must be set in the environment or .env file "
-                    "for text analysis."
-                )
+                raise RuntimeError("TEXT_MODEL must be set in the environment or .env file for text analysis.")
             self._default_model = configured_model
             logger.info("Loaded model '{}'.", self._default_model)
         return self._default_model
@@ -158,10 +151,7 @@ class InferencePipeline:
         if self._translation_model is None:
             configured_model = os.getenv("TRANSLATION_MODEL")
             if not configured_model:
-                raise RuntimeError(
-                    "TRANSLATION_MODEL must be set in the environment or "
-                    ".env file for translation."
-                )
+                raise RuntimeError("TRANSLATION_MODEL must be set in the environment or .env file for translation.")
             self._translation_model = configured_model
         return self._translation_model
 
@@ -191,7 +181,7 @@ class InferencePipeline:
         prompt_path = self.prompt_dir / f"{keyword}.txt"
         if not prompt_path.is_file():
             raise FileNotFoundError(f"Prompt file for keyword '{keyword}' not found.")
-        with open(prompt_path, "r", encoding="utf-8") as f:
+        with open(prompt_path, encoding="utf-8") as f:
             logger.info("Loaded prompt from '{}'", prompt_path)
             return f.read()
 
@@ -239,18 +229,14 @@ class InferencePipeline:
                 is unset and no ``model`` argument is supplied.
         """
         if not self.get_health():
-            raise RuntimeError(
-                "Inference provider is not reachable. Please check your configuration."
-            )
+            raise RuntimeError("Inference provider is not reachable. Please check your configuration.")
 
         messages: list[dict[str, str]] = []
         if include_system_prompt:
             messages.append(
                 {
                     "role": "system",
-                    "content": self.sys_prompt
-                    if system_prompt is None
-                    else system_prompt,
+                    "content": self.sys_prompt if system_prompt is None else system_prompt,
                 }
             )
         messages.append({"role": "user", "content": prompt})

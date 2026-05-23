@@ -4,7 +4,7 @@ import io
 import json
 import zipfile
 
-import pandas as pd  # type: ignore[import-untyped]
+import pandas as pd
 import pytest
 
 from nextext.app import (
@@ -181,18 +181,14 @@ def test_build_docint_jsonl_archive_multi_file_returns_zip() -> None:
             "source_file_hash": None,
             "transcript_language": "en",
             "task": "transcribe",
-            "transcript": pd.DataFrame(
-                [{"start": "0:00:00", "end": "0:00:01", "text": "one"}]
-            ),
+            "transcript": pd.DataFrame([{"start": "0:00:00", "end": "0:00:01", "text": "one"}]),
         },
         {
             "file_name": "b.mp3",
             "source_file_hash": None,
             "transcript_language": "en",
             "task": "transcribe",
-            "transcript": pd.DataFrame(
-                [{"start": "0:00:00", "end": "0:00:01", "text": "two"}]
-            ),
+            "transcript": pd.DataFrame([{"start": "0:00:00", "end": "0:00:01", "text": "two"}]),
         },
     ]
     data, file_name, mime = _build_docint_jsonl_archive(results, "bundle")

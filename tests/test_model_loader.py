@@ -40,13 +40,12 @@ def test_download_spacy_model_skips_cached_model(
     monkeypatch.setenv(model_loader.SPACY_MODEL_DIR, str(cache_dir))
 
     def fail_run(*args: object, **kwargs: object) -> None:
-        """Simulate a failure if subprocess.run is called, indicating that the download function attempted to run
-        when it should have been skipped due to the model already being cached. This helps verify that the caching
-        mechanism is working correctly and prevents unnecessary downloads of spaCy models that are already available
-        in the specified cache directory.
+        """Fail if subprocess.run is called — the cached model should short-circuit the download.
+
+        Lets the test assert the cache check ran and skipped the spaCy download.
 
         Raises:
-            AssertionError: Always raised to indicate that subprocess.run should not be called for cached models.
+            AssertionError: Always raised — subprocess.run must not be called for cached models.
         """
         raise AssertionError("subprocess.run should not be called for cached models")
 
@@ -72,13 +71,13 @@ def test_download_spacy_model_uses_persistent_target(
     captured: list[list[str]] = []
 
     def fake_run(cmd: list[str], check: bool) -> None:
-        """Simulate the subprocess.run function to capture the command that would be executed for downloading
-        a spaCy model. This allows us to verify that the download command is correctly targeting the specified
-        cache directory, ensuring that the model is being downloaded to the intended location rather than a
-        default or incorrect path.
+        """Capture the command subprocess.run would execute for the spaCy download.
+
+        Lets the test assert the command targets the configured cache directory.
 
         Args:
             cmd (list[str]): The command that would be executed by subprocess.run, captured for verification.
+
             check (bool): A flag indicating whether to check the command execution result, included for signature
         """
         captured.append(cmd)
@@ -148,9 +147,7 @@ def test_get_spacy_model_download_url_uses_override_base_url(
     monkeypatch.setenv(model_loader.SPACY_MODEL_PACKAGE_VERSION, "3.8.0")
 
     assert model_loader.get_spacy_model_download_url("en_core_web_sm") == (
-        "https://mirror.example.com/spacy/"
-        "en_core_web_sm-3.8.0/"
-        "en_core_web_sm-3.8.0-py3-none-any.whl"
+        "https://mirror.example.com/spacy/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl"
     )
 
 
@@ -197,9 +194,7 @@ def test_main_preloads_expected_model_groups(
     monkeypatch.setattr(
         model_loader,
         "preload_diarization_model",
-        lambda auth_token, device: calls.append(
-            (f"diarization:{device}", auth_token or "")
-        ),
+        lambda auth_token, device: calls.append((f"diarization:{device}", auth_token or "")),
     )
     monkeypatch.setattr(
         model_loader,
@@ -246,9 +241,7 @@ def test_preload_translation_model_skips_when_no_model_set(
         raise AssertionError("Should not be called when TRANSLATION_MODEL is unset")
 
     monkeypatch.setattr(model_loader.subprocess, "run", should_not_be_called)
-    monkeypatch.setattr(
-        model_loader.huggingface_hub, "snapshot_download", should_not_be_called
-    )
+    monkeypatch.setattr(model_loader.huggingface_hub, "snapshot_download", should_not_be_called)
 
     model_loader.preload_translation_model()
 
@@ -305,9 +298,7 @@ def test_preload_translation_model_vllm_downloads_from_hf(
         """
         captured.append({"model_id": model_id, "token": token})
 
-    monkeypatch.setattr(
-        model_loader.huggingface_hub, "snapshot_download", fake_snapshot_download
-    )
+    monkeypatch.setattr(model_loader.huggingface_hub, "snapshot_download", fake_snapshot_download)
 
     model_loader.preload_translation_model(hf_token="hf-token")
 
@@ -335,8 +326,6 @@ def test_preload_translation_model_openai_is_noop(
         raise AssertionError("No local download should occur for the OpenAI provider")
 
     monkeypatch.setattr(model_loader.subprocess, "run", should_not_be_called)
-    monkeypatch.setattr(
-        model_loader.huggingface_hub, "snapshot_download", should_not_be_called
-    )
+    monkeypatch.setattr(model_loader.huggingface_hub, "snapshot_download", should_not_be_called)
 
     model_loader.preload_translation_model()

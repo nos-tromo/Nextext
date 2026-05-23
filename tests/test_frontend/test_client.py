@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from typing import Any
 
 import httpx
 import pytest
@@ -9,7 +10,7 @@ import pytest
 from nextext.frontend.client import BackendClient, StageEvent
 
 
-def _make_client(handler) -> BackendClient:  # type: ignore[no-untyped-def]
+def _make_client(handler: Any) -> BackendClient:
     """Build a :class:`BackendClient` backed by an ``httpx.MockTransport``.
 
     Args:

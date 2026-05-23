@@ -1,6 +1,9 @@
+"""JSON mappings loader for Whisper/spaCy/language-code config files."""
+
 import json
 from functools import lru_cache
 from pathlib import Path
+from typing import cast
 
 from loguru import logger
 
@@ -21,10 +24,10 @@ def load_mappings(
     """
     _JSON_PATH = Path(__file__).parent / subdir / file
     logger.info("Attempting to load mappings from '{}'", _JSON_PATH)
-    with open(_JSON_PATH, "r", encoding="utf-8") as f:
+    with open(_JSON_PATH, encoding="utf-8") as f:
         code2name = json.load(f)
     logger.info("Successfully loaded mappings from file: {}", file)
-    return code2name
+    return cast(dict[str, str], code2name)
 
 
 def load_and_sort_mappings(file: str) -> tuple[dict[str, str], list[str]]:

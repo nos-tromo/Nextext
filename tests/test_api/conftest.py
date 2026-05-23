@@ -2,18 +2,18 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager
 from typing import Any
 
-import pandas as pd  # type: ignore[import-untyped]
+import pandas as pd
 import pytest
 from fastapi.testclient import TestClient
 
 from nextext.api.jobs import (
+    PIPELINE_STAGE_LABELS,
     JobManager,
     JobState,
-    PIPELINE_STAGE_LABELS,
     PushEvent,
 )
 from nextext.api.main import create_app
@@ -104,7 +104,7 @@ def stub_app_client() -> Iterator[tuple[TestClient, JobManager]]:
     original_lifespan = app.router.lifespan_context
 
     @asynccontextmanager
-    async def _patched_lifespan(_app):  # type: ignore[no-untyped-def]
+    async def _patched_lifespan(_app: Any) -> AsyncIterator[None]:
         manager = JobManager(
             pipeline_runner=stub_pipeline_runner,
             ttl_seconds=3600,
@@ -119,6 +119,6 @@ def stub_app_client() -> Iterator[tuple[TestClient, JobManager]]:
     app.router.lifespan_context = _patched_lifespan
     try:
         with TestClient(app) as client:
-            yield client, client.app.state.job_manager  # type: ignore[union-attr]
+            yield client, client.app.state.job_manager  # type: ignore[attr-defined]
     finally:
         app.router.lifespan_context = original_lifespan

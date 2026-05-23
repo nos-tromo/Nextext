@@ -41,9 +41,7 @@ def test_vllm_defaults_to_openai_large_v3(monkeypatch: pytest.MonkeyPatch) -> No
 
 
 @pytest.mark.parametrize("provider", ["openai", "vllm"])
-def test_explicit_whisper_model_overrides_default(
-    monkeypatch: pytest.MonkeyPatch, provider: str
-) -> None:
+def test_explicit_whisper_model_overrides_default(monkeypatch: pytest.MonkeyPatch, provider: str) -> None:
     """An explicit WHISPER_MODEL overrides the per-provider default."""
     monkeypatch.setenv("INFERENCE_PROVIDER", provider)
     monkeypatch.setenv("WHISPER_MODEL", "custom/model")
