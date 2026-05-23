@@ -102,6 +102,11 @@ cuda = [
   "torchvision>=0.20.1,<0.27",
 ]
 
+[tool.mypy]
+ignore_missing_imports = true
+no_incremental = true
+disable_error_code = ["import-untyped", "attr-defined", "assignment"]
+
 [tool.uv]
 package = true
 conflicts = [
