@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import io
 import json
+from typing import Any, cast
 
 from fastapi.testclient import TestClient
 
-from nextext.api.jobs import JobManager, PIPELINE_STAGE_LABELS
+from nextext.api.jobs import PIPELINE_STAGE_LABELS, JobManager
 
 
 def _submit(client: TestClient) -> str:
@@ -33,19 +34,19 @@ def _submit(client: TestClient) -> str:
         data={"options": json.dumps(options)},
     )
     assert response.status_code == 201
-    return response.json()["job_id"]
+    return cast(str, response.json()["job_id"])
 
 
-def _parse_sse(stream: bytes) -> list[tuple[str, dict]]:
+def _parse_sse(stream: bytes) -> list[tuple[str, dict[str, Any]]]:
     """Decode an SSE byte payload into ``(event, payload)`` pairs.
 
     Args:
         stream: Raw bytes from the SSE response body.
 
     Returns:
-        list[tuple[str, dict]]: Pairs in arrival order.
+        list[tuple[str, dict[str, Any]]]: Pairs in arrival order.
     """
-    events: list[tuple[str, dict]] = []
+    events: list[tuple[str, dict[str, Any]]] = []
     event_name = ""
     for chunk in stream.decode("utf-8").split("\n\n"):
         chunk = chunk.strip()

@@ -10,8 +10,9 @@ refactors.
 
 from __future__ import annotations
 
-import nextext  # noqa: F401  # side-effect: disables NNPACK
 import torch
+
+import nextext  # noqa: F401  # side-effect: disables NNPACK
 
 
 def test_nnpack_disabled_at_import() -> None:

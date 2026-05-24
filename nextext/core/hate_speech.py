@@ -2,7 +2,7 @@
 
 import json
 import re
-from typing import TypedDict
+from typing import Any, TypedDict
 
 from loguru import logger
 
@@ -35,9 +35,7 @@ class HateSpeechDetector:
             construction time.
     """
 
-    def __init__(
-        self, inference_pipeline: InferencePipeline, max_chars: int = 2048
-    ) -> None:
+    def __init__(self, inference_pipeline: InferencePipeline, max_chars: int = 2048) -> None:
         """Initialize the detector with a shared inference client.
 
         Args:
@@ -76,7 +74,7 @@ def _parse_hate_speech_payload(raw: str) -> HateSpeechDetection:
     Returns:
         HateSpeechDetection: Parsed and normalised detection result.
     """
-    data: dict = {}
+    data: dict[str, Any] = {}
     try:
         data = json.loads(raw)
     except json.JSONDecodeError:

@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any, cast
 
 import altair as alt
-import pandas as pd  # type: ignore[import-untyped]
+import pandas as pd
 import streamlit as st
 from loguru import logger
 from streamlit.web import cli as st_cli
@@ -118,9 +118,7 @@ def _normalize_snapshot_result(snapshot: dict[str, Any]) -> dict[str, Any]:
         "resolved_src_lang": api_result.get("resolved_src_lang"),
         "summary": api_result.get("summary"),
         "word_counts": word_counts_list_to_dataframe(api_result.get("word_counts")),
-        "named_entities": named_entities_list_to_dataframe(
-            api_result.get("named_entities")
-        ),
+        "named_entities": named_entities_list_to_dataframe(api_result.get("named_entities")),
         "wordcloud_url": api_result.get("wordcloud_url"),
         "hate_speech_findings": api_result.get("hate_speech_findings"),
         "skipped": bool(api_result.get("skipped", False)),
@@ -148,9 +146,7 @@ def _render_event_delta(container: Any, event: StageEvent) -> None:
         if "word_counts" in delta:
             wc = delta.get("word_counts") or 0
             ner = delta.get("named_entities") or 0
-            container.write(
-                f"**Word analysis:** {wc} unique words, {ner} named entities"
-            )
+            container.write(f"**Word analysis:** {wc} unique words, {ner} named entities")
         if delta.get("summary") is True:
             container.write("**Summary:** ready")
         flagged = delta.get("flagged")
@@ -196,7 +192,7 @@ def _process_uploaded_files(
         payload = uploaded_file.read()
         try:
             job_id = client.submit_job(file_name, payload, opts)
-        except Exception as exc:  # noqa: BLE001 - surface any submit failure
+        except Exception as exc:
             logger.exception("Failed to submit job for {}.", file_name)
             if file_status is not None:
                 file_status.update(
@@ -218,17 +214,14 @@ def _process_uploaded_files(
                         stage_index=min(stage_index, total_stages - 1),
                         total_stages=total_stages,
                     ),
-                    text=(
-                        f"Processing file {file_index}/{total_files}: "
-                        f"{file_name} ({stage_name})"
-                    ),
+                    text=(f"Processing file {file_index}/{total_files}: {file_name} ({stage_name})"),
                 )
                 if file_status is not None and event.name == "stage_completed":
                     _render_event_delta(file_status, event)
                 if event.name in {"job_completed", "job_failed"}:
                     terminal = event
                     break
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.exception("SSE subscription failed for {}.", file_name)
             if file_status is not None:
                 file_status.update(
@@ -239,11 +232,7 @@ def _process_uploaded_files(
             continue
 
         if terminal is None or terminal.name == "job_failed":
-            error = (
-                terminal.data.get("error")
-                if terminal is not None
-                else "Unknown failure"
-            )
+            error = terminal.data.get("error") if terminal is not None else "Unknown failure"
             if file_status is not None:
                 file_status.update(
                     label=f"{file_name} — failed: {error}",
@@ -251,14 +240,12 @@ def _process_uploaded_files(
                     expanded=False,
                 )
             else:
-                st.warning(
-                    f"File {file_index}/{total_files} failed — {file_name}: {error}"
-                )
+                st.warning(f"File {file_index}/{total_files} failed — {file_name}: {error}")
             continue
 
         try:
             snapshot = client.get_snapshot(job_id)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.exception("Failed to fetch snapshot for {}.", job_id)
             if file_status is not None:
                 file_status.update(
@@ -273,10 +260,7 @@ def _process_uploaded_files(
         if file_result.get("skipped"):
             if file_status is not None:
                 file_status.update(
-                    label=(
-                        f"{file_name} — skipped "
-                        f"({file_result.get('skip_reason', 'No processable content.')})"
-                    ),
+                    label=(f"{file_name} — skipped ({file_result.get('skip_reason', 'No processable content.')})"),
                     state="complete",
                     expanded=False,
                 )
@@ -418,7 +402,7 @@ def _start_page() -> None:
 
     try:
         languages = _fetch_languages()
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         st.error(f"Could not reach the Nextext backend: {exc}")
         languages = {"whisper": [], "target": []}
 
@@ -434,7 +418,7 @@ def _start_page() -> None:
     with col1:
         src_lang_name = st.selectbox(
             "Source language",
-            ["Detect language"] + src_lang_names,
+            ["Detect language", *src_lang_names],
             index=0,
         )
         words = st.checkbox("Word-level analysis")
@@ -480,9 +464,7 @@ def _start_page() -> None:
             st.session_state["results"] = results
             st.session_state["result"] = results[0]
             st.session_state["selected_result_file"] = results[0]["file_name"]
-            st.session_state["results_timestamp"] = datetime.now().strftime(
-                "%Y%m%d_%H%M%S"
-            )
+            st.session_state["results_timestamp"] = datetime.now().strftime("%Y%m%d_%H%M%S")
             skipped_count = sum(1 for r in results if r.get("skipped"))
             if skipped_count == len(results):
                 st.warning("All files were skipped — no speech detected.")
@@ -507,9 +489,7 @@ def _render_transcript_tab(result: dict[str, Any]) -> None:
     if "file_name" in result:
         st.caption(f"Showing results for `{result['file_name']}`")
     if result.get("skipped"):
-        st.warning(
-            result.get("skip_reason", "This file was skipped during processing.")
-        )
+        st.warning(result.get("skip_reason", "This file was skipped during processing."))
     st.dataframe(result["transcript"], hide_index=True)
 
 
@@ -520,9 +500,7 @@ def _render_summary_tab(result: dict[str, Any]) -> None:
         result: Stored result payload for one file.
     """
     if result.get("skipped"):
-        st.warning(
-            result.get("skip_reason", "This file was skipped during processing.")
-        )
+        st.warning(result.get("skip_reason", "This file was skipped during processing."))
     elif not result.get("summary"):
         st.warning("Summary not requested.")
     else:
@@ -543,9 +521,7 @@ def _render_word_tab(result: dict[str, Any]) -> None:
         result: Stored result payload for one file.
     """
     if result.get("skipped"):
-        st.warning(
-            result.get("skip_reason", "This file was skipped during processing.")
-        )
+        st.warning(result.get("skip_reason", "This file was skipped during processing."))
         return
     wc_df = result.get("word_counts")
     if not isinstance(wc_df, pd.DataFrame) or wc_df.empty:
@@ -603,9 +579,7 @@ def _render_hate_tab(result: dict[str, Any]) -> None:
         result: Stored result payload for one file.
     """
     if result.get("skipped"):
-        st.warning(
-            result.get("skip_reason", "This file was skipped during processing.")
-        )
+        st.warning(result.get("skip_reason", "This file was skipped during processing."))
         return
     findings = result.get("hate_speech_findings")
     if findings is None:
@@ -616,9 +590,7 @@ def _render_hate_tab(result: dict[str, Any]) -> None:
         return
     st.subheader("🚨 Hate Speech Findings")
     for item in findings:
-        with st.expander(
-            f"{item.get('start', '')} – {str(item.get('category', '')).title()}"
-        ):
+        with st.expander(f"{item.get('start', '')} - {str(item.get('category', '')).title()}"):
             st.write(f"**Reason:** {item.get('reason', '')}")
             st.write(f"**Flagged text:** {item.get('text', '')}")
 
@@ -642,8 +614,7 @@ def main() -> None:
 
     if not results:
         msg = (
-            "After you upload one or more files and press **Run** in the "
-            "Parameters tab, the results will appear here."
+            "After you upload one or more files and press **Run** in the Parameters tab, the results will appear here."
         )
         for tab in (tab_transcript, tab_summary, tab_words, tab_hate):
             with tab:
@@ -659,9 +630,7 @@ def main() -> None:
         )
         return
 
-    archive_timestamp = st.session_state.get(
-        "results_timestamp"
-    ) or datetime.now().strftime("%Y%m%d_%H%M%S")
+    archive_timestamp = st.session_state.get("results_timestamp") or datetime.now().strftime("%Y%m%d_%H%M%S")
     archive_stem = f"{archive_timestamp}_nextext_output"
     st.download_button(
         label="⬇️ Download all outputs (ZIP)",
@@ -738,7 +707,7 @@ def cli() -> None:
     Sets up the command line arguments as if the user typed
     ``streamlit run nextext/frontend/app.py``.
     """
-    sys.argv = ["streamlit", "run", __file__] + sys.argv[1:]
+    sys.argv = ["streamlit", "run", __file__, *sys.argv[1:]]
     sys.exit(st_cli.main())
 
 

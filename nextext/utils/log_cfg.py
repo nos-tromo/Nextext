@@ -1,3 +1,5 @@
+"""Loguru sinks (stderr + rotating file) for the Nextext backend and CLI."""
+
 from __future__ import annotations
 
 import sys
@@ -9,7 +11,7 @@ from nextext.utils.env_cfg import load_path_env
 
 
 def setup_logging(
-    encoding="utf-8",
+    encoding: str = "utf-8",
     rotation: str = "5 MB",
     retention: int = 3,
     backtrace: bool = False,

@@ -1,8 +1,9 @@
 """Tests for the shared Nextext pipeline helpers."""
 
 from pathlib import Path
+from typing import Any
 
-import pandas as pd  # type: ignore[import-untyped]
+import pandas as pd
 import pytest
 
 from nextext import pipeline
@@ -17,7 +18,7 @@ def disable_docker_env(monkeypatch: pytest.MonkeyPatch) -> None:
     """
     original_exists = Path.exists
 
-    def fake_exists(path: Path) -> bool:  # type: ignore[override]
+    def fake_exists(path: Path) -> bool:
         """Mock the Path.exists method to simulate a non-Docker environment by returning False for the /.dockerenv path.
 
         Args:
@@ -42,7 +43,7 @@ def enable_docker_env(monkeypatch: pytest.MonkeyPatch) -> None:
     """
     original_exists = Path.exists
 
-    def fake_exists(path: Path) -> bool:  # type: ignore[override]
+    def fake_exists(path: Path) -> bool:
         if path.as_posix() == "/.dockerenv":
             return True
         return original_exists(path)
@@ -61,9 +62,10 @@ def test_transcription_pipeline_invokes_transcriber(
     monkeypatch.setenv("INFERENCE_PROVIDER", "ollama")
 
     class DummyTranscriber:
-        """A dummy transcriber class to test the transcription pipeline without relying
-        on the actual WhisperX implementation. It records the parameters passed to it and
-        whether its methods were called, allowing us to verify the pipeline's behavior.
+        """A dummy transcriber for testing the pipeline without WhisperX.
+
+        It records the parameters passed to it and whether its methods were called,
+        allowing us to verify the pipeline's behavior.
         """
 
         instance: "DummyTranscriber"
@@ -134,8 +136,7 @@ def test_transcription_pipeline_invokes_transcriber(
 def test_transcription_pipeline_falls_back_to_original_language(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """
-    Test the transcription pipeline to ensure it falls back to the original language.
+    """Test the transcription pipeline to ensure it falls back to the original language.
 
     Args:
         monkeypatch (pytest.MonkeyPatch): The monkeypatch fixture for modifying behavior.
@@ -143,28 +144,30 @@ def test_transcription_pipeline_falls_back_to_original_language(
     monkeypatch.setenv("INFERENCE_PROVIDER", "ollama")
 
     class DummyTranscriber:
-        """A dummy transcriber class to test the transcription pipeline's language fallback
-        behavior. It simulates a scenario where the transcriber detects a source language
-        but does not set it, allowing us to verify that the pipeline correctly falls back
-        to the original source language provided as an argument.
+        """A dummy transcriber that exercises the pipeline's language-fallback path.
+
+        Simulates a scenario where the transcriber detects a source language but does not
+        set it, so the pipeline must fall back to the source language passed as an argument.
         """
 
-        def __init__(self, *args, **kwargs) -> None:
-            """Initialize the dummy transcriber. The parameters are not used in this dummy
-            implementation, but they are accepted to match the expected signature of the
-            actual transcriber.
-            """
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            """Initialise the dummy transcriber; args/kwargs accepted to match the real signature."""
             self.src_lang = None
 
         def transcription(self) -> None:
-            """Simulate the transcription process. In this dummy implementation, it does not
+            """Simulate the transcription process.
+
+            In this dummy implementation, it does not
             set the src_lang attribute, allowing us to test the fallback behavior in the pipeline.
             """
             pass
 
         def diarization(self) -> None:
-            """Simulate the diarization process. In this dummy implementation, it should not be
-            called when n_speakers <= 1."""
+            """Simulate the diarization process.
+
+            In this dummy implementation, it should not be
+            called when n_speakers <= 1.
+            """
             pytest.fail("diarization should not be called when n_speakers <= 1")
 
         def transcript_output(self) -> pd.DataFrame:
@@ -192,8 +195,7 @@ def test_transcription_pipeline_falls_back_to_original_language(
 def test_translation_pipeline_returns_input_when_language_matches(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """
-    Test the translation pipeline to ensure it returns the input when the language matches.
+    """Test the translation pipeline to ensure it returns the input when the language matches.
 
     Args:
         monkeypatch (pytest.MonkeyPatch): The monkeypatch fixture for modifying behavior.
@@ -203,25 +205,17 @@ def test_translation_pipeline_returns_input_when_language_matches(
     """
 
     class DummyTranslator:
-        """A dummy translator class to test the translation pipeline's behavior when the
-        detected source language matches the target language. It simulates a scenario where
-        the translator detects the source language as the same as the target language, and
-        it raises an assertion error if the translate method is called, allowing us to verify
-        that the pipeline correctly returns the input without attempting translation.
+        """A dummy translator covering the case where detected source matches target language.
+
+        Simulates the translator returning the target language as the detected source; the
+        translate method asserts to verify the pipeline returns the input without translating.
         """
 
-        def __init__(self, **kwargs) -> None:
-            """Initialize the dummy translator. The parameters are not used in this dummy
-            implementation, but they are accepted to match the expected signature of the
-            actual translator.
-            """
-            pass
+        def __init__(self, **kwargs: Any) -> None:
+            """Initialise; kwargs accepted to match the real translator signature."""
 
         def detect_language(self, text: str) -> dict[str, str]:
-            """Simulate language detection by returning a dictionary indicating that the detected
-            language code is "es", which matches the target language in the test, allowing us to
-            verify that the translation pipeline correctly identifies the language match and returns
-            the input without translation.
+            """Return a dict reporting ``"es"`` — matches the test's target so translation is skipped.
 
             Args:
                 text (str): The text for which to detect the language.
@@ -232,12 +226,15 @@ def test_translation_pipeline_returns_input_when_language_matches(
             return {"code": "es"}
 
         def translate(self, trg_lang: str, text: str) -> str:
-            """Simulate the translation process. In this dummy implementation, it raises an assertion
+            """Simulate the translation process.
+
+            In this dummy implementation, it raises an assertion
             error if called, because the translation pipeline should not attempt to translate when
             the detected source language matches the target language.
 
             Args:
                 trg_lang (str): The target language for translation.
+
                 text (str): The text to be translated.
 
             Returns:
@@ -259,32 +256,27 @@ def test_translation_pipeline_returns_input_when_language_matches(
 def test_translation_pipeline_translates_each_row(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """
-    Test the translation pipeline to ensure it translates each row correctly.
+    """Test the translation pipeline to ensure it translates each row correctly.
 
     Args:
         monkeypatch (pytest.MonkeyPatch): The monkeypatch fixture for modifying behavior.
     """
 
     class DummyTranslator:
-        """A dummy translator class to test the translation pipeline's behavior when the detected source
-        language does not match the target language. It simulates a scenario where the translator detects
-        a source language different from the target language and records the parameters passed to the
-        translate method, allowing us to verify that the pipeline correctly attempts translation for each
-        row of text.
+        """A dummy translator covering the case where source != target language.
+
+        Simulates the translator detecting a source different from the target and records each
+        translate-method call so the test can assert per-row translation actually happened.
         """
 
-        def __init__(self, **kwargs) -> None:
-            """Initialize the dummy translator. The parameters are not used in this dummy implementation,
-            but they are accepted to match the expected signature of the actual translator.
-            """
+        def __init__(self, **kwargs: Any) -> None:
+            """Initialise; kwargs accepted to match the real translator signature."""
             self.calls: list[tuple[str, str, str]] = []
 
         def detect_language(self, text: str) -> dict[str, str]:
-            """Simulate language detection by returning a dictionary indicating that the detected language
-            code is "en", which does not match the target language "es" in the test, allowing us to verify
-            that the translation pipeline correctly identifies the language mismatch and attempts translation
-            for each row of text.
+            """Return a dict reporting ``"en"`` (doesn't match the ``"es"`` target).
+
+            Forces the pipeline to attempt translation for each row.
 
             Args:
                 text (str): The text for which to detect the language.
@@ -294,10 +286,10 @@ def test_translation_pipeline_translates_each_row(
             """
             return {"code": "en"}
 
-        def translate(
-            self, trg_lang: str, text: str, src_lang: str | None = None
-        ) -> str:
-            """Simulate the translation process by recording the parameters passed to the translate method and returning a dummy translated string that combines the original text and the target language code. This allows us to verify that the translation pipeline correctly attempts translation for each row of text when the detected source language does not match the target language.
+        def translate(self, trg_lang: str, text: str, src_lang: str | None = None) -> str:
+            """Record args and return a synthetic translated string ``"{text} (to {trg_lang})"``.
+
+            Lets the test assert per-row translation actually fires when source != target.
 
             Args:
                 trg_lang (str): The target language for translation.
@@ -321,13 +313,11 @@ def test_translation_pipeline_translates_each_row(
 
 
 def test_summarization_pipeline_formats_prompt(monkeypatch: pytest.MonkeyPatch) -> None:
-    """
-    Test the summarization pipeline to ensure it formats the prompt correctly.
+    """Test the summarization pipeline to ensure it formats the prompt correctly.
 
     Args:
         monkeypatch (pytest.MonkeyPatch): The monkeypatch fixture for modifying behavior.
     """
-
     # Import the real InferencePipeline type for subclassing
     from nextext.core.openai_cfg import InferencePipeline
 
@@ -335,9 +325,7 @@ def test_summarization_pipeline_formats_prompt(monkeypatch: pytest.MonkeyPatch) 
         """A dummy inference pipeline class to test the summarization pipeline's prompt formatting behavior."""
 
         def __init__(self) -> None:
-            """Initialize the dummy inference pipeline and set up a list to record the prompts passed to the
-            call_model method.
-            """
+            """Initialise the pipeline and start the per-call prompt list."""
             self.prompts: list[str] = []
 
         def load_prompt(self, keyword: str = "system") -> str:
@@ -377,6 +365,7 @@ def test_summarization_pipeline_formats_prompt(monkeypatch: pytest.MonkeyPatch) 
                 top_p (float | None): Unused test double argument.
                 system_prompt (str | None): Unused test double argument.
                 include_system_prompt (bool): Unused test double argument.
+                think (bool | None): Unused test double argument.
 
             Returns:
                 str: The model's response.
@@ -405,8 +394,7 @@ def test_summarization_pipeline_formats_prompt(monkeypatch: pytest.MonkeyPatch) 
 def test_summarization_pipeline_rejects_empty_text(
     ollama_pipeline: None = None,
 ) -> None:
-    """
-    Test the summarization pipeline to ensure it rejects empty text.
+    """Test the summarization pipeline to ensure it rejects empty text.
 
     Args:
         ollama_pipeline (None, optional): The Ollama pipeline instance. Defaults to None.
@@ -449,17 +437,15 @@ def test_hate_speech_pipeline_returns_flagged_rows(
     )
 
     class DummyDetector:
-        def __init__(self, inference_pipeline, max_chars):
+        def __init__(self, inference_pipeline: Any, max_chars: int) -> None:
             pass
 
-        def detect(self, text: str) -> dict:
+        def detect(self, text: str) -> dict[str, Any]:
             return next(responses)
 
     monkeypatch.setattr(pipeline, "HateSpeechDetector", DummyDetector)
 
-    df = pd.DataFrame(
-        {"start": ["00:00:01", "00:00:05"], "text": ["bad text", "good text"]}
-    )
+    df = pd.DataFrame({"start": ["00:00:01", "00:00:05"], "text": ["bad text", "good text"]})
     dummy_ip = InferencePipeline.__new__(InferencePipeline)
 
     results = pipeline.hate_speech_pipeline(df, dummy_ip)
@@ -471,8 +457,7 @@ def test_hate_speech_pipeline_returns_flagged_rows(
 
 
 def test_wordlevel_pipeline_invokes_all_steps(monkeypatch: pytest.MonkeyPatch) -> None:
-    """
-    Test the word-level pipeline to ensure all steps are invoked.
+    """Test the word-level pipeline to ensure all steps are invoked.
 
     Args:
         monkeypatch (pytest.MonkeyPatch): The monkeypatch fixture for modifying behavior.
@@ -482,8 +467,7 @@ def test_wordlevel_pipeline_invokes_all_steps(monkeypatch: pytest.MonkeyPatch) -
         """A dummy word counter class to test the word-level pipeline's behavior."""
 
         def __init__(self, text: str, language: str) -> None:
-            """Initialize the dummy word counter with the given text and language, and set up a list to record
-            the steps invoked.
+            """Initialise the counter with text + language and start the step-invocation list.
 
             Args:
                 text (str): The text to be processed.
@@ -494,21 +478,27 @@ def test_wordlevel_pipeline_invokes_all_steps(monkeypatch: pytest.MonkeyPatch) -
             self.steps: list[str] = []
 
         def text_to_doc(self) -> None:
-            """Simulate the process of converting text to a document format. In this dummy implementation,
+            """Simulate the process of converting text to a document format.
+
+            In this dummy implementation,
             it simply records that the text_to_doc step was invoked, allowing us to verify that the word-level
             pipeline correctly calls this step as part of its processing.
             """
             self.steps.append("text_to_doc")
 
         def lemmatize_doc(self) -> None:
-            """Simulate the process of lemmatizing a document. In this dummy implementation, it simply records
+            """Simulate the process of lemmatizing a document.
+
+            In this dummy implementation, it simply records
             that the lemmatize_doc step was invoked, allowing us to verify that the word-level pipeline correctly
             calls this step as part of its processing.
             """
             self.steps.append("lemmatize_doc")
 
         def count_words(self) -> pd.DataFrame:
-            """Simulate the process of counting words in the text. In this dummy implementation, it returns a
+            """Simulate the process of counting words in the text.
+
+            In this dummy implementation, it returns a
             DataFrame with a single word and its count, allowing us to verify that the word-level pipeline correctly
             calls this step and processes its output.
 
@@ -518,7 +508,9 @@ def test_wordlevel_pipeline_invokes_all_steps(monkeypatch: pytest.MonkeyPatch) -
             return pd.DataFrame({"word": ["test"], "count": [1]})
 
         def named_entity_recognition(self) -> pd.DataFrame:
-            """Simulate the process of named entity recognition. In this dummy implementation, it returns a DataFrame
+            """Simulate the process of named entity recognition.
+
+            In this dummy implementation, it returns a DataFrame
             with a single entity, allowing us to verify that the word-level pipeline correctly calls this step and
             processes its output.
 
@@ -528,7 +520,9 @@ def test_wordlevel_pipeline_invokes_all_steps(monkeypatch: pytest.MonkeyPatch) -
             return pd.DataFrame({"entity": ["Test"]})
 
         def get_noun_sentiment(self) -> pd.DataFrame:
-            """Simulate the process of getting noun sentiment. In this dummy implementation, it returns a DataFrame
+            """Simulate the process of getting noun sentiment.
+
+            In this dummy implementation, it returns a DataFrame
             with a single noun and its sentiment score, allowing us to verify that the word-level pipeline correctly
             calls this step and processes its output.
 
@@ -538,7 +532,9 @@ def test_wordlevel_pipeline_invokes_all_steps(monkeypatch: pytest.MonkeyPatch) -
             return pd.DataFrame({"noun": ["test"], "sentiment": [0.5]})
 
         def create_interactive_graph(self) -> str:
-            """Simulate the process of creating an interactive graph. In this dummy implementation, it returns a string
+            """Simulate the process of creating an interactive graph.
+
+            In this dummy implementation, it returns a string
             representing the path to the graph, allowing us to verify that the word-level pipeline correctly calls this
             step and processes its output.
 
@@ -548,22 +544,18 @@ def test_wordlevel_pipeline_invokes_all_steps(monkeypatch: pytest.MonkeyPatch) -
             return "graph.html"
 
         def create_wordcloud(self) -> str:
-            """Simulate the process of creating a word cloud. In this dummy implementation, it returns a string
-            representing the path to the word cloud, allowing us to verify that the word-level pipeline correctly calls this
-            step and processes its output.
+            """Simulate word-cloud creation; returns a path-like string for the test to assert on.
 
             Returns:
                 str: A string representing the path to the word cloud.
             """
             return "wordcloud"
 
-    monkeypatch.setattr(
-        pipeline, "WordCounter", lambda text, language: DummyWordCounter(text, language)
-    )
+    monkeypatch.setattr(pipeline, "WordCounter", lambda text, language: DummyWordCounter(text, language))
     df = pd.DataFrame({"text": ["alpha", "beta"]})
 
     counts, entities, wordcloud = pipeline.wordlevel_pipeline(df, "en")
 
     assert list(counts["word"]) == ["test"]
     assert list(entities["entity"]) == ["Test"]
-    assert wordcloud == "wordcloud"
+    assert wordcloud == "wordcloud"  # type: ignore[comparison-overlap]

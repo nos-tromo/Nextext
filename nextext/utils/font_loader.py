@@ -1,3 +1,5 @@
+"""Font file resolution for word-cloud rendering (bundled .ttf assets)."""
+
 from pathlib import Path
 
 from loguru import logger

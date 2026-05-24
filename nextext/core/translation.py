@@ -1,3 +1,5 @@
+"""LLM-based segment translation via the inference provider abstraction."""
+
 import pycountry
 from langdetect import detect
 from loguru import logger
@@ -117,39 +119,33 @@ class Translator:
         Args:
             trg_lang (str): The target language code.
             text (str): The text to be translated.
-            src_lang (str | None, optional): The source language code. If not provided, it will be detected automatically. Defaults to None.
+            src_lang (str | None, optional): The source language code. Auto-detected when None.
 
         Returns:
             str: The translated text.
 
         Raises:
-            ValueError: If the input text is empty, if the target language is not supported, or if the source language cannot be determined.
+            ValueError: If the input text is empty, the target language is unsupported, or the
+                source language cannot be determined.
         """
         if not text:
             raise ValueError("Input text cannot be empty.")
         if trg_lang not in self.languages:
-            raise ValueError(
-                f"Target language '{trg_lang}' is not supported by the translation pipeline."
-            )
+            raise ValueError(f"Target language '{trg_lang}' is not supported by the translation pipeline.")
 
         resolved_src_lang = src_lang or self.src_lang
         if resolved_src_lang is None:
             resolved_src_lang = self.detect_language(text).get("code")
         if not resolved_src_lang:
             raise ValueError("Source language could not be determined.")
-        if self._base_language_code(resolved_src_lang) == self._base_language_code(
-            trg_lang
-        ):
+        if self._base_language_code(resolved_src_lang) == self._base_language_code(trg_lang):
             return text
 
         self.src_lang = resolved_src_lang
 
         if self.inference_pipeline.provider == "vllm":
             translation_model = self.inference_pipeline.translation_model
-            if (
-                not self._warned_vllm_model
-                and "translategemma" not in translation_model.lower()
-            ):
+            if not self._warned_vllm_model and "translategemma" not in translation_model.lower():
                 logger.warning(
                     "INFERENCE_PROVIDER=vllm but TRANSLATION_MODEL='{}' does "
                     "not look like a TranslateGemma variant. Proceeding anyway.",
@@ -177,7 +173,5 @@ class Translator:
             prompt=prompt,
             model=self.inference_pipeline.translation_model,
             temperature=0.0,
-            system_prompt=(
-                "You are a precise translation engine. Return only the translation text."
-            ),
+            system_prompt=("You are a precise translation engine. Return only the translation text."),
         )

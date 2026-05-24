@@ -56,7 +56,7 @@ def _make_translator(
 def test_translator_vllm_builds_delimiter_prompt(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """vllm provider produces the delimiter-format prompt with no system message."""
+    """Vllm provider produces the delimiter-format prompt with no system message."""
     translator, pipeline = _make_translator(
         monkeypatch,
         provider="vllm",
@@ -94,7 +94,7 @@ def test_translator_vllm_same_language_short_circuit(
 def test_translator_ollama_uses_templated_prompt(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """ollama provider keeps the existing templated prompt + translation system prompt."""
+    """Ollama provider keeps the existing templated prompt + translation system prompt."""
     translator, pipeline = _make_translator(monkeypatch, provider="ollama")
 
     translator.translate(trg_lang="de-DE", text="hello", src_lang="en")
@@ -104,19 +104,15 @@ def test_translator_ollama_uses_templated_prompt(
     assert "<<<source>>>" not in call["prompt"]
     assert "hello" in call["prompt"]
     assert call["include_system_prompt"] is True
-    assert call["system_prompt"] == (
-        "You are a precise translation engine. Return only the translation text."
-    )
+    assert call["system_prompt"] == ("You are a precise translation engine. Return only the translation text.")
     assert call["temperature"] == 0.0
 
 
 def test_translator_openai_uses_templated_prompt(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """openai provider behaves identically to ollama on the templated path."""
-    translator, pipeline = _make_translator(
-        monkeypatch, provider="openai", translation_model="gpt-4o"
-    )
+    """Openai provider behaves identically to ollama on the templated path."""
+    translator, pipeline = _make_translator(monkeypatch, provider="openai", translation_model="gpt-4o")
 
     translator.translate(trg_lang="de-DE", text="hello", src_lang="en")
 
@@ -135,9 +131,7 @@ def test_translator_vllm_warns_on_non_translategemma_model_once(
 
     from loguru import logger
 
-    translator, _ = _make_translator(
-        monkeypatch, provider="vllm", translation_model="gpt-4o"
-    )
+    translator, _ = _make_translator(monkeypatch, provider="vllm", translation_model="gpt-4o")
 
     sink = io.StringIO()
     handler_id = logger.add(sink, level="WARNING")
@@ -147,7 +141,5 @@ def test_translator_vllm_warns_on_non_translategemma_model_once(
     finally:
         logger.remove(handler_id)
 
-    warnings = [
-        line for line in sink.getvalue().splitlines() if "TranslateGemma" in line
-    ]
+    warnings = [line for line in sink.getvalue().splitlines() if "TranslateGemma" in line]
     assert len(warnings) == 1

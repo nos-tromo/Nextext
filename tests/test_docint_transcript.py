@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import json
+from typing import Any
 
 import pytest
 
 from nextext.core.docint_transcript import build_docint_jsonl, format_hhmmss
 
 
-def _decode_lines(payload: bytes) -> list[dict]:
+def _decode_lines(payload: bytes) -> list[dict[str, Any]]:
     """Decode a JSONL payload into a list of dictionaries.
 
     Args:

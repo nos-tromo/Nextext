@@ -22,11 +22,11 @@ import tempfile
 import uuid
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-import pandas as pd  # type: ignore[import-untyped]
+import pandas as pd
 from loguru import logger
 from matplotlib.figure import Figure
 
@@ -41,10 +41,7 @@ from nextext.api.schemas import (
     WordCount,
 )
 
-
-_TERMINAL_EVENT_NAMES: frozenset[str] = frozenset(
-    {"job_completed", "job_failed", "job_cancelled"}
-)
+_TERMINAL_EVENT_NAMES: frozenset[str] = frozenset({"job_completed", "job_failed", "job_cancelled"})
 
 
 PIPELINE_STAGE_LABELS: tuple[str, ...] = (
@@ -62,7 +59,7 @@ def _utcnow() -> datetime:
     Returns:
         datetime: Current time with explicit UTC offset.
     """
-    return datetime.now(tz=timezone.utc)
+    return datetime.now(tz=UTC)
 
 
 def _format_sse(event_name: str, payload: dict[str, Any]) -> bytes:
@@ -76,7 +73,7 @@ def _format_sse(event_name: str, payload: dict[str, Any]) -> bytes:
         bytes: UTF-8 encoded frame ready to send over ``text/event-stream``.
     """
     body = json.dumps(payload, default=str)
-    return f"event: {event_name}\ndata: {body}\n\n".encode("utf-8")
+    return f"event: {event_name}\ndata: {body}\n\n".encode()
 
 
 @dataclass
@@ -120,9 +117,7 @@ class JobState:
             created_at=self.created_at,
             started_at=self.started_at,
             finished_at=self.finished_at,
-            result=_serialize_result(self.result)
-            if self.status == JobStatus.COMPLETED
-            else None,
+            result=_serialize_result(self.result) if self.status == JobStatus.COMPLETED else None,
         )
 
 
@@ -176,10 +171,7 @@ def _normalize_word_counts(df: pd.DataFrame | None) -> list[WordCount] | None:
         return None
     word_col = df.columns[0]
     count_col = df.columns[1]
-    return [
-        WordCount(word=str(row[word_col]), count=int(row[count_col]))
-        for _, row in df.iterrows()
-    ]
+    return [WordCount(word=str(row[word_col]), count=int(row[count_col])) for _, row in df.iterrows()]
 
 
 def _normalize_named_entities(df: pd.DataFrame | None) -> list[NamedEntity] | None:
@@ -204,7 +196,7 @@ def _normalize_named_entities(df: pd.DataFrame | None) -> list[NamedEntity] | No
     ]
 
 
-def _normalize_hate_speech(items: list[dict] | None) -> list[HateSpeechFinding] | None:
+def _normalize_hate_speech(items: list[dict[str, Any]] | None) -> list[HateSpeechFinding] | None:
     """Coerce hate-speech findings into ``HateSpeechFinding`` instances.
 
     Args:
@@ -233,10 +225,7 @@ def _serialize_result(result: dict[str, Any]) -> JobResult:
     transcript_df = result.get("transcript")
     transcript: list[TranscriptSegment] = []
     if isinstance(transcript_df, pd.DataFrame) and not transcript_df.empty:
-        transcript = [
-            _normalize_transcript_row(row)
-            for row in transcript_df.to_dict(orient="records")
-        ]
+        transcript = [_normalize_transcript_row(row) for row in transcript_df.to_dict(orient="records")]
 
     wordcloud_url: str | None = None
     if isinstance(result.get("wordcloud"), Figure):
@@ -349,9 +338,7 @@ def _run_pipeline_blocking(state: JobState, push_event: PushEvent) -> dict[str, 
 
     transcript_text = " ".join(df["text"].astype(str).tolist()).strip()
     if df.empty or not transcript_text:
-        transcript_language = file_opts[
-            "trg_lang" if file_opts["task"] == "translate" else "src_lang"
-        ]
+        transcript_language = file_opts["trg_lang" if file_opts["task"] == "translate" else "src_lang"]
         payload = {
             "transcript": df,
             "summary": None,
@@ -371,7 +358,7 @@ def _run_pipeline_blocking(state: JobState, push_event: PushEvent) -> dict[str, 
     _complete(
         0,
         {
-            "transcript_segments": int(len(df)),
+            "transcript_segments": len(df),
             "resolved_src_lang": file_opts["src_lang"],
         },
     )
@@ -380,13 +367,10 @@ def _run_pipeline_blocking(state: JobState, push_event: PushEvent) -> dict[str, 
     _notify(1)
     inference_pipeline: InferencePipeline | None = None
     if file_opts["task"] == "translate" and file_opts["trg_lang"] != "en":
-        inference_pipeline = InferencePipeline(
-            out_language=language_name(file_opts["trg_lang"])
-        )
+        inference_pipeline = InferencePipeline(out_language=language_name(file_opts["trg_lang"]))
         if not inference_pipeline.get_health():
             raise ConnectionError(
-                "The configured inference provider is not reachable. "
-                "Please ensure it is running and accessible."
+                "The configured inference provider is not reachable. Please ensure it is running and accessible."
             )
         df = translation_pipeline(
             df,
@@ -398,9 +382,7 @@ def _run_pipeline_blocking(state: JobState, push_event: PushEvent) -> dict[str, 
     else:
         _complete(1, {"translated": False})
 
-    transcript_language = file_opts[
-        "trg_lang" if file_opts["task"] == "translate" else "src_lang"
-    ]
+    transcript_language = file_opts["trg_lang" if file_opts["task"] == "translate" else "src_lang"]
     result: dict[str, Any] = {
         "transcript": df,
         "summary": None,
@@ -423,14 +405,12 @@ def _run_pipeline_blocking(state: JobState, push_event: PushEvent) -> dict[str, 
         result["word_counts"] = wc
         result["named_entities"] = ner
         result["wordcloud"] = cloud
-        result["_wordcloud_url"] = (
-            f"/api/v1/jobs/{state.job_id}/artifacts/wordcloud.png"
-        )
+        result["_wordcloud_url"] = f"/api/v1/jobs/{state.job_id}/artifacts/wordcloud.png"
         _complete(
             2,
             {
-                "word_counts": int(len(wc)) if wc is not None else 0,
-                "named_entities": int(len(ner)) if ner is not None else 0,
+                "word_counts": len(wc) if wc is not None else 0,
+                "named_entities": len(ner) if ner is not None else 0,
                 "wordcloud": cloud is not None,
             },
         )
@@ -441,13 +421,10 @@ def _run_pipeline_blocking(state: JobState, push_event: PushEvent) -> dict[str, 
     _notify(3)
     if file_opts["summarization"]:
         if inference_pipeline is None:
-            inference_pipeline = InferencePipeline(
-                out_language=language_name(transcript_language)
-            )
+            inference_pipeline = InferencePipeline(out_language=language_name(transcript_language))
             if not inference_pipeline.get_health():
                 raise ConnectionError(
-                    "The configured inference provider is not reachable. "
-                    "Please ensure it is running and accessible."
+                    "The configured inference provider is not reachable. Please ensure it is running and accessible."
                 )
         result["summary"] = summarization_pipeline(
             " ".join(df["text"].astype(str).tolist()),
@@ -461,13 +438,10 @@ def _run_pipeline_blocking(state: JobState, push_event: PushEvent) -> dict[str, 
     _notify(4)
     if file_opts["hate_speech"]:
         if inference_pipeline is None:
-            inference_pipeline = InferencePipeline(
-                out_language=language_name(transcript_language)
-            )
+            inference_pipeline = InferencePipeline(out_language=language_name(transcript_language))
             if not inference_pipeline.get_health():
                 raise ConnectionError(
-                    "The configured inference provider is not reachable. "
-                    "Please ensure it is running and accessible."
+                    "The configured inference provider is not reachable. Please ensure it is running and accessible."
                 )
         findings = hate_speech_pipeline(df=df, inference_pipeline=inference_pipeline)
         result["hate_speech_findings"] = findings
@@ -501,6 +475,7 @@ class JobManager:
         self._lock = asyncio.Lock()
         self._workers_semaphore = asyncio.Semaphore(1)
         self._sweeper_task: asyncio.Task[None] | None = None
+        self._background_tasks: set[asyncio.Task[None]] = set()
         self.tmp_root = tmp_root or Path(tempfile.gettempdir()) / "nextext-jobs"
         self.tmp_root.mkdir(parents=True, exist_ok=True)
         self.ttl_seconds = ttl_seconds
@@ -551,7 +526,9 @@ class JobManager:
         )
         async with self._lock:
             self._jobs[job_id] = state
-        asyncio.create_task(self._worker(state))
+        task = asyncio.create_task(self._worker(state))
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
         return state
 
     async def get(self, job_id: str) -> JobState | None:
@@ -638,15 +615,15 @@ class JobManager:
             while True:
                 try:
                     raw: bytes | None = await asyncio.wait_for(
-                        queue.get(),  # type: ignore[arg-type]
+                        queue.get(),
                         timeout=15.0,
                     )
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     yield b": ping\n\n"
                     continue
-                frame = raw
-                if frame is None:
+                if raw is None:
                     return
+                frame = raw
                 yield frame
                 # Detect terminal frames so the connection closes cleanly.
                 if frame.startswith(b"event: job_"):
@@ -677,9 +654,7 @@ class JobManager:
                     payload: JSON-serializable payload.
                 """
                 frame = _format_sse(event_name, payload)
-                loop.call_soon_threadsafe(
-                    self._dispatch_event, state, event_name, payload, frame
-                )
+                loop.call_soon_threadsafe(self._dispatch_event, state, event_name, payload, frame)
 
             try:
                 result = await asyncio.to_thread(self._pipeline_runner, state, _push)
@@ -696,7 +671,7 @@ class JobManager:
                         "timestamp": _utcnow().isoformat(),
                     },
                 )
-            except Exception as exc:  # noqa: BLE001 - we want any failure mode
+            except Exception as exc:
                 logger.exception("Job {} failed.", state.job_id)
                 state.status = JobStatus.FAILED
                 state.error = str(exc)
