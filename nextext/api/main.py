@@ -41,11 +41,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         None: Control is yielded after startup configuration completes.
     """
     set_offline_env()
-    log_path = setup_logging()
+    setup_logging()
     job_manager = JobManager(ttl_seconds=_resolve_job_ttl())
     await job_manager.start()
     app.state.job_manager = job_manager
-    logger.info("Nextext API started — logs at {}", log_path)
+    logger.info("Nextext API started")
     try:
         yield
     finally:
