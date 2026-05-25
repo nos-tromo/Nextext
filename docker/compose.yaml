@@ -7,6 +7,17 @@ x-no-proxy-env: &no-proxy-env
 x-env-file: &env-file
   - ../.env
 
+##########################################################
+# Shared logging — the local driver rotates and compresses
+# per-container; tail with `docker compose logs -f <svc>`.
+##########################################################
+x-logging: &default-logging
+  driver: "local"
+  options:
+    max-size: "50m"
+    max-file: "5"
+    compress: "true"
+
 services:
   ##########################################################
   # Nextext backend (CPU) — FastAPI + pipeline + CLI
@@ -16,12 +27,12 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile.backend.cpu
+    logging: *default-logging
     environment: &backend-env
       <<: *no-proxy-env
       HF_HUB_OFFLINE: ${HF_HUB_OFFLINE:-false}
       HF_HUB_TOKEN: $HF_HUB_TOKEN
       INFERENCE_PROVIDER: ${INFERENCE_PROVIDER:-ollama}
-      LOG_PATH: /var/log/nextext/backend-cpu.log
       NER_MODEL: ${NER_MODEL:-}
       NEXTEXT_API_HOST: ${NEXTEXT_API_HOST:-0.0.0.0}
       NEXTEXT_API_PORT: ${NEXTEXT_API_PORT:-8000}
@@ -37,7 +48,6 @@ services:
     env_file: *env-file
     volumes: &backend-volumes
       - huggingface-cache:/root/.cache/huggingface/hub
-      - nextext-logs:/var/log/nextext
       - nltk-cache:/root/nltk_data
       - spacy-cache:/root/.cache/spacy
       - torch-cache:/root/.cache/torch
@@ -59,9 +69,9 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile.backend.cuda
+    logging: *default-logging
     environment:
       <<: *backend-env
-      LOG_PATH: /var/log/nextext/backend-cuda.log
       NVIDIA_VISIBLE_DEVICES: all
     env_file: *env-file
     volumes: *backend-volumes
@@ -83,17 +93,15 @@ services:
     build: &frontend-build
       context: ..
       dockerfile: docker/Dockerfile.frontend
+    logging: *default-logging
     environment: &frontend-env
       <<: *no-proxy-env
       BACKEND_HOST: ${BACKEND_HOST:-http://backend:8000}
       BACKEND_PUBLIC_HOST: ${BACKEND_PUBLIC_HOST:-http://localhost:8000}
-      LOG_PATH: /var/log/nextext/frontend-cpu.log
       STREAMLIT_BROWSER_GATHER_USAGE_STATS: "false"
       STREAMLIT_SERVER_FILE_WATCHER_TYPE: none
       STREAMLIT_SERVER_MAX_UPLOAD_SIZE: 8192
     env_file: *env-file
-    volumes: &frontend-volumes
-      - nextext-logs:/var/log/nextext
     networks: &frontend-networks
       nextext-net:
     depends_on:
@@ -106,11 +114,10 @@ services:
   frontend-cuda:
     image: nextext-frontend-cuda:${NEXTEXT_VERSION:-latest}
     build: *frontend-build
+    logging: *default-logging
     environment:
       <<: *frontend-env
-      LOG_PATH: /var/log/nextext/frontend-cuda.log
     env_file: *env-file
-    volumes: *frontend-volumes
     networks: *frontend-networks
     depends_on:
       - backend-cuda
@@ -122,7 +129,6 @@ services:
 volumes:
   huggingface-cache:
     external: true
-  nextext-logs:
   nltk-cache:
     external: true
   spacy-cache:
