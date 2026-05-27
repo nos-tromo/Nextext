@@ -132,9 +132,9 @@ GPU-resident models (`whisper_turbo`, `whisper_large`, `diarization`, `gliner`) 
 Docker assets live under `docker/`. `docker/compose.yaml` defines four services across two profiles:
 
 - `backend-cpu` / `backend-cuda` — built from `docker/Dockerfile.backend.{cpu,cuda}`, multi-stage `uv` builds. Run `uvicorn nextext.api.main:app` with a `HEALTHCHECK` against `/api/v1/health`. Reachable only on the `inference-net` network by default; no host port is published.
-- `frontend-cpu` / `frontend-cuda` — built from `docker/Dockerfile.frontend` (single-stage `uv`, `--only-group frontend`). The base `docker/compose.yaml` is the production shape and publishes no host ports; `docker/compose.override.yaml` (layered by `make up`) publishes Streamlit on `${NEXTEXT_HOST_PORT:-8501}`.
+- `frontend-cpu` / `frontend-cuda` — built from `docker/Dockerfile.frontend` (single-stage `uv`, `--only-group frontend`). The base `docker/compose.yaml` is the production shape and publishes no host ports; `docker/compose.override.yaml` (layered by `make up-dev`) publishes Streamlit on `${NEXTEXT_HOST_PORT:-8501}`.
 
-Both profiles share `inference-net` with Ollama / vLLM. The `Makefile` is the entry point — it points Compose at `docker/compose.yaml`, since a bare `docker compose` from the repo root no longer finds it. The profile (`cpu`/`cuda`) is read from `PROFILE` in `.env` (default `cpu`); override per-invocation as `make up PROFILE=cuda`. Run `make build && make up` to bring the full stack up.
+Both profiles share `inference-net` with Ollama / vLLM. The `Makefile` is the entry point — it points Compose at `docker/compose.yaml`, since a bare `docker compose` from the repo root no longer finds it. The profile (`cpu`/`cuda`) is read from `PROFILE` in `.env` (default `cpu`); override per-invocation as `make up PROFILE=cuda`. Run `make build && make up` for production shape, or `make build && make up-dev` to publish the Streamlit frontend on the host.
 
 ## Commits
 

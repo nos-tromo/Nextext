@@ -6,7 +6,7 @@
 
 .DEFAULT_GOAL := help
 
-.PHONY: help network volumes build bundle up stop logs pre-commit test
+.PHONY: help network volumes build bundle up up-dev stop logs pre-commit test
 
 # Docker profile (cpu/cuda). Read from .env, default cpu. Override on the
 # command line: make up PROFILE=cuda
@@ -22,7 +22,8 @@ NEXTEXT_VERSION ?= $(shell \
       echo "$$(date +%Y-%m-%d)$${_s:+-$$_s}"; } )
 export NEXTEXT_VERSION
 
-COMPOSE      := docker compose --env-file .env -f docker/compose.yaml -f docker/compose.override.yaml
+COMPOSE      := docker compose --env-file .env -f docker/compose.yaml
+COMPOSE_DEV  := docker compose --env-file .env -f docker/compose.yaml -f docker/compose.override.yaml
 PROFILE_FLAG := --profile $(PROFILE)
 
 help:
@@ -32,7 +33,8 @@ help:
 	@echo "  make volumes    create the external Docker volumes"
 	@echo "  make build      build images for the $(PROFILE) profile"
 	@echo "  make bundle     ship images as a versioned .tar.gz pair ($(PROFILE))"
-	@echo "  make up         run the $(PROFILE) profile (no rebuild)"
+	@echo "  make up         run the $(PROFILE) profile (no rebuild, no host ports)"
+	@echo "  make up-dev     like 'up', but publishes the frontend port on the host"
 	@echo "  make stop       stop the $(PROFILE) profile containers"
 	@echo "  make logs       tail combined logs for the $(PROFILE) profile"
 	@echo "  make pre-commit run pre-commit hooks (ruff + mypy)"
@@ -56,9 +58,14 @@ build:
 bundle:
 	./scripts/bundle_images.sh $(PROFILE)
 
-# Run the active profile without rebuilding images.
+# Run the active profile without rebuilding images (production shape, no host ports).
 up:
 	DOCKER_BUILDKIT=1 $(COMPOSE) $(PROFILE_FLAG) up --no-build
+
+# Like 'up' but layers compose.override.yaml on top to publish the
+# Streamlit frontend port on the host.
+up-dev:
+	DOCKER_BUILDKIT=1 $(COMPOSE_DEV) $(PROFILE_FLAG) up --no-build
 
 # Stop the active profile's containers.
 stop:
