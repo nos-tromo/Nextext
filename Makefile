@@ -6,7 +6,7 @@
 
 .DEFAULT_GOAL := help
 
-.PHONY: help network volumes build bundle up up-dev stop logs pre-commit test
+.PHONY: help network volumes build bundle up up-dev stop down logs pre-commit test
 
 # Docker profile (cpu/cuda). Read from .env, default cpu. Override on the
 # command line: make up PROFILE=cuda
@@ -36,6 +36,7 @@ help:
 	@echo "  make up         run the $(PROFILE) profile (no rebuild, no host ports)"
 	@echo "  make up-dev     like 'up', but publishes the frontend port on the host"
 	@echo "  make stop       stop the $(PROFILE) profile containers"
+	@echo "  make down       stop + remove the $(PROFILE) profile containers"
 	@echo "  make logs       tail combined logs for the $(PROFILE) profile"
 	@echo "  make pre-commit run pre-commit hooks (ruff + mypy)"
 	@echo "  make test       run the test suite"
@@ -70,6 +71,11 @@ up-dev:
 # Stop the active profile's containers.
 stop:
 	$(COMPOSE) $(PROFILE_FLAG) stop
+
+# Stop + remove the active profile's containers. All Nextext volumes
+# are declared external, so this never destroys cached models or data.
+down:
+	$(COMPOSE) $(PROFILE_FLAG) down
 
 # Tail combined logs for the active profile.
 logs:
