@@ -1,8 +1,9 @@
 ### Dev override — publishes the Nextext Streamlit frontend on the host.
 ###
 ### NOT auto-loaded: it lives in docker/ and the Makefile passes explicit -f
-### flags. `make up` layers this on top of docker/compose.yaml so the UI is
-### reachable in dev; docker/compose.yaml alone is the production shape.
+### flags. `make up-dev` layers this on top of docker/compose.yaml so the
+### UI is reachable in dev; `make up` runs docker/compose.yaml alone
+### (production shape).
 
 services:
   frontend-cpu:
