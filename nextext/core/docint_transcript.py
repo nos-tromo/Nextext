@@ -17,7 +17,7 @@ import json
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-import pandas as pd  # type: ignore[import-untyped]
+import pandas as pd
 import pycountry
 
 from nextext.pipeline import normalize_language_code
@@ -175,9 +175,7 @@ def _coerce_float(value: Any, *, field: str) -> float:
     try:
         return float(value)
     except (TypeError, ValueError) as exc:
-        raise TypeError(
-            f"Segment field '{field}' must be numeric, got {type(value).__name__}."
-        ) from exc
+        raise TypeError(f"Segment field '{field}' must be numeric, got {type(value).__name__}.") from exc
 
 
 def _segment_to_record(
@@ -257,7 +255,7 @@ def build_docint_jsonl(
     task: str,
     segments: Sequence[Mapping[str, Any]],
 ) -> bytes:
-    """Serialize a sentence-level transcript to docint-flavoured JSONL bytes.
+    r"""Serialize a sentence-level transcript to docint-flavoured JSONL bytes.
 
     The payload is one JSON object per line, newline-terminated including
     the final line. Unicode text is preserved verbatim (no ASCII escaping)

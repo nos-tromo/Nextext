@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import os
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import AsyncIterator
 
 from fastapi import FastAPI
 from loguru import logger
@@ -42,7 +42,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         None: Control is yielded after startup configuration completes.
     """
     set_offline_env()
-    log_path = setup_logging()
+    setup_logging()
     repository = init_repository()
     job_manager = JobManager(
         ttl_seconds=_resolve_job_ttl(),
@@ -51,7 +51,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await job_manager.start()
     app.state.job_manager = job_manager
     app.state.repository = repository
-    logger.info("Nextext API started — logs at {}", log_path)
+    logger.info("Nextext API started")
     try:
         yield
     finally:

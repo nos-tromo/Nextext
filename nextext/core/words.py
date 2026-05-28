@@ -1,3 +1,5 @@
+"""Word-level analysis: counts, GLiNER NER, and word clouds via spaCy + NLTK."""
+
 import hashlib
 import json
 import os
@@ -7,21 +9,21 @@ import tempfile
 import warnings
 from collections import Counter
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
-import arabic_reshaper  # type: ignore[import-untyped]
-import matplotlib.pyplot as plt  # type: ignore[import-untyped]
-import pandas as pd  # type: ignore[import-untyped]
+import arabic_reshaper
+import matplotlib.pyplot as plt
+import pandas as pd
 import spacy
-from bidi.algorithm import get_display  # type: ignore[import-untyped]
-from camel_tools.tokenizers.word import simple_word_tokenize  # type: ignore[import-untyped]
+from bidi.algorithm import get_display
+from camel_tools.tokenizers.word import simple_word_tokenize
 from dotenv import load_dotenv
-from gliner import GLiNER  # type: ignore[import-untyped]
+from gliner import GLiNER
 from loguru import logger
 from matplotlib.figure import Figure
 from spacy.language import Language
 from spacy.tokens import Doc
-from wordcloud import WordCloud  # type: ignore[import-untyped]
+from wordcloud import WordCloud
 
 from nextext.utils.font_loader import load_font_file
 from nextext.utils.mappings_loader import load_mappings
@@ -110,7 +112,7 @@ def _load_gliner_config(model_dir: Path) -> dict[str, Any]:
     config_path = model_dir / "gliner_config.json"
     if not config_path.is_file():
         raise FileNotFoundError(f"No GLiNER config found in {model_dir}")
-    return json.loads(config_path.read_text(encoding="utf-8"))
+    return cast(dict[str, Any], json.loads(config_path.read_text(encoding="utf-8")))
 
 
 def _link_or_copy_path(source: Path, destination: Path) -> None:
@@ -151,8 +153,7 @@ def _resolve_local_gliner_dependency(cache_dir: Path, dependency: str) -> Path:
     resolved = _resolve_hf_cache_path(cache_dir=cache_dir, repo_id=dependency)
     if resolved is None:
         raise FileNotFoundError(
-            f"GLiNER offline load requires a local snapshot for '{dependency}', "
-            f"but none was found in {cache_dir}."
+            f"GLiNER offline load requires a local snapshot for '{dependency}', but none was found in {cache_dir}."
         )
     return resolved
 
@@ -169,9 +170,7 @@ def _materialize_offline_gliner_dir(model_dir: Path, config: dict[str, Any]) -> 
         Path: Local runtime directory with patched config and links to model
             assets.
     """
-    digest = hashlib.sha256(
-        f"{model_dir.resolve()}\0{json.dumps(config, sort_keys=True)}".encode("utf-8")
-    ).hexdigest()[:16]
+    digest = hashlib.sha256(f"{model_dir.resolve()}\0{json.dumps(config, sort_keys=True)}".encode()).hexdigest()[:16]
     runtime_dir = _GLINER_OFFLINE_DIR / digest
     runtime_dir.mkdir(parents=True, exist_ok=True)
     for item in model_dir.iterdir():
@@ -205,9 +204,7 @@ def _prepare_local_gliner_model_dir(model_dir: Path, cache_dir: Path) -> Path:
         value = config.get(field)
         if not isinstance(value, str) or not value.strip():
             continue
-        resolved = _resolve_local_gliner_dependency(
-            cache_dir=cache_dir, dependency=value
-        )
+        resolved = _resolve_local_gliner_dependency(cache_dir=cache_dir, dependency=value)
         resolved_str = str(resolved)
         if value != resolved_str:
             config[field] = resolved_str
@@ -236,23 +233,16 @@ def _resolve_gliner_load_target(model_id: str, cache_dir: Path) -> tuple[str, bo
     """
     local_dir = Path(model_id).expanduser()
     if local_dir.exists():
-        prepared = _prepare_local_gliner_model_dir(
-            model_dir=local_dir.resolve(), cache_dir=cache_dir
-        )
+        prepared = _prepare_local_gliner_model_dir(model_dir=local_dir.resolve(), cache_dir=cache_dir)
         return str(prepared), True
 
     resolved = _resolve_hf_cache_path(cache_dir=cache_dir, repo_id=model_id)
     if resolved is not None:
         logger.info("Using local GLiNER model path: {}", resolved)
-        prepared = _prepare_local_gliner_model_dir(
-            model_dir=resolved, cache_dir=cache_dir
-        )
+        prepared = _prepare_local_gliner_model_dir(model_dir=resolved, cache_dir=cache_dir)
         return str(prepared), True
 
-    if (
-        os.getenv("HF_HUB_OFFLINE", "0") == "1"
-        or os.getenv("NEXTEXT_OFFLINE", "0") == "1"
-    ):
+    if os.getenv("HF_HUB_OFFLINE", "0") == "1" or os.getenv("NEXTEXT_OFFLINE", "0") == "1":
         raise FileNotFoundError(
             f"GLiNER model '{model_id}' is not available in the local cache "
             f"{cache_dir}. Disable offline mode to download it."
@@ -338,11 +328,9 @@ def _chunk_text(text: str, word_budget: int = _GLINER_WORD_BUDGET) -> list[str]:
         list[str]: Ordered list of text chunks suitable for repeated GLiNER
             inference.
     """
-    sentences = [
-        m.group(0).strip()
-        for m in _SENTENCE_RE.finditer(text.strip())
-        if m.group(0).strip()
-    ] or [text.strip()]
+    sentences = [m.group(0).strip() for m in _SENTENCE_RE.finditer(text.strip()) if m.group(0).strip()] or [
+        text.strip()
+    ]
     chunks: list[str] = []
     current_words: list[str] = []
     for sentence in sentences:
@@ -359,7 +347,7 @@ def _chunk_text(text: str, word_budget: int = _GLINER_WORD_BUDGET) -> list[str]:
 
 
 class WordCounter:
-    """WordCounter analyzes word frequencies, extracts linguistic features, and generates visualizations from input text.
+    """Analyzes word frequencies, extracts linguistic features, and renders visualizations.
 
     Attributes:
         text (str): The text to analyze.
@@ -373,20 +361,20 @@ class WordCounter:
         noun_df (pd.DataFrame | None): DataFrame of high-frequency nouns with associated verbs and adjectives.
 
     Methods:
-        __init__(text: str, language: str, spacy_models_file: str = "spacy_models.json", font_file: str = "Amiri-Regular.ttf") -> None:
-            Initializes the WordCounter object with text, language, and configuration files.
-        _load_spacy_model(spacy_languages: dict[str, str], language: str) -> Language | None:
-            Loads the spaCy model for the specified language code.
+        __init__(text, language, spacy_models_file=..., font_file=...) -> None:
+            Initialise with text, language, and configuration files.
+        _load_spacy_model(spacy_languages, language) -> Language | None:
+            Load the spaCy model for the specified language code.
         text_to_doc() -> None:
-            Converts the input text to a spaCy Doc object.
+            Convert the input text to a spaCy Doc object.
         lemmatize_doc() -> None:
-            Tokenizes and lemmatizes the text, populating tokenized_doc and tokenized_nouns.
-        count_words(n_words: int = 30, columns: list[str] = ["Word", "Frequency"]) -> pd.DataFrame:
-            Counts word frequencies and returns a DataFrame of the most common words.
-        named_entity_recognition(columns: list[str] = ["Category", "Entity", "Frequency"]) -> pd.DataFrame:
-            Performs named entity recognition on the text and returns a DataFrame.
+            Tokenize/lemmatize the text into ``tokenized_doc`` + ``tokenized_nouns``.
+        count_words(n_words=30, columns=...) -> pd.DataFrame:
+            Count word frequencies; return a top-N DataFrame.
+        named_entity_recognition(columns=...) -> pd.DataFrame:
+            Run NER and return a DataFrame.
         create_wordcloud() -> Figure:
-            Generates a word cloud visualization of word frequencies.
+            Render a word-cloud visualisation of word frequencies.
     """
 
     def __init__(
@@ -401,8 +389,10 @@ class WordCounter:
         Args:
             text (str): The text to analyze.
             language (str): Language code of the text (e.g., "en", "ar").
-            spacy_models_file (str, optional): Path to the JSON file containing spaCy model mappings. Defaults to "spacy_models.json".
-            font_file (str, optional): Path to the font file for word cloud generation. Defaults to "Amiri-Regular.ttf".
+            spacy_models_file (str, optional): JSON file with spaCy model mappings. Defaults to
+                "spacy_models.json".
+            font_file (str, optional): Font file for word-cloud rendering. Defaults to
+                "Amiri-Regular.ttf".
         """
         self.text = text
         self.language = language
@@ -416,14 +406,12 @@ class WordCounter:
         self.font_path = load_font_file(font_file)
 
         self.doc: Doc | None = None
-        self.tokenized_doc: list | None = None
-        self.tokenized_nouns: list | None = None
-        self.word_counts: Counter | None = None
+        self.tokenized_doc: list[str] | None = None
+        self.tokenized_nouns: list[str] | None = None
+        self.word_counts: Counter[str] | None = None
         self.noun_df: pd.DataFrame | None = None
 
-    def _load_spacy_model(
-        self, language: str, spacy_languages: dict[str, str]
-    ) -> Language | None:
+    def _load_spacy_model(self, language: str, spacy_languages: dict[str, str]) -> Language | None:
         """Load the spaCy model for the specified language code.
 
         Args:
@@ -487,20 +475,14 @@ class WordCounter:
             self.tokenized_doc = [token.text for token in self.doc if token.is_alpha]
             self.tokenized_nouns = []  # Can't extract nouns without POS
         else:
-            self.tokenized_doc = [
-                token.lemma_.lower()
-                for token in self.doc
-                if token.is_alpha and not token.is_stop
-            ]
+            self.tokenized_doc = [token.lemma_.lower() for token in self.doc if token.is_alpha and not token.is_stop]
             self.tokenized_nouns = [
                 token
                 for token in self.tokenized_doc
                 if any(t.lemma_.lower() == token and t.pos_ == "NOUN" for t in self.doc)
             ]
 
-    def count_words(
-        self, n_words: int = 30, columns: list[str] = ["Word", "Frequency"]
-    ) -> pd.DataFrame:
+    def count_words(self, n_words: int = 30, columns: list[str] | None = None) -> pd.DataFrame:
         """Perform n-gram analysis and count word frequencies using Counter.
 
         Args:
@@ -510,24 +492,20 @@ class WordCounter:
         Returns:
             pd.DataFrame: DataFrame of words and their counts, sorted by frequency.
         """
+        if columns is None:
+            columns = ["Word", "Frequency"]
         if self.tokenized_doc is None:
-            logger.error(
-                "Tokenized document is None. Please run lemmatize_doc() first."
-            )
+            logger.error("Tokenized document is None. Please run lemmatize_doc() first.")
             return pd.DataFrame(columns=pd.Index(columns)).reset_index(drop=True)
         self.word_counts = Counter(token for token in self.tokenized_doc)
         df = (
-            pd.DataFrame(
-                self.word_counts.most_common(n_words), columns=pd.Index(columns)
-            )
+            pd.DataFrame(self.word_counts.most_common(n_words), columns=pd.Index(columns))
             .sort_values(columns[1], ascending=False)
             .reset_index(drop=True)
         )
         return df
 
-    def named_entity_recognition(
-        self, columns: list[str] = ["Category", "Entity", "Frequency"]
-    ) -> pd.DataFrame:
+    def named_entity_recognition(self, columns: list[str] | None = None) -> pd.DataFrame:
         """Perform named entity recognition on the text using GLiNER.
 
         Args:
@@ -537,6 +515,8 @@ class WordCounter:
         Returns:
             pd.DataFrame: DataFrame containing named entities and their counts.
         """
+        if columns is None:
+            columns = ["Category", "Entity", "Frequency"]
         if not self.text or not self.text.strip():
             logger.error("Text is empty. Cannot run NER.")
             return pd.DataFrame(columns=pd.Index(columns)).reset_index(drop=True)
@@ -551,9 +531,7 @@ class WordCounter:
                     )
                     for chunk in _chunk_text(self.text):
                         try:
-                            preds = model.predict_entities(
-                                chunk, _GLINER_LABELS, threshold=_GLINER_THRESHOLD
-                            )
+                            preds = model.predict_entities(chunk, _GLINER_LABELS, threshold=_GLINER_THRESHOLD)
                             for pred in preds:
                                 text_val = pred.get("text", "").strip()
                                 label = pred.get("label", "").strip()
@@ -587,22 +565,12 @@ class WordCounter:
         """
         # Create a string of words for the wordcloud
         if self.word_counts is None:
-            logger.error(
-                "Word counts are not available. Please run count_words() first."
-            )
-            raise ValueError(
-                "Word counts are not available. Please run count_words() first."
-            )
+            logger.error("Word counts are not available. Please run count_words() first.")
+            raise ValueError("Word counts are not available. Please run count_words() first.")
         if not self.word_counts:
             logger.info("Word counts are empty; skipping word cloud generation.")
             return None
-        text = " ".join(
-            [
-                str(word)
-                for word, count in self.word_counts.items()
-                for _ in range(count)
-            ]
-        )
+        text = " ".join([str(word) for word, count in self.word_counts.items() for _ in range(count)])
         if self.language == "ar":
             text = arabic_reshaper.reshape(text)
             text = get_display(text)

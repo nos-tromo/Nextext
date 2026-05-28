@@ -72,10 +72,7 @@ def get_owner_id(
     if not _is_valid_owner_id(x_owner_id):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=(
-                f"Missing or invalid {OWNER_HEADER} header; "
-                "expected a 32-character hex UUID."
-            ),
+            detail=(f"Missing or invalid {OWNER_HEADER} header; expected a 32-character hex UUID."),
         )
     assert x_owner_id is not None  # Narrowed by _is_valid_owner_id above.
     return x_owner_id

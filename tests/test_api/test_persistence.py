@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -46,7 +46,7 @@ def _make_record(
         file_name=file_name,
         source_file_hash="sha256:deadbeef",
         options=JobOptions(persist=True),
-        created_at=datetime(2026, 5, 1, tzinfo=timezone.utc),
+        created_at=datetime(2026, 5, 1, tzinfo=UTC),
         started_at=None,
         finished_at=None,
         artifact_dir=f"jobs/{job_id}",
@@ -129,7 +129,7 @@ def test_mark_completed_sets_terminal_state(repo: SqliteJobRepository) -> None:
     """``mark_completed`` should set status, finished_at, and progress=1."""
     record = _make_record()
     repo.create(record)
-    finished = datetime(2026, 5, 1, 1, 0, tzinfo=timezone.utc)
+    finished = datetime(2026, 5, 1, 1, 0, tzinfo=UTC)
     repo.mark_completed(record.job_id, finished_at=finished)
     fetched = repo.get(record.job_id)
     assert fetched is not None
@@ -142,7 +142,7 @@ def test_mark_failed_records_error_message(repo: SqliteJobRepository) -> None:
     """``mark_failed`` should preserve the operator-facing error."""
     record = _make_record()
     repo.create(record)
-    finished = datetime(2026, 5, 1, 0, 5, tzinfo=timezone.utc)
+    finished = datetime(2026, 5, 1, 0, 5, tzinfo=UTC)
     repo.mark_failed(record.job_id, error="boom", finished_at=finished)
     fetched = repo.get(record.job_id)
     assert fetched is not None
@@ -188,7 +188,7 @@ def test_list_for_owner_is_scoped_and_ordered(repo: SqliteJobRepository) -> None
             file_name="b.wav",
             source_file_hash=None,
             options=JobOptions(persist=True),
-            created_at=datetime(2026, 5, 2, tzinfo=timezone.utc),
+            created_at=datetime(2026, 5, 2, tzinfo=UTC),
             started_at=None,
             finished_at=None,
             artifact_dir="jobs/alice-2",

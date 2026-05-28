@@ -19,7 +19,7 @@ import zipfile
 from pathlib import Path
 from typing import Any, cast
 
-import pandas as pd  # type: ignore[import-untyped]
+import pandas as pd
 from matplotlib.figure import Figure
 
 from nextext.api.jobs import JobState
@@ -82,18 +82,14 @@ def hydrate_from_disk(state: JobState) -> None:
 
     findings_path = store.path("hate_speech.parquet")
     if findings_path.is_file():
-        result["hate_speech_findings"] = pd.read_parquet(findings_path).to_dict(
-            orient="records"
-        )
+        result["hate_speech_findings"] = pd.read_parquet(findings_path).to_dict(orient="records")
 
     summary_path = store.path("summary.txt")
     if summary_path.is_file():
         result["summary"] = summary_path.read_text(encoding="utf-8")
 
     if store.exists("wordcloud.png"):
-        result["_wordcloud_url"] = (
-            f"/api/v1/jobs/{state.job_id}/artifacts/wordcloud.png"
-        )
+        result["_wordcloud_url"] = f"/api/v1/jobs/{state.job_id}/artifacts/wordcloud.png"
 
     state.result = result
 
@@ -142,14 +138,8 @@ def build_docint_jsonl_for_job(state: JobState) -> bytes:
     segments = transcript_segments_from_df(transcript)
     if not segments:
         return b""
-    transcript_language = state.result.get("transcript_language") or state.result.get(
-        "resolved_src_lang"
-    )
-    language = (
-        normalize_language_code(str(transcript_language))
-        if transcript_language
-        else None
-    )
+    transcript_language = state.result.get("transcript_language") or state.result.get("resolved_src_lang")
+    language = normalize_language_code(str(transcript_language)) if transcript_language else None
     task = state.result.get("task") or state.options.task
     return build_docint_jsonl(
         source_file=state.file_name,
@@ -209,11 +199,7 @@ def build_archive_for_job(state: JobState) -> bytes:
         wordcloud = result.get("wordcloud")
         if isinstance(wordcloud, Figure):
             zf.writestr(f"{base}_wordcloud.png", _figure_to_png(wordcloud))
-        elif (
-            state.persistent
-            and state.artifact_store is not None
-            and state.artifact_store.exists("wordcloud.png")
-        ):
+        elif state.persistent and state.artifact_store is not None and state.artifact_store.exists("wordcloud.png"):
             # Rehydrated persistent jobs no longer hold the Figure in
             # memory; serve the PNG bytes that were written to disk at
             # completion time so archive.zip stays complete.
@@ -274,11 +260,7 @@ def render_artifact(state: JobState, name: str) -> tuple[bytes, str] | None:
             was not produced (caller should respond with 404).
     """
     hydrate_from_disk(state)
-    if (
-        name == "wordcloud.png"
-        and state.persistent
-        and state.artifact_store is not None
-    ):
+    if name == "wordcloud.png" and state.persistent and state.artifact_store is not None:
         # The wordcloud is the only artifact that lives on disk as PNG
         # rather than being rebuilt from a matplotlib ``Figure``; serve
         # the bytes directly when they're available.
@@ -290,9 +272,7 @@ def render_artifact(state: JobState, name: str) -> tuple[bytes, str] | None:
         if _missing_dataframe(state, "transcript"):
             return None
         return (
-            cast(pd.DataFrame, result["transcript"])
-            .to_csv(index=False)
-            .encode("utf-8"),
+            cast(pd.DataFrame, result["transcript"]).to_csv(index=False).encode("utf-8"),
             _TEXT_CSV,
         )
     if name == "transcript.xlsx":
@@ -308,9 +288,7 @@ def render_artifact(state: JobState, name: str) -> tuple[bytes, str] | None:
         if _missing_dataframe(state, "word_counts"):
             return None
         return (
-            cast(pd.DataFrame, result["word_counts"])
-            .to_csv(index=False)
-            .encode("utf-8"),
+            cast(pd.DataFrame, result["word_counts"]).to_csv(index=False).encode("utf-8"),
             _TEXT_CSV,
         )
     if name == "wordcounts.xlsx":
@@ -321,9 +299,7 @@ def render_artifact(state: JobState, name: str) -> tuple[bytes, str] | None:
         if _missing_dataframe(state, "named_entities"):
             return None
         return (
-            cast(pd.DataFrame, result["named_entities"])
-            .to_csv(index=False)
-            .encode("utf-8"),
+            cast(pd.DataFrame, result["named_entities"]).to_csv(index=False).encode("utf-8"),
             _TEXT_CSV,
         )
     if name == "entities.xlsx":

@@ -92,12 +92,18 @@ Any other OpenAI-compatible endpoint (vLLM, LiteLLM, etc.) works the same way �
 
 #### Profile installation
 
-Clone the repository and run either for CPU or GPU usage (requires a CUDA compatible GPU and the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html) for the CUDA profile):
+Clone the repository and bring up the stack for CPU or GPU usage (the
+CUDA profile requires a CUDA compatible GPU and the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)). The profile is read from `PROFILE` in `.env` (default `cpu`); the `Makefile` is the entry point and points Compose at `docker/compose.yaml` for you:
 
 ```bash
-docker compose --profile cpu up  # CPU — starts backend-cpu + frontend-cpu
-docker compose --profile cuda up  # CUDA — starts backend-cuda + frontend-cuda
+make build              # build images for the active profile
+make up-dev             # CPU by default — starts backend-cpu + frontend-cpu (publishes host ports)
+make up-dev PROFILE=cuda  # CUDA — starts backend-cuda + frontend-cuda
 ```
+
+`make up-dev` layers `docker/compose.override.yaml` so host ports are
+published for local development; `make up` (or the base `docker/compose.yaml`
+alone) is the production shape and publishes no host ports.
 
 Each profile brings up two containers:
 
@@ -110,22 +116,26 @@ Launch the UI: `http://localhost:8501/`. The frontend reaches the backend via `B
 
 Each build is tagged `nextext-{backend,frontend}-{cpu|cuda}:${NEXTEXT_VERSION}`, where
 `NEXTEXT_VERSION` defaults to `latest`. Override it (e.g. for releases)
-by exporting `NEXTEXT_VERSION` before running `docker compose` or `make`.
+by exporting `NEXTEXT_VERSION` before running `make` (or a raw
+`docker compose -f docker/compose.yaml` invocation).
 
 #### Make shortcuts 🧰
 
-A `Makefile` wraps the most common compose flows so you don't have to
-remember profile flags:
+A `Makefile` is the entry point for the Docker workflow — it points
+Compose at `docker/compose.yaml` so you don't have to remember the
+file path or profile flags. The profile is read from `PROFILE` in `.env`
+(default `cpu`); override per-invocation as `make up PROFILE=cuda`:
 
 | Target | Action |
 |--------|--------|
-| `make volumes` | Create the external Docker volumes (one-time per host; idempotent). |
-| `make build-cpu` / `make build-cuda` | Build both backend and frontend images for the chosen profile. |
-| `make up-cpu` / `make up-cuda` | Build and run both services for the chosen profile in the foreground. |
-| `make no-build-cpu` / `make no-build-cuda` | Run the stack from already-built (or freshly loaded) images, skipping the build step. |
-| `make stop-cpu` / `make stop-cuda` | Stop the chosen profile's containers. |
-| `make logs-cpu` / `make logs-cuda` | Tail combined logs from backend and frontend. |
-| `make bundle-cpu` / `make bundle-cuda` | Build a profile and write versioned `.tar.gz` archives for offline transfer (see below). |
+| `make network` | Create the external `inference-net` Docker network (one-time per host; idempotent). |
+| `make volumes` | Create the external Docker volumes including `nextext-data` for persistent job storage (one-time per host; idempotent). |
+| `make build` | Build both backend and frontend images for the active profile. |
+| `make up` | Run both services for the active profile in the foreground (production shape — no host ports). |
+| `make up-dev` | Same as `make up` but layers `docker/compose.override.yaml` to publish host ports for local development. |
+| `make stop` | Stop the active profile's containers. |
+| `make logs` | Tail combined logs from backend and frontend. |
+| `make bundle` | Build the active profile and write versioned `.tar.gz` archives for offline transfer (see below). |
 
 When invoked through `make`, `NEXTEXT_VERSION` defaults to
 `YYYY-MM-DD-<short-sha>` so each build gets a traceable tag. Export
@@ -134,10 +144,11 @@ When invoked through `make`, `NEXTEXT_VERSION` defaults to
 #### Offline / air-gapped distribution 📦
 
 To ship Nextext to a host without internet access, run the bundler on a
-machine that *does* have access:
+machine that *does* have access (`make bundle` follows `PROFILE` from
+`.env`; override with `make bundle PROFILE=cuda`):
 
 ```bash
-make bundle-cpu   # or: make bundle-cuda
+make bundle   # or: make bundle PROFILE=cuda
 ```
 
 The script builds the local Nextext image, pulls any externally hosted
@@ -147,14 +158,16 @@ tarballs in the project root:
 - `nextext-built-{profile}-{version}.tar.gz` — locally built Nextext images
 - `nextext-pulled-{profile}-{version}.tar.gz` — images pulled from registries
 
-Copy the tarballs (and your `.env`) to the target host, load them, and
-bring up the stack without rebuilding:
+Copy the tarballs (and your `.env` plus the `docker/` directory) to the
+target host, load them, and bring up the stack without rebuilding. The
+target host runs the production shape — `docker/compose.yaml` without the
+dev override — so no host ports are published:
 
 ```bash
 docker load < nextext-built-cpu-<version>.tar.gz
 docker load < nextext-pulled-cpu-<version>.tar.gz   # may be empty for the default compose
 export NEXTEXT_VERSION=<version>
-make no-build   # or: make no-build-cuda
+docker compose --env-file .env -f docker/compose.yaml --profile cpu up --no-build
 ```
 
 ### Model downloads 📥
@@ -219,7 +232,7 @@ BACKEND_HOST=http://localhost:8000 uv run nextext
 
 Open `http://localhost:8501` in your browser. The `BACKEND_HOST` env var defaults to the Docker-internal alias `http://backend:8000`; override it as shown when running outside compose.
 
-The backend exposes the same workflow as the UI under `/api/v1/jobs` (multipart upload + SSE event stream + per-artifact downloads) so any HTTP client — `curl`, scripts, other services — can drive the pipeline directly. See `docker-compose.yml` and `Dockerfile.backend.{cpu,cuda}` for production deployment.
+The backend exposes the same workflow as the UI under `/api/v1/jobs` (multipart upload + SSE event stream + per-artifact downloads) so any HTTP client — `curl`, scripts, other services — can drive the pipeline directly. See `docker/compose.yaml` and `docker/Dockerfile.backend.{cpu,cuda}` for production deployment.
 
 #### Increasing file upload size limit 📂
 

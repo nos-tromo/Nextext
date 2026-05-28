@@ -5,9 +5,11 @@ from __future__ import annotations
 import io
 import json
 import time
-from collections.abc import Iterator
+from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager
+from datetime import UTC
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 from fastapi.testclient import TestClient
@@ -25,9 +27,7 @@ from .conftest import (
 
 
 @pytest.fixture
-def persistent_app_clients(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> Iterator[tuple[TestClient, TestClient]]:
+def persistent_app_clients(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[tuple[TestClient, TestClient]]:
     """Spin up a backend with a real SQLite repository and two clients.
 
     The two clients model two separate browsers, each holding its own
@@ -48,7 +48,7 @@ def persistent_app_clients(
     original_lifespan = app.router.lifespan_context
 
     @asynccontextmanager
-    async def _patched_lifespan(_app):  # type: ignore[no-untyped-def]
+    async def _patched_lifespan(_app: Any) -> AsyncIterator[None]:
         repository = init_repository(db_path=tmp_path / "jobs.db")
         manager = JobManager(
             pipeline_runner=stub_pipeline_runner,
@@ -103,10 +103,10 @@ def _submit(client: TestClient, *, persist: bool, name: str = "clip.wav") -> str
         data={"options": json.dumps(options)},
     )
     assert response.status_code == 201, response.text
-    return response.json()["job_id"]
+    return cast(str, response.json()["job_id"])
 
 
-def _wait_for_completed(client: TestClient, job_id: str) -> dict:
+def _wait_for_completed(client: TestClient, job_id: str) -> dict[str, Any]:
     """Poll ``GET /jobs/{id}`` until completion.
 
     Args:
@@ -114,13 +114,13 @@ def _wait_for_completed(client: TestClient, job_id: str) -> dict:
         job_id: Job identifier.
 
     Returns:
-        dict: Final snapshot body.
+        dict[str, Any]: Final snapshot body.
     """
     deadline = time.monotonic() + 5.0
     while time.monotonic() < deadline:
         response = client.get(f"/api/v1/jobs/{job_id}")
         if response.status_code == 200 and response.json()["status"] == "completed":
-            return response.json()
+            return cast(dict[str, Any], response.json())
         time.sleep(0.05)
     raise AssertionError(f"Job {job_id} never completed.")
 
@@ -236,7 +236,7 @@ def test_rehydration_skips_poisoned_artifact_dir(tmp_path: Path) -> None:
     resolved per-job directory stays under ``data_root``.
     """
     import asyncio as _asyncio
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     from nextext.api.jobs import JobManager
     from nextext.api.persistence import JobRecord, SqliteJobRepository, init_repository
@@ -265,9 +265,9 @@ def test_rehydration_skips_poisoned_artifact_dir(tmp_path: Path) -> None:
             file_name="x.wav",
             source_file_hash=None,
             options=JobOptions(persist=True),
-            created_at=datetime(2026, 5, 1, tzinfo=timezone.utc),
+            created_at=datetime(2026, 5, 1, tzinfo=UTC),
             started_at=None,
-            finished_at=datetime(2026, 5, 1, 1, tzinfo=timezone.utc),
+            finished_at=datetime(2026, 5, 1, 1, tzinfo=UTC),
             artifact_dir="../../outside_secret_dir",
         )
     )
@@ -284,9 +284,9 @@ def test_rehydration_skips_poisoned_artifact_dir(tmp_path: Path) -> None:
             file_name="y.wav",
             source_file_hash=None,
             options=JobOptions(persist=True),
-            created_at=datetime(2026, 5, 1, tzinfo=timezone.utc),
+            created_at=datetime(2026, 5, 1, tzinfo=UTC),
             started_at=None,
-            finished_at=datetime(2026, 5, 1, 1, tzinfo=timezone.utc),
+            finished_at=datetime(2026, 5, 1, 1, tzinfo=UTC),
             artifact_dir="../../outside",
         )
     )
@@ -303,9 +303,7 @@ def test_rehydration_skips_poisoned_artifact_dir(tmp_path: Path) -> None:
 
         states = _asyncio.run(_bootstrap())
         # The non-UUID row was skipped; only the UUID4 row survives.
-        assert [state.job_id for state in states] == [
-            "cafef00dcafef00dcafef00dcafef00d"
-        ]
+        assert [state.job_id for state in states] == ["cafef00dcafef00dcafef00dcafef00d"]
         state = states[0]
         assert state.artifact_store is not None
         # The reconstructed path lives strictly under data_root.
@@ -313,7 +311,7 @@ def test_rehydration_skips_poisoned_artifact_dir(tmp_path: Path) -> None:
         assert resolved.is_relative_to(data_root.resolve())
         # DELETE must not touch anything outside data_root.
 
-        async def _delete() -> None:  # type: ignore[no-untyped-def]
+        async def _delete() -> None:
             await manager.delete(state.job_id, owner_id="attacker")
 
         _asyncio.run(_delete())
@@ -325,7 +323,7 @@ def test_rehydration_skips_poisoned_artifact_dir(tmp_path: Path) -> None:
 
 def test_rehydration_marks_running_rows_as_interrupted(tmp_path: Path) -> None:
     """A backend restart must surface stuck rows as ``interrupted``."""
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     from nextext.api.persistence import (
         JobRecord,
@@ -352,8 +350,8 @@ def test_rehydration_marks_running_rows_as_interrupted(tmp_path: Path) -> None:
             file_name="long.wav",
             source_file_hash=None,
             options=JobOptions(persist=True),
-            created_at=datetime(2026, 5, 1, tzinfo=timezone.utc),
-            started_at=datetime(2026, 5, 1, tzinfo=timezone.utc),
+            created_at=datetime(2026, 5, 1, tzinfo=UTC),
+            started_at=datetime(2026, 5, 1, tzinfo=UTC),
             finished_at=None,
             artifact_dir=f"jobs/{stuck_id}",
         )
@@ -370,9 +368,9 @@ def test_rehydration_marks_running_rows_as_interrupted(tmp_path: Path) -> None:
             file_name="ok.wav",
             source_file_hash=None,
             options=JobOptions(persist=True),
-            created_at=datetime(2026, 5, 1, tzinfo=timezone.utc),
-            started_at=datetime(2026, 5, 1, tzinfo=timezone.utc),
-            finished_at=datetime(2026, 5, 1, 1, tzinfo=timezone.utc),
+            created_at=datetime(2026, 5, 1, tzinfo=UTC),
+            started_at=datetime(2026, 5, 1, tzinfo=UTC),
+            finished_at=datetime(2026, 5, 1, 1, tzinfo=UTC),
             artifact_dir=f"jobs/{done_id}",
         )
     )
@@ -388,7 +386,7 @@ def test_rehydration_marks_running_rows_as_interrupted(tmp_path: Path) -> None:
         # Drive the rehydration path on the loop the production app uses.
         import asyncio as _asyncio
 
-        async def _bootstrap():  # type: ignore[no-untyped-def]
+        async def _bootstrap() -> list[Any]:
             await manager.start()
             return await manager.list_persistent("alice")
 

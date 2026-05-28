@@ -11,7 +11,6 @@ from nextext.core.hate_speech import (
     _parse_hate_speech_payload,
 )
 
-
 # ---------------------------------------------------------------------------
 # _parse_hate_speech_payload
 # ---------------------------------------------------------------------------
@@ -30,9 +29,7 @@ def test_parse_valid_json_hate_speech_true() -> None:
 
 def test_parse_valid_json_no_hate_speech() -> None:
     """Test parsing a well-formed JSON response that does not flag hate speech."""
-    raw = (
-        '{"hate_speech": false, "category": "none", "confidence": "low", "reason": ""}'
-    )
+    raw = '{"hate_speech": false, "category": "none", "confidence": "low", "reason": ""}'
     result = _parse_hate_speech_payload(raw)
 
     assert result["hate_speech"] is False
@@ -41,7 +38,10 @@ def test_parse_valid_json_no_hate_speech() -> None:
 
 def test_parse_json_embedded_in_prose() -> None:
     """Test that JSON embedded inside prose is extracted correctly."""
-    raw = 'Sure! Here is my answer: {"hate_speech": true, "category": "sexism", "confidence": "medium", "reason": "Derogatory"} Hope that helps.'
+    raw = (
+        'Sure! Here is my answer: {"hate_speech": true, "category": "sexism",'
+        ' "confidence": "medium", "reason": "Derogatory"} Hope that helps.'
+    )
     result = _parse_hate_speech_payload(raw)
 
     assert result["hate_speech"] is True
@@ -164,9 +164,7 @@ def test_detector_calls_inference_pipeline(monkeypatch: pytest.MonkeyPatch) -> N
             assert "hello world" in prompt
             return '{"hate_speech": false, "category": "none", "confidence": "low", "reason": "clean"}'
 
-    detector = HateSpeechDetector(
-        cast(InferencePipeline, DummyPipeline()), max_chars=2048
-    )
+    detector = HateSpeechDetector(cast(InferencePipeline, DummyPipeline()), max_chars=2048)
     result = detector.detect("hello world")
 
     assert result["hate_speech"] is False

@@ -11,7 +11,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
-import pandas as pd  # type: ignore[import-untyped]
+import pandas as pd
 
 
 def default_target_language(
@@ -183,6 +183,6 @@ def named_entities_list_to_dataframe(
     if not rows:
         return pd.DataFrame(columns=["Entity", "Category", "Frequency"])
     df = pd.DataFrame(list(rows))
-    return df.rename(
-        columns={"entity": "Entity", "category": "Category", "frequency": "Frequency"}
-    )[["Entity", "Category", "Frequency"]]
+    return df.rename(columns={"entity": "Entity", "category": "Category", "frequency": "Frequency"})[
+        ["Entity", "Category", "Frequency"]
+    ]

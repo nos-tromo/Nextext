@@ -80,6 +80,7 @@ def _force_apple_silicon(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_acquire_loads_and_moves_to_target_device() -> None:
+    """Acquire loads and moves to target device."""
     registry = ModelRegistry()
     loaded: list[_FakeModel] = []
     registry.register(_make_spec(loaded_models=loaded))
@@ -91,6 +92,7 @@ def test_acquire_loads_and_moves_to_target_device() -> None:
 
 
 def test_offload_returns_model_to_cpu_on_exit() -> None:
+    """Offload returns model to cpu on exit."""
     registry = ModelRegistry()
     registry.register(_make_spec(default_strategy=Strategy.OFFLOAD))
 
@@ -107,6 +109,7 @@ def test_offload_returns_model_to_cpu_on_exit() -> None:
 
 
 def test_evict_drops_instance_on_exit() -> None:
+    """Evict drops instance on exit."""
     registry = ModelRegistry()
     loaded: list[_FakeModel] = []
     registry.register(_make_spec(default_strategy=Strategy.EVICT, loaded_models=loaded))
@@ -122,12 +125,14 @@ def test_evict_drops_instance_on_exit() -> None:
 
 
 def test_acquire_raises_for_unknown_spec() -> None:
+    """Acquire raises for unknown spec."""
     registry = ModelRegistry()
     with pytest.raises(KeyError, match="not_registered"):
         registry.acquire("not_registered")
 
 
 def test_is_registered_reflects_register() -> None:
+    """Is registered reflects register."""
     registry = ModelRegistry()
     assert not registry.is_registered("fake")
     registry.register(_make_spec())
@@ -135,6 +140,7 @@ def test_is_registered_reflects_register() -> None:
 
 
 def test_gpu_capable_false_skips_device_moves() -> None:
+    """Gpu capable false skips device moves."""
     moves: list[tuple[Any, str]] = []
 
     def recording_mover(model: _FakeModel, device: str) -> _FakeModel:
@@ -171,10 +177,10 @@ def test_mps_compatible_true_uses_mps_when_cuda_missing(
 def test_mps_compatible_false_falls_back_to_cpu_on_apple_silicon(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Specs declaring mps_compatible=False pin to CPU even when MPS is the
-    only accelerator. This is the Whisper/pyannote path: their sparse-tensor
-    ops crash on the SparseMPS backend, so they must never be auto-targeted
-    at MPS regardless of ``_default_device``'s preference order.
+    """Specs with mps_compatible=False pin to CPU even when MPS is the only accelerator.
+
+    This is the Whisper/pyannote path: their sparse-tensor ops crash on the SparseMPS
+    backend, so they must never be auto-targeted at MPS regardless of ``_default_device``.
     """
     _force_apple_silicon(monkeypatch)
     registry = ModelRegistry()
@@ -220,14 +226,13 @@ def test_gliner_spec_opts_out_of_mps() -> None:
 
 
 def test_global_env_override_flips_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Global env override flips default."""
     monkeypatch.setenv("MODEL_RESIDENCY_STRATEGY", "evict")
     monkeypatch.delenv("MODEL_RESIDENCY_FAKE", raising=False)
 
     registry = ModelRegistry()
     loaded: list[_FakeModel] = []
-    registry.register(
-        _make_spec(default_strategy=Strategy.OFFLOAD, loaded_models=loaded)
-    )
+    registry.register(_make_spec(default_strategy=Strategy.OFFLOAD, loaded_models=loaded))
 
     with registry.acquire("fake", device="cuda"):
         pass
@@ -238,6 +243,7 @@ def test_global_env_override_flips_default(monkeypatch: pytest.MonkeyPatch) -> N
 
 
 def test_per_model_override_beats_global(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Per model override beats global."""
     monkeypatch.setenv("MODEL_RESIDENCY_STRATEGY", "evict")
     monkeypatch.setenv("MODEL_RESIDENCY_FAKE", "offload")
 
@@ -256,6 +262,7 @@ def test_per_model_override_beats_global(monkeypatch: pytest.MonkeyPatch) -> Non
 def test_unknown_strategy_falls_back_to_spec_default(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Unknown strategy falls back to spec default."""
     monkeypatch.setenv("MODEL_RESIDENCY_STRATEGY", "garbage")
     monkeypatch.delenv("MODEL_RESIDENCY_FAKE", raising=False)
 
@@ -277,6 +284,7 @@ def test_unknown_strategy_falls_back_to_spec_default(
 
 
 def test_concurrent_acquires_do_not_double_load() -> None:
+    """Concurrent acquires do not double load."""
     registry = ModelRegistry()
     loaded: list[_FakeModel] = []
 
@@ -326,6 +334,7 @@ def test_concurrent_acquires_do_not_double_load() -> None:
 def test_oom_on_gpu_move_falls_back_to_cpu(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Oom on gpu move falls back to cpu."""
     call_devices: list[str] = []
 
     def flaky_mover(model: _FakeModel, device: str) -> _FakeModel:
@@ -352,6 +361,8 @@ def test_oom_on_gpu_move_falls_back_to_cpu(
 
 
 def test_non_oom_error_propagates() -> None:
+    """Non oom error propagates."""
+
     def angry_mover(model: _FakeModel, device: str) -> _FakeModel:
         raise RuntimeError("something totally unrelated")
 
@@ -364,6 +375,7 @@ def test_non_oom_error_propagates() -> None:
 
 
 def test_is_oom_error_detects_common_messages() -> None:
+    """Is oom error detects common messages."""
     assert _is_oom_error(RuntimeError("CUDA out of memory"))
     assert _is_oom_error(RuntimeError("cuda oom triggered"))
     assert not _is_oom_error(RuntimeError("device-side assert"))
@@ -378,6 +390,7 @@ def test_is_oom_error_detects_common_messages() -> None:
 def test_flush_gpu_runs_gc_and_empty_cache(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Flush gpu runs gc and empty cache."""
     gc_mock = MagicMock()
     empty_cache_mock = MagicMock()
 
@@ -394,6 +407,7 @@ def test_flush_gpu_runs_gc_and_empty_cache(
 def test_flush_gpu_without_cuda_still_runs_gc(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Flush gpu without cuda still runs gc."""
     gc_mock = MagicMock()
     empty_cache_mock = MagicMock()
 
@@ -408,6 +422,7 @@ def test_flush_gpu_without_cuda_still_runs_gc(
 
 
 def test_shutdown_drops_all_instances(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Shutdown drops all instances."""
     monkeypatch.setattr(model_registry.torch.cuda, "is_available", lambda: False)
 
     registry = ModelRegistry()
@@ -433,6 +448,7 @@ def test_shutdown_drops_all_instances(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_evict_drops_single_spec(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Evict drops single spec."""
     monkeypatch.setattr(model_registry.torch.cuda, "is_available", lambda: False)
 
     registry = ModelRegistry()
@@ -459,6 +475,7 @@ def test_evict_drops_single_spec(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_evict_ignores_unknown_name() -> None:
+    """Evict ignores unknown name."""
     registry = ModelRegistry()
     registry.evict("never-registered")  # must not raise
 
@@ -471,6 +488,7 @@ def test_evict_ignores_unknown_name() -> None:
 def test_load_memory_env_defaults_to_offload(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Load memory env defaults to offload."""
     monkeypatch.delenv("MODEL_RESIDENCY_STRATEGY", raising=False)
     cfg = load_memory_env()
     assert isinstance(cfg, MemoryConfig)
@@ -478,12 +496,14 @@ def test_load_memory_env_defaults_to_offload(
 
 
 def test_load_memory_env_accepts_evict(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Load memory env accepts evict."""
     monkeypatch.setenv("MODEL_RESIDENCY_STRATEGY", "EVICT")
     cfg = load_memory_env()
     assert cfg.default_strategy == "evict"
 
 
 def test_load_memory_env_rejects_unknown(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Load memory env rejects unknown."""
     monkeypatch.setenv("MODEL_RESIDENCY_STRATEGY", "garbage")
     cfg = load_memory_env()
     assert cfg.default_strategy == "offload"

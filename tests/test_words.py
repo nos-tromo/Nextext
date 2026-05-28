@@ -15,7 +15,7 @@ def test_create_wordcloud_returns_none_when_word_counts_empty() -> None:
     """
     wc = WordCounter.__new__(WordCounter)
     wc.language = "de"
-    wc.font_path = None
+    wc.font_path = None  # type: ignore[assignment]
     wc.word_counts = Counter()
 
     assert wc.create_wordcloud() is None

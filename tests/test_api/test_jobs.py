@@ -42,9 +42,7 @@ def _wait_for_status(
             if last["status"] == target:
                 return last
         time.sleep(0.05)
-    raise AssertionError(
-        f"Job '{job_id}' never reached status '{target}'. Last seen: {last}"
-    )
+    raise AssertionError(f"Job '{job_id}' never reached status '{target}'. Last seen: {last}")
 
 
 def test_post_jobs_creates_and_runs_a_stub_pipeline(
@@ -105,7 +103,7 @@ def test_delete_jobs_removes_state(
     stub_app_client: tuple[TestClient, JobManager],
 ) -> None:
     """DELETE should evict the job and return 204."""
-    client, manager = stub_app_client
+    client, _manager = stub_app_client
     options = {
         "task": "transcribe",
         "trg_lang": "de",

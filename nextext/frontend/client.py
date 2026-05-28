@@ -6,11 +6,10 @@ import json
 import os
 from collections.abc import Iterator
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 import httpx
 from loguru import logger
-
 
 DEFAULT_BACKEND_URL = "http://backend:8000"
 OWNER_HEADER = "X-Owner-Id"
@@ -53,9 +52,7 @@ class BackendClient:
                 persistent rows. Sourced from the browser's
                 ``localStorage`` in production; tests pass a stable value.
         """
-        self.base_url = (
-            base_url or os.getenv("BACKEND_HOST") or DEFAULT_BACKEND_URL
-        ).rstrip("/")
+        self.base_url = (base_url or os.getenv("BACKEND_HOST") or DEFAULT_BACKEND_URL).rstrip("/")
         self.owner_id = owner_id
         headers: dict[str, str] = {}
         if owner_id:
@@ -63,8 +60,7 @@ class BackendClient:
         self.client = httpx.Client(
             base_url=self.base_url,
             headers=headers,
-            timeout=timeout
-            or httpx.Timeout(connect=10.0, read=None, write=300.0, pool=10.0),
+            timeout=timeout or httpx.Timeout(connect=10.0, read=None, write=300.0, pool=10.0),
             transport=transport,
         )
 
@@ -72,7 +68,7 @@ class BackendClient:
         """Close the underlying HTTP client."""
         self.client.close()
 
-    def __enter__(self) -> "BackendClient":
+    def __enter__(self) -> BackendClient:
         """Support ``with`` blocks for callers that want explicit cleanup.
 
         Returns:
@@ -105,7 +101,7 @@ class BackendClient:
         data = {"options": json.dumps(options)}
         response = self.client.post("/api/v1/jobs", files=files, data=data)
         response.raise_for_status()
-        return response.json()["job_id"]
+        return cast(str, response.json()["job_id"])
 
     def subscribe_events(self, job_id: str) -> Iterator[StageEvent]:
         """Stream SSE events for a job until it terminates.
@@ -133,9 +129,7 @@ class BackendClient:
                         try:
                             payload = json.loads("\n".join(data_lines))
                         except json.JSONDecodeError:
-                            logger.warning(
-                                "Discarding malformed SSE payload for {}.", job_id
-                            )
+                            logger.warning("Discarding malformed SSE payload for {}.", job_id)
                             payload = {}
                         yield StageEvent(name=event_name, data=payload)
                     event_name = ""
@@ -157,7 +151,7 @@ class BackendClient:
         """
         response = self.client.get(f"/api/v1/jobs/{job_id}")
         response.raise_for_status()
-        return response.json()
+        return cast(dict[str, Any], response.json())
 
     def download_artifact(
         self,
@@ -208,7 +202,7 @@ class BackendClient:
         """
         response = self.client.get("/api/v1/health")
         response.raise_for_status()
-        return response.json()
+        return cast(dict[str, Any], response.json())
 
     def get_languages(self) -> dict[str, list[dict[str, str]]]:
         """Return the language mappings used by the frontend dropdowns.
@@ -218,4 +212,4 @@ class BackendClient:
         """
         response = self.client.get("/api/v1/languages")
         response.raise_for_status()
-        return response.json()
+        return cast(dict[str, list[dict[str, str]]], response.json())

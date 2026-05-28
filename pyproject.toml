@@ -59,12 +59,12 @@ nextext-cli = "nextext.cli:main"
 
 [dependency-groups]
 dev = [
-    "mypy>=1.18.2",
+    "mypy==1.19.0",
     "pre-commit>=4.4.0",
     "pytest>=9.0.1",
     "pytest-asyncio>=0.24",
     "respx>=0.21",
-    "ruff>=0.15.7",
+    "ruff==0.15.14",
 ]
 frontend = [
     "altair>=5.4",
@@ -101,6 +101,33 @@ cuda = [
   "torchaudio>=2.5.1,<2.12",
   "torchvision>=0.20.1,<0.27",
 ]
+
+[tool.ruff]
+# Mirrors nos-tromo/.github/configs/python-strict/ruff.toml. target-version
+# is the only key that may differ (Nextext floors at py312). Drift fails CI.
+target-version = "py312"
+line-length = 120
+
+[tool.ruff.lint]
+select = [
+    "E", "F", "W",
+    "I",
+    "B",
+    "D",
+    "ANN",
+    "UP",
+    "RUF",
+]
+ignore = ["ANN401"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.mypy]
+# Mirrors nos-tromo/.github/configs/python-strict/mypy.ini. Drift fails CI.
+strict = true
+ignore_missing_imports = true
+no_incremental = true
 
 [tool.uv]
 package = true

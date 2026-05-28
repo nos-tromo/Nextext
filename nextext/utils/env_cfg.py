@@ -1,3 +1,5 @@
+"""Centralized environment-config dataclasses (every env var loader lives here)."""
+
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -39,7 +41,6 @@ set_offline_env()  # Apply offline settings at module load time
 class PathConfig:
     """Dataclass for path configuration."""
 
-    logs: Path
     prompts: Path
     hf_hub_cache: Path
 
@@ -165,9 +166,7 @@ def load_inference_env() -> InferenceConfig:
     """
     raw = os.getenv("INFERENCE_PROVIDER", "ollama").strip().lower()
     if raw not in VALID_INFERENCE_PROVIDERS:
-        logger.warning(
-            "Unknown INFERENCE_PROVIDER '{}'. Falling back to 'ollama'.", raw
-        )
+        logger.warning("Unknown INFERENCE_PROVIDER '{}'. Falling back to 'ollama'.", raw)
         raw = "ollama"
     return InferenceConfig(provider=raw, think=_parse_tristate_bool("OLLAMA_THINK"))
 
@@ -210,7 +209,6 @@ def load_path_env() -> PathConfig:
 
     Returns:
         PathConfig: Dataclass containing path configuration.
-        - logs (Path): Path to the logs file.
         - prompts (Path): Path to the prompts directory.
         - hf_hub_cache (Path): Path to the Hugging Face Hub cache directory.
     """
@@ -219,11 +217,8 @@ def load_path_env() -> PathConfig:
 
     utils_dir: Path = Path(__file__).parent.resolve()
     default_prompts_dir: Path = utils_dir / "prompts"
-    project_root: Path = utils_dir.parents[1]
-    default_log_dir = project_root / ".log" / "nextext.log"
 
     return PathConfig(
-        logs=Path(os.getenv("LOG_PATH", default_log_dir)).expanduser(),
         prompts=default_prompts_dir,
         hf_hub_cache=Path(os.getenv("HF_HUB_CACHE", default_hf_hub_cache)).expanduser(),
     )

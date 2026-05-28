@@ -1,6 +1,9 @@
-from pathlib import Path
+"""CLI-side file I/O helpers and per-format export rendering."""
 
-import pandas as pd  # type: ignore[import]
+from pathlib import Path
+from typing import Any
+
+import pandas as pd
 from loguru import logger
 from matplotlib.figure import Figure
 
@@ -15,8 +18,9 @@ class FileProcessor:
     Methods:
         _setup_directories(file_path: Path, output_dir: Path) -> tuple[str, Path]:
             Sets up necessary directories for file processing.
-        write_file_output(data: str | list | tuple | pd.DataFrame | plt.Figure, label: str, target_language: str = "") -> str | list | pd.DataFrame | plt.Figure:
-            Writes the provided data to an appropriate output file based on its type (text, list, DataFrame, or plot).
+        write_file_output(data, label, target_language="") -> ...:
+            Writes the provided data to an output file based on its type
+            (text, list, DataFrame, or plot).
     """
 
     def __init__(
@@ -24,7 +28,7 @@ class FileProcessor:
         file_path: Path | None = None,
         output_dir: Path = Path("output"),
     ) -> None:
-        """Initializes the FileProcessor class. Sets up the logger and prepares the output directory for file processing.
+        """Set up the logger and prepare the output directory for file processing.
 
         Args:
             file_path (Path | None, optional): The path to the input file.
@@ -61,26 +65,26 @@ class FileProcessor:
 
     def write_file_output(
         self,
-        data: str | list | tuple | pd.DataFrame | Figure,
+        data: str | list[Any] | tuple[Any, ...] | pd.DataFrame | Figure,
         label: str,
         target_language: str = "",
-    ) -> str | list | tuple | pd.DataFrame | Figure | None:
+    ) -> str | list[Any] | tuple[Any, ...] | pd.DataFrame | Figure | None:
         """Write the provided data to an appropriate output file based on its type (text, list, DataFrame, or plot).
 
         Args:
-            data (str | list | tuple | pd.DataFrame | plt.Figure): The data to be written, which can be a string, list, DataFrame, or matplotlib Figure.
+            data (str | list[Any] | tuple[Any, ...] | pd.DataFrame | plt.Figure): Data to write — string, list,
+                DataFrame, or matplotlib Figure.
             label (str): The label used to create the file name.
-            target_language (str, optional): Optional language code to be appended to the file name. Defaults to "".
+            target_language (str, optional): Optional language code appended to the file name.
+                Defaults to "".
 
         Returns:
-            str | list | tuple | pd.DataFrame | plt.Figure | None: The data that was written, which can be a string, list, DataFrame, Figure or None if the data type is unsupported.
+            The data that was written, or None if the data type is unsupported.
         """
         if isinstance(data, (str, list, tuple, pd.DataFrame, Figure)):
             # Creating paths for file output
             language_suffix = f"_{target_language}" if target_language else ""
-            output_file_path = (
-                self.output_path / f"{self.filename}_{label}{language_suffix}"
-            )
+            output_file_path = self.output_path / f"{self.filename}_{label}{language_suffix}"
             output_file_path_csv = output_file_path.with_suffix(".csv")
             output_file_path_txt = output_file_path.with_suffix(".txt")
             output_file_path_excel = output_file_path.with_suffix(".xlsx")
@@ -98,9 +102,7 @@ class FileProcessor:
             # DataFrame file operations
             elif isinstance(data, pd.DataFrame):
                 data.to_csv(output_file_path_csv, index=False, encoding="utf-8")
-                with pd.ExcelWriter(
-                    output_file_path_excel, engine="openpyxl"
-                ) as writer:
+                with pd.ExcelWriter(output_file_path_excel, engine="openpyxl") as writer:
                     data.to_excel(writer, index=False, sheet_name="Sheet1")
             elif isinstance(data, Figure):
                 data.savefig(output_file_path_png)

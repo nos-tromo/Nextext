@@ -79,8 +79,7 @@ def get_job_manager(request: Request) -> JobManager:
     manager = getattr(request.app.state, "job_manager", None)
     if not isinstance(manager, JobManager):
         raise RuntimeError(
-            "JobManager has not been initialized. "
-            "Was the API started through `create_app` + the lifespan hook?"
+            "JobManager has not been initialized. Was the API started through `create_app` + the lifespan hook?"
         )
     return manager
 
@@ -156,10 +155,7 @@ async def _stream_upload_to_disk(
             if received > max_bytes:
                 raise HTTPException(
                     status_code=413,
-                    detail=(
-                        f"Upload exceeds the configured limit of "
-                        f"{max_bytes // (1 << 20)} MiB."
-                    ),
+                    detail=(f"Upload exceeds the configured limit of {max_bytes // (1 << 20)} MiB."),
                 )
             hasher.update(chunk)
             out_file.write(chunk)
@@ -172,12 +168,12 @@ async def _stream_upload_to_disk(
     status_code=status.HTTP_201_CREATED,
 )
 async def create_job(
-    file: UploadFile = File(..., description="Audio or video file to process."),
+    file: UploadFile = File(..., description="Audio or video file to process."),  # noqa: B008 — FastAPI dependency marker
     options: str = Form(
         ...,
         description="JSON-encoded `JobOptions` payload.",
     ),
-    manager: JobManager = Depends(get_job_manager),
+    manager: JobManager = Depends(get_job_manager),  # noqa: B008 — FastAPI dependency marker
     owner_id: str = Depends(get_owner_id),
 ) -> JobCreateResponse:
     """Accept a multipart upload and queue a new pipeline job.
@@ -223,7 +219,7 @@ async def create_job(
 
 @router.get("", response_model=JobListResponse)
 async def list_jobs(
-    manager: JobManager = Depends(get_job_manager),
+    manager: JobManager = Depends(get_job_manager),  # noqa: B008 — FastAPI dependency marker
     owner_id: str = Depends(get_owner_id),
 ) -> JobListResponse:
     """Return the caller's persistent jobs, newest first.
@@ -292,7 +288,7 @@ async def _require_job(
 @router.get("/{job_id}", response_model=JobSnapshot)
 async def get_job(
     job_id: str,
-    manager: JobManager = Depends(get_job_manager),
+    manager: JobManager = Depends(get_job_manager),  # noqa: B008 — FastAPI dependency marker
     owner_id: str = Depends(get_owner_id),
 ) -> JobSnapshot:
     """Return a point-in-time view of one job.
@@ -312,7 +308,7 @@ async def get_job(
 @router.delete("/{job_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_job(
     job_id: str,
-    manager: JobManager = Depends(get_job_manager),
+    manager: JobManager = Depends(get_job_manager),  # noqa: B008 — FastAPI dependency marker
     owner_id: str = Depends(get_owner_id),
 ) -> Response:
     """Remove a job, its tempfile, and signal SSE subscribers.
@@ -337,7 +333,7 @@ async def delete_job(
 @router.get("/{job_id}/events")
 async def stream_job_events(
     job_id: str,
-    manager: JobManager = Depends(get_job_manager),
+    manager: JobManager = Depends(get_job_manager),  # noqa: B008 — FastAPI dependency marker
     owner_id: str = Depends(get_owner_id),
 ) -> StreamingResponse:
     """Stream SSE events for one job.
@@ -368,7 +364,7 @@ async def stream_job_events(
 async def download_artifact(
     job_id: str,
     name: str,
-    manager: JobManager = Depends(get_job_manager),
+    manager: JobManager = Depends(get_job_manager),  # noqa: B008 — FastAPI dependency marker
     owner_id: str = Depends(get_owner_id),
 ) -> Response:
     """Return one artifact byte stream for a completed job.
@@ -407,9 +403,7 @@ async def download_artifact(
         content=payload,
         media_type=content_type,
         headers={
-            "Content-Disposition": (
-                f"attachment; filename=\"{download_name}\"; filename*=UTF-8''{quoted}"
-            ),
+            "Content-Disposition": (f"attachment; filename=\"{download_name}\"; filename*=UTF-8''{quoted}"),
             "Cache-Control": "no-store",
         },
     )

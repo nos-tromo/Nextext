@@ -58,8 +58,8 @@ Tests are in `tests/` using pytest with monkeypatch fixtures for mocking ML mode
 
 **Service split (Docker):**
 
-- **Backend** (`backend-cpu` / `backend-cuda`) — FastAPI app exposing `/api/v1`. Owns the pipeline, GPU model registry, and model caches. Built from `Dockerfile.backend.{cpu,cuda}`.
-- **Frontend** (`frontend-cpu` / `frontend-cuda`) — Streamlit-only container. Talks to the backend via `BACKEND_HOST` (default `http://backend:8000`). Built from `Dockerfile.frontend` (single-stage, ships only the `frontend` dependency group; no torch, no ML libs).
+- **Backend** (`backend-cpu` / `backend-cuda`) — FastAPI app exposing `/api/v1`. Owns the pipeline, GPU model registry, and model caches. Built from `docker/Dockerfile.backend.{cpu,cuda}`.
+- **Frontend** (`frontend-cpu` / `frontend-cuda`) — Streamlit-only container. Talks to the backend via `BACKEND_HOST` (default `http://backend:8000`). Built from `docker/Dockerfile.frontend` (single-stage, ships only the `frontend` dependency group; no torch, no ML libs).
 
 `nextext-cli` keeps the in-process path: it imports `nextext.pipeline` directly and runs end-to-end without needing a backend container. Lives in the backend image alongside the API.
 
@@ -135,12 +135,12 @@ GPU-resident models (`whisper_turbo`, `whisper_large`, `diarization`, `gliner`) 
 
 ## Docker
 
-`docker-compose.yml` defines four services across two profiles:
+Docker assets live under `docker/`. `docker/compose.yaml` defines four services across two profiles:
 
-- `backend-cpu` / `backend-cuda` — built from `Dockerfile.backend.{cpu,cuda}`, multi-stage `uv` builds. Run `uvicorn nextext.api.main:app` with a `HEALTHCHECK` against `/api/v1/health`. Reachable only on the `inference-net` network by default; no host port is published. Mounts the `nextext-data` Docker volume at `/var/lib/nextext` for persistent job storage.
-- `frontend-cpu` / `frontend-cuda` — built from `Dockerfile.frontend` (single-stage `uv`, `--only-group frontend`). Publishes Streamlit on `${NEXTEXT_HOST_PORT:-8501}` and reaches the backend over the internal network.
+- `backend-cpu` / `backend-cuda` — built from `docker/Dockerfile.backend.{cpu,cuda}`, multi-stage `uv` builds. Run `uvicorn nextext.api.main:app` with a `HEALTHCHECK` against `/api/v1/health`. Reachable only on the `inference-net` network by default; no host port is published. Mounts the `nextext-data` Docker volume at `/var/lib/nextext` for persistent job storage.
+- `frontend-cpu` / `frontend-cuda` — built from `docker/Dockerfile.frontend` (single-stage `uv`, `--only-group frontend`). The base `docker/compose.yaml` is the production shape and publishes no host ports; `docker/compose.override.yaml` (layered by `make up-dev`) publishes Streamlit on `${NEXTEXT_HOST_PORT:-8501}`.
 
-Both profiles share `inference-net` with Ollama / vLLM. Run `make volumes` (one-time, creates the external volumes including `nextext-data`) then `make build-cpu && make up-cpu` (or the CUDA equivalents) to bring the full stack up.
+Both profiles share `inference-net` with Ollama / vLLM. The `Makefile` is the entry point — it points Compose at `docker/compose.yaml`, since a bare `docker compose` from the repo root no longer finds it. The profile (`cpu`/`cuda`) is read from `PROFILE` in `.env` (default `cpu`); override per-invocation as `make up PROFILE=cuda`. Run `make volumes` (one-time, creates the external volumes including `nextext-data`), then `make build && make up` for production shape, or `make build && make up-dev` to publish the Streamlit frontend on the host.
 
 ## Persistence model
 

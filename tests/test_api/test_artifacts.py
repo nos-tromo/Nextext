@@ -6,14 +6,15 @@ import io
 import json
 import time
 import zipfile
+from typing import Any, cast
 
-import pandas as pd  # type: ignore[import-untyped]
+import pandas as pd
 from fastapi.testclient import TestClient
 
 from nextext.api.jobs import JobManager
 
 
-def _submit_and_wait(client: TestClient, options: dict) -> str:
+def _submit_and_wait(client: TestClient, options: dict[str, Any]) -> str:
     """Submit a job and block until it completes.
 
     Args:
@@ -29,7 +30,7 @@ def _submit_and_wait(client: TestClient, options: dict) -> str:
         data={"options": json.dumps(options)},
     )
     assert response.status_code == 201
-    job_id = response.json()["job_id"]
+    job_id = cast(str, response.json()["job_id"])
     deadline = time.monotonic() + 5.0
     while time.monotonic() < deadline:
         snapshot = client.get(f"/api/v1/jobs/{job_id}").json()

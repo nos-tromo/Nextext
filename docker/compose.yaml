@@ -1,11 +1,22 @@
 name: nextext
 
 x-no-proxy-env: &no-proxy-env
-  NO_PROXY: "backend,frontend,nextext,localhost,127.0.0.1,172.16.0.0/12,10.0.0.0/8${EXTRA_NO_PROXY:-}"
-  no_proxy: "backend,frontend,nextext,localhost,127.0.0.1,172.16.0.0/12,10.0.0.0/8${EXTRA_NO_PROXY:-}"
+  NO_PROXY: "backend,frontend,localhost,127.0.0.1,172.16.0.0/12,10.0.0.0/8${EXTRA_NO_PROXY:-}"
+  no_proxy: "backend,frontend,localhost,127.0.0.1,172.16.0.0/12,10.0.0.0/8${EXTRA_NO_PROXY:-}"
 
 x-env-file: &env-file
-  - .env
+  - ../.env
+
+##########################################################
+# Shared logging — the local driver rotates and compresses
+# per-container; tail with `docker compose logs -f <svc>`.
+##########################################################
+x-logging: &default-logging
+  driver: "local"
+  options:
+    max-size: "50m"
+    max-file: "5"
+    compress: "true"
 
 services:
   ##########################################################
@@ -14,14 +25,14 @@ services:
   backend-cpu:
     image: nextext-backend-cpu:${NEXTEXT_VERSION:-latest}
     build:
-      context: .
-      dockerfile: Dockerfile.backend.cpu
+      context: ..
+      dockerfile: docker/Dockerfile.backend.cpu
+    logging: *default-logging
     environment: &backend-env
       <<: *no-proxy-env
       HF_HUB_OFFLINE: ${HF_HUB_OFFLINE:-false}
       HF_HUB_TOKEN: $HF_HUB_TOKEN
       INFERENCE_PROVIDER: ${INFERENCE_PROVIDER:-ollama}
-      LOG_PATH: /var/log/nextext/backend-cpu.log
       NER_MODEL: ${NER_MODEL:-}
       NEXTEXT_API_HOST: ${NEXTEXT_API_HOST:-0.0.0.0}
       NEXTEXT_API_PORT: ${NEXTEXT_API_PORT:-8000}
@@ -38,18 +49,18 @@ services:
     env_file: *env-file
     volumes: &backend-volumes
       - huggingface-cache:/root/.cache/huggingface/hub
-      - nextext-data:/var/lib/nextext
-      - nextext-logs:/var/log/nextext
       - nltk-cache:/root/nltk_data
       - spacy-cache:/root/.cache/spacy
       - torch-cache:/root/.cache/torch
       - whisper-cache:/root/.cache/whisper
+      - nextext-data:/var/lib/nextext
     networks: &backend-networks
-      inference-net:
+      nextext-net:
         aliases:
           - backend
+      inference-net:
+        aliases:
           - nextext-backend
-          - nextext
     profiles: ["cpu"]
 
   ##########################################################
@@ -58,11 +69,11 @@ services:
   backend-cuda:
     image: nextext-backend-cuda:${NEXTEXT_VERSION:-latest}
     build:
-      context: .
-      dockerfile: Dockerfile.backend.cuda
+      context: ..
+      dockerfile: docker/Dockerfile.backend.cuda
+    logging: *default-logging
     environment:
       <<: *backend-env
-      LOG_PATH: /var/log/nextext/backend-cuda.log
       NVIDIA_VISIBLE_DEVICES: all
     env_file: *env-file
     volumes: *backend-volumes
@@ -82,25 +93,19 @@ services:
   frontend-cpu:
     image: nextext-frontend-cpu:${NEXTEXT_VERSION:-latest}
     build: &frontend-build
-      context: .
-      dockerfile: Dockerfile.frontend
-    ports: &frontend-ports
-      - ${NEXTEXT_HOST_PORT:-8501}:8501
+      context: ..
+      dockerfile: docker/Dockerfile.frontend
+    logging: *default-logging
     environment: &frontend-env
       <<: *no-proxy-env
       BACKEND_HOST: ${BACKEND_HOST:-http://backend:8000}
       BACKEND_PUBLIC_HOST: ${BACKEND_PUBLIC_HOST:-http://localhost:8000}
-      LOG_PATH: /var/log/nextext/frontend-cpu.log
       STREAMLIT_BROWSER_GATHER_USAGE_STATS: "false"
       STREAMLIT_SERVER_FILE_WATCHER_TYPE: none
       STREAMLIT_SERVER_MAX_UPLOAD_SIZE: 8192
     env_file: *env-file
-    volumes: &frontend-volumes
-      - nextext-logs:/var/log/nextext
     networks: &frontend-networks
-      inference-net:
-        aliases:
-          - frontend
+      nextext-net:
     depends_on:
       - backend-cpu
     profiles: ["cpu"]
@@ -111,12 +116,10 @@ services:
   frontend-cuda:
     image: nextext-frontend-cuda:${NEXTEXT_VERSION:-latest}
     build: *frontend-build
-    ports: *frontend-ports
+    logging: *default-logging
     environment:
       <<: *frontend-env
-      LOG_PATH: /var/log/nextext/frontend-cuda.log
     env_file: *env-file
-    volumes: *frontend-volumes
     networks: *frontend-networks
     depends_on:
       - backend-cuda
@@ -128,9 +131,6 @@ services:
 volumes:
   huggingface-cache:
     external: true
-  nextext-data:
-    external: true
-  nextext-logs:
   nltk-cache:
     external: true
   spacy-cache:
@@ -139,11 +139,14 @@ volumes:
     external: true
   whisper-cache:
     external: true
+  nextext-data:
+    external: true
 
 ##########################################################
 # Networks
 ##########################################################
 networks:
+  nextext-net:
   inference-net:
     external: true
     name: ${INFERENCE_NETWORK:-inference-net}

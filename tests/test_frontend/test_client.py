@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 
 import httpx
 import pytest
@@ -11,7 +12,11 @@ from nextext.frontend.client import OWNER_HEADER, BackendClient, StageEvent
 _TEST_OWNER_ID = "a" * 32
 
 
-def _make_client(handler, *, owner_id: str | None = _TEST_OWNER_ID) -> BackendClient:  # type: ignore[no-untyped-def]
+def _make_client(
+    handler: Callable[[httpx.Request], httpx.Response],
+    *,
+    owner_id: str | None = _TEST_OWNER_ID,
+) -> BackendClient:
     """Build a :class:`BackendClient` backed by an ``httpx.MockTransport``.
 
     Args:

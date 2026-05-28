@@ -1,27 +1,28 @@
 """Utilities for preloading Nextext language and speech models."""
 
-import gc
-import importlib
+# Re-exported for tests that monkeypatch through this module.
+import gc as gc
+import importlib as importlib
 import os
-import subprocess
+import subprocess as subprocess
 import sys
 from collections.abc import Iterable
-from importlib.metadata import PackageNotFoundError, version as package_version
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as package_version
 from pathlib import Path
 
-import huggingface_hub
-import nltk  # type: ignore[import-untyped]
+import huggingface_hub as huggingface_hub
+import nltk
 import torch
-import whisper  # type: ignore[import-untyped]
+import whisper
 from dotenv import load_dotenv
-from gliner import GLiNER  # type: ignore[import-untyped]
+from gliner import GLiNER
 from loguru import logger
-from pyannote.audio import Pipeline as DiarizationPipeline  # type: ignore[import-untyped]
+from pyannote.audio import Pipeline as DiarizationPipeline
 
+from nextext.core.transcription import _configure_torch_safe_globals
 from nextext.utils.env_cfg import load_inference_env
 from nextext.utils.mappings_loader import load_mappings
-from nextext.core.transcription import _configure_torch_safe_globals
-
 
 load_dotenv()
 
@@ -29,9 +30,7 @@ SPACY_MODEL_DIR = "SPACY_MODEL_DIR"
 SPACY_MODEL_DOWNLOAD_BASE_URL = "SPACY_MODEL_DOWNLOAD_BASE_URL"
 SPACY_MODEL_PACKAGE_VERSION = "SPACY_MODEL_PACKAGE_VERSION"
 DEFAULT_SPACY_MODEL_DIR = Path.home() / ".cache" / "spacy"
-DEFAULT_SPACY_MODEL_DOWNLOAD_BASE_URL = (
-    "https://github.com/explosion/spacy-models/releases/download"
-)
+DEFAULT_SPACY_MODEL_DOWNLOAD_BASE_URL = "https://github.com/explosion/spacy-models/releases/download"
 NLTK_RESOURCES = ("punkt_tab", "stopwords")
 LOCAL_WHISPER_MODEL_IDS: tuple[str, ...] = ("large-v3-turbo", "large-v3")
 GLINER_MODEL_ID = "gliner-community/gliner_large-v2.5"
@@ -70,9 +69,7 @@ def get_spacy_model_package_version() -> str:
 
     version_parts = installed_spacy_version.split(".")
     if len(version_parts) < 2:
-        raise RuntimeError(
-            f"Unsupported spaCy version '{installed_spacy_version}' for model preload."
-        )
+        raise RuntimeError(f"Unsupported spaCy version '{installed_spacy_version}' for model preload.")
 
     return f"{version_parts[0]}.{version_parts[1]}.0"
 
@@ -100,9 +97,7 @@ def get_spacy_model_download_url(model_id: str) -> str:
     """
     model_version = get_spacy_model_package_version()
     wheel_name = f"{model_id}-{model_version}-py3-none-any.whl"
-    return (
-        f"{get_spacy_model_download_base_url()}/{model_id}-{model_version}/{wheel_name}"
-    )
+    return f"{get_spacy_model_download_base_url()}/{model_id}-{model_version}/{wheel_name}"
 
 
 def ensure_spacy_model_path(model_dir: Path | None = None) -> Path:
@@ -230,17 +225,13 @@ def preload_whisper_model(model_id: str, device: str = "cpu") -> None:
     del device
 
     if model_id not in whisper._MODELS:
-        raise ValueError(
-            f"Unknown Whisper model '{model_id}'. Available: {sorted(whisper._MODELS)}."
-        )
+        raise ValueError(f"Unknown Whisper model '{model_id}'. Available: {sorted(whisper._MODELS)}.")
 
     default_cache = os.path.join(os.path.expanduser("~"), ".cache")
     download_root = os.path.join(os.getenv("XDG_CACHE_HOME", default_cache), "whisper")
 
     logger.info("Downloading Whisper model '{}' to '{}'.", model_id, download_root)
-    checkpoint_path = whisper._download(
-        whisper._MODELS[model_id], download_root, in_memory=False
-    )
+    checkpoint_path = whisper._download(whisper._MODELS[model_id], download_root, in_memory=False)
     logger.info("Whisper model '{}' cached at '{}'.", model_id, checkpoint_path)
 
 
@@ -263,7 +254,7 @@ def preload_whisper_models(
 def preload_silero_vad() -> None:
     """Download and cache the Silero VAD model via ``torch.hub``."""
     logger.info("Downloading Silero VAD model from '{}'.", SILERO_VAD_REPO)
-    torch.hub.load(SILERO_VAD_REPO, model="silero_vad", trust_repo=True)
+    torch.hub.load(SILERO_VAD_REPO, model="silero_vad", trust_repo=True)  # type: ignore[no-untyped-call]
     logger.info("Silero VAD model cached.")
 
 
@@ -349,9 +340,7 @@ def preload_translation_model(
             resolved_model_id,
         )
         huggingface_hub.snapshot_download(resolved_model_id, token=hf_token)
-        logger.info(
-            "Translation model '{}' cached from Hugging Face Hub.", resolved_model_id
-        )
+        logger.info("Translation model '{}' cached from Hugging Face Hub.", resolved_model_id)
     else:
         logger.info(
             "Translation model '{}' is hosted remotely; no local preload required.",

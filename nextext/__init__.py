@@ -21,6 +21,6 @@ from __future__ import annotations
 try:
     import torch
 
-    torch.backends.nnpack.set_flags(_enabled=False)
+    torch.backends.nnpack.set_flags(_enabled=False)  # type: ignore[no-untyped-call]
 except ImportError:  # pragma: no cover - frontend-only image path
     pass

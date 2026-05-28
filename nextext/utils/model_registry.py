@@ -15,21 +15,21 @@ Strategy resolution per release:
 
 from __future__ import annotations
 
-import gc
+import gc as gc  # re-exported for tests
 import os
 import threading
 from collections.abc import Callable
 from contextlib import AbstractContextManager
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 from types import TracebackType
 from typing import Any
 
-import torch
+import torch as torch  # re-exported for tests
 from loguru import logger
 
 
-class Strategy(str, Enum):
+class Strategy(StrEnum):
     """Residency strategy for a model after a caller releases it."""
 
     OFFLOAD = "offload"
@@ -306,9 +306,7 @@ class ModelRegistry:
         Returns:
             Strategy: The resolved :class:`Strategy` enum member.
         """
-        per_model_raw = (
-            os.getenv(f"MODEL_RESIDENCY_{spec.name.upper()}", "").strip().lower()
-        )
+        per_model_raw = os.getenv(f"MODEL_RESIDENCY_{spec.name.upper()}", "").strip().lower()
         if per_model_raw in VALID_STRATEGIES:
             return Strategy(per_model_raw)
         if per_model_raw:
@@ -349,9 +347,7 @@ class ModelRegistry:
                 state.device = "cpu"
             desired = target_device if spec.gpu_capable else "cpu"
             if spec.gpu_capable and state.device != desired:
-                state.instance, state.device = self._safe_move(
-                    spec, state.instance, desired
-                )
+                state.instance, state.device = self._safe_move(spec, state.instance, desired)
             return state.instance
 
     def _release(self, spec: ModelSpec) -> None:
@@ -377,9 +373,7 @@ class ModelRegistry:
                 return
             if spec.gpu_capable and state.device != "cpu":
                 logger.debug("Offloading model '{}' to CPU.", spec.name)
-                state.instance, state.device = self._safe_move(
-                    spec, state.instance, "cpu"
-                )
+                state.instance, state.device = self._safe_move(spec, state.instance, "cpu")
                 self.flush_gpu()
 
     def _safe_move(self, spec: ModelSpec, model: Any, target: str) -> tuple[Any, str]:
@@ -431,8 +425,7 @@ class ModelRegistry:
                     return moved, "cpu"
                 except Exception:
                     logger.warning(
-                        "Could not move '{}' to CPU after OOM. Instance may "
-                        "be in an inconsistent state.",
+                        "Could not move '{}' to CPU after OOM. Instance may be in an inconsistent state.",
                         spec.name,
                     )
                     return model, "cpu"

@@ -33,7 +33,7 @@ import sqlite3
 import threading
 from collections.abc import Iterator
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
@@ -67,7 +67,7 @@ def _utcnow() -> datetime:
     Returns:
         datetime: Current time with explicit UTC offset.
     """
-    return datetime.now(tz=timezone.utc)
+    return datetime.now(tz=UTC)
 
 
 def _iso(value: datetime | None) -> str | None:
@@ -453,9 +453,7 @@ class SqliteJobRepository:
             JobRecord | None: The row, or ``None`` if missing.
         """
         with self._lock:
-            row = self._conn.execute(
-                "SELECT * FROM jobs WHERE job_id = ?", (job_id,)
-            ).fetchone()
+            row = self._conn.execute("SELECT * FROM jobs WHERE job_id = ?", (job_id,)).fetchone()
         return _row_to_record(row) if row else None
 
     def list_for_owner(
@@ -474,11 +472,7 @@ class SqliteJobRepository:
         """
         if statuses:
             placeholders = ",".join("?" * len(statuses))
-            sql = (
-                "SELECT * FROM jobs WHERE owner_id = ? "
-                f"AND status IN ({placeholders}) "
-                "ORDER BY created_at DESC"
-            )
+            sql = f"SELECT * FROM jobs WHERE owner_id = ? AND status IN ({placeholders}) ORDER BY created_at DESC"
             params: tuple[Any, ...] = (owner_id, *(s.value for s in statuses))
         else:
             sql = "SELECT * FROM jobs WHERE owner_id = ? ORDER BY created_at DESC"
@@ -494,9 +488,7 @@ class SqliteJobRepository:
             JobRecord: One row per emit.
         """
         with self._lock:
-            rows = self._conn.execute(
-                "SELECT * FROM jobs ORDER BY created_at ASC"
-            ).fetchall()
+            rows = self._conn.execute("SELECT * FROM jobs ORDER BY created_at ASC").fetchall()
         for row in rows:
             yield _row_to_record(row)
 
@@ -568,7 +560,7 @@ class ArtifactStore:
     root: Path
 
     @classmethod
-    def for_job(cls, data_root: Path, job_id: str) -> "ArtifactStore":
+    def for_job(cls, data_root: Path, job_id: str) -> ArtifactStore:
         """Build the store for ``job_id`` under ``data_root``.
 
         Args:
