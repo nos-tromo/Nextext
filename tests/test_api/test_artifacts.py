@@ -30,12 +30,12 @@ def _submit_and_wait(client: TestClient, options: dict[str, Any]) -> str:
         data={"options": json.dumps(options)},
     )
     assert response.status_code == 201
-    job_id = response.json()["job_id"]
+    job_id = cast(str, response.json()["job_id"])
     deadline = time.monotonic() + 5.0
     while time.monotonic() < deadline:
         snapshot = client.get(f"/api/v1/jobs/{job_id}").json()
         if snapshot["status"] == "completed":
-            return cast(str, job_id)
+            return job_id
         time.sleep(0.05)
     raise AssertionError(f"Job {job_id} did not complete in time.")
 

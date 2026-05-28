@@ -38,6 +38,7 @@ The compose file uses external cache volumes so model artifacts survive
 container recreation:
 
 - `huggingface-cache`
+- `nextext-data` (persistent job index + artifacts; survives `docker compose down -v`)
 - `nltk-cache`
 - `spacy-cache`
 - `torch-cache`
@@ -95,19 +96,21 @@ Clone the repository and bring up the stack for CPU or GPU usage (the
 CUDA profile requires a CUDA compatible GPU and the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)). The profile is read from `PROFILE` in `.env` (default `cpu`); the `Makefile` is the entry point and points Compose at `docker/compose.yaml` for you:
 
 ```bash
-make build           # build images for the active profile
-make up              # CPU by default — starts backend-cpu + frontend-cpu
-make up PROFILE=cuda  # CUDA — starts backend-cuda + frontend-cuda
+make build              # build images for the active profile
+make up-dev             # CPU by default — starts backend-cpu + frontend-cpu (publishes host ports)
+make up-dev PROFILE=cuda  # CUDA — starts backend-cuda + frontend-cuda
 ```
 
-`make up` layers `docker/compose.override.yaml` so host ports are
-published for local development; the base `docker/compose.yaml` is the
-production shape and publishes no host ports.
+`make up-dev` layers `docker/compose.override.yaml` so host ports are
+published for local development; `make up` (or the base `docker/compose.yaml`
+alone) is the production shape and publishes no host ports.
 
 Each profile brings up two containers:
 
-- **Backend** (`backend-cpu` / `backend-cuda`) — FastAPI on port 8000 (internal). Owns the pipeline and model caches. Exposes `/api/v1/health`, `/api/v1/languages`, `/api/v1/jobs/*`. Not published to the host by default.
+- **Backend** (`backend-cpu` / `backend-cuda`) — FastAPI on port 8000 (internal). Owns the pipeline, model caches, and (optionally) the persistent job index. Exposes `/api/v1/health`, `/api/v1/languages`, `/api/v1/jobs/*`. Not published to the host by default.
 - **Frontend** (`frontend-cpu` / `frontend-cuda`) — Streamlit on port 8501. A thin HTTP client over the backend; ships only the `frontend` dependency group (no torch / whisper / pyannote).
+
+By default every job runs ephemerally — uploads stream through RAM and disappear when the sweeper evicts them. Tick **Save results across browser sessions** in the Parameters tab to opt into persistent storage: the backend then writes the job index to SQLite under `/var/lib/nextext` (the `nextext-data` Docker volume) and per-job artifacts to a directory beside it. Persistent jobs survive container restarts. Identity is anonymous — the frontend stamps a UUID4 into the URL (`?owner=<uuid>`) on first visit and the backend uses it to scope rows. Bookmark the page or keep the tab open to keep your saved jobs reachable.
 
 Launch the UI: `http://localhost:8501/`. The frontend reaches the backend via `BACKEND_HOST` (default `http://backend:8000` inside the compose network).
 
@@ -126,9 +129,10 @@ file path or profile flags. The profile is read from `PROFILE` in `.env`
 | Target | Action |
 |--------|--------|
 | `make network` | Create the external `inference-net` Docker network (one-time per host; idempotent). |
-| `make volumes` | Create the external Docker volumes (one-time per host; idempotent). |
+| `make volumes` | Create the external Docker volumes including `nextext-data` for persistent job storage (one-time per host; idempotent). |
 | `make build` | Build both backend and frontend images for the active profile. |
-| `make up` | Run both services for the active profile in the foreground. Layers `docker/compose.override.yaml` to publish host ports. |
+| `make up` | Run both services for the active profile in the foreground (production shape — no host ports). |
+| `make up-dev` | Same as `make up` but layers `docker/compose.override.yaml` to publish host ports for local development. |
 | `make stop` | Stop the active profile's containers. |
 | `make logs` | Tail combined logs from backend and frontend. |
 | `make bundle` | Build the active profile and write versioned `.tar.gz` archives for offline transfer (see below). |

@@ -10,7 +10,9 @@ chains to it, so the Streamlit Docker image can ship with only the
 from __future__ import annotations
 
 import io
+import re
 import sys
+import uuid
 import zipfile
 from collections.abc import Sequence
 from datetime import datetime
@@ -43,15 +45,77 @@ PIPELINE_STAGE_LABELS: tuple[str, ...] = (
     "Detecting hate speech",
 )
 
+OWNER_PARAM = "owner"
+_UUID4_HEX_RE = re.compile(r"^[0-9a-f]{32}$")
 
-@st.cache_resource(show_spinner=False)
-def _get_client() -> BackendClient:
-    """Return a session-cached :class:`BackendClient` instance.
+
+def _ensure_owner_id() -> str:
+    """Resolve the per-browser owner identifier, persisting it in the URL.
+
+    The URL query parameter ``?owner=<uuid>`` is the canonical carrier
+    for the per-browser identity. On first visit (no param present) the
+    function mints a fresh UUID4 hex and writes it into ``st.query_params``
+    so Streamlit updates the address bar; subsequent reloads, browser
+    history navigations, and bookmarks all re-supply the value via the
+    URL without any client-side state.
+
+    This approach was chosen over a ``localStorage`` shim because
+    ``streamlit.components.v1.html`` iframes are sandboxed without
+    ``allow-top-navigation``: a JS bootstrap attempting
+    ``window.parent.location.replace(...)`` is silently blocked, which
+    leaves the page stuck on the "Initializing session…" gate forever.
 
     Returns:
-        BackendClient: A long-lived client reused across reruns.
+        str: The validated UUID4 hex identifier for the current browser.
     """
-    return BackendClient()
+    owner_param = st.query_params.get(OWNER_PARAM)
+    if isinstance(owner_param, str) and _UUID4_HEX_RE.match(owner_param):
+        st.session_state["owner_id"] = owner_param
+        return owner_param
+
+    new_id = st.session_state.get("owner_id")
+    if not (isinstance(new_id, str) and _UUID4_HEX_RE.match(new_id)):
+        new_id = uuid.uuid4().hex
+        st.session_state["owner_id"] = new_id
+    # Persist into the URL so a reload (or a returning visit via the
+    # browser's history) keeps the same identity. Setting an entry on
+    # ``st.query_params`` updates the URL bar without an extra rerun.
+    st.query_params[OWNER_PARAM] = new_id
+    return new_id
+
+
+@st.cache_resource(show_spinner=False, scope="session")
+def _get_client(owner_id: str) -> BackendClient:
+    """Return a session-cached :class:`BackendClient` for one owner.
+
+    The cache is session-scoped *and* keyed on the owner_id so two
+    browser tabs that happen to land on the same Streamlit session
+    cannot accidentally share a client (and therefore an identity).
+
+    Args:
+        owner_id: Stable UUID4 hex from the browser's ``localStorage``.
+
+    Returns:
+        BackendClient: A long-lived client with the ``X-Owner-Id``
+            header pre-bound.
+    """
+    return BackendClient(owner_id=owner_id)
+
+
+def _get_owner_id() -> str:
+    """Return the owner_id stashed by :func:`_ensure_owner_id`.
+
+    Returns:
+        str: The current owner_id.
+
+    Raises:
+        RuntimeError: If called before ``_ensure_owner_id`` populated
+            the session state — indicates a Streamlit script-flow bug.
+    """
+    owner_id = st.session_state.get("owner_id")
+    if not isinstance(owner_id, str):
+        raise RuntimeError("owner_id is not in session state; _ensure_owner_id must run before any backend call.")
+    return owner_id
 
 
 @st.cache_data(show_spinner=False, ttl=300)
@@ -61,7 +125,7 @@ def _fetch_languages() -> dict[str, list[dict[str, str]]]:
     Returns:
         dict[str, list[dict[str, str]]]: ``{"whisper": [...], "target": [...]}``.
     """
-    client = _get_client()
+    client = _get_client(_get_owner_id())
     return client.get_languages()
 
 
@@ -169,7 +233,7 @@ def _process_uploaded_files(
     Returns:
         list[dict[str, Any]]: Result payloads in upload order.
     """
-    client = _get_client()
+    client = _get_client(_get_owner_id())
     total_files = len(uploaded_files)
     total_stages = len(PIPELINE_STAGE_LABELS)
     progress_bar = st.progress(0.0, text="Preparing files…")
@@ -309,7 +373,7 @@ def _results_archive_bytes(
     if isinstance(cached, tuple) and cached[0] == cache_key:
         return cast(bytes, cached[1])
 
-    client = _get_client()
+    client = _get_client(_get_owner_id())
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, mode="w", compression=zipfile.ZIP_DEFLATED) as outer:
         for result in results:
@@ -355,7 +419,7 @@ def _docint_jsonl_bytes(
     if isinstance(cached, tuple) and cached[0] == cache_key:
         return cast(tuple[bytes, str, str], cached[1])
 
-    client = _get_client()
+    client = _get_client(_get_owner_id())
     per_file: list[tuple[str, bytes]] = []
     for result in results:
         job_id = result.get("job_id")
@@ -432,6 +496,16 @@ def _start_page() -> None:
         )
         speakers = st.number_input("Max speakers", 1, 10, value=1, step=1)
 
+    persist = st.checkbox(
+        "Save results across browser sessions",
+        value=False,
+        help=(
+            "Stored on the server until you delete them via the Saved jobs "
+            "sidebar. Leave this off so results live only in memory and "
+            "disappear after the configured TTL."
+        ),
+    )
+
     src_lang_code = _name_to_code(src_lang_maps).get(src_lang_name)
     trg_lang_code = _name_to_code(trg_lang_maps).get(
         trg_lang_name,
@@ -448,6 +522,7 @@ def _start_page() -> None:
         words=words,
         summarization=summarization,
         hate_speech=hate_speech,
+        persist=persist,
     )
 
     if run and uploaded_files:
@@ -563,7 +638,7 @@ def _render_word_tab(result: dict[str, Any]) -> None:
     st.subheader("☁️ Word Cloud")
     if result.get("wordcloud_url") and result.get("job_id"):
         try:
-            client = _get_client()
+            client = _get_client(_get_owner_id())
             png_bytes, _ = client.download_artifact(result["job_id"], "wordcloud.png")
             st.image(io.BytesIO(png_bytes))
         except Exception:
@@ -595,11 +670,85 @@ def _render_hate_tab(result: dict[str, Any]) -> None:
             st.write(f"**Flagged text:** {item.get('text', '')}")
 
 
+def _load_saved_job(job_id: str) -> None:
+    """Load a persisted snapshot into ``st.session_state["results"]``.
+
+    Used by the Saved-jobs sidebar to re-open a previously stored run
+    inside the result tabs without re-running the pipeline.
+
+    Args:
+        job_id: Job identifier returned by ``client.list_jobs``.
+    """
+    try:
+        snapshot = _get_client(_get_owner_id()).get_snapshot(job_id)
+    except Exception as exc:
+        st.sidebar.error(f"Could not load job {job_id}: {exc}")
+        return
+    if snapshot.get("status") != "completed":
+        st.sidebar.warning(
+            f"Job {snapshot.get('file_name', job_id)} is "
+            f"{snapshot.get('status', 'unknown')}; only completed jobs can be reloaded."
+        )
+        return
+    result = _normalize_snapshot_result(snapshot)
+    result["file_name"] = snapshot.get("file_name") or job_id
+    st.session_state["results"] = [result]
+    st.session_state["result"] = result
+    st.session_state["selected_result_file"] = result["file_name"]
+    st.session_state["results_timestamp"] = datetime.now().strftime("%Y%m%d_%H%M%S")
+    st.session_state.pop("_results_archive", None)
+    st.session_state.pop("_docint_jsonl", None)
+
+
+def _render_saved_jobs_sidebar() -> None:
+    """Populate the sidebar with the caller's persistent jobs.
+
+    Lets users reopen previously-saved work and delete entries they no
+    longer need. Silently skips when the backend is unreachable so the
+    main UI stays usable.
+    """
+    with st.sidebar:
+        st.markdown("### 💾 Saved jobs")
+        try:
+            jobs = _get_client(_get_owner_id()).list_jobs()
+        except Exception:
+            st.caption("Backend unreachable — saved jobs unavailable.")
+            return
+        if not jobs:
+            st.caption("Tick **Save results across browser sessions** before running to keep results here.")
+            return
+        for job in jobs:
+            status_label = str(job.get("status", "unknown"))
+            file_name = str(job.get("file_name", job["job_id"]))
+            label = f"📄 {file_name} — {status_label}"
+            cols = st.columns([4, 1])
+            with cols[0]:
+                if st.button(label, key=f"saved_open_{job['job_id']}"):
+                    _load_saved_job(job["job_id"])
+                    st.rerun()
+            with cols[1]:
+                if st.button("🗑", key=f"saved_delete_{job['job_id']}"):
+                    try:
+                        _get_client(_get_owner_id()).delete_job(job["job_id"])
+                    except Exception as exc:
+                        st.error(f"Delete failed: {exc}")
+                    else:
+                        st.rerun()
+
+
 def main() -> None:
     """Run the Streamlit app with tab-based navigation."""
     st.set_page_config(page_title="Nextext", layout="wide")
+    # Establish the per-browser owner identity before any backend call.
+    # The helper mints a UUID4 on first visit and stamps it into the
+    # URL via ``st.query_params`` so the identity survives reloads and
+    # browser-history navigations. There is no client-side bootstrap;
+    # every run returns a usable id immediately.
+    _ensure_owner_id()
     st.title("Nextext")
     st.subheader("Transcribe, translate, and analyze audio/video files")
+
+    _render_saved_jobs_sidebar()
 
     tab_params, tab_transcript, tab_summary, tab_words, tab_hate = st.tabs(
         ["Parameters", "Transcript", "Summary", "Word-level Analysis", "Hate Speech"]
@@ -694,7 +843,7 @@ def main() -> None:
         """
         <hr style="margin-top:2rem;margin-bottom:1rem;">
         <p style="text-align:center;">
-            🔗 <a href="https://github.com/nos-tromo/nextext" target="_blank">GitHub&nbsp;Repository</a>
+            🔗 <a href="https://github.com/nos-tromo/nextext" target="_blank">Nextext</a>
         </p>
         """,
         unsafe_allow_html=True,

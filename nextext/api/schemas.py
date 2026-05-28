@@ -17,6 +17,7 @@ class JobStatus(StrEnum):
     COMPLETED = "completed"
     FAILED = "failed"
     CANCELLED = "cancelled"
+    INTERRUPTED = "interrupted"
 
 
 class JobOptions(BaseModel):
@@ -31,6 +32,15 @@ class JobOptions(BaseModel):
     words: bool = False
     summarization: bool = False
     hate_speech: bool = False
+    persist: bool = Field(
+        default=False,
+        description=(
+            "When true, the backend stores the job index in SQLite and "
+            "the artifacts on disk so they survive container restarts. "
+            "Default is false to keep job content out of durable storage "
+            "unless the user explicitly opts in."
+        ),
+    )
 
 
 class JobCreateResponse(BaseModel):
@@ -141,3 +151,24 @@ class LanguagesResponse(BaseModel):
 
     whisper: list[LanguageEntry]
     target: list[LanguageEntry]
+
+
+class JobListItem(BaseModel):
+    """Compact view of a persistent job for the listing endpoint."""
+
+    job_id: str
+    status: JobStatus
+    file_name: str
+    stage: str | None = None
+    progress: float = 0.0
+    error: str | None = None
+    created_at: datetime
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    task: Literal["transcribe", "translate"] = "transcribe"
+
+
+class JobListResponse(BaseModel):
+    """Response body for ``GET /jobs``."""
+
+    jobs: list[JobListItem]

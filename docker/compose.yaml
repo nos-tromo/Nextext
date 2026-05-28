@@ -36,6 +36,7 @@ services:
       NER_MODEL: ${NER_MODEL:-}
       NEXTEXT_API_HOST: ${NEXTEXT_API_HOST:-0.0.0.0}
       NEXTEXT_API_PORT: ${NEXTEXT_API_PORT:-8000}
+      NEXTEXT_DATA_DIR: ${NEXTEXT_DATA_DIR:-/var/lib/nextext}
       NEXTEXT_JOB_TTL_SECONDS: ${NEXTEXT_JOB_TTL_SECONDS:-3600}
       NEXTEXT_MAX_UPLOAD_MB: ${NEXTEXT_MAX_UPLOAD_MB:-8192}
       NEXTEXT_OFFLINE: ${NEXTEXT_OFFLINE:-1}
@@ -52,6 +53,7 @@ services:
       - spacy-cache:/root/.cache/spacy
       - torch-cache:/root/.cache/torch
       - whisper-cache:/root/.cache/whisper
+      - nextext-data:/var/lib/nextext
     networks: &backend-networks
       nextext-net:
         aliases:
@@ -136,6 +138,8 @@ volumes:
   torch-cache:
     external: true
   whisper-cache:
+    external: true
+  nextext-data:
     external: true
 
 ##########################################################

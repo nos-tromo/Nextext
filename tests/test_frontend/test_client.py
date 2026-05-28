@@ -2,25 +2,37 @@
 
 from __future__ import annotations
 
-from typing import Any
+from collections.abc import Callable
 
 import httpx
 import pytest
 
-from nextext.frontend.client import BackendClient, StageEvent
+from nextext.frontend.client import OWNER_HEADER, BackendClient, StageEvent
+
+_TEST_OWNER_ID = "a" * 32
 
 
-def _make_client(handler: Any) -> BackendClient:
+def _make_client(
+    handler: Callable[[httpx.Request], httpx.Response],
+    *,
+    owner_id: str | None = _TEST_OWNER_ID,
+) -> BackendClient:
     """Build a :class:`BackendClient` backed by an ``httpx.MockTransport``.
 
     Args:
         handler: A function ``(httpx.Request) -> httpx.Response``.
+        owner_id: Value sent in the ``X-Owner-Id`` header. Defaults to a
+            32-char hex sentinel used across the frontend test suite.
 
     Returns:
         BackendClient: A client wired to the mock transport.
     """
     transport = httpx.MockTransport(handler)
-    return BackendClient(base_url="http://backend.test", transport=transport)
+    return BackendClient(
+        base_url="http://backend.test",
+        transport=transport,
+        owner_id=owner_id,
+    )
 
 
 def test_submit_job_sends_multipart_and_returns_id() -> None:
@@ -177,3 +189,106 @@ def test_stage_event_holds_name_and_data() -> None:
     event = StageEvent(name="stage_started", data={"stage": "Transcribing"})
     assert event.name == "stage_started"
     assert event.data["stage"] == "Transcribing"
+
+
+def test_list_jobs_returns_jobs_array() -> None:
+    """``list_jobs`` should return the backend's ``jobs`` list."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/api/v1/jobs"
+        return httpx.Response(
+            200,
+            json={
+                "jobs": [
+                    {
+                        "job_id": "abc",
+                        "status": "completed",
+                        "file_name": "clip.wav",
+                        "progress": 1.0,
+                        "created_at": "2026-05-01T00:00:00Z",
+                        "task": "transcribe",
+                    }
+                ]
+            },
+        )
+
+    with _make_client(handler) as client:
+        jobs = client.list_jobs()
+
+    assert len(jobs) == 1
+    assert jobs[0]["job_id"] == "abc"
+
+
+def test_submit_job_threads_persist_flag_into_options() -> None:
+    """The persist flag should reach the backend inside ``options``."""
+    seen: dict[str, bytes] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["body"] = request.content
+        return httpx.Response(
+            201,
+            json={
+                "job_id": "p1",
+                "status": "queued",
+                "created_at": "2026-05-01T00:00:00Z",
+            },
+        )
+
+    with _make_client(handler) as client:
+        client.submit_job(
+            "clip.wav",
+            b"AUDIO",
+            {"task": "transcribe", "persist": True},
+        )
+
+    assert b'"persist": true' in seen["body"]
+
+
+def test_owner_id_is_sent_as_x_owner_id_header() -> None:
+    """Every request must carry the configured ``X-Owner-Id`` header."""
+    captured: list[str | None] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request.headers.get(OWNER_HEADER))
+        return httpx.Response(200, json={"jobs": []})
+
+    with _make_client(handler) as client:
+        client.list_jobs()
+        client.list_jobs()
+
+    assert captured == [_TEST_OWNER_ID, _TEST_OWNER_ID]
+
+
+def test_distinct_owner_ids_produce_distinct_headers() -> None:
+    """Two clients with different owner_ids send distinct headers."""
+    seen: list[str | None] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.headers.get(OWNER_HEADER))
+        return httpx.Response(200, json={"jobs": []})
+
+    with (
+        _make_client(handler, owner_id="a" * 32) as alice,
+        _make_client(handler, owner_id="b" * 32) as bob,
+    ):
+        alice.list_jobs()
+        bob.list_jobs()
+
+    assert seen == ["a" * 32, "b" * 32]
+
+
+def test_client_without_owner_id_omits_header() -> None:
+    """When the caller skips owner_id, no header is sent (test convenience)."""
+    seen: list[str | None] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.headers.get(OWNER_HEADER))
+        return httpx.Response(
+            200,
+            json={"status": "ok", "inference": False, "version": "x"},
+        )
+
+    with _make_client(handler, owner_id=None) as client:
+        client.get_health()
+
+    assert seen == [None]
