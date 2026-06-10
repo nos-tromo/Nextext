@@ -115,10 +115,10 @@ See `AGENTS.md` for detailed agent documentation including I/O contracts and how
 
 Key env vars (see `.env.example`):
 
-- `INFERENCE_PROVIDER` — `ollama` (default), `vllm`, or `openai`. Selects the translation prompt format: `ollama`/`openai` use the templated prompt in `nextext/utils/prompts/translation.txt`, while `vllm` sends a single-user-message delimiter format (`<<<source>>>...<<<target>>>...<<<text>>>...`) required by `Infomaniak-AI/vllm-translategemma-4b-it`.
+- `INFERENCE_PROVIDER` — `ollama` (default), `vllm`, or `openai`. Selects the inference backend for all LLM calls; it no longer affects the translation prompt — every provider uses the templated prompt in `nextext/utils/prompts/translation.txt` plus a translation system prompt. Still governs transcription routing and the Ollama `think` field.
 - `HF_HUB_TOKEN` — required for diarization models
-- `OPENAI_API_KEY`, `OPENAI_API_BASE` — OpenAI-compatible endpoint credentials; shared across translation, summarization, and hate-speech detection, so in `vllm` mode the LiteLLM proxy must expose both `TEXT_MODEL` and `TRANSLATION_MODEL` on the same endpoint.
-- `TEXT_MODEL`, `TRANSLATION_MODEL` — LLM model names
+- `OPENAI_API_KEY`, `OPENAI_API_BASE` — OpenAI-compatible endpoint credentials; shared across translation, summarization, and hate-speech detection, which all run on `TEXT_MODEL`.
+- `TEXT_MODEL` — LLM model name shared by translation, summarization, and hate-speech detection
 - `OLLAMA_THINK` — tri-state default for the Ollama `think` request field forwarded by `InferencePipeline.call_model` via `extra_body`. Accepts `1`/`true`/`yes`/`on` (enable), `0`/`false`/`no`/`off` (disable), or unset (omit field, model default). Honoured by Ollama-hosted reasoning models such as Qwen3; a no-op for `vllm`/`openai` providers. Per-call `think=` overrides the env default.
 - `NEXTEXT_OFFLINE=1` — offline mode (skip model downloads)
 - `MODEL_RESIDENCY_STRATEGY` — `offload` (default) or `evict`. Controls how the registry releases GPU models between files. Per-model overrides: `MODEL_RESIDENCY_GLINER`, `MODEL_RESIDENCY_WHISPER_TURBO`, `MODEL_RESIDENCY_WHISPER_LARGE`, `MODEL_RESIDENCY_DIARIZATION`.

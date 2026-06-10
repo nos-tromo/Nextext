@@ -67,7 +67,7 @@ def get_languages() -> LanguagesResponse:
 
     Returns:
         LanguagesResponse: Two sorted lists — Whisper source languages and
-            TranslateGemma target languages — that the frontend uses to
+            supported target languages — that the frontend uses to
             populate its dropdowns without bundling the JSON itself.
     """
     whisper = load_mappings("whisper_languages.json")

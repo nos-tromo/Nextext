@@ -42,11 +42,11 @@ This document describes every agent, how they interact, and what they expect fro
 ## Translation Agent
 
 - **Key files:** `nextext/core/translation.py`, `translation_pipeline()` (`nextext/pipeline.py`).
-- **Responsibilities:** Detect the transcript language via `langdetect` when needed, prompt TranslateGemma via the shared inference service, and rewrite each transcript segment to the requested target language.
+- **Responsibilities:** Detect the transcript language via `langdetect` when needed, prompt the shared chat model via the inference service, and rewrite each transcript segment to the requested target language.
 - **Inputs:** Transcript `pd.DataFrame` (only the `text` column is used), target ISO 639-1 code, optional resolved source code from transcription, shared `InferencePipeline`.
 - **Outputs:** In-place replacement of the `text` column; `Translator.src_lang` is populated for logging and downstream toggles.
 - **Dependencies:** `langdetect`, `pycountry`, plus an OpenAI-compatible chat completions backend selected by `INFERENCE_PROVIDER` (`ollama` by default, `vllm`, or `openai`).
-- **Operational notes:** Translation is skipped when the resolved source language already equals the target. The runtime requires an explicit `TRANSLATION_MODEL` environment variable when translation is enabled. The prompt shape depends on `INFERENCE_PROVIDER`: `ollama` and `openai` use the templated prompt in `nextext/utils/prompts/translation.txt` with a system message, while `vllm` sends a single user message in the delimiter format (`<<<source>>>{src}<<<target>>>{trg}<<<text>>>{text}`) required by `Infomaniak-AI/vllm-translategemma-4b-it` — the model card specifies user/assistant roles only, so the system prompt is omitted on that path.
+- **Operational notes:** Translation is skipped when the resolved source language already equals the target. Translation runs on `TEXT_MODEL` — the same model used for summarization — over the templated prompt in `nextext/utils/prompts/translation.txt` plus a translation system prompt, identically for every `INFERENCE_PROVIDER`.
 
 ## Word Intelligence Agent
 
@@ -79,10 +79,10 @@ This document describes every agent, how they interact, and what they expect fro
 ## Inference Service Agent
 
 - **Key files:** `nextext/core/openai_cfg.py` and prompts directory `nextext/utils/prompts/`.
-- **Responsibilities:** Construct prompts, pick provider-specific models, create an OpenAI-compatible client, perform provider health checks, and expose `call_model()` to translation and summarization.
+- **Responsibilities:** Construct prompts, resolve the configured `TEXT_MODEL`, create an OpenAI-compatible client, perform provider health checks, and expose `call_model()` to translation and summarization.
 - **Inputs:** Prompt keyword (`system`, `summary`, `translation`, `hate_speech`), runtime options (temperature, stop tokens, max tokens, `include_system_prompt`), provider configuration (`INFERENCE_PROVIDER`, `OPENAI_API_BASE`, `OPENAI_API_KEY`).
 - **Outputs:** Raw string response from the configured chat completion endpoint; `sys_prompt` ensures outputs are emitted in the configured language when the system role is included.
-- **Operational notes:** Ollama remains the default provider and is reached through its `/v1/chat/completions` compatibility layer. `INFERENCE_PROVIDER=vllm` targets a LiteLLM-fronted `nos-tromo/vllm-service` stack (LiteLLM dispatches by `model` field, so both `TEXT_MODEL` and `TRANSLATION_MODEL` must be registered on the same endpoint). `INFERENCE_PROVIDER=openai` targets the hosted OpenAI API. `call_model(include_system_prompt=False)` is used by the vLLM translation path only — all other callers keep the default system prompt. `OPENAI_API_KEY` is required for every provider. `OLLAMA_THINK` (tri-state: `1`/`true`/`yes`/`on` to enable, `0`/`false`/`no`/`off` to disable, unset to omit) sets a process-wide default for the Ollama `think` request field; `call_model(think=...)` overrides it per call. Forwarded via `extra_body`, so it is a no-op on vLLM/OpenAI.
+- **Operational notes:** Ollama remains the default provider and is reached through its `/v1/chat/completions` compatibility layer. `INFERENCE_PROVIDER=vllm` targets a LiteLLM-fronted `nos-tromo/vllm-service` stack (LiteLLM dispatches by `model` field, so `TEXT_MODEL` must be registered on the endpoint). `INFERENCE_PROVIDER=openai` targets the hosted OpenAI API. `call_model(include_system_prompt=False)` sends a single user message for models or endpoints that accept only `user`/`assistant` roles; all standard callers keep the default system prompt. `OPENAI_API_KEY` is required for every provider. `OLLAMA_THINK` (tri-state: `1`/`true`/`yes`/`on` to enable, `0`/`false`/`no`/`off` to disable, unset to omit) sets a process-wide default for the Ollama `think` request field; `call_model(think=...)` overrides it per call. Forwarded via `extra_body`, so it is a no-op on vLLM/OpenAI.
 
 ## File Export Agent
 
