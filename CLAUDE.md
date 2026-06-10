@@ -74,25 +74,24 @@ Tests are in `tests/` using pytest with monkeypatch fixtures for mocking ML mode
 
 **HTTP API (`/api/v1`):**
 
-- `POST /jobs` (multipart: `file` + JSON `options`) — queue a new job; returns `{job_id}`. `options.persist=true` opts in to durable storage; ephemeral by default.
-- `GET /jobs` — list the caller's persistent jobs, newest first.
+- `POST /jobs` (multipart: `file` + JSON `options`) — queue a new job; returns `{job_id}`.
+- `GET /jobs` — list the caller's in-memory jobs, newest first. The frontend calls this on load to re-discover and resume its jobs after a browser reload.
 - `GET /jobs/{id}` — point-in-time snapshot (owner-scoped).
-- `GET /jobs/{id}/events` — SSE stream of stage transitions (owner-scoped).
+- `GET /jobs/{id}/events` — SSE stream of stage transitions (owner-scoped); replays event history on connect so a reattached client resumes mid-run.
 - `GET /jobs/{id}/artifacts/{name}` — binary download (transcript.csv/xlsx, summary.txt, wordcounts.csv/xlsx, entities.csv/xlsx, wordcloud.png, hate_speech.csv/xlsx, docint.jsonl, archive.zip). Owner-scoped.
 - `DELETE /jobs/{id}` — cleanup (owner-scoped).
 - `GET /health`, `GET /languages` — meta endpoints.
 
-Every request carries an `X-Owner-Id` header (UUID4 hex). The frontend stamps the identifier into its URL via `st.query_params` (`?owner=<uuid>`) on first visit and reads it back on every rerun, so the value survives page reloads, bookmarks, and any navigation that preserves the URL. The header is the only thing the backend uses to scope rows; visiting the bare host produces a fresh identity and prior persistent rows become unreachable to it. There is still no authentication — the backend trusts whoever can reach `inference-net`.
+Identity is resolved per request by `resolve_principal`: the trusted header (`NEXTEXT_AUTH_HEADER`, default `X-Auth-User`) if present, else `NEXTEXT_DEFAULT_IDENTITY` (the dev / header-less fallback), else `401`. The value scopes the caller's in-memory jobs; cross-owner reads return `404` so existence never leaks. The Streamlit frontend mints a per-browser id and carries it in its URL via `st.query_params` (`?owner=<id>`) on first visit, reading it back on every rerun so the identity survives reloads and bookmarks. There is no authentication — the backend trusts whoever can reach `inference-net` — and no durable storage: jobs live only in memory.
 
 **Key modules:**
 
 - `nextext/api/main.py` — FastAPI factory, lifespan (boots `JobManager` + persistence repository).
-- `nextext/api/jobs.py` — `JobManager`, async worker (single in-flight job via `asyncio.Semaphore(1)`), SSE event broker. Owns the bridge to durable storage when a job opts in.
-- `nextext/api/identity.py` — Header-based `get_owner_id` FastAPI dependency. Reads the `X-Owner-Id` request header (UUID4 hex), rejects missing/malformed values with 400. The Streamlit frontend carries the identity in its URL (`?owner=<uuid>`); there are no server-managed cookies.
-- `nextext/api/persistence.py` — `JobRepository` protocol + `SqliteJobRepository` implementation (WAL mode), `ArtifactStore` filesystem helper. Postgres-ready by design — replace the implementation, keep the protocol.
+- `nextext/api/jobs.py` — `JobManager`, async worker (single in-flight job via `asyncio.Semaphore(1)`), SSE event broker. Holds all jobs in memory; `list_for_owner` powers the frontend's reload re-discovery.
+- `nextext/api/identity.py` — `resolve_principal` FastAPI dependency. Reads the trusted header (`NEXTEXT_AUTH_HEADER`, default `X-Auth-User`); falls back to `NEXTEXT_DEFAULT_IDENTITY` for header-less/dev callers; returns `401` when neither is set. The Streamlit frontend carries the identity in its URL (`?owner=<id>`); there are no server-managed cookies. This is the single seam a real auth track would replace.
 - `nextext/api/routes/` — `health`, `jobs` routers. Per-route ownership checks return `404` on cross-owner access so existence never leaks.
-- `nextext/api/artifacts.py` — Per-job artifact byte materializers (CSV/XLSX/PNG/JSONL/ZIP). Lazily hydrates from disk for persistent jobs rehydrated at startup.
-- `nextext/api/schemas.py` — Pydantic request/response models. `JobOptions.persist` toggles durable storage per submission.
+- `nextext/api/artifacts.py` — Per-job artifact byte materializers (CSV/XLSX/PNG/JSONL/ZIP) rendered on demand from the in-memory `state.result`.
+- `nextext/api/schemas.py` — Pydantic request/response models for jobs, snapshots, and the SSE event payloads.
 - `nextext/frontend/app.py` — Streamlit entry point talking to the backend.
 - `nextext/frontend/client.py` — `BackendClient` (httpx wrapper) with SSE parsing.
 - `nextext/frontend/state.py` — Pure UI helpers (no pipeline imports).
@@ -125,9 +124,9 @@ Key env vars (see `.env.example`):
 - `BACKEND_HOST` (frontend only) — Backend root URL. Defaults to `http://backend:8000` inside compose; set to `http://localhost:8000` for local dev.
 - `BACKEND_PUBLIC_HOST` (frontend only) — Externally reachable backend URL surfaced in UI hints.
 - `NEXTEXT_API_HOST` / `NEXTEXT_API_PORT` (backend only) — uvicorn bind address. Defaults to `0.0.0.0:8000`.
-- `NEXTEXT_JOB_TTL_SECONDS` (backend only) — Lifetime for completed *ephemeral* jobs before the sweeper evicts them. Persistent jobs are not affected. Defaults to `3600`.
 - `NEXTEXT_MAX_UPLOAD_MB` (backend only) — Hard cap on per-upload bytes. Defaults to `8192`.
-- `NEXTEXT_DATA_DIR` (backend only) — On-disk root for the SQLite job index and per-job artifact directories. Defaults to `/var/lib/nextext` (the `nextext-data` Docker volume); local dev falls back to `./.nextext-data`.
+- `NEXTEXT_AUTH_HEADER` (backend + frontend) — Name of the trusted identity header. Defaults to `X-Auth-User`. Both sides read the same variable so they agree on the header.
+- `NEXTEXT_DEFAULT_IDENTITY` (backend only) — Fallback identity for header-less / developer callers. Unset by default, so a request without the trusted header gets `401`.
 
 ## Memory management
 
@@ -137,21 +136,18 @@ GPU-resident models (`whisper_turbo`, `whisper_large`, `diarization`, `gliner`) 
 
 Docker assets live under `docker/`. `docker/compose.yaml` defines four services across two profiles:
 
-- `backend-cpu` / `backend-cuda` — built from `docker/Dockerfile.backend.{cpu,cuda}`, multi-stage `uv` builds. Run `uvicorn nextext.api.main:app` with a `HEALTHCHECK` against `/api/v1/health`. Reachable only on the `inference-net` network by default; no host port is published. Mounts the `nextext-data` Docker volume at `/var/lib/nextext` for persistent job storage.
+- `backend-cpu` / `backend-cuda` — built from `docker/Dockerfile.backend.{cpu,cuda}`, multi-stage `uv` builds. Run `uvicorn nextext.api.main:app` with a `HEALTHCHECK` against `/api/v1/health`. Reachable only on the `inference-net` network by default; no host port is published.
 - `frontend-cpu` / `frontend-cuda` — built from `docker/Dockerfile.frontend` (single-stage `uv`, `--only-group frontend`). The base `docker/compose.yaml` is the production shape and publishes no host ports; `docker/compose.override.yaml` (layered by `make up-dev`) publishes Streamlit on `${NEXTEXT_HOST_PORT:-8501}`.
 
-Both profiles share `inference-net` with Ollama / vLLM. The `Makefile` is the entry point — it points Compose at `docker/compose.yaml`, since a bare `docker compose` from the repo root no longer finds it. The profile (`cpu`/`cuda`) is read from `PROFILE` in `.env` (default `cpu`); override per-invocation as `make up PROFILE=cuda`. Run `make volumes` (one-time, creates the external volumes including `nextext-data`), then `make build && make up` for production shape, or `make build && make up-dev` to publish the Streamlit frontend on the host.
+Both profiles share `inference-net` with Ollama / vLLM. The `Makefile` is the entry point — it points Compose at `docker/compose.yaml`, since a bare `docker compose` from the repo root no longer finds it. The profile (`cpu`/`cuda`) is read from `PROFILE` in `.env` (default `cpu`); override per-invocation as `make up PROFILE=cuda`. Run `make volumes` (one-time, creates the external model-cache volumes), then `make build && make up` for production shape, or `make build && make up-dev` to publish the Streamlit frontend on the host.
 
 ## Persistence model
 
-Jobs are ephemeral by default — `JobManager` holds them in memory and the sweeper evicts completed entries after `NEXTEXT_JOB_TTL_SECONDS`. Setting `JobOptions.persist=true` on submission flips that single job to durable storage:
+Jobs live only in memory. `JobManager` holds them in a dict keyed by `job_id` and scoped by `owner_id`; there is no SQLite index, no on-disk artifacts, and no TTL sweeper. A job is retained until the owner `DELETE`s it or the backend process exits — nothing ever cuts off a long-running job.
 
-1. `SqliteJobRepository.create()` inserts a row in `<NEXTEXT_DATA_DIR>/jobs.db`, tagged with the caller's `owner_id`.
-2. The worker writes artifacts to `<NEXTEXT_DATA_DIR>/jobs/<job_id>/` (Parquet for DataFrames, PNG for the wordcloud, TXT for the summary, JSON for metadata).
-3. On backend startup, `JobManager._rehydrate_from_repository()` rebuilds the in-memory states for every row and marks any row still in `queued`/`running` as `interrupted`.
-4. The sweeper leaves persistent jobs alone — they live until the owner deletes them.
+Reload resilience comes from the identity, not from storage. The owner id survives a browser refresh in the page URL (`?owner=<id>`), so on load the frontend calls `GET /jobs` to re-discover the caller's jobs and resumes them: it re-subscribes to any still running (the SSE broker replays each job's event history on connect) and re-renders those already finished. A run therefore survives a browser reload during processing, but not a backend restart.
 
-Postgres-readiness: the persistence surface is the `JobRepository` Protocol in `nextext/api/persistence.py`. A future `PostgresJobRepository` only needs to swap the SQL driver; callers depend on the protocol, not the implementation.
+Artifacts (`.csv`/`.xlsx`/`.png`/`.jsonl`/`.zip`) are materialised on demand from the in-memory `state.result` by `nextext/api/artifacts.py`; they are never written to disk.
 
 ## Commits
 

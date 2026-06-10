@@ -4,7 +4,6 @@ set -eu
 
 for volume_name in \
     huggingface-cache \
-    nextext-data \
     nltk-cache \
     ollama-cache \
     spacy-cache \
