@@ -1,4 +1,4 @@
-"""Tests for the Translator provider branching."""
+"""Tests for the Translator: one templated path across all providers."""
 
 from typing import Any
 
@@ -6,6 +6,8 @@ import pytest
 
 from nextext.core.openai_cfg import InferencePipeline
 from nextext.core.translation import Translator
+
+_TRANSLATION_SYSTEM_PROMPT = "You are a precise translation engine. Return only the translation text."
 
 
 class _RecordingPipeline(InferencePipeline):
@@ -42,104 +44,47 @@ class _RecordingPipeline(InferencePipeline):
 def _make_translator(
     monkeypatch: pytest.MonkeyPatch,
     provider: str,
-    translation_model: str = "translategemma:4b",
 ) -> tuple[Translator, _RecordingPipeline]:
     """Build a Translator wired to a recording InferencePipeline with env seeded."""
     monkeypatch.setenv("INFERENCE_PROVIDER", provider)
     monkeypatch.setenv("TEXT_MODEL", "text-model-for-test")
-    monkeypatch.setenv("TRANSLATION_MODEL", translation_model)
+    monkeypatch.delenv("TRANSLATION_MODEL", raising=False)
     pipeline = _RecordingPipeline()
     translator = Translator(inference_pipeline=pipeline)
     return translator, pipeline
 
 
-def test_translator_vllm_builds_delimiter_prompt(
+@pytest.mark.parametrize("provider", ["ollama", "vllm", "openai"])
+def test_translator_uses_templated_prompt_for_all_providers(
     monkeypatch: pytest.MonkeyPatch,
+    provider: str,
 ) -> None:
-    """Vllm provider produces the delimiter-format prompt with no system message."""
-    translator, pipeline = _make_translator(
-        monkeypatch,
-        provider="vllm",
-        translation_model="Infomaniak-AI/vllm-translategemma-4b-it",
-    )
+    """Every provider uses the templated prompt + translation system prompt on TEXT_MODEL."""
+    translator, pipeline = _make_translator(monkeypatch, provider=provider)
 
     result = translator.translate(trg_lang="de-DE", text="hello world", src_lang="en")
 
     assert len(pipeline.calls) == 1
     call = pipeline.calls[0]
-    assert call["prompt"] == "<<<source>>>en<<<target>>>de-DE<<<text>>>hello world"
-    assert call["include_system_prompt"] is False
-    assert call["system_prompt"] is None
-    assert call["model"] == "Infomaniak-AI/vllm-translategemma-4b-it"
+    assert "<<<source>>>" not in call["prompt"]
+    assert "hello world" in call["prompt"]
+    assert call["include_system_prompt"] is True
+    assert call["system_prompt"] == _TRANSLATION_SYSTEM_PROMPT
     assert call["temperature"] == 0.0
-    assert result == "translated::<<<source>>>en<<<target>>>de-DE<<<text>>>hello world"
+    # ``model`` is left unset, so InferencePipeline.call_model defaults to TEXT_MODEL.
+    assert call["model"] is None
+    assert result == f"translated::{call['prompt']}"
 
 
-def test_translator_vllm_same_language_short_circuit(
+@pytest.mark.parametrize("provider", ["ollama", "vllm", "openai"])
+def test_translator_same_language_short_circuit(
     monkeypatch: pytest.MonkeyPatch,
+    provider: str,
 ) -> None:
-    """Same source and target language still short-circuits in vllm mode."""
-    translator, pipeline = _make_translator(
-        monkeypatch,
-        provider="vllm",
-        translation_model="Infomaniak-AI/vllm-translategemma-4b-it",
-    )
+    """Same source and target language short-circuits without calling the model."""
+    translator, pipeline = _make_translator(monkeypatch, provider=provider)
 
     result = translator.translate(trg_lang="en", text="hello", src_lang="en")
 
     assert result == "hello"
     assert pipeline.calls == []
-
-
-def test_translator_ollama_uses_templated_prompt(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Ollama provider keeps the existing templated prompt + translation system prompt."""
-    translator, pipeline = _make_translator(monkeypatch, provider="ollama")
-
-    translator.translate(trg_lang="de-DE", text="hello", src_lang="en")
-
-    assert len(pipeline.calls) == 1
-    call = pipeline.calls[0]
-    assert "<<<source>>>" not in call["prompt"]
-    assert "hello" in call["prompt"]
-    assert call["include_system_prompt"] is True
-    assert call["system_prompt"] == ("You are a precise translation engine. Return only the translation text.")
-    assert call["temperature"] == 0.0
-
-
-def test_translator_openai_uses_templated_prompt(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Openai provider behaves identically to ollama on the templated path."""
-    translator, pipeline = _make_translator(monkeypatch, provider="openai", translation_model="gpt-4o")
-
-    translator.translate(trg_lang="de-DE", text="hello", src_lang="en")
-
-    assert len(pipeline.calls) == 1
-    call = pipeline.calls[0]
-    assert "<<<source>>>" not in call["prompt"]
-    assert call["include_system_prompt"] is True
-    assert call["model"] == "gpt-4o"
-
-
-def test_translator_vllm_warns_on_non_translategemma_model_once(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A sanity warning fires once when vllm is configured without a TranslateGemma model."""
-    import io
-
-    from loguru import logger
-
-    translator, _ = _make_translator(monkeypatch, provider="vllm", translation_model="gpt-4o")
-
-    sink = io.StringIO()
-    handler_id = logger.add(sink, level="WARNING")
-    try:
-        translator.translate(trg_lang="de-DE", text="hello", src_lang="en")
-        translator.translate(trg_lang="de-DE", text="again", src_lang="en")
-    finally:
-        logger.remove(handler_id)
-
-    warnings = [line for line in sink.getvalue().splitlines() if "TranslateGemma" in line]
-    assert len(warnings) == 1
