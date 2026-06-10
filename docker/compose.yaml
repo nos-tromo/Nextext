@@ -44,7 +44,6 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY}
       PRELOAD_MODELS: ${PRELOAD_MODELS:-false}
       TEXT_MODEL: ${TEXT_MODEL:-}
-      TRANSLATION_MODEL: ${TRANSLATION_MODEL:-}
       WHISPER_MODEL: ${WHISPER_MODEL:-}
     env_file: *env-file
     volumes: &backend-volumes
