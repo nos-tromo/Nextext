@@ -222,3 +222,56 @@ def load_path_env() -> PathConfig:
         prompts=default_prompts_dir,
         hf_hub_cache=Path(os.getenv("HF_HUB_CACHE", default_hf_hub_cache)).expanduser(),
     )
+
+
+@dataclass(frozen=True)
+class PrincipalConfig:
+    """Dataclass for request-principal resolution configuration.
+
+    Attributes:
+        header_name: Trusted request header carrying the authenticated
+            principal (the caller's owner identifier).
+        default_identity: Developer / header-less fallback identity used when
+            the trusted header is absent, or ``None`` when unset (the resolver
+            then fails closed with HTTP 401).
+    """
+
+    header_name: str
+    default_identity: str | None
+
+
+def load_principal_env(
+    default_header_name: str = "X-Auth-User",
+    default_identity: str | None = None,
+) -> PrincipalConfig:
+    """Loads request-principal configuration from environment variables.
+
+    The backend has no real authentication: identity is whatever the trusted
+    header carries, with an optional env-var fallback so developers (and any
+    header-less client) resolve to a single configured identity instead of
+    being rejected. The seam is intentionally thin — swapping the header read
+    for a verified-token read later leaves ownership queries and routes
+    untouched.
+
+    Args:
+        default_header_name (str): Default trusted header carrying the
+            authenticated principal when ``NEXTEXT_AUTH_HEADER`` is unset.
+        default_identity (str | None): Default fallback identity used when
+            ``NEXTEXT_DEFAULT_IDENTITY`` is unset.
+
+    Returns:
+        PrincipalConfig: Dataclass containing principal configuration.
+        - header_name (str): The trusted header carrying the principal.
+        - default_identity (str | None): Fallback identity, or ``None`` when
+          unset (the resolver then fails closed with HTTP 401).
+    """
+    raw_identity = os.getenv("NEXTEXT_DEFAULT_IDENTITY")
+    if raw_identity is not None and raw_identity.strip():
+        resolved_identity: str | None = raw_identity.strip()
+    else:
+        resolved_identity = default_identity
+
+    return PrincipalConfig(
+        header_name=os.getenv("NEXTEXT_AUTH_HEADER", default_header_name),
+        default_identity=resolved_identity,
+    )
