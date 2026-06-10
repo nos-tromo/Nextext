@@ -12,7 +12,9 @@ import httpx
 from loguru import logger
 
 DEFAULT_BACKEND_URL = "http://backend:8000"
-OWNER_HEADER = "X-Owner-Id"
+# Trusted identity header. Mirrors the backend's ``NEXTEXT_AUTH_HEADER``
+# default (``X-Auth-User``); override both sides together when changing it.
+OWNER_HEADER = os.getenv("NEXTEXT_AUTH_HEADER", "X-Auth-User")
 
 
 @dataclass(frozen=True)
@@ -47,10 +49,10 @@ class BackendClient:
                 long-lived configuration suited to long uploads and streamed
                 events.
             transport: Optional transport (mainly used by tests).
-            owner_id: Per-browser identifier sent in the ``X-Owner-Id``
-                header on every request. The backend uses this to scope
-                persistent rows. Sourced from the browser's
-                ``localStorage`` in production; tests pass a stable value.
+            owner_id: Per-browser identifier sent in the trusted identity
+                header on every request. The backend uses this to scope the
+                caller's in-memory jobs. The Streamlit frontend carries it in
+                the page URL (``?owner=<id>``); tests pass a stable value.
         """
         self.base_url = (base_url or os.getenv("BACKEND_HOST") or DEFAULT_BACKEND_URL).rstrip("/")
         self.owner_id = owner_id
@@ -182,11 +184,11 @@ class BackendClient:
             response.raise_for_status()
 
     def list_jobs(self) -> list[dict[str, Any]]:
-        """Return the caller's persistent jobs, newest first.
+        """Return the caller's in-memory jobs, newest first.
 
         Returns:
-            list[dict[str, Any]]: One entry per saved job. The list is
-                empty when the caller has never opted in to persistence.
+            list[dict[str, Any]]: One entry per job the caller owns, used
+                on page load to re-attach after a browser reload.
         """
         response = self.client.get("/api/v1/jobs")
         response.raise_for_status()
