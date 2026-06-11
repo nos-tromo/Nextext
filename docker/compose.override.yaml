@@ -6,10 +6,6 @@
 ### (production shape).
 
 services:
-  frontend-cpu:
-    ports:
-      - "${NEXTEXT_HOST_PORT:-8501}:8501"
-
-  frontend-cuda:
+  frontend:
     ports:
       - "${NEXTEXT_HOST_PORT:-8501}:8501"

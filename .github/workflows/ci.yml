@@ -24,4 +24,3 @@ jobs:
       python-versions: '["3.12"]'
       uv-sync-args: '--frozen --group dev'
       docker-build: true
-      docker-compose-profiles: '--profile cpu'

@@ -1,17 +1,11 @@
 # Build-host helpers for nextext.
 #
-# The Docker profile (cpu/cuda) is read from PROFILE in .env, so plain
-# `make up` follows the host's hardware. Override per-invocation with
-# `make up PROFILE=cuda`.
+# Single CPU-only image pair (backend + frontend): all model inference runs
+# on external endpoints, so there is no cpu/cuda profile split.
 
 .DEFAULT_GOAL := help
 
 .PHONY: help network volumes build bundle up up-dev stop down logs pre-commit test
-
-# Docker profile (cpu/cuda). Read from .env, default cpu. Override on the
-# command line: make up PROFILE=cuda
-PROFILE ?= $(or $(strip $(shell test -f .env && grep -E '^PROFILE=' .env | cut -d= -f2)),cpu)
-
 
 # Versioned image tag.
 # On production: read from .nextext-version written by bundle_images.sh.
@@ -25,24 +19,21 @@ export NEXTEXT_VERSION
 
 COMPOSE      := docker compose --env-file .env -f docker/compose.yaml
 COMPOSE_DEV  := docker compose --env-file .env -f docker/compose.yaml -f docker/compose.override.yaml
-PROFILE_FLAG := --profile $(PROFILE)
 
 help:
-	@echo "nextext — build-host helpers. Active profile: $(PROFILE)"
+	@echo "nextext — build-host helpers"
 	@echo
 	@echo "  make network    create the external inference-net"
 	@echo "  make volumes    create the external Docker volumes"
-	@echo "  make build      build images for the $(PROFILE) profile"
-	@echo "  make bundle     ship images as a versioned .tar.gz pair ($(PROFILE))"
-	@echo "  make up         run the $(PROFILE) profile (no rebuild, no host ports)"
+	@echo "  make build      build the backend + frontend images"
+	@echo "  make bundle     ship images as a versioned .tar.gz pair"
+	@echo "  make up         run the stack (no rebuild, no host ports)"
 	@echo "  make up-dev     like 'up', but publishes the frontend port on the host"
-	@echo "  make stop       stop the $(PROFILE) profile containers"
-	@echo "  make down       stop + remove the $(PROFILE) profile containers"
-	@echo "  make logs       tail combined logs for the $(PROFILE) profile"
+	@echo "  make stop       stop the containers"
+	@echo "  make down       stop + remove the containers"
+	@echo "  make logs       tail combined logs"
 	@echo "  make pre-commit run pre-commit hooks (ruff + mypy)"
 	@echo "  make test       run the test suite"
-	@echo
-	@echo "Set PROFILE=cpu|cuda in .env, or override: make up PROFILE=cuda"
 
 # Create the external Docker network (one-time per host; idempotent).
 network:
@@ -52,35 +43,35 @@ network:
 volumes:
 	./scripts/create_docker_volumes.sh
 
-# Build images for the active profile.
+# Build the backend + frontend images.
 build:
-	DOCKER_BUILDKIT=1 $(COMPOSE) $(PROFILE_FLAG) build
+	DOCKER_BUILDKIT=1 $(COMPOSE) build
 
 # Build images and ship as a versioned .tar.gz pair (built + pulled).
 bundle:
-	./scripts/bundle_images.sh $(PROFILE)
+	./scripts/bundle_images.sh
 
-# Run the active profile without rebuilding images (production shape, no host ports).
+# Run the stack without rebuilding images (production shape, no host ports).
 up:
-	DOCKER_BUILDKIT=1 $(COMPOSE) $(PROFILE_FLAG) up --no-build
+	DOCKER_BUILDKIT=1 $(COMPOSE) up --no-build
 
 # Like 'up' but layers compose.override.yaml on top to publish the
 # Streamlit frontend port on the host.
 up-dev:
-	DOCKER_BUILDKIT=1 $(COMPOSE_DEV) $(PROFILE_FLAG) up --no-build
+	DOCKER_BUILDKIT=1 $(COMPOSE_DEV) up --no-build
 
-# Stop the active profile's containers.
+# Stop the containers.
 stop:
-	$(COMPOSE) $(PROFILE_FLAG) stop
+	$(COMPOSE) stop
 
-# Stop + remove the active profile's containers. All Nextext volumes
-# are declared external, so this never destroys cached models or data.
+# Stop + remove the containers. All Nextext volumes are declared
+# external, so this never destroys cached language resources.
 down:
-	$(COMPOSE) $(PROFILE_FLAG) down
+	$(COMPOSE) down
 
-# Tail combined logs for the active profile.
+# Tail combined logs.
 logs:
-	$(COMPOSE) $(PROFILE_FLAG) logs -f --tail=100
+	$(COMPOSE) logs -f --tail=100
 
 # Run pre-commit hooks (ruff + mypy).
 pre-commit:
