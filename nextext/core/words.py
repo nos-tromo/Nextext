@@ -1,15 +1,7 @@
-"""Word-level analysis: counts, GLiNER NER, and word clouds via spaCy + NLTK."""
+"""Word-level analysis: counts, remote GLiNER NER, and word clouds via spaCy + NLTK."""
 
-import hashlib
-import json
-import os
 import re
-import shutil
-import tempfile
-import warnings
 from collections import Counter
-from pathlib import Path
-from typing import Any, cast
 
 import arabic_reshaper
 import matplotlib.pyplot as plt
@@ -17,303 +9,28 @@ import pandas as pd
 import spacy
 from bidi.algorithm import get_display
 from camel_tools.tokenizers.word import simple_word_tokenize
-from dotenv import load_dotenv
-from gliner import GLiNER
 from loguru import logger
 from matplotlib.figure import Figure
 from spacy.language import Language
 from spacy.tokens import Doc
 from wordcloud import WordCloud
 
+from nextext.core.ner_client import build_remote_ner_extractor
 from nextext.utils.font_loader import load_font_file
 from nextext.utils.mappings_loader import load_mappings
 from nextext.utils.model_loader import (
     download_spacy_model,
     ensure_spacy_model_path,
 )
-from nextext.utils.model_registry import REGISTRY, ModelSpec, Strategy
-
-load_dotenv()
 
 # ---------------------------------------------------------------------------
-# GLiNER NER — module-level singleton and offline loading helpers
+# Remote GLiNER NER — sentence-aware chunking for the HTTP extractor
 # ---------------------------------------------------------------------------
 
-_GLINER_MODEL_ID = os.getenv("NER_MODEL", "gliner-community/gliner_large-v2.5")
-_GLINER_LABELS = [
-    "date",
-    "event",
-    "fac",
-    "group",
-    "loc",
-    "money",
-    "org",
-    "person",
-    "time",
-]
-_GLINER_THRESHOLD = 0.3
 _GLINER_WORD_BUDGET = 512
-_GLINER_OFFLINE_DIR = Path(tempfile.gettempdir()) / "nextext-gliner-offline"
 _SENTENCE_RE = re.compile(
     r".+?(?:[.!?]+[\"')\]]*(?=\s+|$)|\n{2,}|$)",
     re.DOTALL,
-)
-
-
-def _resolve_hf_cache_dir() -> Path:
-    """Return the Hugging Face hub cache directory.
-
-    Returns:
-        Path: Resolved HF hub cache directory from environment or default.
-    """
-    hf_cache = os.getenv("HF_HUB_CACHE") or os.getenv("HUGGINGFACE_HUB_CACHE")
-    if hf_cache:
-        return Path(hf_cache)
-    return Path.home() / ".cache" / "huggingface" / "hub"
-
-
-def _resolve_hf_cache_path(cache_dir: Path, repo_id: str) -> Path | None:
-    """Find a locally cached HF snapshot directory for repo_id.
-
-    Args:
-        cache_dir (Path): HF hub cache directory (e.g.
-            ``~/.cache/huggingface/hub``).
-        repo_id (str): HuggingFace repository ID (e.g.
-            ``"gliner-community/gliner_large-v2.5"``).
-
-    Returns:
-        Path | None: Path to the snapshot directory if found, otherwise
-            ``None``.
-    """
-    model_dir_name = f"models--{repo_id.replace('/', '--')}"
-    model_cache_dir = cache_dir / model_dir_name
-    if not model_cache_dir.exists():
-        return None
-    ref_path = model_cache_dir / "refs" / "main"
-    if not ref_path.exists():
-        return None
-    commit_hash = ref_path.read_text().strip()
-    snapshot_path = model_cache_dir / "snapshots" / commit_hash
-    return snapshot_path if snapshot_path.exists() else None
-
-
-def _load_gliner_config(model_dir: Path) -> dict[str, Any]:
-    """Load the GLiNER config for a local model directory.
-
-    Args:
-        model_dir (Path): Directory containing ``gliner_config.json``.
-
-    Returns:
-        dict[str, Any]: Parsed GLiNER configuration payload.
-
-    Raises:
-        FileNotFoundError: If the config file does not exist.
-    """
-    config_path = model_dir / "gliner_config.json"
-    if not config_path.is_file():
-        raise FileNotFoundError(f"No GLiNER config found in {model_dir}")
-    return cast(dict[str, Any], json.loads(config_path.read_text(encoding="utf-8")))
-
-
-def _link_or_copy_path(source: Path, destination: Path) -> None:
-    """Materialize a file or directory at ``destination`` from ``source``.
-
-    Args:
-        source (Path): Existing file or directory to link or copy.
-        destination (Path): Target path that should mirror ``source``.
-    """
-    if destination.exists():
-        return
-    try:
-        destination.symlink_to(source, target_is_directory=source.is_dir())
-    except Exception:
-        if source.is_dir():
-            shutil.copytree(source, destination, dirs_exist_ok=True)
-        else:
-            shutil.copy2(source, destination)
-
-
-def _resolve_local_gliner_dependency(cache_dir: Path, dependency: str) -> Path:
-    """Resolve a GLiNER dependency path without allowing network access.
-
-    Args:
-        cache_dir (Path): Hugging Face hub cache directory.
-        dependency (str): Repo ID or local filesystem path referenced by
-            GLiNER config.
-
-    Returns:
-        Path: Local filesystem path for the dependency.
-
-    Raises:
-        FileNotFoundError: If the dependency is unavailable locally.
-    """
-    dep_path = Path(dependency).expanduser()
-    if dep_path.exists():
-        return dep_path.resolve()
-    resolved = _resolve_hf_cache_path(cache_dir=cache_dir, repo_id=dependency)
-    if resolved is None:
-        raise FileNotFoundError(
-            f"GLiNER offline load requires a local snapshot for '{dependency}', but none was found in {cache_dir}."
-        )
-    return resolved
-
-
-def _materialize_offline_gliner_dir(model_dir: Path, config: dict[str, Any]) -> Path:
-    """Create a local-only GLiNER directory with patched config references.
-
-    Args:
-        model_dir (Path): Original local GLiNER model directory.
-        config (dict[str, Any]): GLiNER config payload to write into the
-            offline runtime directory.
-
-    Returns:
-        Path: Local runtime directory with patched config and links to model
-            assets.
-    """
-    digest = hashlib.sha256(f"{model_dir.resolve()}\0{json.dumps(config, sort_keys=True)}".encode()).hexdigest()[:16]
-    runtime_dir = _GLINER_OFFLINE_DIR / digest
-    runtime_dir.mkdir(parents=True, exist_ok=True)
-    for item in model_dir.iterdir():
-        if item.name == "gliner_config.json":
-            continue
-        _link_or_copy_path(item, runtime_dir / item.name)
-    (runtime_dir / "gliner_config.json").write_text(
-        json.dumps(config, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-    )
-    return runtime_dir
-
-
-def _prepare_local_gliner_model_dir(model_dir: Path, cache_dir: Path) -> Path:
-    """Prepare a GLiNER directory for strict offline loading.
-
-    Rewrites backbone config references (model_name, labels_encoder,
-    labels_decoder) to local snapshot paths so the upstream loader does not
-    trigger outbound hub resolution.
-
-    Args:
-        model_dir (Path): Local GLiNER model directory or snapshot path.
-        cache_dir (Path): Hugging Face hub cache directory.
-
-    Returns:
-        Path: A local model directory safe to hand to
-            ``GLiNER.from_pretrained``.
-    """
-    config = _load_gliner_config(model_dir)
-    patched = False
-    for field in ("model_name", "labels_encoder", "labels_decoder"):
-        value = config.get(field)
-        if not isinstance(value, str) or not value.strip():
-            continue
-        resolved = _resolve_local_gliner_dependency(cache_dir=cache_dir, dependency=value)
-        resolved_str = str(resolved)
-        if value != resolved_str:
-            config[field] = resolved_str
-            patched = True
-    if not patched:
-        return model_dir
-    runtime_dir = _materialize_offline_gliner_dir(model_dir=model_dir, config=config)
-    logger.info("Prepared offline GLiNER runtime directory: {}", runtime_dir)
-    return runtime_dir
-
-
-def _resolve_gliner_load_target(model_id: str, cache_dir: Path) -> tuple[str, bool]:
-    """Resolve the load target for GLiNER without allowing accidental hub access.
-
-    Args:
-        model_id (str): GLiNER repo ID or local filesystem path.
-        cache_dir (Path): Hugging Face hub cache directory.
-
-    Returns:
-        tuple[str, bool]: ``(load_target, local_only)`` suitable for
-            ``GLiNER.from_pretrained``.
-
-    Raises:
-        FileNotFoundError: If offline mode is enabled and the model is not
-            cached.
-    """
-    local_dir = Path(model_id).expanduser()
-    if local_dir.exists():
-        prepared = _prepare_local_gliner_model_dir(model_dir=local_dir.resolve(), cache_dir=cache_dir)
-        return str(prepared), True
-
-    resolved = _resolve_hf_cache_path(cache_dir=cache_dir, repo_id=model_id)
-    if resolved is not None:
-        logger.info("Using local GLiNER model path: {}", resolved)
-        prepared = _prepare_local_gliner_model_dir(model_dir=resolved, cache_dir=cache_dir)
-        return str(prepared), True
-
-    if os.getenv("HF_HUB_OFFLINE", "0") == "1" or os.getenv("NEXTEXT_OFFLINE", "0") == "1":
-        raise FileNotFoundError(
-            f"GLiNER model '{model_id}' is not available in the local cache "
-            f"{cache_dir}. Disable offline mode to download it."
-        )
-
-    return model_id, False
-
-
-def _load_gliner() -> Any:
-    """Build the GLiNER model fresh from the local HF cache (registry loader).
-
-    Returns:
-        Any: A ``GLiNER`` model instance on CPU.
-
-    Raises:
-        FileNotFoundError: If ``NEXTEXT_OFFLINE=1`` and the model is not
-            present in the local HF Hub cache.
-    """
-    cache_dir = _resolve_hf_cache_dir()
-    load_target, local_only = _resolve_gliner_load_target(_GLINER_MODEL_ID, cache_dir)
-    logger.info(
-        "Loading GLiNER model '{}' (local_only={}).",
-        _GLINER_MODEL_ID,
-        local_only,
-    )
-    model = GLiNER.from_pretrained(load_target, local_files_only=local_only)
-    logger.info("GLiNER model loaded.")
-    return model
-
-
-def _move_gliner(model: Any, device: str) -> Any:
-    """Move a GLiNER model to ``device``.
-
-    GLiNER's own ``.to()`` covers the wrapped transformer in recent versions,
-    but older releases only move the inner ``.model`` attribute.  The public
-    API is tried first; if it raises, the inner module is moved directly.
-
-    Args:
-        model (Any): A ``GLiNER`` model instance to move.
-        device (str): Target device string, e.g. ``"cuda"`` or ``"cpu"``.
-
-    Returns:
-        Any: The same ``GLiNER`` model instance after the move.
-    """
-    to_method = getattr(model, "to", None)
-    if callable(to_method):
-        try:
-            to_method(device)
-            return model
-        except (AttributeError, TypeError, NotImplementedError):
-            pass
-    inner = getattr(model, "model", None)
-    if inner is not None and hasattr(inner, "to"):
-        inner.to(device)
-    return model
-
-
-# GLiNER runs on Apple Silicon MPS without raising, but on realistic
-# ~512-word chunks the backend silently returns zero predictions while
-# the CPU path returns the correct entities (observed with
-# gliner_large-v2.5 on torch 2.8, 2026-04-19). A silent wrong answer is
-# worse than a crash, so pin to CPU on Mac; CUDA is still used when
-# available.
-REGISTRY.register(
-    ModelSpec(
-        name="gliner",
-        loader=_load_gliner,
-        mover=_move_gliner,
-        default_strategy=Strategy.OFFLOAD,
-        mps_compatible=False,
-    )
 )
 
 
@@ -506,7 +223,13 @@ class WordCounter:
         return df
 
     def named_entity_recognition(self, columns: list[str] | None = None) -> pd.DataFrame:
-        """Perform named entity recognition on the text using GLiNER.
+        """Perform named entity recognition via the remote GLiNER service.
+
+        Each sentence-packed chunk of at most 512 words is sent to the
+        external NER endpoint (see :mod:`nextext.core.ner_client`). The
+        extractor is fail-soft: chunk-level failures are logged inside the
+        client and yield no entities, so a flaky service degrades to fewer
+        entities instead of failing the word-level stage.
 
         Args:
             columns (list[str]): Column names for the resulting DataFrame.
@@ -521,27 +244,14 @@ class WordCounter:
             logger.error("Text is empty. Cannot run NER.")
             return pd.DataFrame(columns=pd.Index(columns)).reset_index(drop=True)
 
+        extract = build_remote_ner_extractor()
         all_entities: list[tuple[str, str]] = []
-        try:
-            with REGISTRY.acquire("gliner") as model:
-                with warnings.catch_warnings():
-                    warnings.filterwarnings(
-                        "ignore",
-                        message=".*truncat.*max_length.*no maximum length.*",
-                    )
-                    for chunk in _chunk_text(self.text):
-                        try:
-                            preds = model.predict_entities(chunk, _GLINER_LABELS, threshold=_GLINER_THRESHOLD)
-                            for pred in preds:
-                                text_val = pred.get("text", "").strip()
-                                label = pred.get("label", "").strip()
-                                if text_val and label and len(text_val) >= 3:
-                                    all_entities.append((label.upper(), text_val))
-                        except Exception as exc:
-                            logger.warning("GLiNER chunk inference failed: {}", exc)
-        except Exception as exc:
-            logger.error("Failed to load GLiNER model: {}", exc)
-            return pd.DataFrame(columns=pd.Index(columns)).reset_index(drop=True)
+        for chunk in _chunk_text(self.text):
+            for entity in extract(chunk):
+                text_val = str(entity.get("text") or "").strip()
+                label = str(entity.get("type") or "").strip()
+                if text_val and label and len(text_val) >= 3:
+                    all_entities.append((label.upper(), text_val))
 
         if not all_entities:
             return pd.DataFrame(columns=pd.Index(columns)).reset_index(drop=True)
