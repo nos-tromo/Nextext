@@ -99,9 +99,7 @@ def test_diarize_file_omits_auth_header_without_key(audio_file: Path) -> None:
     assert "Authorization" not in route.calls.last.request.headers
 
 
-def test_diarize_file_unset_base_raises_actionable_error(
-    audio_file: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_diarize_file_unset_base_raises_actionable_error(audio_file: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """An empty endpoint configuration raises before any network access.
 
     Args:

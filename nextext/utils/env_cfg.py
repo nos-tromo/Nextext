@@ -37,6 +37,20 @@ def set_offline_env() -> None:
 set_offline_env()  # Apply offline settings at module load time
 
 
+def is_offline() -> bool:
+    """Report whether Nextext runs in offline mode (``NEXTEXT_OFFLINE``).
+
+    Offline mode gates the spaCy / NLTK resource downloads — the only
+    runtime downloads Nextext still performs; all model inference happens on
+    external endpoints. Defaults to offline (``"1"``) so airgapped
+    deployments are safe out of the box.
+
+    Returns:
+        bool: ``True`` when offline mode is active.
+    """
+    return str(os.getenv("NEXTEXT_OFFLINE", "1")).lower() in {"1", "true", "yes"}
+
+
 @dataclass(frozen=True)
 class PathConfig:
     """Dataclass for path configuration."""

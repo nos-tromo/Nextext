@@ -1,7 +1,13 @@
-"""Utilities for preloading Nextext language and speech models."""
+"""Utilities for preloading Nextext's spaCy and NLTK language resources.
+
+All model inference runs on external endpoints, so the only assets worth
+preloading are the spaCy model packages (word-level analysis) and the NLTK
+corpora. Downloads are gated by ``NEXTEXT_OFFLINE`` (offline by default —
+see :func:`nextext.utils.env_cfg.is_offline`): airgapped hosts ship the
+caches instead of downloading.
+"""
 
 # Re-exported for tests that monkeypatch through this module.
-import gc as gc
 import importlib as importlib
 import os
 import subprocess as subprocess
@@ -11,15 +17,11 @@ from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as package_version
 from pathlib import Path
 
-import nltk
-import torch
-import whisper
+import nltk as nltk
 from dotenv import load_dotenv
-from gliner import GLiNER
 from loguru import logger
-from pyannote.audio import Pipeline as DiarizationPipeline
 
-from nextext.core.transcription import _configure_torch_safe_globals
+from nextext.utils.env_cfg import is_offline
 from nextext.utils.mappings_loader import load_mappings
 
 load_dotenv()
@@ -30,10 +32,6 @@ SPACY_MODEL_PACKAGE_VERSION = "SPACY_MODEL_PACKAGE_VERSION"
 DEFAULT_SPACY_MODEL_DIR = Path.home() / ".cache" / "spacy"
 DEFAULT_SPACY_MODEL_DOWNLOAD_BASE_URL = "https://github.com/explosion/spacy-models/releases/download"
 NLTK_RESOURCES = ("punkt_tab", "stopwords")
-LOCAL_WHISPER_MODEL_IDS: tuple[str, ...] = ("large-v3-turbo", "large-v3")
-GLINER_MODEL_ID = "gliner-community/gliner_large-v2.5"
-DIARIZATION_MODEL_ID = "pyannote/speaker-diarization-3.1"
-DIARIZATION_DEPENDENCY_IDS = ("pyannote/segmentation-3.0",)
 
 
 def get_spacy_model_dir() -> Path:
@@ -148,10 +146,20 @@ def get_spacy_model_ids(
 def ensure_nltk_resources(resources: Iterable[str] = NLTK_RESOURCES) -> None:
     """Download the NLTK resources required by Nextext.
 
+    In offline mode (``NEXTEXT_OFFLINE``, active by default) downloads are
+    skipped; resources already on disk keep working.
+
     Args:
         resources (Iterable[str]): Resource names to fetch.
     """
-    for resource in resources:
+    resolved_resources = list(resources)
+    if is_offline():
+        logger.info(
+            "Offline mode: skipping NLTK resource downloads ({}).",
+            ", ".join(resolved_resources),
+        )
+        return
+    for resource in resolved_resources:
         nltk.download(resource, quiet=True)
         logger.info("Loaded NLTK resource '{}'.", resource)
 
@@ -163,12 +171,20 @@ def download_spacy_model(model_id: str) -> None:
         model_id (str): The name of the spaCy model to download.
 
     Raises:
+        FileNotFoundError: If offline mode is enabled and the model is not
+            already cached.
         subprocess.CalledProcessError: If the subprocess command fails.
     """
     model_dir = ensure_spacy_model_path()
     if is_spacy_model_cached(model_id, model_dir):
         logger.info("spaCy model '{}' already cached in '{}'.", model_id, model_dir)
         return
+
+    if is_offline():
+        raise FileNotFoundError(
+            f"spaCy model '{model_id}' is not cached in '{model_dir}' and offline mode is active. "
+            "Run 'load-models' with NEXTEXT_OFFLINE=0 on a connected host, or ship the cache volume."
+        )
 
     download_url = get_spacy_model_download_url(model_id)
     subprocess.run(
@@ -200,114 +216,14 @@ def preload_spacy_models(model_ids: Iterable[str] | None = None) -> None:
         download_spacy_model(model_id)
 
 
-def _cleanup_torch_resources() -> None:
-    """Release transient Torch resources after model preloading."""
-    if hasattr(torch, "cuda") and torch.cuda.is_available():
-        torch.cuda.empty_cache()
-    gc.collect()
-
-
-def preload_whisper_model(model_id: str, device: str = "cpu") -> None:
-    """Download an openai-whisper checkpoint into the local cache.
-
-    The weights are fetched to ``~/.cache/whisper`` (or ``XDG_CACHE_HOME``)
-    without being loaded into host memory, so preloading large checkpoints
-    does not require the RAM needed at inference time.
-
-    Args:
-        model_id (str): The Whisper model ID to preload.
-        device (str): Unused; retained for call-site compatibility.
-    """
-    del device
-
-    if model_id not in whisper._MODELS:
-        raise ValueError(f"Unknown Whisper model '{model_id}'. Available: {sorted(whisper._MODELS)}.")
-
-    default_cache = os.path.join(os.path.expanduser("~"), ".cache")
-    download_root = os.path.join(os.getenv("XDG_CACHE_HOME", default_cache), "whisper")
-
-    logger.info("Downloading Whisper model '{}' to '{}'.", model_id, download_root)
-    checkpoint_path = whisper._download(whisper._MODELS[model_id], download_root, in_memory=False)
-    logger.info("Whisper model '{}' cached at '{}'.", model_id, checkpoint_path)
-
-
-def preload_whisper_models(
-    model_ids: Iterable[str] | None = None,
-    device: str = "cpu",
-) -> None:
-    """Preload the local openai-whisper models used by Nextext.
-
-    Args:
-        model_ids (Iterable[str] | None): Optional explicit model IDs to
-            preload. Defaults to :data:`LOCAL_WHISPER_MODEL_IDS`.
-        device (str): Device used for the preload step.
-    """
-    resolved_model_ids = list(model_ids or LOCAL_WHISPER_MODEL_IDS)
-    for model_id in resolved_model_ids:
-        preload_whisper_model(model_id, device=device)
-
-
-def preload_diarization_model(
-    auth_token: str | None,
-    device: str = "cpu",
-) -> None:
-    """Preload the pyannote speaker diarization pipeline.
-
-    Args:
-        auth_token (str | None): Hugging Face token used for private gated
-            model access.
-        device (str): Device used for the preload step.
-    """
-    if not auth_token:
-        logger.warning(
-            "Skipping diarization preload. '{}' also depends on {}.",
-            DIARIZATION_MODEL_ID,
-            ", ".join(DIARIZATION_DEPENDENCY_IDS),
-        )
-        return
-
-    _configure_torch_safe_globals()
-    logger.info("Loading diarization model '{}'.", DIARIZATION_MODEL_ID)
-    pipeline = DiarizationPipeline.from_pretrained(
-        DIARIZATION_MODEL_ID,
-        use_auth_token=auth_token,
-    )
-    pipeline.to(torch.device(device))
-    del pipeline
-    _cleanup_torch_resources()
-
-
-def preload_gliner_model(model_id: str = GLINER_MODEL_ID) -> None:
-    """Download and cache the GLiNER NER model.
-
-    Args:
-        model_id (str): The Hugging Face model ID for GLiNER.
-    """
-    logger.info("Loading GLiNER model '{}'.", model_id)
-    model = GLiNER.from_pretrained(model_id)
-    del model
-    gc.collect()
-    logger.info("GLiNER model '{}' cached.", model_id)
-
-
-def _get_default_device() -> str:
-    """Resolve the preferred device for preload operations.
-
-    Returns:
-        str: ``cuda`` when available, otherwise ``cpu``.
-    """
-    return "cuda" if torch.cuda.is_available() else "cpu"
-
-
 def main() -> None:
-    """Preload Nextext's local language and speech models.
+    """Preload Nextext's spaCy and NLTK language resources.
 
     Raises:
         RuntimeError: If any preload operation fails.
     """
     failures: list[str] = []
-    device = _get_default_device()
-    logger.info("Preloading Nextext models on device '{}'.", device)
+    logger.info("Preloading Nextext language resources (offline={}).", is_offline())
 
     try:
         ensure_nltk_resources()
@@ -320,26 +236,10 @@ def main() -> None:
         except Exception as exc:
             failures.append(f"spaCy {model_id} ({exc})")
 
-    for model_id in LOCAL_WHISPER_MODEL_IDS:
-        try:
-            preload_whisper_model(model_id, device=device)
-        except Exception as exc:
-            failures.append(f"Whisper {model_id} ({exc})")
-
-    try:
-        preload_diarization_model(os.getenv("HF_HUB_TOKEN"), device=device)
-    except Exception as exc:
-        failures.append(f"Diarization {DIARIZATION_MODEL_ID} ({exc})")
-
-    try:
-        preload_gliner_model()
-    except Exception as exc:
-        failures.append(f"GLiNER {GLINER_MODEL_ID} ({exc})")
-
     if failures:
         raise RuntimeError("Failed to preload models: " + "; ".join(failures))
 
-    logger.info("All Nextext preload models are available.")
+    logger.info("All Nextext preload resources are available.")
 
 
 if __name__ == "__main__":

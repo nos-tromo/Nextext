@@ -88,8 +88,7 @@ def diarize_file(
 
     if response.status_code == 404:
         raise RuntimeError(
-            f"{url} does not exist (HTTP 404) — the configured service does not implement diarization. "
-            + _SETUP_HINT
+            f"{url} does not exist (HTTP 404) — the configured service does not implement diarization. " + _SETUP_HINT
         )
     if response.is_error:
         raise RuntimeError(f"Diarization service returned HTTP {response.status_code}: {response.text[:500]}")

@@ -68,6 +68,7 @@ def test_download_spacy_model_uses_persistent_target(
     """
     cache_dir = tmp_path / "spacy-cache"
     monkeypatch.setenv(model_loader.SPACY_MODEL_DIR, str(cache_dir))
+    monkeypatch.setenv("NEXTEXT_OFFLINE", "0")
     captured: list[list[str]] = []
 
     def fake_run(cmd: list[str], check: bool) -> None:
@@ -154,18 +155,13 @@ def test_get_spacy_model_download_url_uses_override_base_url(
 def test_main_preloads_expected_model_groups(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Test that the main preload routine covers all configured model groups.
+    """Test that the main preload routine covers exactly NLTK and spaCy.
 
     Args:
         monkeypatch (pytest.MonkeyPatch): The pytest fixture for modifying environment variables and functions.
     """
     calls: list[tuple[str, str]] = []
 
-    monkeypatch.setattr(
-        model_loader,
-        "_get_default_device",
-        lambda: "cpu",
-    )
     monkeypatch.setattr(
         model_loader,
         "ensure_nltk_resources",
@@ -181,35 +177,101 @@ def test_main_preloads_expected_model_groups(
         "download_spacy_model",
         lambda model_id: calls.append(("spacy", model_id)),
     )
-    monkeypatch.setattr(
-        model_loader,
-        "LOCAL_WHISPER_MODEL_IDS",
-        ("large-v3-turbo", "large-v3"),
-    )
-    monkeypatch.setattr(
-        model_loader,
-        "preload_whisper_model",
-        lambda model_id, device: calls.append((f"whisper:{device}", model_id)),
-    )
-    monkeypatch.setattr(
-        model_loader,
-        "preload_diarization_model",
-        lambda auth_token, device: calls.append((f"diarization:{device}", auth_token or "")),
-    )
-    monkeypatch.setattr(
-        model_loader,
-        "preload_gliner_model",
-        lambda: calls.append(("gliner", model_loader.GLINER_MODEL_ID)),
-    )
-    monkeypatch.setenv("HF_HUB_TOKEN", "secret-token")
 
     model_loader.main()
 
     assert calls == [
         ("nltk", "all"),
         ("spacy", "en_core_web_sm"),
-        ("whisper:cpu", "large-v3-turbo"),
-        ("whisper:cpu", "large-v3"),
-        ("diarization:cpu", "secret-token"),
-        ("gliner", model_loader.GLINER_MODEL_ID),
     ]
+
+
+def test_download_spacy_model_offline_uncached_raises(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Offline mode with an uncached model raises an actionable error.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): The pytest fixture for modifying environment variables and functions.
+        tmp_path (Path): The pytest fixture providing a temporary directory for testing.
+    """
+    cache_dir = tmp_path / "spacy-cache"
+    monkeypatch.setenv(model_loader.SPACY_MODEL_DIR, str(cache_dir))
+    monkeypatch.setenv("NEXTEXT_OFFLINE", "1")
+
+    def fail_run(*args: object, **kwargs: object) -> None:
+        """Fail if subprocess.run is called — offline mode must not download.
+
+        Raises:
+            AssertionError: Always raised — no download may happen offline.
+        """
+        raise AssertionError("subprocess.run must not be called in offline mode")
+
+    monkeypatch.setattr(model_loader.subprocess, "run", fail_run)
+
+    with pytest.raises(FileNotFoundError, match="NEXTEXT_OFFLINE"):
+        model_loader.download_spacy_model("en_core_web_sm")
+
+
+def test_download_spacy_model_offline_cached_is_noop(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Offline mode with a cached model short-circuits without raising.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): The pytest fixture for modifying environment variables.
+        tmp_path (Path): The pytest fixture providing a temporary directory for testing.
+    """
+    cache_dir = tmp_path / "spacy-cache"
+    (cache_dir / "en_core_web_sm").mkdir(parents=True)
+    monkeypatch.setenv(model_loader.SPACY_MODEL_DIR, str(cache_dir))
+    monkeypatch.setenv("NEXTEXT_OFFLINE", "1")
+
+    model_loader.download_spacy_model("en_core_web_sm")
+
+
+def test_ensure_nltk_resources_offline_skips_downloads(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Offline mode skips every NLTK download.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): The pytest fixture for modifying environment variables and functions.
+    """
+    monkeypatch.setenv("NEXTEXT_OFFLINE", "1")
+
+    def fail_download(*args: object, **kwargs: object) -> None:
+        """Fail if nltk.download is called — offline mode must not download.
+
+        Raises:
+            AssertionError: Always raised — no download may happen offline.
+        """
+        raise AssertionError("nltk.download must not be called in offline mode")
+
+    monkeypatch.setattr(model_loader.nltk, "download", fail_download)
+
+    model_loader.ensure_nltk_resources()
+
+
+def test_ensure_nltk_resources_online_downloads_each_resource(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Online mode downloads every configured NLTK resource.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): The pytest fixture for modifying environment variables and functions.
+    """
+    monkeypatch.setenv("NEXTEXT_OFFLINE", "0")
+    downloaded: list[str] = []
+
+    monkeypatch.setattr(
+        model_loader.nltk,
+        "download",
+        lambda resource, quiet: downloaded.append(resource),
+    )
+
+    model_loader.ensure_nltk_resources()
+
+    assert downloaded == list(model_loader.NLTK_RESOURCES)
