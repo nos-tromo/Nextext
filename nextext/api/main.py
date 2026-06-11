@@ -11,13 +11,12 @@ from loguru import logger
 
 from nextext.api.jobs import JobManager
 from nextext.api.routes import router as api_router
-from nextext.utils.env_cfg import set_offline_env
 from nextext.utils.log_cfg import setup_logging
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    """Configure logging, offline mode, and the job manager for the app lifetime.
+    """Configure logging and the job manager for the app lifetime.
 
     Args:
         app: The FastAPI application instance.
@@ -25,7 +24,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     Yields:
         None: Control is yielded after startup configuration completes.
     """
-    set_offline_env()
     setup_logging()
     job_manager = JobManager()
     await job_manager.start()

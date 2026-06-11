@@ -2,39 +2,11 @@
 
 import os
 from dataclasses import dataclass
-from pathlib import Path
 
 from dotenv import load_dotenv
 from loguru import logger
 
 load_dotenv()
-
-
-def set_offline_env() -> None:
-    """Log the current offline mode status.
-
-    The actual env vars (HF_HUB_OFFLINE, TRANSFORMERS_OFFLINE, etc.) are set at
-    module level immediately after ``load_dotenv()`` so they are available before
-    ``huggingface_hub`` / ``transformers`` cache their values at import time.
-    This function re-applies them (idempotent) and emits a log message.
-    """
-    if str(os.getenv("NEXTEXT_OFFLINE", "1")).lower() in {"1", "true", "yes"}:
-        os.environ["HF_HUB_OFFLINE"] = "1"
-        os.environ["TRANSFORMERS_OFFLINE"] = "1"
-        os.environ["HF_HUB_DISABLE_TELEMETRY"] = "1"
-        os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
-        os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
-
-        logger.info("Set Hugging Face libraries to offline mode.")
-    else:
-        logger.info("Hugging Face libraries are in online mode.")
-
-    # Apple Silicon: route MPS-unsupported ops (e.g. sparse_coo paths used
-    # by Whisper / pyannote) to CPU instead of crashing.
-    os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
-
-
-set_offline_env()  # Apply offline settings at module load time
 
 
 def is_offline() -> bool:
@@ -51,16 +23,7 @@ def is_offline() -> bool:
     return str(os.getenv("NEXTEXT_OFFLINE", "1")).lower() in {"1", "true", "yes"}
 
 
-@dataclass(frozen=True)
-class PathConfig:
-    """Dataclass for path configuration."""
-
-    prompts: Path
-    hf_hub_cache: Path
-
-
 VALID_INFERENCE_PROVIDERS: frozenset[str] = frozenset({"ollama", "vllm", "openai"})
-VALID_RESIDENCY_STRATEGIES: frozenset[str] = frozenset({"offload", "evict"})
 _TRUE_TOKENS: frozenset[str] = frozenset({"1", "true", "yes", "on"})
 _FALSE_TOKENS: frozenset[str] = frozenset({"0", "false", "no", "off"})
 
@@ -79,18 +42,6 @@ class InferenceConfig:
 
     provider: str
     think: bool | None = None
-
-
-@dataclass(frozen=True)
-class MemoryConfig:
-    """Dataclass for model residency configuration.
-
-    Attributes:
-        default_strategy: Global fallback strategy applied when no per-model
-            override is set. One of :data:`VALID_RESIDENCY_STRATEGIES`.
-    """
-
-    default_strategy: str
 
 
 @dataclass(frozen=True)
@@ -150,27 +101,6 @@ def load_inference_env() -> InferenceConfig:
         logger.warning("Unknown INFERENCE_PROVIDER '{}'. Falling back to 'ollama'.", raw)
         raw = "ollama"
     return InferenceConfig(provider=raw, think=_parse_tristate_bool("OLLAMA_THINK"))
-
-
-def load_memory_env() -> MemoryConfig:
-    """Loads model residency configuration from environment variables.
-
-    Returns:
-        MemoryConfig: Dataclass containing the resolved residency settings.
-        - default_strategy (str): ``"offload"`` (default) or ``"evict"``. Read
-          from ``MODEL_RESIDENCY_STRATEGY``. Unknown values fall back to
-          ``"offload"`` with a warning. Per-model overrides
-          (``MODEL_RESIDENCY_<NAME>``) are resolved inside the model registry
-          and are not surfaced here.
-    """
-    raw = os.getenv("MODEL_RESIDENCY_STRATEGY", "offload").strip().lower()
-    if raw not in VALID_RESIDENCY_STRATEGIES:
-        logger.warning(
-            "Unknown MODEL_RESIDENCY_STRATEGY '{}'. Falling back to 'offload'.",
-            raw,
-        )
-        raw = "offload"
-    return MemoryConfig(default_strategy=raw)
 
 
 def load_vad_env() -> VadConfig:
@@ -364,26 +294,6 @@ def load_diarization_client_env(default_timeout: float = 600.0) -> DiarizationCl
         api_base=(os.getenv("DIARIZATION_API_BASE", "").strip() or openai_api_root()).rstrip("/"),
         api_key=api_key,
         timeout=float(os.getenv("DIARIZATION_TIMEOUT", default_timeout)),
-    )
-
-
-def load_path_env() -> PathConfig:
-    """Loads path configuration from environment variables or defaults.
-
-    Returns:
-        PathConfig: Dataclass containing path configuration.
-        - prompts (Path): Path to the prompts directory.
-        - hf_hub_cache (Path): Path to the Hugging Face Hub cache directory.
-    """
-    default_cache_cache: Path = Path.home() / ".cache"
-    default_hf_hub_cache: Path = default_cache_cache / "huggingface" / "hub"
-
-    utils_dir: Path = Path(__file__).parent.resolve()
-    default_prompts_dir: Path = utils_dir / "prompts"
-
-    return PathConfig(
-        prompts=default_prompts_dir,
-        hf_hub_cache=Path(os.getenv("HF_HUB_CACHE", default_hf_hub_cache)).expanduser(),
     )
 
 
