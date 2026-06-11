@@ -8,25 +8,10 @@ from matplotlib.figure import Figure
 
 from nextext.core.hate_speech import HateSpeechDetector
 from nextext.core.openai_cfg import InferencePipeline
+from nextext.core.transcription import ExternalWhisperTranscriber
 from nextext.core.translation import Translator
 from nextext.core.words import WordCounter
-from nextext.utils.env_cfg import load_transcription_env
-
-WhisperTranscriber: Any = None
-ExternalWhisperTranscriber: Any = None
-
-try:
-    from nextext.core.transcription import (
-        ExternalWhisperTranscriber as _ExternalWhisperTranscriber,
-    )
-    from nextext.core.transcription import (
-        WhisperTranscriber as _WhisperTranscriber,
-    )
-except Exception:  # pragma: no cover - environment-specific optional dependency failure
-    pass
-else:
-    WhisperTranscriber = _WhisperTranscriber
-    ExternalWhisperTranscriber = _ExternalWhisperTranscriber
+from nextext.utils.env_cfg import load_whisper_env
 
 
 def transcription_pipeline(
@@ -36,61 +21,40 @@ def transcription_pipeline(
     task: str,
     n_speakers: int,
 ) -> tuple[pd.DataFrame, str]:
-    """Transcribe the audio file using either a local Whisper model or an external API.
+    """Transcribe the audio file via the external Whisper API.
 
-    The transcription provider is derived from ``INFERENCE_PROVIDER``: ``ollama``
-    runs the bundled ``openai-whisper`` locally, while ``openai`` and ``vllm``
-    forward the audio to an OpenAI-compatible ``/v1/audio/transcriptions``
-    endpoint. External transcription does not support diarization.
+    The audio always goes to an OpenAI-compatible
+    ``/v1/audio/transcriptions`` endpoint resolved by
+    :func:`nextext.utils.env_cfg.load_whisper_env`. Requesting more than one
+    speaker additionally calls the external diarization service (see
+    :mod:`nextext.core.diarization`).
 
     Args:
         file_path (Path): Path to the audio file.
         trg_lang (str): Target language code for translation check.
         src_lang (str): Source language code.
         task (str): Task to perform (transcribe or translate).
-        n_speakers (int): Number of speakers for diarization (local provider only).
+        n_speakers (int): Maximum number of speakers for diarization.
 
     Returns:
         tuple[pd.DataFrame, str]: The transcript DataFrame and the
             resolved source language code.
     """
-    config = load_transcription_env()
-
-    if config.provider == "external":
-        if ExternalWhisperTranscriber is None:
-            raise RuntimeError(
-                "Transcription dependencies could not be imported. Please verify the openai package installation."
-            )
-        external_transcriber = ExternalWhisperTranscriber(
-            file_path=file_path,
-            trg_lang=trg_lang,
-            src_lang=src_lang,
-            model_id=config.whisper_model,
-            task=task,
-        )
-        external_transcriber.transcription()
-        df = external_transcriber.transcript_output()
-        updated_src_lang = external_transcriber.src_lang or src_lang
-        return df, updated_src_lang
-    else:
-        if WhisperTranscriber is None:
-            raise RuntimeError(
-                "Transcription dependencies could not be imported. Verify the openai-whisper "
-                "and torchaudio installation."
-            )
-        local_transcriber = WhisperTranscriber(
-            file_path=file_path,
-            trg_lang=trg_lang,
-            src_lang=src_lang,
-            task=task,
-            n_speakers=n_speakers,
-        )
-        local_transcriber.transcription()
-        if n_speakers > 1:
-            local_transcriber.diarization()
-        df = local_transcriber.transcript_output()
-        updated_src_lang = local_transcriber.src_lang or src_lang
-        return df, updated_src_lang
+    config = load_whisper_env()
+    transcriber = ExternalWhisperTranscriber(
+        file_path=file_path,
+        trg_lang=trg_lang,
+        src_lang=src_lang,
+        model_id=config.model,
+        task=task,
+        n_speakers=n_speakers,
+    )
+    transcriber.transcription()
+    if n_speakers > 1:
+        transcriber.diarization()
+    df = transcriber.transcript_output()
+    updated_src_lang = transcriber.src_lang or src_lang
+    return df, updated_src_lang
 
 
 def normalize_language_code(lang_code: str | None) -> str | None:
