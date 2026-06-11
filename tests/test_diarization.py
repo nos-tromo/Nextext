@@ -143,7 +143,7 @@ def test_diarize_file_server_error_raises(audio_file: Path) -> None:
     """
     respx.post(f"{_BASE}/diarize").mock(return_value=httpx.Response(500, text="cuda OOM"))
 
-    with pytest.raises(RuntimeError, match="HTTP 500.*cuda OOM"):
+    with pytest.raises(RuntimeError, match=r"HTTP 500.*cuda OOM"):
         diarize_file(audio_file, max_speakers=2, cfg=_make_cfg())
 
 
