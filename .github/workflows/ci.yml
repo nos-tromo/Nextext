@@ -22,6 +22,6 @@ jobs:
     uses: nos-tromo/.github/.github/workflows/python-app-ci.yml@v2.3
     with:
       python-versions: '["3.12"]'
-      uv-sync-args: '--frozen --group dev --extra cpu'
+      uv-sync-args: '--frozen --group dev'
       docker-build: true
       docker-compose-profiles: '--profile cpu'
