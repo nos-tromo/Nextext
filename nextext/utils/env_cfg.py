@@ -204,6 +204,188 @@ def load_vad_env() -> VadConfig:
     return VadConfig(enabled=enabled)
 
 
+def openai_api_root() -> str:
+    """Returns ``OPENAI_API_BASE`` with one trailing ``/v1`` segment stripped.
+
+    Non-OpenAI-shaped endpoints (the GLiNER and diarization pass-throughs)
+    live at the inference-router root (e.g. ``http://vllm-router:4000/gliner``),
+    while ``OPENAI_API_BASE`` conventionally carries the SDK base including
+    ``/v1`` (e.g. ``http://vllm-router:4000/v1``). Stripping exactly one
+    trailing ``/v1`` maps the central base onto that root; bases without the
+    suffix pass through unchanged.
+
+    Returns:
+        str: The derived root URL without a trailing slash, or an empty
+        string when ``OPENAI_API_BASE`` is unset or blank.
+    """
+    base = os.getenv("OPENAI_API_BASE", "").strip().rstrip("/")
+    return base.removesuffix("/v1")
+
+
+@dataclass(frozen=True)
+class WhisperClientConfig:
+    """Dataclass for the external Whisper transcription client.
+
+    Attributes:
+        api_base: OpenAI-SDK base URL (including ``/v1``) of the endpoint
+            serving ``/audio/transcriptions``. Dedicated override via
+            ``WHISPER_API_BASE``; falls back to the central
+            ``OPENAI_API_BASE``. An empty string lets the SDK use its
+            built-in default (``https://api.openai.com/v1``).
+        api_key: Bearer token for the Whisper endpoint. Dedicated override
+            via ``WHISPER_API_KEY``; falls back to ``OPENAI_API_KEY``.
+        model: Model name sent with each request. ``WHISPER_MODEL``
+            overrides the per-provider default.
+    """
+
+    api_base: str
+    api_key: str
+    model: str
+
+
+def load_whisper_env() -> WhisperClientConfig:
+    """Loads external Whisper client configuration from environment variables.
+
+    Every transcription call goes to an OpenAI-compatible audio endpoint —
+    there is no local fallback. The endpoint defaults to the central
+    ``OPENAI_API_BASE``/``OPENAI_API_KEY`` pair and can be re-pointed via the
+    dedicated ``WHISPER_API_BASE``/``WHISPER_API_KEY`` overrides. The model
+    defaults per provider (``openai`` → ``whisper-1``, ``vllm`` →
+    ``openai/whisper-large-v3``); ``WHISPER_MODEL`` overrides.
+
+    ``INFERENCE_PROVIDER=ollama`` serves no transcription API, so both
+    ``WHISPER_API_BASE`` and ``WHISPER_MODEL`` must be set explicitly there
+    (e.g. pointing at the vllm-service audio container or any standalone
+    OpenAI-compatible STT server).
+
+    Returns:
+        WhisperClientConfig: The resolved client configuration.
+
+    Raises:
+        RuntimeError: When ``INFERENCE_PROVIDER=ollama`` and
+            ``WHISPER_API_BASE`` or ``WHISPER_MODEL`` is unset or blank.
+    """
+    provider = load_inference_env().provider
+    dedicated_base = os.getenv("WHISPER_API_BASE", "").strip()
+    api_key = os.getenv("WHISPER_API_KEY", "").strip() or os.getenv("OPENAI_API_KEY", "").strip()
+    model_override = os.getenv("WHISPER_MODEL", "").strip()
+
+    if provider == "ollama":
+        missing = [
+            name
+            for name, value in (
+                ("WHISPER_API_BASE", dedicated_base),
+                ("WHISPER_MODEL", model_override),
+            )
+            if not value
+        ]
+        if missing:
+            raise RuntimeError(
+                "INFERENCE_PROVIDER=ollama has no Whisper endpoint. Set "
+                + " and ".join(missing)
+                + " to an OpenAI-compatible transcription service"
+                " (e.g. the vllm-service audio container)."
+            )
+        return WhisperClientConfig(api_base=dedicated_base, api_key=api_key, model=model_override)
+
+    api_base = dedicated_base or os.getenv("OPENAI_API_BASE", "").strip()
+    model = model_override or EXTERNAL_WHISPER_DEFAULTS[provider]
+    return WhisperClientConfig(api_base=api_base, api_key=api_key, model=model)
+
+
+@dataclass(frozen=True)
+class NERClientConfig:
+    """Dataclass for the remote GLiNER NER service HTTP client.
+
+    Attributes:
+        api_base: Base URL of the service exposing ``POST /gliner``.
+        api_key: Bearer token, or ``None`` for unauthenticated endpoints.
+        threshold: GLiNER confidence cutoff passed per request.
+        timeout: Per-request HTTP timeout in seconds.
+    """
+
+    api_base: str
+    api_key: str | None
+    threshold: float
+    timeout: float
+
+
+def load_ner_client_env(
+    default_threshold: float = 0.3,
+    default_timeout: float = 30.0,
+) -> NERClientConfig:
+    """Loads remote NER client configuration from environment variables.
+
+    The endpoint defaults to the central inference router: ``OPENAI_API_BASE``
+    with a trailing ``/v1`` stripped (see :func:`openai_api_root`), where the
+    LiteLLM ``/gliner`` pass-through lives. Point ``NER_API_BASE`` at a
+    dedicated service (e.g. ``http://gliner-only:8000``) to override.
+
+    Unlike docint's loader, ``NER_API_KEY`` falls back to ``OPENAI_API_KEY``
+    so the central-router case needs no extra variable; set ``NER_API_KEY``
+    explicitly for dedicated endpoints with different auth.
+
+    Args:
+        default_threshold (float): Confidence cutoff used when
+            ``NER_THRESHOLD`` is unset.
+        default_timeout (float): HTTP timeout in seconds used when
+            ``NER_TIMEOUT`` is unset.
+
+    Returns:
+        NERClientConfig: The resolved client configuration.
+    """
+    raw_key = os.getenv("NER_API_KEY") or os.getenv("OPENAI_API_KEY")
+    api_key = raw_key.strip() if raw_key and raw_key.strip() else None
+    return NERClientConfig(
+        api_base=(os.getenv("NER_API_BASE", "").strip() or openai_api_root()).rstrip("/"),
+        api_key=api_key,
+        threshold=float(os.getenv("NER_THRESHOLD", default_threshold)),
+        timeout=float(os.getenv("NER_TIMEOUT", default_timeout)),
+    )
+
+
+@dataclass(frozen=True)
+class DiarizationClientConfig:
+    """Dataclass for the external speaker-diarization service HTTP client.
+
+    Attributes:
+        api_base: Base URL of the service exposing ``POST /diarize``. Empty
+            when neither ``DIARIZATION_API_BASE`` nor ``OPENAI_API_BASE`` is
+            set — the client then fails with an actionable error.
+        api_key: Bearer token, or ``None`` for unauthenticated endpoints.
+        timeout: Per-request HTTP timeout in seconds. Diarization runs a
+            full model pass over the audio, so the default is generous.
+    """
+
+    api_base: str
+    api_key: str | None
+    timeout: float
+
+
+def load_diarization_client_env(default_timeout: float = 600.0) -> DiarizationClientConfig:
+    """Loads diarization client configuration from environment variables.
+
+    The endpoint defaults to the central inference router root (see
+    :func:`openai_api_root`); ``DIARIZATION_API_BASE`` overrides it with a
+    dedicated service. ``DIARIZATION_API_KEY`` falls back to
+    ``OPENAI_API_KEY`` (same rationale as :func:`load_ner_client_env`).
+
+    Args:
+        default_timeout (float): HTTP timeout in seconds used when
+            ``DIARIZATION_TIMEOUT`` is unset.
+
+    Returns:
+        DiarizationClientConfig: The resolved client configuration.
+    """
+    raw_key = os.getenv("DIARIZATION_API_KEY") or os.getenv("OPENAI_API_KEY")
+    api_key = raw_key.strip() if raw_key and raw_key.strip() else None
+    return DiarizationClientConfig(
+        api_base=(os.getenv("DIARIZATION_API_BASE", "").strip() or openai_api_root()).rstrip("/"),
+        api_key=api_key,
+        timeout=float(os.getenv("DIARIZATION_TIMEOUT", default_timeout)),
+    )
+
+
 def load_path_env() -> PathConfig:
     """Loads path configuration from environment variables or defaults.
 
