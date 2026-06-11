@@ -1,6 +1,6 @@
 # Nextext 🎙️
 
-**Nextext** is a modular toolkit for transcribing, translating, and analyzing natural language from audio and video files using state-of-the-art machine learning models. It ships as two cooperating services: a FastAPI **backend** that owns the pipeline and GPU model registry, and a Streamlit **frontend** that talks to the backend over HTTP. The same toolkit also exposes a CLI for in-process batch processing.
+**Nextext** is a modular toolkit for transcribing, translating, and analyzing natural language from audio and video files. All model inference (Whisper transcription, LLM text tasks, GLiNER NER, speaker diarization) runs on **external OpenAI-compatible / HTTP endpoints** — the app itself ships no model weights and needs no GPU. It consists of two cooperating services: a FastAPI **backend** that owns the pipeline and a Streamlit **frontend** that talks to the backend over HTTP. The same toolkit also exposes a CLI for in-process batch processing.
 
 > This is a personal project that is under heavy development. It could, and likely does, contain bugs, incomplete code,
 > or other unintended issues. As such, the software is provided as-is, without warranty of any kind.
@@ -11,12 +11,13 @@
 
 ### Prerequisites 📋
 
-- [Hugging Face](https://huggingface.co/) account and access token (read)
+- An OpenAI-compatible inference endpoint reachable via `OPENAI_API_BASE` (e.g. [nos-tromo/vllm-service](https://github.com/nos-tromo/vllm-service) or [Ollama](https://ollama.com/) for the text tasks)
+- An endpoint serving Whisper transcription (`/v1/audio/transcriptions`) — vllm-service provides one; Ollama does not (set `WHISPER_API_BASE` separately in that case)
+- [`ffmpeg`](https://ffmpeg.org/) on the PATH for non-Docker usage (decodes uploads for the silence/VAD guards)
 
 Without Docker usage:
 
 - [`uv`](https://github.com/astral-sh/uv) for Python version and dependency management
-- Any OpenAI-compatible inference provider (e.g. [Ollama](https://ollama.com/)) reachable via `OPENAI_API_BASE`
 
 ### Manual installation 📦
 
@@ -28,20 +29,16 @@ cd Nextext
 uv sync
 ```
 
-To enable speaker diarization, accept the user agreement for the following models: [`pyannote/segmentation-3.0`](https://huggingface.co/pyannote/segmentation-3.0) and [`speaker-diarization-3.1`](https://huggingface.co/pyannote/speaker-diarization-3.1).
-
 ### Docker installation 🐳
 
 #### Shared Docker volumes
 
-The compose file uses external cache volumes so model artifacts survive
-container recreation:
+The compose file uses external cache volumes so the spaCy / NLTK language
+resources survive container recreation (no model weights are cached —
+inference runs on external endpoints):
 
-- `huggingface-cache`
-- `nextext-data` (persistent job index + artifacts; survives `docker compose down -v`)
 - `nltk-cache`
 - `spacy-cache`
-- `torch-cache`
 
 The helper script creates them with `docker volume create`:
 
@@ -56,9 +53,21 @@ The compose stack loads `.env` into each Nextext container via
 
 Nextext communicates with any OpenAI-compatible inference provider via `OPENAI_API_BASE` and `OPENAI_API_KEY`. Provider selection is handled entirely through environment variables — no code changes required.
 
+Every model class can also be re-pointed at a **dedicated endpoint**, falling back to the central pair when unset:
+
+| Model | Dedicated env vars | Endpoint shape |
+|-------|--------------------|----------------|
+| Whisper transcription | `WHISPER_API_BASE` / `WHISPER_API_KEY` / `WHISPER_MODEL` | OpenAI SDK base incl. `/v1` |
+| GLiNER NER | `NER_API_BASE` / `NER_API_KEY` (+ `NER_THRESHOLD`, `NER_TIMEOUT`) | service root, `POST {base}/gliner` |
+| Speaker diarization | `DIARIZATION_API_BASE` / `DIARIZATION_API_KEY` (+ `DIARIZATION_TIMEOUT`) | service root, `POST {base}/diarize` |
+
+For the non-OpenAI-shaped services the central fallback strips one trailing `/v1` from `OPENAI_API_BASE`, which matches the vllm-service LiteLLM pass-throughs (`http://vllm-router:4000/v1` → `http://vllm-router:4000/gliner`).
+
+> **Diarization** has no server-side implementation in vllm-service yet. Jobs requesting more than one speaker fail with an actionable error until `DIARIZATION_API_BASE` points at a service implementing `POST /diarize` (multipart `file` + `max_speakers` form field → `{"segments": [{"start", "end", "speaker"}]}` — the full contract lives in `nextext/core/diarization.py`).
+
 The Nextext compose services join an external Docker network (`inference-net`) so they can reach whichever inference container you deploy on that network. **Create the network and start your inference provider before running the compose stack.**
 
-**Ollama (recommended for local/self-hosted use):**
+**Ollama (text tasks only — needs a separate Whisper endpoint):**
 
 ```bash
 # Create Docker network and persistent cache
@@ -74,11 +83,13 @@ docker run -d \
   ollama/ollama:0.20.2
 ```
 
-Then configure Nextext to reach it by adding the following to your `.env` file:
+Then configure Nextext to reach it by adding the following to your `.env` file (Ollama serves no transcription API, so Whisper needs an explicit dedicated endpoint):
 
 ```bash
 OPENAI_API_BASE=http://ollama:11434/v1
 OPENAI_API_KEY=ollama
+WHISPER_API_BASE=http://<your-whisper-host>:8000/v1
+WHISPER_MODEL=openai/whisper-large-v3
 ```
 
 **Hosted OpenAI API:**
@@ -90,31 +101,31 @@ OPENAI_API_KEY=your-key
 
 Any other OpenAI-compatible endpoint (vLLM, LiteLLM, etc.) works the same way — set `OPENAI_API_BASE` to the `/v1` endpoint and `OPENAI_API_KEY` to whatever the provider expects.
 
-#### Profile installation
+#### Stack installation
 
-Clone the repository and bring up the stack for CPU or GPU usage (the
-CUDA profile requires a CUDA compatible GPU and the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)). The profile is read from `PROFILE` in `.env` (default `cpu`); the `Makefile` is the entry point and points Compose at `docker/compose.yaml` for you:
+Clone the repository and bring up the stack — a single CPU-only image pair,
+no GPU or profile selection needed (the `Makefile` is the entry point and
+points Compose at `docker/compose.yaml` for you):
 
 ```bash
-make build              # build images for the active profile
-make up-dev             # CPU by default — starts backend-cpu + frontend-cpu (publishes host ports)
-make up-dev PROFILE=cuda  # CUDA — starts backend-cuda + frontend-cuda
+make build              # build the backend + frontend images
+make up-dev             # starts backend + frontend (publishes the frontend port)
 ```
 
 `make up-dev` layers `docker/compose.override.yaml` so host ports are
 published for local development; `make up` (or the base `docker/compose.yaml`
 alone) is the production shape and publishes no host ports.
 
-Each profile brings up two containers:
+The stack brings up two containers:
 
-- **Backend** (`backend-cpu` / `backend-cuda`) — FastAPI on port 8000 (internal). Owns the pipeline, model caches, and the in-memory job store. Exposes `/api/v1/health`, `/api/v1/languages`, `/api/v1/jobs/*`. Not published to the host by default.
-- **Frontend** (`frontend-cpu` / `frontend-cuda`) — Streamlit on port 8501. A thin HTTP client over the backend; ships only the `frontend` dependency group (no torch / whisper / pyannote).
+- **Backend** (`backend`) — FastAPI on port 8000 (internal). Owns the pipeline, the HTTP inference clients, and the in-memory job store. Exposes `/api/v1/health`, `/api/v1/languages`, `/api/v1/jobs/*`. Not published to the host by default.
+- **Frontend** (`frontend`) — Streamlit on port 8501. A thin HTTP client over the backend; ships only the `frontend` dependency group.
 
 Jobs live only in memory — there is no durable storage and no TTL, so a long-running job is never cut off and is retained until you delete it or the backend restarts. Identity is anonymous: the frontend mints a per-browser id and stamps it into the URL (`?owner=<id>`) on first visit, sending it to the backend as the trusted identity header (`X-Auth-User` by default) to scope your jobs. Because that id survives a refresh, reloading the page mid-run re-discovers your jobs and resumes the live progress view; closing the tab and reopening the bare host starts a fresh identity. Developers calling the API directly can skip the header and set `NEXTEXT_DEFAULT_IDENTITY` instead. There is no authentication — the backend trusts whoever can reach `inference-net`.
 
 Launch the UI: `http://localhost:8501/`. The frontend reaches the backend via `BACKEND_HOST` (default `http://backend:8000` inside the compose network).
 
-Each build is tagged `nextext-{backend,frontend}-{cpu|cuda}:${NEXTEXT_VERSION}`, where
+Each build is tagged `nextext-{backend,frontend}:${NEXTEXT_VERSION}`, where
 `NEXTEXT_VERSION` defaults to `latest`. Override it (e.g. for releases)
 by exporting `NEXTEXT_VERSION` before running `make` (or a raw
 `docker compose -f docker/compose.yaml` invocation).
@@ -123,19 +134,18 @@ by exporting `NEXTEXT_VERSION` before running `make` (or a raw
 
 A `Makefile` is the entry point for the Docker workflow — it points
 Compose at `docker/compose.yaml` so you don't have to remember the
-file path or profile flags. The profile is read from `PROFILE` in `.env`
-(default `cpu`); override per-invocation as `make up PROFILE=cuda`:
+file path:
 
 | Target | Action |
 |--------|--------|
 | `make network` | Create the external `inference-net` Docker network (one-time per host; idempotent). |
-| `make volumes` | Create the external Docker volumes including `nextext-data` for persistent job storage (one-time per host; idempotent). |
-| `make build` | Build both backend and frontend images for the active profile. |
-| `make up` | Run both services for the active profile in the foreground (production shape — no host ports). |
+| `make volumes` | Create the external Docker volumes (one-time per host; idempotent). |
+| `make build` | Build the backend and frontend images. |
+| `make up` | Run both services in the foreground (production shape — no host ports). |
 | `make up-dev` | Same as `make up` but layers `docker/compose.override.yaml` to publish host ports for local development. |
-| `make stop` | Stop the active profile's containers. |
+| `make stop` | Stop the containers. |
 | `make logs` | Tail combined logs from backend and frontend. |
-| `make bundle` | Build the active profile and write versioned `.tar.gz` archives for offline transfer (see below). |
+| `make bundle` | Build the images and write versioned `.tar.gz` archives for offline transfer (see below). |
 
 When invoked through `make`, `NEXTEXT_VERSION` defaults to
 `YYYY-MM-DD-<short-sha>` so each build gets a traceable tag. Export
@@ -144,19 +154,18 @@ When invoked through `make`, `NEXTEXT_VERSION` defaults to
 #### Offline / air-gapped distribution 📦
 
 To ship Nextext to a host without internet access, run the bundler on a
-machine that *does* have access (`make bundle` follows `PROFILE` from
-`.env`; override with `make bundle PROFILE=cuda`):
+machine that *does* have access:
 
 ```bash
-make bundle   # or: make bundle PROFILE=cuda
+make bundle
 ```
 
 The script builds the local Nextext image, pulls any externally hosted
 images referenced by the compose file, and writes them to two versioned
 tarballs in the project root:
 
-- `nextext-built-{profile}-{version}.tar.gz` — locally built Nextext images
-- `nextext-pulled-{profile}-{version}.tar.gz` — images pulled from registries
+- `nextext-built-{version}.tar.gz` — locally built Nextext images
+- `nextext-pulled-{version}.tar.gz` — images pulled from registries
 
 Copy the tarballs (and your `.env` plus the `docker/` directory) to the
 target host, load them, and bring up the stack without rebuilding. The
@@ -164,15 +173,17 @@ target host runs the production shape — `docker/compose.yaml` without the
 dev override — so no host ports are published:
 
 ```bash
-docker load < nextext-built-cpu-<version>.tar.gz
-docker load < nextext-pulled-cpu-<version>.tar.gz   # may be empty for the default compose
+docker load < nextext-built-<version>.tar.gz
+docker load < nextext-pulled-<version>.tar.gz   # may be empty for the default compose
 export NEXTEXT_VERSION=<version>
-docker compose --env-file .env -f docker/compose.yaml --profile cpu up --no-build
+docker compose --env-file .env -f docker/compose.yaml up --no-build
 ```
 
 ### Model downloads 📥
 
-Transcription and alignment models used by [WhisperX](https://github.com/m-bain/whisperX/) will be downloaded upon first usage. Some models can be downloaded beforehand:
+The backend itself downloads no model weights — inference models live on the
+external endpoints. Only the spaCy / NLTK language resources are fetched
+locally (see the preload command below).
 
 #### Ollama models 🦙
 
@@ -198,21 +209,18 @@ TEXT_MODEL=gemma3:12b-it-qat
 #### Local preload command 🌐
 
 ```bash
-uv run load-models
+NEXTEXT_OFFLINE=0 uv run load-models
 ```
 
-`load-models` preloads Nextext's NLTK resources, configured spaCy
-packages, WhisperX speech models, WhisperX alignment models, and the
-default diarization pipeline when `HF_HUB_TOKEN` is available. The
-legacy alias `uv run load-spacy-models` still works.
+`load-models` preloads Nextext's NLTK resources and the configured spaCy
+packages. The legacy alias `uv run load-spacy-models` still works.
 
 #### Offline usage 🚫🌐
 
-In case Nextext is intended to run in a firewalled or offline environment, set the environment variable after completing the model downloads:
-
-```bash
-echo 'export HF_HUB_OFFLINE=1' >> .venv/bin/activate
-```
+`NEXTEXT_OFFLINE=1` is the default: spaCy / NLTK downloads are skipped and an
+uncached spaCy model raises an actionable error instead of attempting a
+doomed download. Preload the caches on a connected host (command above) or
+ship the `nltk-cache` / `spacy-cache` volumes alongside the image bundle.
 
 ## Usage 🚀
 
@@ -230,7 +238,7 @@ BACKEND_HOST=http://localhost:8000 uv run nextext
 
 Open `http://localhost:8501` in your browser. The `BACKEND_HOST` env var defaults to the Docker-internal alias `http://backend:8000`; override it as shown when running outside compose.
 
-The backend exposes the same workflow as the UI under `/api/v1/jobs` (multipart upload + SSE event stream + per-artifact downloads) so any HTTP client — `curl`, scripts, other services — can drive the pipeline directly. See `docker/compose.yaml` and `docker/Dockerfile.backend.{cpu,cuda}` for production deployment.
+The backend exposes the same workflow as the UI under `/api/v1/jobs` (multipart upload + SSE event stream + per-artifact downloads) so any HTTP client — `curl`, scripts, other services — can drive the pipeline directly. See `docker/compose.yaml` and `docker/Dockerfile.backend` for production deployment.
 
 #### Increasing file upload size limit 📂
 

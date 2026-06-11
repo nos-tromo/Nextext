@@ -4,13 +4,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Nextext is a modular audio analysis toolkit that transcribes, translates, and analyzes natural language from audio/video files. It uses openai-whisper for transcription, pyannote-audio for diarization, GLiNER for named-entity recognition, spaCy/NLTK for word-level NLP, and LLMs (Ollama, vLLM, or OpenAI-compatible endpoints) for translation, summarization, and hate-speech detection.
+Nextext is a modular audio analysis toolkit that transcribes, translates, and analyzes natural language from audio/video files. All model inference runs on external endpoints: Whisper transcription via an OpenAI-compatible audio API, speaker diarization and GLiNER NER via dedicated HTTP services, and LLMs (Ollama, vLLM, or OpenAI-compatible endpoints) for translation, summarization, and hate-speech detection. Only spaCy/NLTK word-level NLP and the ONNX Silero VAD guard run in-process — the backend ships no model weights and needs no GPU.
 
 ## Project Context
 
-- WhisperX has been removed from this project; use openai-whisper + pyannote.
-- Target torch install is split by extras (cpu/cuda) via conflicts in pyproject.toml.
-- Docker base image is pinned to `python:3.12.10-slim-bookworm` across all Dockerfiles.
+- Local ML runtimes (openai-whisper, pyannote, GLiNER, torch) have been removed; every model call is an HTTP request to an external endpoint. `tests/test_no_torch.py` pins the no-torch invariant — camel-tools' torch/transformers requirements are excluded via `[tool.uv] override-dependencies`.
+- pysilero-vad is pinned `<3` (3.x is a GGML C++ source build; 2.x ships the ONNX model in the wheel).
+- Docker base image is the pinned `ghcr.io/astral-sh/uv:*-python3.12-trixie-slim` across backend and frontend Dockerfiles.
 
 ## Commands
 
@@ -25,8 +25,8 @@ uv run nextext             # Streamlit web UI on port 8501 (talks to backend ove
 uv run nextext-api         # FastAPI backend on port 8000
 uv run nextext-cli -f <file> [args]  # CLI mode (in-process, no backend required)
 
-# Preload ML models
-uv run load-models
+# Preload spaCy/NLTK language resources (the only local downloads)
+NEXTEXT_OFFLINE=0 uv run load-models
 
 # Tests
 uv run pytest              # run full test suite
@@ -58,16 +58,16 @@ Tests are in `tests/` using pytest with monkeypatch fixtures for mocking ML mode
 
 **Service split (Docker):**
 
-- **Backend** (`backend-cpu` / `backend-cuda`) — FastAPI app exposing `/api/v1`. Owns the pipeline, GPU model registry, and model caches. Built from `docker/Dockerfile.backend.{cpu,cuda}`.
-- **Frontend** (`frontend-cpu` / `frontend-cuda`) — Streamlit-only container. Talks to the backend via `BACKEND_HOST` (default `http://backend:8000`). Built from `docker/Dockerfile.frontend` (single-stage, ships only the `frontend` dependency group; no torch, no ML libs).
+- **Backend** (`backend`) — FastAPI app exposing `/api/v1`. Owns the pipeline and the HTTP inference clients (Whisper, NER, diarization). CPU-only, built from `docker/Dockerfile.backend`.
+- **Frontend** (`frontend`) — Streamlit-only container. Talks to the backend via `BACKEND_HOST` (default `http://backend:8000`). Built from `docker/Dockerfile.frontend` (single-stage, ships only the `frontend` dependency group).
 
 `nextext-cli` keeps the in-process path: it imports `nextext.pipeline` directly and runs end-to-end without needing a backend container. Lives in the backend image alongside the API.
 
 **Pipeline flow (server-side):**
 
-1. **Transcription** (always-on) → openai-whisper transcription + optional pyannote diarization → `pd.DataFrame`
+1. **Transcription** (always-on) → external Whisper API (`/v1/audio/transcriptions`) behind local RMS + ONNX Silero VAD guards, + optional external diarization (`POST /diarize`) → `pd.DataFrame`
 2. **Translation** (optional) → LLM-based segment translation via `InferencePipeline`
-3. **Word-level analysis** (optional) → word counts, GLiNER named entities, word clouds
+3. **Word-level analysis** (optional) → word counts, remote GLiNER named entities, word clouds
 4. **Summarization** (optional) → LLM summary via `InferencePipeline`
 5. **Hate-speech detection** (optional) → per-segment LLM classification
 6. **Artifacts** → backend renders `.txt`, `.csv`, `.xlsx`, `.png`, `.jsonl`, ZIP on demand at `/api/v1/jobs/{id}/artifacts/{name}`
@@ -98,13 +98,14 @@ Identity is resolved per request by `resolve_principal`: the trusted header (`NE
 - `nextext/app.py` — Compatibility shim re-exporting helpers from the locations above; preserves the historical import surface for tests and external callers.
 - `nextext/cli.py` — CLI entry point (argparse), single-file processing in-process.
 - `nextext/pipeline.py` — Shared pipeline functions connecting all agents.
-- `nextext/core/transcription.py` — openai-whisper transcription & pyannote diarization.
+- `nextext/core/transcription.py` — `ExternalWhisperTranscriber` (OpenAI-compatible audio API) + the local RMS/ONNX-VAD pre-upload guards and ffmpeg waveform decoding.
+- `nextext/core/diarization.py` — HTTP client for the external diarization service; the module docstring carries the `POST /diarize` contract. Fail-hard.
+- `nextext/core/ner_client.py` — HTTP client for the remote GLiNER service (`POST {NER_API_BASE}/gliner`, docint parity). Fail-soft.
 - `nextext/core/translation.py` — LLM translation with prompt templates.
-- `nextext/core/words.py` — NLP word-level analysis (spaCy + GLiNER NER).
+- `nextext/core/words.py` — NLP word-level analysis (spaCy locally, NER via `ner_client`).
 - `nextext/core/hate_speech.py` — LLM-based hate-speech detection.
 - `nextext/core/openai_cfg.py` — `InferencePipeline` for OpenAI-compatible LLM calls.
 - `nextext/core/processing.py` — File I/O and export formatting (CLI).
-- `nextext/utils/model_registry.py` — Centralized GPU model residency manager.
 - `nextext/utils/mappings/` — JSON config files for Whisper/spaCy model names, language codes.
 - `nextext/utils/prompts/` — LLM prompt templates (system, translation, summary).
 
@@ -114,13 +115,15 @@ See `AGENTS.md` for detailed agent documentation including I/O contracts and how
 
 Key env vars (see `.env.example`):
 
-- `INFERENCE_PROVIDER` — `ollama` (default), `vllm`, or `openai`. Selects the inference backend for all LLM calls; it no longer affects the translation prompt — every provider uses the templated prompt in `nextext/utils/prompts/translation.txt` plus a translation system prompt. Still governs transcription routing and the Ollama `think` field.
-- `HF_HUB_TOKEN` — required for diarization models
-- `OPENAI_API_KEY`, `OPENAI_API_BASE` — OpenAI-compatible endpoint credentials; shared across translation, summarization, and hate-speech detection, which all run on `TEXT_MODEL`.
+- `OPENAI_API_KEY`, `OPENAI_API_BASE` — the **central** OpenAI-compatible endpoint; carries translation, summarization, and hate-speech detection (all on `TEXT_MODEL`) and is the fallback for every per-model endpoint below.
+- `WHISPER_API_BASE` / `WHISPER_API_KEY` / `WHISPER_MODEL` — dedicated Whisper endpoint (OpenAI SDK base incl. `/v1`); falls back to the central pair. Model defaults: `whisper-1` (openai), `openai/whisper-large-v3` (vllm). `INFERENCE_PROVIDER=ollama` has no transcription API, so it requires explicit `WHISPER_API_BASE` + `WHISPER_MODEL` (`load_whisper_env` raises otherwise).
+- `NER_API_BASE` / `NER_API_KEY` / `NER_THRESHOLD` / `NER_TIMEOUT` — remote GLiNER service (`POST {base}/gliner`). Base falls back to `OPENAI_API_BASE` with one trailing `/v1` stripped (`openai_api_root()`), matching the LiteLLM pass-through. Fail-soft: errors degrade to empty entities.
+- `DIARIZATION_API_BASE` / `DIARIZATION_API_KEY` / `DIARIZATION_TIMEOUT` — external diarization service (`POST {base}/diarize`); same `/v1`-strip fallback. Fail-hard: multi-speaker jobs error actionably when unset/unreachable (no server exists in vllm-service yet).
+- `INFERENCE_PROVIDER` — `ollama` (default), `vllm`, or `openai`. Selects the Whisper model default and the Ollama `think` handling; prompts are provider-independent.
 - `TEXT_MODEL` — LLM model name shared by translation, summarization, and hate-speech detection
 - `OLLAMA_THINK` — tri-state default for the Ollama `think` request field forwarded by `InferencePipeline.call_model` via `extra_body`. Accepts `1`/`true`/`yes`/`on` (enable), `0`/`false`/`no`/`off` (disable), or unset (omit field, model default). Honoured by Ollama-hosted reasoning models such as Qwen3; a no-op for `vllm`/`openai` providers. Per-call `think=` overrides the env default.
-- `NEXTEXT_OFFLINE=1` — offline mode (skip model downloads)
-- `MODEL_RESIDENCY_STRATEGY` — `offload` (default) or `evict`. Controls how the registry releases GPU models between files. Per-model overrides: `MODEL_RESIDENCY_GLINER`, `MODEL_RESIDENCY_WHISPER_TURBO`, `MODEL_RESIDENCY_WHISPER_LARGE`, `MODEL_RESIDENCY_DIARIZATION`.
+- `VAD_ENABLED` — `1` (default) runs the ONNX Silero VAD guard before any upload; `0` leaves only the RMS silence check.
+- `NEXTEXT_OFFLINE=1` (default) — gates the spaCy/NLTK downloads (`is_offline()`); the only local downloads left. Offline + uncached spaCy model raises an actionable error.
 - `BACKEND_HOST` (frontend only) — Backend root URL. Defaults to `http://backend:8000` inside compose; set to `http://localhost:8000` for local dev.
 - `BACKEND_PUBLIC_HOST` (frontend only) — Externally reachable backend URL surfaced in UI hints.
 - `NEXTEXT_API_HOST` / `NEXTEXT_API_PORT` (backend only) — uvicorn bind address. Defaults to `0.0.0.0:8000`.
@@ -128,18 +131,14 @@ Key env vars (see `.env.example`):
 - `NEXTEXT_AUTH_HEADER` (backend + frontend) — Name of the trusted identity header. Defaults to `X-Auth-User`. Both sides read the same variable so they agree on the header.
 - `NEXTEXT_DEFAULT_IDENTITY` (backend only) — Fallback identity for header-less / developer callers. Unset by default, so a request without the trusted header gets `401`.
 
-## Memory management
-
-GPU-resident models (`whisper_turbo`, `whisper_large`, `diarization`, `gliner`) are owned by a process-wide registry in `nextext/utils/model_registry.py`. Callers wrap model use in `with REGISTRY.acquire(name) as model:` so the model is on GPU only for the duration of the block; the registry releases it (offload or evict) on exit. The Streamlit and CLI entry points call `flush_gpu()` between files to reclaim PyTorch allocator reservations. Adding a new GPU model means registering a `ModelSpec` with a `loader` (CPU construction) and `mover` (`.to(device)`).
-
 ## Docker
 
-Docker assets live under `docker/`. `docker/compose.yaml` defines four services across two profiles:
+Docker assets live under `docker/`. `docker/compose.yaml` defines two services — no profiles, no GPU reservations:
 
-- `backend-cpu` / `backend-cuda` — built from `docker/Dockerfile.backend.{cpu,cuda}`, multi-stage `uv` builds. Run `uvicorn nextext.api.main:app` with a `HEALTHCHECK` against `/api/v1/health`. Reachable only on the `inference-net` network by default; no host port is published.
-- `frontend-cpu` / `frontend-cuda` — built from `docker/Dockerfile.frontend` (single-stage `uv`, `--only-group frontend`). The base `docker/compose.yaml` is the production shape and publishes no host ports; `docker/compose.override.yaml` (layered by `make up-dev`) publishes Streamlit on `${NEXTEXT_HOST_PORT:-8501}`.
+- `backend` — built from `docker/Dockerfile.backend`, multi-stage `uv` build (no extras; runtime apt is `curl` + `ffmpeg` only). Runs `uvicorn nextext.api.main:app` with a `HEALTHCHECK` against `/api/v1/health`. Reachable only on the `inference-net` network by default; no host port is published.
+- `frontend` — built from `docker/Dockerfile.frontend` (single-stage `uv`, `--only-group frontend`). The base `docker/compose.yaml` is the production shape and publishes no host ports; `docker/compose.override.yaml` (layered by `make up-dev`) publishes Streamlit on `${NEXTEXT_HOST_PORT:-8501}`.
 
-Both profiles share `inference-net` with Ollama / vLLM. The `Makefile` is the entry point — it points Compose at `docker/compose.yaml`, since a bare `docker compose` from the repo root no longer finds it. The profile (`cpu`/`cuda`) is read from `PROFILE` in `.env` (default `cpu`); override per-invocation as `make up PROFILE=cuda`. Run `make volumes` (one-time, creates the external model-cache volumes), then `make build && make up` for production shape, or `make build && make up-dev` to publish the Streamlit frontend on the host.
+The stack shares `inference-net` with the inference provider (vllm-service / Ollama). The `Makefile` is the entry point — it points Compose at `docker/compose.yaml`, since a bare `docker compose` from the repo root no longer finds it. Run `make volumes` (one-time, creates the external `nltk-cache`/`spacy-cache` volumes), then `make build && make up` for production shape, or `make build && make up-dev` to publish the Streamlit frontend on the host.
 
 ## Persistence model
 
