@@ -18,7 +18,7 @@ Nextext is a modular audio analysis toolkit that transcribes, translates, and an
 # Install dependencies
 uv sync                    # production deps
 uv sync --group dev        # include dev deps (pytest, ruff, mypy, pre-commit)
-uv sync --group frontend   # frontend-only deps (no torch / openai-whisper / spaCy)
+uv sync --group frontend   # frontend-only deps (Streamlit client; no pipeline/NLP libs)
 
 # Run the app
 uv run nextext             # Streamlit web UI on port 8501 (talks to backend over HTTP)
@@ -45,7 +45,7 @@ mypy --no-incremental --ignore-missing-imports --disable-error-code=import-untyp
 - When tests fail, fix the root cause rather than patching tests to match stale/removed code.
 - Verify with `pre-commit run --all-files` (mypy, lint, docstrings) before declaring work complete.
 
-Tests are in `tests/` using pytest with monkeypatch fixtures for mocking ML models and inference. Tests simulate Docker detection and environment configuration. No GPU or model downloads required for tests.
+Tests are in `tests/` using pytest with monkeypatch fixtures and `respx` for mocking the HTTP inference clients (Whisper, NER, diarization). Tests simulate Docker detection and environment configuration. No GPU, no network, and no model downloads required for tests.
 
 ## Docstrings & Style
 
@@ -86,7 +86,7 @@ Identity is resolved per request by `resolve_principal`: the trusted header (`NE
 
 **Key modules:**
 
-- `nextext/api/main.py` — FastAPI factory, lifespan (boots `JobManager` + persistence repository).
+- `nextext/api/main.py` — FastAPI factory, lifespan (boots the in-memory `JobManager`).
 - `nextext/api/jobs.py` — `JobManager`, async worker (single in-flight job via `asyncio.Semaphore(1)`), SSE event broker. Holds all jobs in memory; `list_for_owner` powers the frontend's reload re-discovery.
 - `nextext/api/identity.py` — `resolve_principal` FastAPI dependency. Reads the trusted header (`NEXTEXT_AUTH_HEADER`, default `X-Auth-User`); falls back to `NEXTEXT_DEFAULT_IDENTITY` for header-less/dev callers; returns `401` when neither is set. The Streamlit frontend carries the identity in its URL (`?owner=<id>`); there are no server-managed cookies. This is the single seam a real auth track would replace.
 - `nextext/api/routes/` — `health`, `jobs` routers. Per-route ownership checks return `404` on cross-owner access so existence never leaks.
