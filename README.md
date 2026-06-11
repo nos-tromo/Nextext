@@ -187,14 +187,12 @@ Pull models into the running Ollama container:
 
 ```bash
 docker exec ollama ollama pull gemma3:12b-it-qat
-docker exec ollama ollama pull translategemma:4b
 ```
 
 Then set the model names in `.env`:
 
 ```bash
 TEXT_MODEL=gemma3:12b-it-qat
-TRANSLATION_MODEL=translategemma:4b
 ```
 
 #### Local preload command 🌐
