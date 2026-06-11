@@ -1,6 +1,7 @@
 """Audio transcription and diarization with openai-whisper."""
 
 import os
+import subprocess as subprocess  # re-exported for tests that monkeypatch through this module
 from datetime import timedelta
 from importlib import import_module
 from pathlib import Path as Path  # re-exported for tests that monkeypatch nextext.core.transcription.Path
@@ -81,10 +82,12 @@ NO_SPEECH_THRESHOLD: float = 0.6
 # because Whisper can hallucinate with low ``no_speech_prob`` on quiet noise.
 SILENCE_RMS_THRESHOLD: float = 0.01
 
-SILERO_VAD_REPO: str = "snakers4/silero-vad"
+# Per-frame speech probability at or above this value counts as speech.
+# 0.5 is the Silero-recommended default decision threshold.
+VAD_SPEECH_THRESHOLD: float = 0.5
 
-# Three-state lazy cache: False = not attempted, None = failed, tuple = ready.
-_vad_cache: tuple[Any, Any] | None | bool = False
+# Three-state lazy cache: False = not attempted, None = failed, detector = ready.
+_vad_cache: Any | bool = False
 
 
 def _normalize_whisper_language(value: str | None) -> str | None:
@@ -114,26 +117,23 @@ def _normalize_whisper_language(value: str | None) -> str | None:
     return name_to_code.get(value.lower(), value)
 
 
-def _get_vad() -> tuple[Any, Any] | None:
-    """Lazily load the Silero VAD model via ``torch.hub``.
+def _get_vad() -> Any | None:
+    """Lazily construct the Silero VAD detector (ONNX model bundled in the wheel).
 
-    Failure is cached so ``torch.hub.load`` is not retried on every file.
+    Failure is cached so construction is not retried on every file.
 
     Returns:
-        tuple[Any, Any] | None: A ``(model, get_speech_timestamps)`` tuple,
-            or ``None`` when the model could not be loaded (network error,
-            missing cache, etc.).
+        Any | None: A ``pysilero_vad.SileroVoiceActivityDetector`` instance,
+            or ``None`` when the detector could not be constructed (broken
+            onnxruntime install, missing optional dependency, etc.).
     """
     global _vad_cache
     if _vad_cache is not False:
-        return cast(tuple[Any, Any] | None, _vad_cache)
+        return _vad_cache
     try:
-        model, utils = torch.hub.load(  # type: ignore[no-untyped-call]
-            SILERO_VAD_REPO,
-            model="silero_vad",
-            trust_repo=True,
-        )
-        _vad_cache = (model, utils[0])  # utils[0] = get_speech_timestamps
+        from pysilero_vad import SileroVoiceActivityDetector
+
+        _vad_cache = SileroVoiceActivityDetector()
         logger.info("Silero VAD model loaded.")
     except Exception as exc:
         logger.warning("Could not load Silero VAD ({}). Falling back to RMS-only.", exc)
@@ -144,9 +144,16 @@ def _get_vad() -> tuple[Any, Any] | None:
 def _detect_speech_vad(audio: np.ndarray, sample_rate: int = 16000) -> bool | None:
     """Check whether ``audio`` contains human speech using Silero VAD.
 
+    Feeds consecutive 512-sample frames to the ONNX detector and stops at the
+    first frame whose speech probability reaches
+    :data:`VAD_SPEECH_THRESHOLD` — the pre-transcription guard only needs to
+    know whether *any* speech is present, not where it lies. A trailing
+    partial frame is dropped; at 16 kHz it covers less than 32 ms.
+
     Args:
-        audio (np.ndarray): Float32 waveform (mono, 16 kHz).
-        sample_rate (int): Sample rate of ``audio``.
+        audio (np.ndarray): Float32 waveform (mono, 16 kHz, [-1.0, 1.0]).
+        sample_rate (int): Sample rate of ``audio``. The bundled Silero
+            model supports 16 kHz only; other rates skip VAD gracefully.
 
     Returns:
         bool | None: ``True`` if speech is found, ``False`` if no speech is
@@ -156,26 +163,63 @@ def _detect_speech_vad(audio: np.ndarray, sample_rate: int = 16000) -> bool | No
     vad = _get_vad()
     if vad is None:
         return None
-    model, get_speech_timestamps = vad
-    tensor = torch.from_numpy(audio).float()
-    timestamps = get_speech_timestamps(tensor, model, sampling_rate=sample_rate)
-    return len(timestamps) > 0
+    if sample_rate != 16000:
+        logger.warning("Silero VAD supports 16 kHz only (got {} Hz). Skipping VAD.", sample_rate)
+        return None
+    vad.reset()
+    frames = audio.astype(np.float32, copy=False)
+    chunk = int(vad.chunk_samples())
+    for offset in range(0, len(frames) - chunk + 1, chunk):
+        if float(vad.process_array(frames[offset : offset + chunk])) >= VAD_SPEECH_THRESHOLD:
+            return True
+    return False
 
 
-def _load_audio_waveform(file_path: Path) -> np.ndarray:
-    """Decode ``file_path`` into a float32 mono 16 kHz waveform.
+def _load_audio_waveform(file_path: Path, sample_rate: int = 16000) -> np.ndarray:
+    """Decode ``file_path`` into a float32 mono waveform via ffmpeg.
 
-    Thin wrapper over :func:`whisper.load_audio` so every caller in this
-    module — both the local and the external transcriber — shares the
-    exact same decoding step (same sample rate, same normalisation).
+    Adapted from openai-whisper's ``whisper.audio.load_audio`` (MIT licence,
+    https://github.com/openai/whisper) so the pre-upload guards keep the
+    exact same decoding step — same resampling, same normalisation — after
+    the local whisper dependency was dropped.
 
     Args:
-        file_path (Path): Path to the audio file to decode.
+        file_path (Path): Path to the audio/video file to decode.
+        sample_rate (int): Target sample rate in Hz.
 
     Returns:
-        np.ndarray: Float32 mono waveform sampled at 16 kHz.
+        np.ndarray: Float32 mono waveform sampled at ``sample_rate``,
+        normalised to [-1.0, 1.0].
+
+    Raises:
+        RuntimeError: When the ffmpeg binary is missing or fails to decode
+            the file (the ffmpeg stderr is included in the message).
     """
-    return cast(np.ndarray, whisper.load_audio(str(file_path)))
+    cmd = [
+        "ffmpeg",
+        "-nostdin",
+        "-threads",
+        "0",
+        "-i",
+        str(file_path),
+        "-f",
+        "s16le",
+        "-ac",
+        "1",
+        "-acodec",
+        "pcm_s16le",
+        "-ar",
+        str(sample_rate),
+        "-",
+    ]
+    try:
+        out = subprocess.run(cmd, capture_output=True, check=True).stdout
+    except FileNotFoundError as exc:
+        raise RuntimeError("ffmpeg binary not found. Install ffmpeg to decode audio files.") from exc
+    except subprocess.CalledProcessError as exc:
+        stderr = exc.stderr.decode(errors="replace") if exc.stderr else ""
+        raise RuntimeError(f"Failed to decode audio with ffmpeg: {stderr.strip()}") from exc
+    return np.frombuffer(out, np.int16).flatten().astype(np.float32) / 32768.0
 
 
 def _audio_has_speech(audio: np.ndarray) -> tuple[bool, str | None]:

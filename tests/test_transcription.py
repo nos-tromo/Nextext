@@ -914,3 +914,212 @@ def test_external_transcriber_tolerates_missing_no_speech_prob(
     segments = transcriber.transcription_result["segments"]
     assert len(segments) == 1
     assert segments[0]["no_speech_prob"] == 0.0
+
+
+# ---------------------------------------------------------------------------
+# ONNX Silero VAD frame loop + ffmpeg waveform decoding
+# ---------------------------------------------------------------------------
+
+
+class _FakeVadDetector:
+    """Duck-typed stand-in for ``pysilero_vad.SileroVoiceActivityDetector``."""
+
+    def __init__(self, probabilities: list[float]) -> None:
+        """Initialise the fake with scripted per-frame probabilities.
+
+        Args:
+            probabilities (list[float]): Speech probability returned for the
+                n-th processed frame.
+        """
+        self._probabilities = probabilities
+        self.reset_calls = 0
+        self.frames: list[np.ndarray] = []
+
+    @staticmethod
+    def chunk_samples() -> int:
+        """Return the Silero streaming frame size.
+
+        Returns:
+            int: 512 samples, matching the real detector.
+        """
+        return 512
+
+    def reset(self) -> None:
+        """Record that the detector state was reset."""
+        self.reset_calls += 1
+
+    def process_array(self, frame: np.ndarray) -> float:
+        """Return the scripted probability for the next frame.
+
+        Args:
+            frame (np.ndarray): The 512-sample frame under evaluation.
+
+        Returns:
+            float: The scripted speech probability.
+        """
+        self.frames.append(frame)
+        return self._probabilities[len(self.frames) - 1]
+
+
+def test_detect_speech_vad_short_circuits_on_first_speech_frame(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The frame loop stops at the first frame at/above the speech threshold.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Substitutes the fake detector.
+    """
+    detector = _FakeVadDetector([0.1, 0.9, 0.0])
+    monkeypatch.setattr(transcription, "_get_vad", lambda: detector)
+    audio = np.zeros(512 * 3, dtype=np.float32)
+
+    assert transcription._detect_speech_vad(audio) is True
+    assert detector.reset_calls == 1
+    assert len(detector.frames) == 2  # third frame never evaluated
+    assert all(len(frame) == 512 for frame in detector.frames)
+
+
+def test_detect_speech_vad_returns_false_when_all_frames_silent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Sub-threshold frames yield False; a trailing partial frame is dropped.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Substitutes the fake detector.
+    """
+    detector = _FakeVadDetector([0.2, 0.3, 0.49])
+    monkeypatch.setattr(transcription, "_get_vad", lambda: detector)
+    audio = np.zeros(512 * 3 + 100, dtype=np.float32)
+
+    assert transcription._detect_speech_vad(audio) is False
+    assert len(detector.frames) == 3
+
+
+def test_detect_speech_vad_unavailable_model_returns_none(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A missing detector resolves to None (graceful RMS-only fallback).
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Pins ``_get_vad`` to None.
+    """
+    monkeypatch.setattr(transcription, "_get_vad", lambda: None)
+
+    assert transcription._detect_speech_vad(np.zeros(1024, dtype=np.float32)) is None
+
+
+def test_detect_speech_vad_non_16k_rate_skips(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Sample rates the bundled model cannot handle skip VAD gracefully.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Substitutes the fake detector.
+    """
+    detector = _FakeVadDetector([0.9])
+    monkeypatch.setattr(transcription, "_get_vad", lambda: detector)
+
+    result = transcription._detect_speech_vad(np.zeros(2048, dtype=np.float32), sample_rate=8000)
+
+    assert result is None
+    assert detector.frames == []
+
+
+def test_get_vad_caches_construction_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A failed detector construction is cached and never retried per file.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Resets the module cache and makes
+            the detector constructor raise.
+    """
+    import pysilero_vad
+
+    calls = {"n": 0}
+
+    def _boom() -> None:
+        calls["n"] += 1
+        raise OSError("onnxruntime broken")
+
+    monkeypatch.setattr(transcription, "_vad_cache", False)
+    monkeypatch.setattr(pysilero_vad, "SileroVoiceActivityDetector", _boom)
+
+    assert transcription._get_vad() is None
+    assert transcription._get_vad() is None
+    assert calls["n"] == 1
+
+
+def test_silero_onnx_detector_real_inference() -> None:
+    """The ONNX model bundled in the pysilero-vad wheel loads and scores silence low.
+
+    Guards against API drift in the pinned pysilero-vad 2.x line: the
+    detector must construct without downloads and score a silent frame
+    below the speech threshold.
+    """
+    from pysilero_vad import SileroVoiceActivityDetector
+
+    detector = SileroVoiceActivityDetector()
+    silent = np.zeros(detector.chunk_samples(), dtype=np.float32)
+
+    probability = float(detector.process_array(silent))
+
+    assert 0.0 <= probability < transcription.VAD_SPEECH_THRESHOLD
+
+
+def test_load_audio_waveform_decodes_pcm(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Ffmpeg stdout (s16le PCM) is normalised to float32 in [-1.0, 1.0].
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Substitutes ``subprocess.run``.
+    """
+    pcm = np.array([0, 16384, -32768, 32767], dtype=np.int16).tobytes()
+
+    def _fake_run(cmd: list[str], *, capture_output: bool, check: bool) -> SimpleNamespace:
+        assert cmd[0] == "ffmpeg"
+        assert cmd[-1] == "-"
+        assert "16000" in cmd
+        assert capture_output and check
+        return SimpleNamespace(stdout=pcm)
+
+    monkeypatch.setattr(transcription.subprocess, "run", _fake_run)
+
+    waveform = transcription._load_audio_waveform(transcription.Path("clip.wav"))
+
+    assert waveform.dtype == np.float32
+    np.testing.assert_allclose(
+        waveform,
+        np.array([0.0, 0.5, -1.0, 32767 / 32768], dtype=np.float32),
+    )
+
+
+def test_load_audio_waveform_decode_failure_raises_runtime_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failing ffmpeg invocation surfaces its stderr in a RuntimeError.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Substitutes ``subprocess.run``.
+    """
+
+    def _fake_run(cmd: list[str], *, capture_output: bool, check: bool) -> SimpleNamespace:
+        raise transcription.subprocess.CalledProcessError(1, cmd, stderr=b"moov atom not found")
+
+    monkeypatch.setattr(transcription.subprocess, "run", _fake_run)
+
+    with pytest.raises(RuntimeError, match="moov atom not found"):
+        transcription._load_audio_waveform(transcription.Path("broken.mp4"))
+
+
+def test_load_audio_waveform_missing_ffmpeg_raises_runtime_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A missing ffmpeg binary raises an actionable RuntimeError.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Substitutes ``subprocess.run``.
+    """
+
+    def _fake_run(cmd: list[str], *, capture_output: bool, check: bool) -> SimpleNamespace:
+        raise FileNotFoundError("ffmpeg")
+
+    monkeypatch.setattr(transcription.subprocess, "run", _fake_run)
+
+    with pytest.raises(RuntimeError, match="ffmpeg binary not found"):
+        transcription._load_audio_waveform(transcription.Path("clip.wav"))
