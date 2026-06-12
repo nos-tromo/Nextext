@@ -3,7 +3,7 @@
 docint (the sibling RAG app) no longer runs its own Whisper-backed audio
 reader; it ingests structured transcripts produced by Nextext. This module
 owns the serialization format so the wire contract lives next to the
-Whisper/pyannote pipeline that produces it.
+Whisper transcription pipeline that produces it.
 
 The payload is UTF-8 JSON Lines — one JSON object per sentence-level
 segment, newline terminated (including the final line). Optional keys are

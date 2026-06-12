@@ -12,7 +12,7 @@ This document describes every agent, how they interact, and what they expect fro
 
 | Agent | Module & entry point | Consumes | Produces | Activated by |
 | --- | --- | --- | --- | --- |
-| Transcription & Diarization | `nextext/core/transcription.py` → `WhisperTranscriber` / `ExternalWhisperTranscriber`, `transcription_pipeline` | Audio file path, Hugging Face token, Whisper settings | Timestamped transcript `pd.DataFrame` (`start`, `end`, `speaker`, `text`) | Always-on |
+| Transcription & Diarization | `nextext/core/transcription.py` → `WhisperTranscriber` / `ExternalWhisperTranscriber`, `transcription_pipeline`; diarization client in `nextext/core/diarization.py` | Audio file path, Whisper settings, speaker count (`DIARIZE_API_BASE` for diarization) | Timestamped transcript `pd.DataFrame` (`start`, `end`, `speaker`, `text`) | Always-on |
 | Translation | `nextext/core/translation.py` → `Translator`, `translation_pipeline` | Transcript `pd.DataFrame`, source and target ISO codes, inference provider | Mutated `pd.DataFrame` translated segment-wise | CLI `--task translate`, Streamlit "Task" switch |
 | Word Intelligence | `nextext/core/words.py` → `WordCounter`, `wordlevel_pipeline` | Transcript text, resolved language | Word counts, entity table, noun sentiment table, graph HTML, word cloud `Figure` | CLI `-w/--words`, Streamlit "Word-level analysis" |
 | Summarization | `nextext/pipeline.py` → `summarization_pipeline` + `InferencePipeline` | Full transcript text | Summary string in the configured output language | CLI `-sum/--summarize`, Streamlit "Summarisation" |
@@ -31,13 +31,13 @@ This document describes every agent, how they interact, and what they expect fro
 
 ## Transcription & Diarization Agent
 
-- **Key files:** `nextext/core/transcription.py`, `transcription_pipeline()` (`nextext/pipeline.py`).
-- **Responsibilities:** Load audio, auto-detect language when not provided, run openai-whisper transcription, optional pyannote-based diarization (`n_speakers > 1`), and emit a normalized DataFrame used by every downstream agent.
+- **Key files:** `nextext/core/transcription.py`, `nextext/core/diarization.py`, `transcription_pipeline()` (`nextext/pipeline.py`).
+- **Responsibilities:** Load audio, auto-detect language when not provided, run openai-whisper transcription, optional speaker diarization via the out-of-process `/diarize` HTTP service (`n_speakers > 1`), and emit a normalized DataFrame used by every downstream agent.
 - **Inputs:** `Path` to audio/video, optional source code, speaker count. (Whisper always transcribes; the `transcribe`/`translate` task is a job-level flag that gates the downstream Translation agent, not a transcription input.)
 - **Outputs:** `pd.DataFrame` with `start`, `end`, `speaker`, `text`; detected source language stored in `WhisperTranscriber.src_lang`.
-- **Providers:** Derived from `INFERENCE_PROVIDER`. `ollama` (default) runs local openai-whisper with a single hardcoded `large-v3-turbo` model (Whisper always transcribes; translation is performed downstream by the LLM). `openai` and `vllm` forward the audio to an OpenAI-compatible `/v1/audio/transcriptions` endpoint via `ExternalWhisperTranscriber` (no diarization). The external model defaults to `whisper-1` (openai) or `openai/whisper-large-v3` (vllm) and can be overridden via `WHISPER_MODEL`.
-- **Dependencies:** `openai-whisper`, `torch`, `pyannote-audio` (diarization only, gated by Hugging Face token). GPU detection is automatic.
-- **Operational notes:** The `large-v3-turbo` model is loaded once and reused for both mel-spectrogram language detection and transcription; Whisper no longer performs the audio-translate task, so the heavier `large-v3` model has been retired. Diarization assigns speakers via maximum segment overlap from the pyannote timeline. Speaker column is omitted when `n_speakers == 1`.
+- **Providers:** Derived from `INFERENCE_PROVIDER`. `ollama` (default) runs local openai-whisper with a single hardcoded `large-v3-turbo` model (Whisper always transcribes; translation is performed downstream by the LLM). `openai` and `vllm` forward the audio to an OpenAI-compatible `/v1/audio/transcriptions` endpoint via `ExternalWhisperTranscriber`. The external model defaults to `whisper-1` (openai) or `openai/whisper-large-v3` (vllm) and can be overridden via `WHISPER_MODEL`. Diarization is provider-independent: regardless of the transcription provider, `n_speakers > 1` triggers a call to the `/diarize` service.
+- **Dependencies:** `openai-whisper`, `torch`, and `httpx` (the `/diarize` HTTP client). Diarization no longer requires a local `pyannote-audio` install or a Hugging Face token — those now live on the diarization service side. GPU detection is automatic.
+- **Operational notes:** The `large-v3-turbo` model is loaded once and reused for both mel-spectrogram language detection and transcription; Whisper no longer performs the audio-translate task, so the heavier `large-v3` model has been retired. Diarization (`nextext/core/diarization.py`) POSTs the audio to the `/diarize` service and assigns speakers to transcript segments by maximum overlap (`assign_speakers_by_overlap`); when `DIARIZE_API_BASE` is unset or the request fails it logs and continues without speaker labels. The speaker column is omitted when `n_speakers == 1`.
 
 ## Translation Agent
 

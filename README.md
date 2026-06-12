@@ -28,7 +28,7 @@ cd Nextext
 uv sync
 ```
 
-To enable speaker diarization, accept the user agreement for the following models: [`pyannote/segmentation-3.0`](https://huggingface.co/pyannote/segmentation-3.0) and [`speaker-diarization-3.1`](https://huggingface.co/pyannote/speaker-diarization-3.1).
+Speaker diarization runs out-of-process against an HTTP `/diarize` service (e.g. [`nos-tromo/vllm-service`](https://github.com/nos-tromo/vllm-service)). Set `DIARIZE_API_BASE` to its root URL to enable it; the gated-model agreements and Hugging Face token live on the service side, not in Nextext.
 
 ### Docker installation 🐳
 
@@ -108,7 +108,7 @@ alone) is the production shape and publishes no host ports.
 Each profile brings up two containers:
 
 - **Backend** (`backend-cpu` / `backend-cuda`) — FastAPI on port 8000 (internal). Owns the pipeline, model caches, and (optionally) the persistent job index. Exposes `/api/v1/health`, `/api/v1/languages`, `/api/v1/jobs/*`. Not published to the host by default.
-- **Frontend** (`frontend-cpu` / `frontend-cuda`) — Streamlit on port 8501. A thin HTTP client over the backend; ships only the `frontend` dependency group (no torch / whisper / pyannote).
+- **Frontend** (`frontend-cpu` / `frontend-cuda`) — Streamlit on port 8501. A thin HTTP client over the backend; ships only the `frontend` dependency group (no torch / whisper / ML libs).
 
 By default every job runs ephemerally — uploads stream through RAM and disappear when the sweeper evicts them. Tick **Save results across browser sessions** in the Parameters tab to opt into persistent storage: the backend then writes the job index to SQLite under `/var/lib/nextext` (the `nextext-data` Docker volume) and per-job artifacts to a directory beside it. Persistent jobs survive container restarts. Identity is anonymous — the frontend stamps a UUID4 into the URL (`?owner=<uuid>`) on first visit and the backend uses it to scope rows. Bookmark the page or keep the tab open to keep your saved jobs reachable.
 
@@ -202,9 +202,10 @@ uv run load-models
 ```
 
 `load-models` preloads Nextext's NLTK resources, configured spaCy
-packages, WhisperX speech models, WhisperX alignment models, and the
-default diarization pipeline when `HF_HUB_TOKEN` is available. The
-legacy alias `uv run load-spacy-models` still works.
+packages, the openai-whisper `large-v3-turbo` checkpoint, the Silero
+VAD model, and the GLiNER NER model. Diarization is no longer preloaded
+— it runs against the out-of-process `/diarize` service. The legacy
+alias `uv run load-spacy-models` still works.
 
 #### Offline usage 🚫🌐
 
