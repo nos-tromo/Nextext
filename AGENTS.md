@@ -33,11 +33,11 @@ This document describes every agent, how they interact, and what they expect fro
 
 - **Key files:** `nextext/core/transcription.py`, `transcription_pipeline()` (`nextext/pipeline.py`).
 - **Responsibilities:** Load audio, auto-detect language when not provided, run openai-whisper transcription, optional pyannote-based diarization (`n_speakers > 1`), and emit a normalized DataFrame used by every downstream agent.
-- **Inputs:** `Path` to audio/video, task (`transcribe` or `translate`), target ISO code, optional source code, speaker count.
+- **Inputs:** `Path` to audio/video, optional source code, speaker count. (Whisper always transcribes; the `transcribe`/`translate` task is a job-level flag that gates the downstream Translation agent, not a transcription input.)
 - **Outputs:** `pd.DataFrame` with `start`, `end`, `speaker`, `text`; detected source language stored in `WhisperTranscriber.src_lang`.
-- **Providers:** Derived from `INFERENCE_PROVIDER`. `ollama` (default) runs local openai-whisper with hardcoded models (`large-v3-turbo` for transcribe, `large-v3` for translate). `openai` and `vllm` forward the audio to an OpenAI-compatible `/v1/audio/transcriptions` endpoint via `ExternalWhisperTranscriber` (no diarization). The external model defaults to `whisper-1` (openai) or `openai/whisper-large-v3` (vllm) and can be overridden via `WHISPER_MODEL`.
+- **Providers:** Derived from `INFERENCE_PROVIDER`. `ollama` (default) runs local openai-whisper with a single hardcoded `large-v3-turbo` model (Whisper always transcribes; translation is performed downstream by the LLM). `openai` and `vllm` forward the audio to an OpenAI-compatible `/v1/audio/transcriptions` endpoint via `ExternalWhisperTranscriber` (no diarization). The external model defaults to `whisper-1` (openai) or `openai/whisper-large-v3` (vllm) and can be overridden via `WHISPER_MODEL`.
 - **Dependencies:** `openai-whisper`, `torch`, `pyannote-audio` (diarization only, gated by Hugging Face token). GPU detection is automatic.
-- **Operational notes:** The `large-v3-turbo` model is loaded once and reused for both mel-spectrogram language detection and the transcribe task; the translate task releases it and loads `large-v3`. Diarization assigns speakers via maximum segment overlap from the pyannote timeline. Speaker column is omitted when `n_speakers == 1`.
+- **Operational notes:** The `large-v3-turbo` model is loaded once and reused for both mel-spectrogram language detection and transcription; Whisper no longer performs the audio-translate task, so the heavier `large-v3` model has been retired. Diarization assigns speakers via maximum segment overlap from the pyannote timeline. Speaker column is omitted when `n_speakers == 1`.
 
 ## Translation Agent
 
@@ -46,7 +46,7 @@ This document describes every agent, how they interact, and what they expect fro
 - **Inputs:** Transcript `pd.DataFrame` (only the `text` column is used), target ISO 639-1 code, optional resolved source code from transcription, shared `InferencePipeline`.
 - **Outputs:** In-place replacement of the `text` column; `Translator.src_lang` is populated for logging and downstream toggles.
 - **Dependencies:** `langdetect`, `pycountry`, plus an OpenAI-compatible chat completions backend selected by `INFERENCE_PROVIDER` (`ollama` by default, `vllm`, or `openai`).
-- **Operational notes:** Translation is skipped when the resolved source language already equals the target. Translation runs on `TEXT_MODEL` — the same model used for summarization — over the templated prompt in `nextext/utils/prompts/translation.txt` plus a translation system prompt, identically for every `INFERENCE_PROVIDER`.
+- **Operational notes:** This is the only translation path — Whisper's audio-translate task is no longer used — so English targets are translated here too. Translation is skipped only when the resolved source language already equals the target (see `should_translate()` in `nextext/pipeline.py`). Translation runs on `TEXT_MODEL` — the same model used for summarization — over the templated prompt in `nextext/utils/prompts/translation.txt` plus a translation system prompt, identically for every `INFERENCE_PROVIDER`.
 
 ## Word Intelligence Agent
 
