@@ -1,10 +1,8 @@
-"""Audio transcription and diarization with openai-whisper."""
+"""Audio transcription with openai-whisper."""
 
 import os
 from datetime import timedelta
-from importlib import import_module
 from pathlib import Path as Path  # re-exported for tests that monkeypatch nextext.core.transcription.Path
-from types import ModuleType
 from typing import Any, cast
 
 import numpy as np
@@ -14,55 +12,18 @@ import whisper as whisper
 from dotenv import load_dotenv
 from loguru import logger
 from openai import APIStatusError, OpenAI
-from pyannote.audio import Pipeline as DiarizationPipeline
 
 from nextext.utils.env_cfg import load_inference_env, load_vad_env
 from nextext.utils.mappings_loader import load_mappings
 from nextext.utils.model_registry import REGISTRY, ModelSpec, Strategy
 
-
-def _load_optional_module(module_name: str) -> ModuleType | None:
-    """Load an optional module and return None when unavailable.
-
-    Args:
-        module_name (str): Fully qualified module name.
-
-    Returns:
-        ModuleType | None: The imported module, or ``None`` when the import
-            fails.
-    """
-    try:
-        return import_module(module_name)
-    except ImportError:  # pragma: no cover - optional dependency
-        return None
-
-
-_omegaconf = _load_optional_module("omegaconf")
-
-DictConfig: Any = getattr(_omegaconf, "DictConfig", None)
-ListConfig: Any = getattr(_omegaconf, "ListConfig", None)
-
-_torch_version = _load_optional_module("torch.torch_version")
-
-TorchVersion: Any = getattr(_torch_version, "TorchVersion", None)
-
-_pyannote_task = _load_optional_module("pyannote.audio.core.task")
-
-Problem: Any = getattr(_pyannote_task, "Problem", None)
-Resolution: Any = getattr(_pyannote_task, "Resolution", None)
-Specifications: Any = getattr(_pyannote_task, "Specifications", None)
-
-
 load_dotenv()
-HF_HUB_TOKEN = os.getenv("HF_HUB_TOKEN", "")
 
 # Whisper always transcribes; translation is handled downstream by the LLM
 # (``TEXT_MODEL``), so a single turbo checkpoint covers both language
 # detection and transcription. The heavier ``large-v3`` translate model has
 # been retired along with Whisper's built-in translate task.
 LOCAL_WHISPER_MODEL: str = "large-v3-turbo"
-
-_DIARIZATION_MODEL_ID: str = "pyannote/speaker-diarization-3.1"
 
 OPENAI_WHISPER_MAX_UPLOAD_BYTES: int = 25 * 1024 * 1024
 
@@ -245,33 +206,6 @@ def _filter_no_speech_segments(
     return segments
 
 
-def _configure_torch_safe_globals() -> None:
-    """Register safe globals needed for Pyannote checkpoints on Torch 2.6+."""
-    add_safe_globals = getattr(torch.serialization, "add_safe_globals", None)
-    if add_safe_globals is None:
-        return
-
-    safe_globals: list[Any] = []
-
-    if DictConfig is not None and ListConfig is not None:
-        safe_globals.extend([DictConfig, ListConfig])
-    else:
-        logger.debug("OmegaConf is unavailable; skipping Torch safe-global registration.")
-
-    if TorchVersion is not None:
-        safe_globals.append(TorchVersion)
-    else:
-        logger.debug("TorchVersion is unavailable; skipping Torch safe-global registration.")
-
-    if Problem is not None and Resolution is not None and Specifications is not None:
-        safe_globals.extend([Problem, Resolution, Specifications])
-    else:
-        logger.debug("Pyannote task classes are unavailable; skipping Torch safe-global registration.")
-
-    if safe_globals:
-        add_safe_globals(safe_globals)
-
-
 def _seconds_to_time(seconds: float) -> str:
     """Convert seconds to a string representation of time in the format HH:MM:SS.
 
@@ -375,9 +309,6 @@ def _merge_transcriptions_by_sentence(
     return merged_df
 
 
-_configure_torch_safe_globals()
-
-
 def _load_whisper(model_id: str) -> Any:
     """Load an openai-whisper model onto CPU.
 
@@ -395,11 +326,10 @@ def _load_whisper(model_id: str) -> Any:
 
 
 def _move_torch_module(model: Any, device: str) -> Any:
-    """Move an ``nn.Module``-like object (Whisper / pyannote) to ``device``.
+    """Move an ``nn.Module``-like object (the Whisper model) to ``device``.
 
     Args:
-        model (Any): A model with a ``.to()`` method, e.g. a Whisper model or
-            a pyannote ``Pipeline``.
+        model (Any): A model with a ``.to()`` method, e.g. a Whisper model.
         device (str): Target device string, e.g. ``"cuda"`` or ``"cpu"``.
 
     Returns:
@@ -409,30 +339,11 @@ def _move_torch_module(model: Any, device: str) -> Any:
     return model
 
 
-def _load_diarization_pipeline() -> DiarizationPipeline:
-    """Load the pyannote speaker diarization pipeline onto CPU.
-
-    Returns:
-        DiarizationPipeline: The loaded pyannote pipeline on CPU, ready to be
-            promoted to GPU via :func:`_move_torch_module`.
-
-    Raises:
-        RuntimeError: If ``HF_HUB_TOKEN`` is not set in the environment.
-    """
-    if not HF_HUB_TOKEN:
-        raise RuntimeError("Speaker diarization requires HF_HUB_TOKEN. Set it in your environment.")
-    logger.info("Loading diarization pipeline '{}' on CPU.", _DIARIZATION_MODEL_ID)
-    return DiarizationPipeline.from_pretrained(
-        _DIARIZATION_MODEL_ID,
-        use_auth_token=HF_HUB_TOKEN,
-    )
-
-
-# Whisper and pyannote use sparse-tensor ops that are not implemented on
-# the Apple Silicon SparseMPS backend; PYTORCH_ENABLE_MPS_FALLBACK=1 only
-# covers the regular MPS backend, so promoting these models to MPS raises
-# NotImplementedError mid-move. Mark them mps_compatible=False so acquire()
-# pins them to CPU on Mac while CUDA is still used where available.
+# Whisper uses sparse-tensor ops that are not implemented on the Apple Silicon
+# SparseMPS backend; PYTORCH_ENABLE_MPS_FALLBACK=1 only covers the regular MPS
+# backend, so promoting the model to MPS raises NotImplementedError mid-move.
+# Mark it mps_compatible=False so acquire() pins it to CPU on Mac while CUDA is
+# still used where available.
 REGISTRY.register(
     ModelSpec(
         name="whisper_turbo",
@@ -442,42 +353,34 @@ REGISTRY.register(
         mps_compatible=False,
     )
 )
-REGISTRY.register(
-    ModelSpec(
-        name="diarization",
-        loader=_load_diarization_pipeline,
-        mover=_move_torch_module,
-        default_strategy=Strategy.OFFLOAD,
-        mps_compatible=False,
-    )
-)
 
 
 class WhisperTranscriber:
-    """Transcribes and optionally diarizes audio using openai-whisper and pyannote.
+    """Transcribes audio using openai-whisper.
 
-    All GPU-resident models (Whisper turbo, diarization pipeline) are managed
-    through the process-wide :data:`REGISTRY` and are acquired lazily on first
-    use.  Between files, call
-    :func:`nextext.utils.model_registry.flush_gpu` to reclaim VRAM.
+    The GPU-resident Whisper turbo checkpoint is managed through the
+    process-wide :data:`REGISTRY` and acquired lazily on first use.  Between
+    files, call :func:`nextext.utils.model_registry.flush_gpu` to reclaim VRAM.
 
     Whisper always transcribes; translation to the target language is handled
     downstream by the LLM (``TEXT_MODEL``), so this class no longer takes a
     ``task`` and never loads the retired ``large-v3`` translate model.
+    Diarization is no longer performed in-process: the pipeline labels speakers
+    out-of-band via the ``/diarize`` service (see
+    :func:`nextext.core.diarization.diarize_file`). ``n_speakers`` is retained
+    only so :meth:`transcript_output` knows whether to keep a speaker column.
 
     Attributes:
         src_lang (str): Source language of the audio, resolved during ``__init__``.
-        n_speakers (int): Maximum number of speakers for diarization.
+        n_speakers (int): Maximum speaker count requested. When greater than 1,
+            speaker labels attached upstream by the pipeline are preserved by
+            :meth:`transcript_output`; a value of 1 drops any speaker column.
         start_column (str): DataFrame column for segment start times.
         end_column (str): DataFrame column for segment end times.
         speaker_column (str): DataFrame column for speaker labels.
         text_column (str): DataFrame column for transcribed text.
         transcription_device (str): Preferred device for inference
             (``"cuda"`` or ``"cpu"``).
-        diarize_model (Any): ``True`` when diarization is available (token
-            present and ``n_speakers > 1``); ``None`` otherwise.  The actual
-            pipeline is acquired from the registry lazily inside
-            :meth:`diarization`.
         audio (np.ndarray): Audio loaded at 16 kHz by whisper.
         transcription_result (Optional[dict[str, Any]]): Raw output populated
             by :meth:`transcription`.
@@ -530,15 +433,6 @@ class WhisperTranscriber:
             det_lang = src_lang or "en"
         self.src_lang = src_lang if src_lang in whisper_languages.keys() else det_lang
         logger.info("Using language '{}' for transcription.", self.src_lang)
-
-        self.diarize_model: Any = None
-        if self.n_speakers > 1:
-            if not HF_HUB_TOKEN:
-                logger.warning("No Hugging Face token provided. Speaker diarization will be unavailable.")
-            else:
-                # Sentinel: diarization is available; pipeline is acquired lazily
-                # via REGISTRY.acquire("diarization") inside diarization().
-                self.diarize_model = True
 
         self.transcription_result: dict[str, Any] | None = None
         self.df: pd.DataFrame | None = None
@@ -620,50 +514,6 @@ class WhisperTranscriber:
             self.transcription_result = {"segments": _filter_no_speech_segments(result["segments"])}
         except Exception as e:
             logger.error("Error during transcription: {}", e, exc_info=True)
-            raise
-
-    def _assign_speakers(self, diarization_result: Any) -> None:
-        """Assign speaker labels to transcription segments by maximum overlap.
-
-        Args:
-            diarization_result (Any): A pyannote Annotation object from the
-                diarization pipeline.
-        """
-        if self.transcription_result is None:
-            return
-        for segment in self.transcription_result["segments"]:
-            seg_start: float = segment["start"]
-            seg_end: float = segment["end"]
-            speaker_durations: dict[str, float] = {}
-            for turn, _, speaker in diarization_result.itertracks(yield_label=True):
-                overlap_start = max(seg_start, turn.start)
-                overlap_end = min(seg_end, turn.end)
-                if overlap_end > overlap_start:
-                    speaker_durations[speaker] = speaker_durations.get(speaker, 0.0) + (overlap_end - overlap_start)
-            if speaker_durations:
-                segment["speaker"] = max(speaker_durations, key=lambda s: speaker_durations[s])
-
-    def diarization(self) -> None:
-        """Perform speaker diarization on the audio file and assign speaker labels to segments.
-
-        Raises:
-            RuntimeError: If diarization is requested but the diarization model is not available.
-        """
-        if self.n_speakers <= 1:
-            logger.info("Skipping diarization as only one speaker is specified.")
-            return
-        if self.diarize_model is None:
-            raise RuntimeError("Speaker diarization requires a valid HF_HUB_TOKEN and accepted pyannote model access.")
-        try:
-            waveform = torch.tensor(self.audio).unsqueeze(0)
-            with REGISTRY.acquire("diarization") as pipeline:
-                diarize_result = pipeline(
-                    {"waveform": waveform, "sample_rate": 16000},
-                    max_speakers=self.n_speakers,
-                )
-            self._assign_speakers(diarize_result)
-        except Exception as e:
-            logger.error("Error during diarization: {}", e, exc_info=True)
             raise
 
     @staticmethod
@@ -900,8 +750,13 @@ class ExternalWhisperTranscriber:
     def transcript_output(self) -> pd.DataFrame:
         """Get the external transcription result as a DataFrame.
 
+        A ``speaker`` column is emitted only when the segments carry speaker
+        labels — these are added out-of-band by the pipeline after a successful
+        ``/diarize`` call (the external API itself never returns speakers).
+
         Returns:
-            pd.DataFrame: A DataFrame containing the transcription results.
+            pd.DataFrame: A DataFrame with ``start``/``end``/``text`` columns,
+                plus a ``speaker`` column when diarization labelled the segments.
 
         Raises:
             ValueError: If transcription has not been run yet.
@@ -909,20 +764,24 @@ class ExternalWhisperTranscriber:
         if self.transcription_result is None or "segments" not in self.transcription_result:
             raise ValueError("Transcription result is not available. Run transcription first.")
 
+        has_speaker = any("speaker" in item for item in self.transcription_result["segments"])
         rows = []
         for item in self.transcription_result["segments"]:
-            rows.append(
-                [
-                    _seconds_to_time(item["start"]),
-                    _seconds_to_time(item["end"]),
-                    item["text"],
-                ]
-            )
+            row = [
+                _seconds_to_time(item["start"]),
+                _seconds_to_time(item["end"]),
+            ]
+            if has_speaker:
+                row.append(item.get("speaker", "Unknown"))
+            row.append(item["text"])
+            rows.append(row)
 
-        df = pd.DataFrame(
-            rows,
-            columns=pd.Index([self.start_column, self.end_column, self.text_column]),
-        )
+        columns: list[str] = [self.start_column, self.end_column]
+        if has_speaker:
+            columns.append(self.speaker_column)
+        columns.append(self.text_column)
+
+        df = pd.DataFrame(rows, columns=pd.Index(columns))
         return _merge_transcriptions_by_sentence(
             df,
             self.start_column,

@@ -193,15 +193,9 @@ def test_main_preloads_expected_model_groups(
     )
     monkeypatch.setattr(
         model_loader,
-        "preload_diarization_model",
-        lambda auth_token, device: calls.append((f"diarization:{device}", auth_token or "")),
-    )
-    monkeypatch.setattr(
-        model_loader,
         "preload_gliner_model",
         lambda: calls.append(("gliner", model_loader.GLINER_MODEL_ID)),
     )
-    monkeypatch.setenv("HF_HUB_TOKEN", "secret-token")
 
     model_loader.main()
 
@@ -209,6 +203,5 @@ def test_main_preloads_expected_model_groups(
         ("nltk", "all"),
         ("spacy", "en_core_web_sm"),
         ("whisper:cpu", "large-v3-turbo"),
-        ("diarization:cpu", "secret-token"),
         ("gliner", model_loader.GLINER_MODEL_ID),
     ]
