@@ -244,7 +244,6 @@ def test_init_skips_diarization_model_for_single_speaker(
 
     transcriber = WhisperTranscriber(
         file_path=transcription.Path("sample.wav"),
-        trg_lang="en",
         n_speakers=1,
     )
 
@@ -285,7 +284,6 @@ def test_init_skips_language_detection_for_silent_audio(
 
     transcriber = WhisperTranscriber(
         file_path=transcription.Path("sample.wav"),
-        trg_lang="en",
         n_speakers=1,
     )
 
@@ -395,10 +393,20 @@ def test_detect_language_uses_whisper_mel_spectrogram(
 # ---------------------------------------------------------------------------
 
 
-def test_transcription_acquires_task_specific_registry_key(
+def test_transcription_always_acquires_whisper_turbo(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """transcription() must acquire whisper_turbo for transcribe, whisper_large for translate."""
+    """transcription() always acquires whisper_turbo and runs a plain transcribe.
+
+    Whisper no longer performs translation locally: the dedicated ``large-v3``
+    translate model is gone and translation is handled downstream by the LLM.
+    Even a historical ``translate`` task must therefore acquire the turbo model
+    and call ``model.transcribe`` with ``task="transcribe"``.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Fixture for patching the model
+            registry and the VAD guard.
+    """
     acquired_keys: list[str] = []
     fake_model = MagicMock()
     fake_model.transcribe.return_value = {"segments": []}
@@ -421,7 +429,6 @@ def test_transcription_acquires_task_specific_registry_key(
 
     t = WhisperTranscriber.__new__(WhisperTranscriber)
     t.audio = np.full(16000, 0.05, dtype=np.float32)
-    t.task = "translate"
     t.src_lang = "de"
     t.transcription_result = None
     # __init__ caches the speech-guard result so transcription() doesn't have
@@ -429,12 +436,10 @@ def test_transcription_acquires_task_specific_registry_key(
     t._speech_check = (True, None)
 
     t.transcription()
-    assert acquired_keys == ["whisper_large"]
 
-    acquired_keys.clear()
-    t.task = "transcribe"
-    t.transcription()
     assert acquired_keys == ["whisper_turbo"]
+    fake_model.transcribe.assert_called_once()
+    assert fake_model.transcribe.call_args.kwargs["task"] == "transcribe"
 
 
 # ---------------------------------------------------------------------------
@@ -453,7 +458,6 @@ def test_external_transcriber_transcript_output(
     transcriber = ExternalWhisperTranscriber.__new__(ExternalWhisperTranscriber)
     transcriber.file_path = transcription.Path("dummy.wav")
     transcriber.src_lang = "en"
-    transcriber.task = "transcribe"
     transcriber._model_id = "whisper-1"
     transcriber.start_column = "start"
     transcriber.end_column = "end"
@@ -474,6 +478,56 @@ def test_external_transcriber_transcript_output(
     assert df.iloc[1]["text"] == "How are you?"
 
 
+def test_external_transcriber_uses_transcriptions_not_translations(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The external transcriber only ever calls the transcriptions endpoint.
+
+    Whisper's ``/v1/audio/translations`` endpoint is not served by every
+    OpenAI-compatible backend (vLLM returns 404 for it), and translation is
+    now an LLM concern. Even when a ``translate`` task was requested,
+    ``transcription()`` must call ``audio.transcriptions.create`` and never
+    ``audio.translations.create``.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Fixture for patching the lazy client
+            and the audio guard.
+    """
+    seg = SimpleNamespace(start=0.0, end=1.0, text="Bonjour.", no_speech_prob=0.1)
+    fake_response = SimpleNamespace(segments=[seg], language="fr")
+
+    fake_client = MagicMock()
+    fake_client.audio.transcriptions.create.return_value = fake_response
+    # If the (removed) translate path were taken it would still "work" here,
+    # so the assertions below are what actually pin the endpoint choice.
+    fake_client.audio.translations.create.return_value = fake_response
+
+    transcriber = ExternalWhisperTranscriber.__new__(ExternalWhisperTranscriber)
+    transcriber.file_path = transcription.Path(__file__)
+    transcriber.src_lang = None
+    transcriber._model_id = "openai/whisper-large-v3"
+    transcriber._client = None
+    transcriber.transcription_result = None
+
+    monkeypatch.setattr(
+        type(transcriber),
+        "_get_client",
+        property(lambda self: fake_client),
+    )
+    monkeypatch.setattr(
+        transcription,
+        "_load_audio_waveform",
+        lambda _path: np.zeros(1, dtype=np.float32),
+    )
+    monkeypatch.setattr(transcription, "_audio_has_speech", lambda _audio: (True, None))
+
+    transcriber.transcription()
+
+    fake_client.audio.transcriptions.create.assert_called_once()
+    fake_client.audio.translations.create.assert_not_called()
+    assert transcriber.src_lang == "fr"
+
+
 def test_external_transcriber_transcription_populates_src_lang(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -491,7 +545,6 @@ def test_external_transcriber_transcription_populates_src_lang(
     transcriber = ExternalWhisperTranscriber.__new__(ExternalWhisperTranscriber)
     transcriber.file_path = transcription.Path(__file__)  # use an existing file
     transcriber.src_lang = None
-    transcriber.task = "transcribe"
     transcriber._model_id = "whisper-1"
     transcriber._client = None
     transcriber.transcription_result = None
@@ -537,7 +590,6 @@ def test_external_transcriber_normalizes_full_language_name(
     transcriber = ExternalWhisperTranscriber.__new__(ExternalWhisperTranscriber)
     transcriber.file_path = transcription.Path(__file__)
     transcriber.src_lang = None
-    transcriber.task = "transcribe"
     transcriber._model_id = "whisper-1"
     transcriber._client = None
     transcriber.transcription_result = None
@@ -579,7 +631,6 @@ def _make_external_transcriber() -> ExternalWhisperTranscriber:
     transcriber = ExternalWhisperTranscriber.__new__(ExternalWhisperTranscriber)
     transcriber.file_path = transcription.Path(__file__)
     transcriber.src_lang = None
-    transcriber.task = "transcribe"
     transcriber._model_id = "whisper-1"
     transcriber._client = None
     transcriber.start_column = "start"

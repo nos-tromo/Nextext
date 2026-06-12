@@ -73,25 +73,19 @@ def test_transcription_pipeline_invokes_transcriber(
         def __init__(
             self,
             file_path: Path,
-            trg_lang: str,
             src_lang: str,
-            task: str,
             n_speakers: int,
         ) -> None:
             """Initialize the dummy transcriber with the given parameters.
 
             Args:
                 file_path (Path): Path to the audio file.
-                trg_lang (str): Target language code.
                 src_lang (str): Source language code.
-                task (str): Task to perform (transcribe or translate).
                 n_speakers (int): Number of speakers for diarization.
             """
             self.params = {
                 "file_path": file_path,
-                "trg_lang": trg_lang,
                 "src_lang": src_lang,
-                "task": task,
                 "n_speakers": n_speakers,
             }
             self.transcription_called = False
@@ -119,9 +113,7 @@ def test_transcription_pipeline_invokes_transcriber(
 
     df, detected_lang = pipeline.transcription_pipeline(
         file_path=Path("/tmp/audio.wav"),
-        trg_lang="en",
         src_lang="auto",
-        task="transcribe",
         n_speakers=2,
     )
 
@@ -182,14 +174,45 @@ def test_transcription_pipeline_falls_back_to_original_language(
 
     df, detected_lang = pipeline.transcription_pipeline(
         file_path=Path("/tmp/audio.wav"),
-        trg_lang="en",
         src_lang="es",
-        task="transcribe",
         n_speakers=1,
     )
 
     assert list(df["text"]) == ["hola"]
     assert detected_lang == "es"
+
+
+@pytest.mark.parametrize(
+    ("task", "src_lang", "trg_lang", "expected"),
+    [
+        ("translate", "de", "en", True),  # English target is translated like any other
+        ("translate", "en", "de", True),
+        ("translate", "de", "de", False),  # same language is a no-op
+        ("translate", "de-DE", "de", False),  # locale variants collapse to the base code
+        ("translate", None, "de", True),  # unknown source still differs from the target
+        ("transcribe", "de", "en", False),  # transcribe never translates
+    ],
+)
+def test_should_translate(
+    task: str,
+    src_lang: str | None,
+    trg_lang: str,
+    expected: bool,
+) -> None:
+    """The LLM translation stage runs only for a translate task across languages.
+
+    Whisper only transcribes, so translation is gated purely on the requested
+    task and whether the resolved source differs from the target. An English
+    target must translate (no Whisper translate hop exists anymore), while a
+    same-language request must be a no-op.
+
+    Args:
+        task (str): Requested task, ``"transcribe"`` or ``"translate"``.
+        src_lang (str | None): Resolved source language code.
+        trg_lang (str): Target language code.
+        expected (bool): Whether translation should run.
+    """
+    assert pipeline.should_translate(task, src_lang, trg_lang) is expected
 
 
 def test_translation_pipeline_returns_input_when_language_matches(

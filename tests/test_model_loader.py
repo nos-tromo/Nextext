@@ -184,7 +184,7 @@ def test_main_preloads_expected_model_groups(
     monkeypatch.setattr(
         model_loader,
         "LOCAL_WHISPER_MODEL_IDS",
-        ("large-v3-turbo", "large-v3"),
+        ("large-v3-turbo",),
     )
     monkeypatch.setattr(
         model_loader,
@@ -209,7 +209,6 @@ def test_main_preloads_expected_model_groups(
         ("nltk", "all"),
         ("spacy", "en_core_web_sm"),
         ("whisper:cpu", "large-v3-turbo"),
-        ("whisper:cpu", "large-v3"),
         ("diarization:cpu", "secret-token"),
         ("gliner", model_loader.GLINER_MODEL_ID),
     ]
