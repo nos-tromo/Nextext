@@ -204,7 +204,7 @@ def _segment_to_record(
             source audio, or ``None`` to omit the key.
         language (str | None): ISO 639-1 language code of the transcript
             text. May be ``None`` when unknown.
-        task (str): Whisper task, ``"transcribe"`` or ``"translate"``.
+        task (str): Task performed, ``"transcribe"`` or ``"translate"``.
 
     Returns:
         dict[str, Any]: The ordered record ready for ``json.dumps``.
@@ -269,7 +269,7 @@ def build_docint_jsonl(
     - ``source_file_hash`` (str, optional) — ``sha256:<hex>`` digest of the
       source audio. Omitted entirely when ``source_file_hash`` is ``None``.
     - ``language`` (str | None) — ISO 639-1 language code or ``None``.
-    - ``task`` (str) — Whisper task, ``"transcribe"`` or ``"translate"``.
+    - ``task`` (str) — task performed, ``"transcribe"`` or ``"translate"``.
     - ``sentence_index`` (int) — 0-based line index.
     - ``start_seconds`` / ``end_seconds`` (float) — raw segment offsets.
     - ``start_ts`` / ``end_ts`` (str) — zero-padded ``HH:MM:SS`` strings.

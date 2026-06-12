@@ -185,7 +185,7 @@ def _docint_language_for_result(result: dict[str, Any]) -> str | None:
 
 
 def _docint_task_for_result(result: dict[str, Any]) -> str:
-    """Resolve the Whisper task label for a single result entry.
+    """Resolve the task label for a single result entry.
 
     Args:
         result: Stored result payload.

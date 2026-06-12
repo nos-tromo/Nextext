@@ -22,6 +22,7 @@ from nextext.core.processing import FileProcessor
 from nextext.pipeline import (
     hate_speech_pipeline,
     normalize_language_code,
+    should_translate,
     summarization_pipeline,
     transcription_pipeline,
     translation_pipeline,
@@ -213,7 +214,7 @@ def _emit_docint_jsonl(
         transcript_df (pd.DataFrame): Sentence-merged transcript.
         source_path (Path): Original input audio path.
         output_path (Path): Target JSONL path or parent directory.
-        task (str): Whisper task, ``"transcribe"`` or ``"translate"``.
+        task (str): Task to perform, ``"transcribe"`` or ``"translate"``.
         language (str | None): Normalized ISO 639-1 language code.
         force_overwrite (bool): When ``True``, overwrite an existing
             target file. When ``False`` (default), refuse and raise
@@ -307,9 +308,7 @@ def _run_main(args: argparse.Namespace) -> None:
     if args.task in ["transcribe", "translate"]:
         transcript_df, updated_src_lang = transcription_pipeline(
             file_path=args.file_path,
-            trg_lang=args.trg_lang,
             src_lang=args.src_lang,
-            task=args.task,
             n_speakers=args.speakers,
         )
         args.src_lang = updated_src_lang  # Update source language if detected
@@ -327,9 +326,12 @@ def _run_main(args: argparse.Namespace) -> None:
         logger.error("Invalid task specified: {}", args.task)
         raise ValueError("Invalid task. Please specify 'transcribe' or 'translate'.")
 
-    # Machine translate the transcribed text
+    # Machine translate the transcribed text. Whisper only transcribes; the LLM
+    # performs every translation, directly from source to target. Engage it
+    # whenever a translate task was requested and the resolved source differs
+    # from the target (so an English target is translated too).
     inference_pipeline = None
-    if args.task == "translate" and args.trg_lang != "en":
+    if should_translate(args.task, args.src_lang, args.trg_lang):
         inference_pipeline = InferencePipeline(out_language=_language_name(args.trg_lang))
         if not inference_pipeline.get_health():
             logger.error("The configured inference provider is not reachable.")
