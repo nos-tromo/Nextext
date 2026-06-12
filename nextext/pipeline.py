@@ -6,6 +6,7 @@ from typing import Any
 import pandas as pd
 from matplotlib.figure import Figure
 
+from nextext.core.diarization import assign_speakers_by_overlap, diarize_file
 from nextext.core.hate_speech import HateSpeechDetector
 from nextext.core.openai_cfg import InferencePipeline
 from nextext.core.translation import Translator
@@ -41,12 +42,20 @@ def transcription_pipeline(
     forward the audio to an OpenAI-compatible ``/v1/audio/transcriptions``
     endpoint. Whisper always transcribes in the source language; translation to
     a target language is handled separately by :func:`translation_pipeline`.
-    External transcription does not support diarization.
+
+    Diarization is provider-independent: when ``n_speakers > 1`` the audio is
+    sent to the out-of-process ``/diarize`` service (see
+    :func:`nextext.core.diarization.diarize_file`) and the returned speaker
+    turns are aligned onto the transcript by maximum overlap. It is skipped for
+    single-speaker requests and for empty transcripts, and degrades to an
+    unlabelled transcript when ``DIARIZE_API_BASE`` is unset or the service is
+    unreachable.
 
     Args:
         file_path (Path): Path to the audio file.
         src_lang (str): Source language code.
-        n_speakers (int): Number of speakers for diarization (local provider only).
+        n_speakers (int): Maximum speaker count for diarization. Values greater
+            than 1 trigger a ``/diarize`` request; 1 disables diarization.
 
     Returns:
         tuple[pd.DataFrame, str]: The transcript DataFrame and the
@@ -54,37 +63,43 @@ def transcription_pipeline(
     """
     config = load_transcription_env()
 
+    transcriber: Any
     if config.provider == "external":
         if ExternalWhisperTranscriber is None:
             raise RuntimeError(
                 "Transcription dependencies could not be imported. Please verify the openai package installation."
             )
-        external_transcriber = ExternalWhisperTranscriber(
+        transcriber = ExternalWhisperTranscriber(
             file_path=file_path,
             src_lang=src_lang,
             model_id=config.whisper_model,
         )
-        external_transcriber.transcription()
-        df = external_transcriber.transcript_output()
-        updated_src_lang = external_transcriber.src_lang or src_lang
-        return df, updated_src_lang
     else:
         if WhisperTranscriber is None:
             raise RuntimeError(
                 "Transcription dependencies could not be imported. Verify the openai-whisper "
                 "and torchaudio installation."
             )
-        local_transcriber = WhisperTranscriber(
+        transcriber = WhisperTranscriber(
             file_path=file_path,
             src_lang=src_lang,
             n_speakers=n_speakers,
         )
-        local_transcriber.transcription()
-        if n_speakers > 1:
-            local_transcriber.diarization()
-        df = local_transcriber.transcript_output()
-        updated_src_lang = local_transcriber.src_lang or src_lang
-        return df, updated_src_lang
+
+    transcriber.transcription()
+
+    # Diarization runs against the /diarize HTTP service for every provider.
+    # Skip it for single-speaker requests and for empty transcripts (silent
+    # audio short-circuited by the speech guard) to avoid a needless request.
+    segments = transcriber.transcription_result["segments"] if transcriber.transcription_result else []
+    if n_speakers > 1 and segments:
+        diarize_segments = diarize_file(file_path, max_speakers=n_speakers)
+        if diarize_segments:
+            assign_speakers_by_overlap(segments, diarize_segments)
+
+    df = transcriber.transcript_output()
+    updated_src_lang = transcriber.src_lang or src_lang
+    return df, updated_src_lang
 
 
 def normalize_language_code(lang_code: str | None) -> str | None:
