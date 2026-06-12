@@ -37,7 +37,6 @@ class InferencePipeline:
 
     out_language: str = "German"
     _default_model: str | None = field(default=None, init=False)
-    _translation_model: str | None = field(default=None, init=False)
     _client: Any | None = field(default=None, init=False)
     prompt_dir: Path = field(default=PROMPT_DIR, init=False)
 
@@ -139,23 +138,6 @@ class InferencePipeline:
         return self._default_model
 
     @property
-    def translation_model(self) -> str:
-        """Resolve the model used for translation.
-
-        Returns:
-            str: The translation model name.
-
-        Raises:
-            RuntimeError: If ``TRANSLATION_MODEL`` is not configured.
-        """
-        if self._translation_model is None:
-            configured_model = os.getenv("TRANSLATION_MODEL")
-            if not configured_model:
-                raise RuntimeError("TRANSLATION_MODEL must be set in the environment or .env file for translation.")
-            self._translation_model = configured_model
-        return self._translation_model
-
-    @property
     def provider(self) -> str:
         """Resolve the configured inference provider.
 
@@ -210,9 +192,9 @@ class InferencePipeline:
             top_p (float | None): Nucleus sampling parameter.
             system_prompt (str | None): Override the default system prompt for this call.
             include_system_prompt (bool): When False, no ``system`` role is
-                sent at all — the request is a single ``user`` message. Used by
-                the vLLM TranslateGemma path, whose model card specifies that
-                the model accepts only ``user``/``assistant`` roles.
+                sent at all — the request is a single ``user`` message, for
+                models or endpoints that accept only ``user``/``assistant``
+                roles.
             think (bool | None): Override the ``think`` field forwarded to the
                 provider via ``extra_body``. ``None`` (default) falls back to
                 the value resolved from ``OLLAMA_THINK`` by

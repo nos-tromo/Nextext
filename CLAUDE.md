@@ -65,8 +65,8 @@ Tests are in `tests/` using pytest with monkeypatch fixtures for mocking ML mode
 
 **Pipeline flow (server-side):**
 
-1. **Transcription** (always-on) → openai-whisper transcription + optional pyannote diarization → `pd.DataFrame`
-2. **Translation** (optional) → LLM-based segment translation via `InferencePipeline`
+1. **Transcription** (always-on) → openai-whisper transcription (always in the source language) + optional pyannote diarization → `pd.DataFrame`
+2. **Translation** (optional) → LLM-based segment translation, directly source → target for any target language, via `InferencePipeline`. Whisper's audio-translate task is not used.
 3. **Word-level analysis** (optional) → word counts, GLiNER named entities, word clouds
 4. **Summarization** (optional) → LLM summary via `InferencePipeline`
 5. **Hate-speech detection** (optional) → per-segment LLM classification
@@ -115,13 +115,13 @@ See `AGENTS.md` for detailed agent documentation including I/O contracts and how
 
 Key env vars (see `.env.example`):
 
-- `INFERENCE_PROVIDER` — `ollama` (default), `vllm`, or `openai`. Selects the translation prompt format: `ollama`/`openai` use the templated prompt in `nextext/utils/prompts/translation.txt`, while `vllm` sends a single-user-message delimiter format (`<<<source>>>...<<<target>>>...<<<text>>>...`) required by `Infomaniak-AI/vllm-translategemma-4b-it`.
+- `INFERENCE_PROVIDER` — `ollama` (default), `vllm`, or `openai`. Selects the inference backend for all LLM calls; it no longer affects the translation prompt — every provider uses the templated prompt in `nextext/utils/prompts/translation.txt` plus a translation system prompt. Still governs transcription routing and the Ollama `think` field.
 - `HF_HUB_TOKEN` — required for diarization models
-- `OPENAI_API_KEY`, `OPENAI_API_BASE` — OpenAI-compatible endpoint credentials; shared across translation, summarization, and hate-speech detection, so in `vllm` mode the LiteLLM proxy must expose both `TEXT_MODEL` and `TRANSLATION_MODEL` on the same endpoint.
-- `TEXT_MODEL`, `TRANSLATION_MODEL` — LLM model names
+- `OPENAI_API_KEY`, `OPENAI_API_BASE` — OpenAI-compatible endpoint credentials; shared across translation, summarization, and hate-speech detection, which all run on `TEXT_MODEL`.
+- `TEXT_MODEL` — LLM model name shared by translation, summarization, and hate-speech detection
 - `OLLAMA_THINK` — tri-state default for the Ollama `think` request field forwarded by `InferencePipeline.call_model` via `extra_body`. Accepts `1`/`true`/`yes`/`on` (enable), `0`/`false`/`no`/`off` (disable), or unset (omit field, model default). Honoured by Ollama-hosted reasoning models such as Qwen3; a no-op for `vllm`/`openai` providers. Per-call `think=` overrides the env default.
 - `NEXTEXT_OFFLINE=1` — offline mode (skip model downloads)
-- `MODEL_RESIDENCY_STRATEGY` — `offload` (default) or `evict`. Controls how the registry releases GPU models between files. Per-model overrides: `MODEL_RESIDENCY_GLINER`, `MODEL_RESIDENCY_WHISPER_TURBO`, `MODEL_RESIDENCY_WHISPER_LARGE`, `MODEL_RESIDENCY_DIARIZATION`.
+- `MODEL_RESIDENCY_STRATEGY` — `offload` (default) or `evict`. Controls how the registry releases GPU models between files. Per-model overrides: `MODEL_RESIDENCY_GLINER`, `MODEL_RESIDENCY_WHISPER_TURBO`, `MODEL_RESIDENCY_DIARIZATION`.
 - `BACKEND_HOST` (frontend only) — Backend root URL. Defaults to `http://backend:8000` inside compose; set to `http://localhost:8000` for local dev.
 - `BACKEND_PUBLIC_HOST` (frontend only) — Externally reachable backend URL surfaced in UI hints.
 - `NEXTEXT_API_HOST` / `NEXTEXT_API_PORT` (backend only) — uvicorn bind address. Defaults to `0.0.0.0:8000`.
@@ -131,7 +131,7 @@ Key env vars (see `.env.example`):
 
 ## Memory management
 
-GPU-resident models (`whisper_turbo`, `whisper_large`, `diarization`, `gliner`) are owned by a process-wide registry in `nextext/utils/model_registry.py`. Callers wrap model use in `with REGISTRY.acquire(name) as model:` so the model is on GPU only for the duration of the block; the registry releases it (offload or evict) on exit. The Streamlit and CLI entry points call `flush_gpu()` between files to reclaim PyTorch allocator reservations. Adding a new GPU model means registering a `ModelSpec` with a `loader` (CPU construction) and `mover` (`.to(device)`).
+GPU-resident models (`whisper_turbo`, `diarization`, `gliner`) are owned by a process-wide registry in `nextext/utils/model_registry.py`. Callers wrap model use in `with REGISTRY.acquire(name) as model:` so the model is on GPU only for the duration of the block; the registry releases it (offload or evict) on exit. The Streamlit and CLI entry points call `flush_gpu()` between files to reclaim PyTorch allocator reservations. Adding a new GPU model means registering a `ModelSpec` with a `loader` (CPU construction) and `mover` (`.to(device)`).
 
 ## Docker
 

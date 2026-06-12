@@ -11,7 +11,6 @@ from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as package_version
 from pathlib import Path
 
-import huggingface_hub as huggingface_hub
 import nltk
 import torch
 import whisper
@@ -21,7 +20,6 @@ from loguru import logger
 from pyannote.audio import Pipeline as DiarizationPipeline
 
 from nextext.core.transcription import _configure_torch_safe_globals
-from nextext.utils.env_cfg import load_inference_env
 from nextext.utils.mappings_loader import load_mappings
 
 load_dotenv()
@@ -32,12 +30,11 @@ SPACY_MODEL_PACKAGE_VERSION = "SPACY_MODEL_PACKAGE_VERSION"
 DEFAULT_SPACY_MODEL_DIR = Path.home() / ".cache" / "spacy"
 DEFAULT_SPACY_MODEL_DOWNLOAD_BASE_URL = "https://github.com/explosion/spacy-models/releases/download"
 NLTK_RESOURCES = ("punkt_tab", "stopwords")
-LOCAL_WHISPER_MODEL_IDS: tuple[str, ...] = ("large-v3-turbo", "large-v3")
+LOCAL_WHISPER_MODEL_IDS: tuple[str, ...] = ("large-v3-turbo",)
 GLINER_MODEL_ID = "gliner-community/gliner_large-v2.5"
 SILERO_VAD_REPO = "snakers4/silero-vad"
 DIARIZATION_MODEL_ID = "pyannote/speaker-diarization-3.1"
 DIARIZATION_DEPENDENCY_IDS = ("pyannote/segmentation-3.0",)
-TRANSLATION_MODEL_ENV = "TRANSLATION_MODEL"
 
 
 def get_spacy_model_dir() -> Path:
@@ -301,53 +298,6 @@ def preload_gliner_model(model_id: str = GLINER_MODEL_ID) -> None:
     logger.info("GLiNER model '{}' cached.", model_id)
 
 
-def preload_translation_model(
-    model_id: str | None = None,
-    provider: str | None = None,
-    hf_token: str | None = None,
-) -> None:
-    """Ensure the translation model is available for the configured inference provider.
-
-    For ``ollama``, pulls the model via the Ollama CLI. For ``vllm``, downloads
-    the model weights from Hugging Face Hub. For ``openai``, the model is remote
-    and no local action is needed.
-
-    Args:
-        model_id (str | None): Override for the translation model identifier.
-            Defaults to the ``TRANSLATION_MODEL`` environment variable.
-        provider (str | None): Override for the inference provider. Defaults to
-            the value resolved by :func:`~nextext.utils.env_cfg.load_inference_env`.
-        hf_token (str | None): Hugging Face Hub token used when downloading
-            model weights (``vllm`` provider only).
-    """
-    resolved_model_id = model_id or os.getenv(TRANSLATION_MODEL_ENV)
-    if not resolved_model_id:
-        logger.warning(
-            "Skipping translation model preload: '{}' is not set.",
-            TRANSLATION_MODEL_ENV,
-        )
-        return
-
-    resolved_provider = provider or load_inference_env().provider
-
-    if resolved_provider == "ollama":
-        logger.info("Pulling translation model '{}' via Ollama.", resolved_model_id)
-        subprocess.run(["ollama", "pull", resolved_model_id], check=True)
-        logger.info("Translation model '{}' is available in Ollama.", resolved_model_id)
-    elif resolved_provider == "vllm":
-        logger.info(
-            "Downloading translation model '{}' from Hugging Face Hub.",
-            resolved_model_id,
-        )
-        huggingface_hub.snapshot_download(resolved_model_id, token=hf_token)
-        logger.info("Translation model '{}' cached from Hugging Face Hub.", resolved_model_id)
-    else:
-        logger.info(
-            "Translation model '{}' is hosted remotely; no local preload required.",
-            resolved_model_id,
-        )
-
-
 def _get_default_device() -> str:
     """Resolve the preferred device for preload operations.
 
@@ -398,11 +348,6 @@ def main() -> None:
         preload_gliner_model()
     except Exception as exc:
         failures.append(f"GLiNER {GLINER_MODEL_ID} ({exc})")
-
-    try:
-        preload_translation_model(hf_token=os.getenv("HF_HUB_TOKEN"))
-    except Exception as exc:
-        failures.append(f"Translation model ({exc})")
 
     if failures:
         raise RuntimeError("Failed to preload models: " + "; ".join(failures))

@@ -56,15 +56,12 @@ Specifications: Any = getattr(_pyannote_task, "Specifications", None)
 load_dotenv()
 HF_HUB_TOKEN = os.getenv("HF_HUB_TOKEN", "")
 
-LOCAL_WHISPER_MODELS: dict[str, str] = {
-    "transcribe": "large-v3-turbo",
-    "translate": "large-v3",
-}
+# Whisper always transcribes; translation is handled downstream by the LLM
+# (``TEXT_MODEL``), so a single turbo checkpoint covers both language
+# detection and transcription. The heavier ``large-v3`` translate model has
+# been retired along with Whisper's built-in translate task.
+LOCAL_WHISPER_MODEL: str = "large-v3-turbo"
 
-_WHISPER_REGISTRY_KEYS: dict[str, str] = {
-    "transcribe": "whisper_turbo",
-    "translate": "whisper_large",
-}
 _DIARIZATION_MODEL_ID: str = "pyannote/speaker-diarization-3.1"
 
 OPENAI_WHISPER_MAX_UPLOAD_BYTES: int = 25 * 1024 * 1024
@@ -439,16 +436,7 @@ def _load_diarization_pipeline() -> DiarizationPipeline:
 REGISTRY.register(
     ModelSpec(
         name="whisper_turbo",
-        loader=lambda: _load_whisper(LOCAL_WHISPER_MODELS["transcribe"]),
-        mover=_move_torch_module,
-        default_strategy=Strategy.OFFLOAD,
-        mps_compatible=False,
-    )
-)
-REGISTRY.register(
-    ModelSpec(
-        name="whisper_large",
-        loader=lambda: _load_whisper(LOCAL_WHISPER_MODELS["translate"]),
+        loader=lambda: _load_whisper(LOCAL_WHISPER_MODEL),
         mover=_move_torch_module,
         default_strategy=Strategy.OFFLOAD,
         mps_compatible=False,
@@ -468,14 +456,17 @@ REGISTRY.register(
 class WhisperTranscriber:
     """Transcribes and optionally diarizes audio using openai-whisper and pyannote.
 
-    All GPU-resident models (Whisper turbo, Whisper large, diarization pipeline)
-    are managed through the process-wide :data:`REGISTRY` and are acquired
-    lazily on first use.  Between files, call
+    All GPU-resident models (Whisper turbo, diarization pipeline) are managed
+    through the process-wide :data:`REGISTRY` and are acquired lazily on first
+    use.  Between files, call
     :func:`nextext.utils.model_registry.flush_gpu` to reclaim VRAM.
+
+    Whisper always transcribes; translation to the target language is handled
+    downstream by the LLM (``TEXT_MODEL``), so this class no longer takes a
+    ``task`` and never loads the retired ``large-v3`` translate model.
 
     Attributes:
         src_lang (str): Source language of the audio, resolved during ``__init__``.
-        task (str): ``"transcribe"`` or ``"translate"``.
         n_speakers (int): Maximum number of speakers for diarization.
         start_column (str): DataFrame column for segment start times.
         end_column (str): DataFrame column for segment end times.
@@ -497,9 +488,7 @@ class WhisperTranscriber:
     def __init__(
         self,
         file_path: Path,
-        trg_lang: str,
         src_lang: str | None = None,
-        task: str = "transcribe",
         n_speakers: int = 1,
         start_column: str = "start",
         end_column: str = "end",
@@ -511,10 +500,8 @@ class WhisperTranscriber:
 
         Args:
             file_path (Path): The path to the input file.
-            trg_lang (str): The target language for translation.
             src_lang (str, optional): The source language of the file. Defaults to None
                 (triggers language detection).
-            task (str): Indicates whether the task is transcription or translation. Defaults to "transcribe".
             n_speakers (int): The maximum number of speakers to identify in the audio. Defaults to 1.
             start_column (str): The text column with the starting timestamp. Defaults to "start".
             end_column (str): The text column with the ending timestamp. Defaults to "end".
@@ -542,8 +529,7 @@ class WhisperTranscriber:
             logger.info("{}; skipping language detection.", self._speech_check[1])
             det_lang = src_lang or "en"
         self.src_lang = src_lang if src_lang in whisper_languages.keys() else det_lang
-        self.task = "transcribe" if det_lang == trg_lang else task
-        logger.info("Using language '{}' for task '{}'", self.src_lang, self.task)
+        logger.info("Using language '{}' for transcription.", self.src_lang)
 
         self.diarize_model: Any = None
         if self.n_speakers > 1:
@@ -628,10 +614,9 @@ class WhisperTranscriber:
             return
 
         # Layer 3: Whisper transcription + no_speech_prob filter
-        key = _WHISPER_REGISTRY_KEYS.get(self.task, "whisper_turbo")
         try:
-            with REGISTRY.acquire(key) as model:
-                result = model.transcribe(self.audio, task=self.task, language=self.src_lang)
+            with REGISTRY.acquire("whisper_turbo") as model:
+                result = model.transcribe(self.audio, task="transcribe", language=self.src_lang)
             self.transcription_result = {"segments": _filter_no_speech_segments(result["segments"])}
         except Exception as e:
             logger.error("Error during transcription: {}", e, exc_info=True)
@@ -761,12 +746,16 @@ class WhisperTranscriber:
 class ExternalWhisperTranscriber:
     """Transcribe audio via an external OpenAI-compatible Whisper API.
 
-    Diarization is not supported; n_speakers is silently ignored.
+    Diarization is not supported; n_speakers is silently ignored. The
+    transcriber only ever calls ``/v1/audio/transcriptions``; translation to
+    the target language is handled downstream by the LLM (``TEXT_MODEL``).
+    Whisper's ``/v1/audio/translations`` endpoint is deliberately not used, as
+    it always emits English and is not served by every OpenAI-compatible
+    backend (vLLM returns 404 for it).
 
     Attributes:
         file_path (Path): Path to the audio file.
         src_lang (str | None): Source language code; populated from API response if not provided.
-        task (str): Task type, "transcribe" or "translate".
 
     Methods:
         transcription(): Call the external API and store segment results.
@@ -776,10 +765,8 @@ class ExternalWhisperTranscriber:
     def __init__(
         self,
         file_path: Path,
-        trg_lang: str,
         src_lang: str | None = None,
         model_id: str = "whisper-1",
-        task: str = "transcribe",
         start_column: str = "start",
         end_column: str = "end",
         speaker_column: str = "speaker",
@@ -789,10 +776,8 @@ class ExternalWhisperTranscriber:
 
         Args:
             file_path (Path): Path to the audio file.
-            trg_lang (str): Accepted for interface compatibility; not forwarded to the API.
             src_lang (str | None): Source language code. Defaults to None (API auto-detects).
             model_id (str): Model name to pass to the external API. Defaults to "whisper-1".
-            task (str): "transcribe" or "translate". Defaults to "transcribe".
             start_column (str): DataFrame column for segment start times.
             end_column (str): DataFrame column for segment end times.
             speaker_column (str): Kept for interface compatibility; not used.
@@ -800,7 +785,6 @@ class ExternalWhisperTranscriber:
         """
         self.file_path = file_path
         self.src_lang = src_lang
-        self.task = task
         self._model_id = model_id
         self.start_column = start_column
         self.end_column = end_column
@@ -838,10 +822,10 @@ class ExternalWhisperTranscriber:
            ``no_speech_prob`` exceeds :data:`NO_SPEECH_THRESHOLD` are
            dropped from the returned payload.
 
-        Whisper's built-in ``translate`` task always targets English and
-        is exposed by OpenAI-compatible servers as a separate
-        ``/v1/audio/translations`` endpoint. ``task`` itself is not
-        accepted on either endpoint.
+        Only the ``/v1/audio/transcriptions`` endpoint is called. Whisper's
+        ``/v1/audio/translations`` endpoint is not used: it always emits
+        English and is not served by every OpenAI-compatible backend.
+        Translation to the target language happens downstream in the LLM.
         """
         audio = _load_audio_waveform(self.file_path)
         has_speech, skip_reason = _audio_has_speech(audio)
@@ -857,9 +841,8 @@ class ExternalWhisperTranscriber:
         client = self._get_client
         file_size = self.file_path.stat().st_size
         logger.info(
-            "External Whisper request: model='{}' task='{}' language='{}' file='{}' size={}B",
+            "External Whisper request: model='{}' language='{}' file='{}' size={}B",
             self._model_id,
-            self.task,
             self.src_lang,
             self.file_path.name,
             file_size,
@@ -877,22 +860,15 @@ class ExternalWhisperTranscriber:
             )
         try:
             with open(self.file_path, "rb") as f:
-                if self.task == "translate":
-                    response = client.audio.translations.create(
-                        model=self._model_id,
-                        file=f,
-                        response_format="verbose_json",
-                    )
-                else:
-                    kwargs: dict[str, Any] = {
-                        "model": self._model_id,
-                        "file": f,
-                        "response_format": "verbose_json",
-                        "timestamp_granularities": ["segment"],
-                    }
-                    if self.src_lang:
-                        kwargs["language"] = self.src_lang
-                    response = client.audio.transcriptions.create(**kwargs)
+                kwargs: dict[str, Any] = {
+                    "model": self._model_id,
+                    "file": f,
+                    "response_format": "verbose_json",
+                    "timestamp_granularities": ["segment"],
+                }
+                if self.src_lang:
+                    kwargs["language"] = self.src_lang
+                response = client.audio.transcriptions.create(**kwargs)
         except APIStatusError as exc:
             body = getattr(exc, "response", None)
             body_text = body.text if body is not None else ""

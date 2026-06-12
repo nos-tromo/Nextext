@@ -31,9 +31,7 @@ else:
 
 def transcription_pipeline(
     file_path: Path,
-    trg_lang: str,
     src_lang: str,
-    task: str,
     n_speakers: int,
 ) -> tuple[pd.DataFrame, str]:
     """Transcribe the audio file using either a local Whisper model or an external API.
@@ -41,13 +39,13 @@ def transcription_pipeline(
     The transcription provider is derived from ``INFERENCE_PROVIDER``: ``ollama``
     runs the bundled ``openai-whisper`` locally, while ``openai`` and ``vllm``
     forward the audio to an OpenAI-compatible ``/v1/audio/transcriptions``
-    endpoint. External transcription does not support diarization.
+    endpoint. Whisper always transcribes in the source language; translation to
+    a target language is handled separately by :func:`translation_pipeline`.
+    External transcription does not support diarization.
 
     Args:
         file_path (Path): Path to the audio file.
-        trg_lang (str): Target language code for translation check.
         src_lang (str): Source language code.
-        task (str): Task to perform (transcribe or translate).
         n_speakers (int): Number of speakers for diarization (local provider only).
 
     Returns:
@@ -63,10 +61,8 @@ def transcription_pipeline(
             )
         external_transcriber = ExternalWhisperTranscriber(
             file_path=file_path,
-            trg_lang=trg_lang,
             src_lang=src_lang,
             model_id=config.whisper_model,
-            task=task,
         )
         external_transcriber.transcription()
         df = external_transcriber.transcript_output()
@@ -80,9 +76,7 @@ def transcription_pipeline(
             )
         local_transcriber = WhisperTranscriber(
             file_path=file_path,
-            trg_lang=trg_lang,
             src_lang=src_lang,
-            task=task,
             n_speakers=n_speakers,
         )
         local_transcriber.transcription()
@@ -105,6 +99,28 @@ def normalize_language_code(lang_code: str | None) -> str | None:
     if lang_code is None:
         return None
     return lang_code.split("-", 1)[0]
+
+
+def should_translate(task: str, src_lang: str | None, trg_lang: str) -> bool:
+    """Decide whether the LLM translation stage should run.
+
+    Whisper only transcribes, so every translation is performed downstream by
+    the LLM (``TEXT_MODEL``). Translation runs when a ``translate`` task was
+    requested and the resolved source language differs from the target: a
+    same-language request is a no-op, and an English target is translated like
+    any other (there is no longer a Whisper audio-translate hop to English).
+
+    Args:
+        task (str): The requested task, ``"transcribe"`` or ``"translate"``.
+        src_lang (str | None): The resolved source language code.
+        trg_lang (str): The target language code.
+
+    Returns:
+        bool: ``True`` when the translation stage should run.
+    """
+    if task != "translate":
+        return False
+    return normalize_language_code(src_lang) != normalize_language_code(trg_lang)
 
 
 def translation_pipeline(

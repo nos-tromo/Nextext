@@ -149,24 +149,6 @@ def test_default_model_requires_text_model(
         _ = pipeline.default_model
 
 
-def test_translation_model_requires_translation_model(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Test that translation requires TRANSLATION_MODEL.
-
-    Args:
-        monkeypatch (pytest.MonkeyPatch): The pytest fixture for patching
-            environment variables.
-    """
-    monkeypatch.setenv("TEXT_MODEL", "llama3.1:8b")
-    monkeypatch.delenv("TRANSLATION_MODEL", raising=False)
-
-    pipeline = InferencePipeline()
-
-    with pytest.raises(RuntimeError, match="TRANSLATION_MODEL"):
-        _ = pipeline.translation_model
-
-
 def test_call_model_includes_system_message_by_default(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
