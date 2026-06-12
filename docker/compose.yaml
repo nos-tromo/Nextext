@@ -30,8 +30,9 @@ services:
     logging: *default-logging
     environment: &backend-env
       <<: *no-proxy-env
+      DIARIZE_API_BASE: ${DIARIZE_API_BASE:-}
+      DIARIZE_TIMEOUT: ${DIARIZE_TIMEOUT:-600}
       HF_HUB_OFFLINE: ${HF_HUB_OFFLINE:-false}
-      HF_HUB_TOKEN: $HF_HUB_TOKEN
       INFERENCE_PROVIDER: ${INFERENCE_PROVIDER:-ollama}
       NER_MODEL: ${NER_MODEL:-}
       NEXTEXT_API_HOST: ${NEXTEXT_API_HOST:-0.0.0.0}

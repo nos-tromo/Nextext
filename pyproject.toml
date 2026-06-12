@@ -31,7 +31,6 @@ dependencies = [
     "pandas>=2.2.3",
     "pillow>=11.0.0",
     "pip>=25.0.1",
-    "pyannote-audio>=3.3.2,<5",
     "pyarabic>=0.6.15",
     "pycountry>=24.6.1",
     "python-bidi>=0.6.3",

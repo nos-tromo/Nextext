@@ -17,9 +17,7 @@ import whisper
 from dotenv import load_dotenv
 from gliner import GLiNER
 from loguru import logger
-from pyannote.audio import Pipeline as DiarizationPipeline
 
-from nextext.core.transcription import _configure_torch_safe_globals
 from nextext.utils.mappings_loader import load_mappings
 
 load_dotenv()
@@ -33,8 +31,6 @@ NLTK_RESOURCES = ("punkt_tab", "stopwords")
 LOCAL_WHISPER_MODEL_IDS: tuple[str, ...] = ("large-v3-turbo",)
 GLINER_MODEL_ID = "gliner-community/gliner_large-v2.5"
 SILERO_VAD_REPO = "snakers4/silero-vad"
-DIARIZATION_MODEL_ID = "pyannote/speaker-diarization-3.1"
-DIARIZATION_DEPENDENCY_IDS = ("pyannote/segmentation-3.0",)
 
 
 def get_spacy_model_dir() -> Path:
@@ -201,13 +197,6 @@ def preload_spacy_models(model_ids: Iterable[str] | None = None) -> None:
         download_spacy_model(model_id)
 
 
-def _cleanup_torch_resources() -> None:
-    """Release transient Torch resources after model preloading."""
-    if hasattr(torch, "cuda") and torch.cuda.is_available():
-        torch.cuda.empty_cache()
-    gc.collect()
-
-
 def preload_whisper_model(model_id: str, device: str = "cpu") -> None:
     """Download an openai-whisper checkpoint into the local cache.
 
@@ -253,36 +242,6 @@ def preload_silero_vad() -> None:
     logger.info("Downloading Silero VAD model from '{}'.", SILERO_VAD_REPO)
     torch.hub.load(SILERO_VAD_REPO, model="silero_vad", trust_repo=True)  # type: ignore[no-untyped-call]
     logger.info("Silero VAD model cached.")
-
-
-def preload_diarization_model(
-    auth_token: str | None,
-    device: str = "cpu",
-) -> None:
-    """Preload the pyannote speaker diarization pipeline.
-
-    Args:
-        auth_token (str | None): Hugging Face token used for private gated
-            model access.
-        device (str): Device used for the preload step.
-    """
-    if not auth_token:
-        logger.warning(
-            "Skipping diarization preload. '{}' also depends on {}.",
-            DIARIZATION_MODEL_ID,
-            ", ".join(DIARIZATION_DEPENDENCY_IDS),
-        )
-        return
-
-    _configure_torch_safe_globals()
-    logger.info("Loading diarization model '{}'.", DIARIZATION_MODEL_ID)
-    pipeline = DiarizationPipeline.from_pretrained(
-        DIARIZATION_MODEL_ID,
-        use_auth_token=auth_token,
-    )
-    pipeline.to(torch.device(device))
-    del pipeline
-    _cleanup_torch_resources()
 
 
 def preload_gliner_model(model_id: str = GLINER_MODEL_ID) -> None:
@@ -338,11 +297,6 @@ def main() -> None:
         preload_silero_vad()
     except Exception as exc:
         failures.append(f"Silero VAD ({exc})")
-
-    try:
-        preload_diarization_model(os.getenv("HF_HUB_TOKEN"), device=device)
-    except Exception as exc:
-        failures.append(f"Diarization {DIARIZATION_MODEL_ID} ({exc})")
 
     try:
         preload_gliner_model()

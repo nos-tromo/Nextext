@@ -179,8 +179,8 @@ def test_mps_compatible_false_falls_back_to_cpu_on_apple_silicon(
 ) -> None:
     """Specs with mps_compatible=False pin to CPU even when MPS is the only accelerator.
 
-    This is the Whisper/pyannote path: their sparse-tensor ops crash on the SparseMPS
-    backend, so they must never be auto-targeted at MPS regardless of ``_default_device``.
+    This is the Whisper path: its sparse-tensor ops crash on the SparseMPS
+    backend, so it must never be auto-targeted at MPS regardless of ``_default_device``.
     """
     _force_apple_silicon(monkeypatch)
     registry = ModelRegistry()

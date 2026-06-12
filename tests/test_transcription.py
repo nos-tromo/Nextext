@@ -13,7 +13,6 @@ from nextext.core import transcription
 from nextext.core.transcription import (
     ExternalWhisperTranscriber,
     WhisperTranscriber,
-    _configure_torch_safe_globals,
     _ends_with_punctuation,
     _merge_transcriptions_by_sentence,
     _seconds_to_time,
@@ -179,75 +178,8 @@ def test_module_level_merge_function_matches_instance_method() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Torch safe globals
-# ---------------------------------------------------------------------------
-
-
-def test_configure_torch_safe_globals_registers_checkpoint_types(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Test that Torch safe globals include required checkpoint classes.
-
-    Args:
-        monkeypatch (pytest.MonkeyPatch): The pytest monkeypatch fixture for patching.
-    """
-    recorded_globals: list[type] = []
-
-    def fake_add_safe_globals(classes: list[type]) -> None:
-        recorded_globals.extend(classes)
-
-    monkeypatch.setattr(
-        transcription.torch.serialization,
-        "add_safe_globals",
-        fake_add_safe_globals,
-    )
-
-    _configure_torch_safe_globals()
-
-    class_names = {registered.__name__ for registered in recorded_globals}
-    assert "DictConfig" in class_names
-    assert "ListConfig" in class_names
-    assert "TorchVersion" in class_names
-    assert "Problem" in class_names
-    assert "Resolution" in class_names
-    assert "Specifications" in class_names
-
-
-# ---------------------------------------------------------------------------
 # WhisperTranscriber initialisation
 # ---------------------------------------------------------------------------
-
-
-def test_init_skips_diarization_model_for_single_speaker(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Test that single-speaker runs do not arm the diarization path.
-
-    Args:
-        monkeypatch (pytest.MonkeyPatch): The pytest monkeypatch fixture for patching.
-    """
-    monkeypatch.setattr(
-        WhisperTranscriber,
-        "_load_audio",
-        staticmethod(lambda file, sample_rate=16000: np.zeros(sample_rate)),
-    )
-    monkeypatch.setattr(
-        WhisperTranscriber,
-        "_detect_language",
-        lambda self: "de",
-    )
-    monkeypatch.setattr(
-        transcription,
-        "load_mappings",
-        lambda _: {"de": "German", "en": "English"},
-    )
-
-    transcriber = WhisperTranscriber(
-        file_path=transcription.Path("sample.wav"),
-        n_speakers=1,
-    )
-
-    assert transcriber.diarize_model is None
 
 
 def test_init_skips_language_detection_for_silent_audio(
@@ -289,43 +221,6 @@ def test_init_skips_language_detection_for_silent_audio(
 
     assert transcriber._speech_check[0] is False
     assert transcriber.src_lang == "en"
-
-
-# ---------------------------------------------------------------------------
-# Diarization
-# ---------------------------------------------------------------------------
-
-
-def test_diarization_requires_loaded_model() -> None:
-    """Test that diarization raises a clear error when the model is missing."""
-    transcriber = WhisperTranscriber.__new__(WhisperTranscriber)
-    transcriber.audio = np.zeros(16000)
-    transcriber.diarize_model = None
-    transcriber.n_speakers = 2
-    transcriber.transcription_result = {"segments": []}
-
-    with pytest.raises(RuntimeError, match="HF_HUB_TOKEN"):
-        transcriber.diarization()
-
-
-def test_assign_speakers_uses_maximum_overlap() -> None:
-    """Test that _assign_speakers assigns the speaker with the longest overlap."""
-    transcriber = WhisperTranscriber.__new__(WhisperTranscriber)
-    transcriber.transcription_result = {"segments": [{"start": 0.0, "end": 2.0, "text": "hello world"}]}
-
-    # Build a fake diarization result using itertracks
-    turn_a = SimpleNamespace(start=0.0, end=1.8)  # 1.8 s overlap
-    turn_b = SimpleNamespace(start=1.8, end=2.0)  # 0.2 s overlap
-
-    fake_annotation = MagicMock()
-    fake_annotation.itertracks.return_value = [
-        (turn_a, None, "SPEAKER_00"),
-        (turn_b, None, "SPEAKER_01"),
-    ]
-
-    transcriber._assign_speakers(fake_annotation)
-
-    assert transcriber.transcription_result["segments"][0]["speaker"] == "SPEAKER_00"
 
 
 # ---------------------------------------------------------------------------
@@ -476,6 +371,40 @@ def test_external_transcriber_transcript_output(
     assert len(df) == 2
     assert df.iloc[0]["text"] == "Hello world."
     assert df.iloc[1]["text"] == "How are you?"
+
+
+def test_external_transcriber_transcript_output_includes_speaker_column(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A speaker column is emitted when segments carry diarization labels.
+
+    The external API never returns speakers; the pipeline assigns them after a
+    successful /diarize call. transcript_output must surface them.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): The pytest monkeypatch fixture for patching.
+    """
+    transcriber = ExternalWhisperTranscriber.__new__(ExternalWhisperTranscriber)
+    transcriber.file_path = transcription.Path("dummy.wav")
+    transcriber.src_lang = "en"
+    transcriber._model_id = "whisper-1"
+    transcriber.start_column = "start"
+    transcriber.end_column = "end"
+    transcriber.speaker_column = "speaker"
+    transcriber.text_column = "text"
+    transcriber.transcription_result = {
+        "segments": [
+            {"start": 0.0, "end": 1.5, "speaker": "SPEAKER_00", "text": "Hello world."},
+            {"start": 1.5, "end": 3.0, "speaker": "SPEAKER_01", "text": "How are you?"},
+        ]
+    }
+
+    df = transcriber.transcript_output()
+
+    assert list(df.columns) == ["start", "end", "speaker", "text"]
+    assert len(df) == 2
+    assert df.iloc[0]["speaker"] == "SPEAKER_00"
+    assert df.iloc[1]["speaker"] == "SPEAKER_01"
 
 
 def test_external_transcriber_uses_transcriptions_not_translations(
