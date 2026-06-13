@@ -605,18 +605,6 @@ def test_wordlevel_pipeline_invokes_all_steps(monkeypatch: pytest.MonkeyPatch) -
             """
             return pd.DataFrame({"word": ["test"], "count": [1]})
 
-        def named_entity_recognition(self) -> pd.DataFrame:
-            """Simulate the process of named entity recognition.
-
-            In this dummy implementation, it returns a DataFrame
-            with a single entity, allowing us to verify that the word-level pipeline correctly calls this step and
-            processes its output.
-
-            Returns:
-                pd.DataFrame: A DataFrame containing a single entity.
-            """
-            return pd.DataFrame({"entity": ["Test"]})
-
         def get_noun_sentiment(self) -> pd.DataFrame:
             """Simulate the process of getting noun sentiment.
 
@@ -650,10 +638,18 @@ def test_wordlevel_pipeline_invokes_all_steps(monkeypatch: pytest.MonkeyPatch) -
             return "wordcloud"
 
     monkeypatch.setattr(pipeline, "WordCounter", lambda text, language: DummyWordCounter(text, language))
+    captured: dict[str, str] = {}
+
+    def fake_extract_entities(text: str) -> pd.DataFrame:
+        captured["text"] = text
+        return pd.DataFrame({"entity": ["Test"]})
+
+    monkeypatch.setattr(pipeline, "extract_entities", fake_extract_entities)
     df = pd.DataFrame({"text": ["alpha", "beta"]})
 
     counts, entities, wordcloud = pipeline.wordlevel_pipeline(df, "en")
 
     assert list(counts["word"]) == ["test"]
     assert list(entities["entity"]) == ["Test"]
+    assert captured["text"] == "alpha beta"
     assert wordcloud == "wordcloud"  # type: ignore[comparison-overlap]
