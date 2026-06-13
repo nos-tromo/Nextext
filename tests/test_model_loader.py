@@ -191,17 +191,10 @@ def test_main_preloads_expected_model_groups(
         "preload_whisper_model",
         lambda model_id, device: calls.append((f"whisper:{device}", model_id)),
     )
-    monkeypatch.setattr(
-        model_loader,
-        "preload_gliner_model",
-        lambda: calls.append(("gliner", model_loader.GLINER_MODEL_ID)),
-    )
-
     model_loader.main()
 
     assert calls == [
         ("nltk", "all"),
         ("spacy", "en_core_web_sm"),
         ("whisper:cpu", "large-v3-turbo"),
-        ("gliner", model_loader.GLINER_MODEL_ID),
     ]

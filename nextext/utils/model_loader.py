@@ -1,7 +1,6 @@
 """Utilities for preloading Nextext language and speech models."""
 
 # Re-exported for tests that monkeypatch through this module.
-import gc as gc
 import importlib as importlib
 import os
 import subprocess as subprocess
@@ -15,7 +14,6 @@ import nltk
 import torch
 import whisper
 from dotenv import load_dotenv
-from gliner import GLiNER
 from loguru import logger
 
 from nextext.utils.mappings_loader import load_mappings
@@ -29,7 +27,6 @@ DEFAULT_SPACY_MODEL_DIR = Path.home() / ".cache" / "spacy"
 DEFAULT_SPACY_MODEL_DOWNLOAD_BASE_URL = "https://github.com/explosion/spacy-models/releases/download"
 NLTK_RESOURCES = ("punkt_tab", "stopwords")
 LOCAL_WHISPER_MODEL_IDS: tuple[str, ...] = ("large-v3-turbo",)
-GLINER_MODEL_ID = "gliner-community/gliner_large-v2.5"
 SILERO_VAD_REPO = "snakers4/silero-vad"
 
 
@@ -244,19 +241,6 @@ def preload_silero_vad() -> None:
     logger.info("Silero VAD model cached.")
 
 
-def preload_gliner_model(model_id: str = GLINER_MODEL_ID) -> None:
-    """Download and cache the GLiNER NER model.
-
-    Args:
-        model_id (str): The Hugging Face model ID for GLiNER.
-    """
-    logger.info("Loading GLiNER model '{}'.", model_id)
-    model = GLiNER.from_pretrained(model_id)
-    del model
-    gc.collect()
-    logger.info("GLiNER model '{}' cached.", model_id)
-
-
 def _get_default_device() -> str:
     """Resolve the preferred device for preload operations.
 
@@ -297,11 +281,6 @@ def main() -> None:
         preload_silero_vad()
     except Exception as exc:
         failures.append(f"Silero VAD ({exc})")
-
-    try:
-        preload_gliner_model()
-    except Exception as exc:
-        failures.append(f"GLiNER {GLINER_MODEL_ID} ({exc})")
 
     if failures:
         raise RuntimeError("Failed to preload models: " + "; ".join(failures))
