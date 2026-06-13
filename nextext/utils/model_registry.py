@@ -1,6 +1,6 @@
 """Centralized GPU-model residency manager for Nextext.
 
-Models that can live on GPU (Whisper, diarization, GLiNER, ...) register a
+Models that can live on GPU (e.g. Whisper) register a
 :class:`ModelSpec` with the process-wide :data:`REGISTRY`. Callers wrap use of
 the model in ``with REGISTRY.acquire(name) as model:`` to ensure the model is
 on the target device during use and released (either moved back to CPU or
@@ -44,7 +44,7 @@ class ModelSpec:
     """Loader / mover configuration for a managed model.
 
     Attributes:
-        name: Registry key, e.g. ``"gliner"``, ``"whisper_turbo"``.
+        name: Registry key, e.g. ``"whisper_turbo"``.
         loader: Zero-arg callable that builds the model on CPU.
         mover: Callable ``(model, device) -> model`` that moves the model to
             the requested device and returns it (possibly the same object).
