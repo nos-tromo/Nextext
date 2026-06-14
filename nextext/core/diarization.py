@@ -6,10 +6,11 @@ upload and returns chronological speaker turns. This module owns both the wire
 call and the client-side alignment of those turns onto Whisper's transcript
 segments (by maximum temporal overlap), keeping the contract in one place.
 
-The endpoint is located via ``DIARIZE_API_BASE``; when it is unset diarization is
-disabled and callers simply receive no speaker labels (see
-:func:`nextext.utils.env_cfg.load_diarization_env`). Failures are logged and
-swallowed: a transcript without speakers is preferable to a failed job.
+The endpoint is resolved by :func:`nextext.utils.env_cfg.load_diarization_env`:
+``DIARIZE_API_BASE`` when set, else the central ``OPENAI_API_BASE`` (one trailing
+``/v1`` stripped). When neither resolves diarization is disabled and callers
+simply receive no speaker labels. Failures are logged and swallowed: a transcript
+without speakers is preferable to a failed job.
 """
 
 from pathlib import Path
@@ -32,10 +33,12 @@ def diarize_file(
 ) -> list[dict[str, Any]]:
     """Request speaker turns for an audio file from the ``/diarize`` service.
 
-    The service URL is ``{DIARIZE_API_BASE}/diarize``. When ``DIARIZE_API_BASE``
-    is unset diarization is disabled: a warning is logged and an empty list is
-    returned so the caller proceeds without speaker labels. Any transport or
-    HTTP error is likewise logged and swallowed into an empty list.
+    The service URL is ``{base}/diarize`` for the resolved diarization ``base``
+    (``DIARIZE_API_BASE`` or the central ``OPENAI_API_BASE`` with one trailing
+    ``/v1`` stripped). When neither resolves diarization is disabled: a warning is
+    logged and an empty list is returned so the caller proceeds without speaker
+    labels. Any transport or HTTP error is likewise logged and swallowed into an
+    empty list.
 
     ``num_speakers`` (exact count) is mutually exclusive with
     ``min_speakers``/``max_speakers`` on the server side; the frontend's
@@ -56,8 +59,9 @@ def diarize_file(
     config = load_diarization_env()
     if not config.api_base:
         logger.warning(
-            "Diarization requested but DIARIZE_API_BASE is unset; returning no "
-            "speaker turns. Set DIARIZE_API_BASE to enable speaker labels."
+            "Diarization requested but no endpoint is configured (DIARIZE_API_BASE "
+            "and OPENAI_API_BASE both unset); returning no speaker turns. Set "
+            "DIARIZE_API_BASE or the central OPENAI_API_BASE to enable speaker labels."
         )
         return []
 

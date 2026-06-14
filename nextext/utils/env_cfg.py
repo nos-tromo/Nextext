@@ -53,8 +53,10 @@ class VadConfig:
 
     Attributes:
         api_base: Root URL of the VAD service (e.g. ``http://vllm-router:7000``);
-            the client appends ``/vad``. An empty string disables the speech
-            guard, so every file is transcribed.
+            the client appends ``/vad``. Falls back to the central endpoint when
+            ``VAD_API_BASE`` is unset; an explicit falsy ``VAD_API_BASE`` switches
+            the guard off. An empty string disables the speech guard, so every
+            file is transcribed.
         api_key: Bearer token forwarded to the service, reused from
             ``OPENAI_API_KEY``. An empty string sends no ``Authorization`` header.
         timeout: Per-request timeout in seconds for the ``/vad`` call.
@@ -74,7 +76,8 @@ class DiarizationConfig:
 
     Attributes:
         api_base: Root URL of the diarization service (e.g.
-            ``http://vllm-router:9000``); the client appends ``/diarize``. An
+            ``http://vllm-router:9000``); the client appends ``/diarize``. Falls
+            back to the central endpoint when ``DIARIZE_API_BASE`` is unset. An
             empty string disables diarization entirely.
         api_key: Bearer token forwarded to the service, reused from
             ``OPENAI_API_KEY``. An empty string sends no ``Authorization``
@@ -98,7 +101,8 @@ class NerConfig:
 
     Attributes:
         api_base: Root URL of the NER service (e.g. ``http://vllm-router:4000``);
-            the client appends ``/gliner``. An empty string disables NER.
+            the client appends ``/gliner``. Falls back to the central endpoint
+            when ``NER_API_BASE`` is unset. An empty string disables NER.
         api_key: Bearer token forwarded to the service, reused from
             ``OPENAI_API_KEY``. An empty string sends no ``Authorization`` header.
         timeout: Per-request timeout in seconds for each chunk's ``/gliner`` call.
@@ -142,6 +146,25 @@ def _parse_tristate_bool(name: str) -> bool | None:
     return None
 
 
+def _central_endpoint_root() -> str:
+    """Normalise ``OPENAI_API_BASE`` to a service root for path-appending clients.
+
+    The central endpoint is an OpenAI-SDK base that conventionally ends in
+    ``/v1`` (e.g. ``http://vllm-router:4000/v1``). The out-of-process ``/gliner``,
+    ``/diarize``, and ``/vad`` services sit at the service root alongside it, so a
+    single trailing ``/v1`` segment is removed before a client appends its own
+    path. Surrounding whitespace and any trailing ``/`` are stripped too.
+
+    Returns:
+        str: The central endpoint's service root (e.g. ``http://vllm-router:4000``),
+            or ``""`` when ``OPENAI_API_BASE`` is unset or blank.
+    """
+    base = os.getenv("OPENAI_API_BASE", "").strip().rstrip("/")
+    if base.endswith("/v1"):
+        base = base[:-3].rstrip("/")
+    return base
+
+
 def load_inference_env() -> InferenceConfig:
     """Loads inference provider configuration from environment variables.
 
@@ -166,16 +189,25 @@ def load_vad_env() -> VadConfig:
 
     Returns:
         VadConfig: Dataclass containing the resolved settings.
-        - api_base (str): ``VAD_API_BASE`` with surrounding whitespace and any
-          trailing ``/`` removed. Empty (the default) disables the speech guard,
-          so callers skip the HTTP call and transcribe every file.
+        - api_base (str): The VAD service root, resolved three ways from
+          ``VAD_API_BASE``: a URL is used as-is (trailing ``/`` removed); an
+          explicit falsy token (``off``/``false``/``no``/``0``) switches the
+          guard off (empty string); unset/blank falls back to the central
+          endpoint (:func:`_central_endpoint_root`). An empty result disables the
+          guard, so callers skip the HTTP call and transcribe every file.
         - api_key (str): ``OPENAI_API_KEY`` (the VAD service shares the inference
           router's credentials). Empty sends no bearer token.
         - timeout (float): ``VAD_TIMEOUT`` seconds. Defaults to
           :data:`DEFAULT_VAD_TIMEOUT`; non-numeric or non-positive values warn
           and fall back to the default.
     """
-    api_base = os.getenv("VAD_API_BASE", "").strip().rstrip("/")
+    raw_base = os.getenv("VAD_API_BASE", "").strip()
+    if raw_base.lower() in _FALSE_TOKENS:
+        api_base = ""
+    elif raw_base:
+        api_base = raw_base.rstrip("/")
+    else:
+        api_base = _central_endpoint_root()
     api_key = os.getenv("OPENAI_API_KEY", "").strip()
 
     timeout = DEFAULT_VAD_TIMEOUT
@@ -201,16 +233,18 @@ def load_diarization_env() -> DiarizationConfig:
 
     Returns:
         DiarizationConfig: Dataclass containing the resolved settings.
-        - api_base (str): ``DIARIZE_API_BASE`` with surrounding whitespace and
-          any trailing ``/`` removed. Empty (the default) disables diarization,
-          so callers skip the HTTP call and emit no speaker labels.
+        - api_base (str): ``DIARIZE_API_BASE`` (a service root, trailing ``/``
+          removed) when set; otherwise it falls back to the central endpoint
+          (:func:`_central_endpoint_root`). Empty — no dedicated override and no
+          central endpoint — disables diarization, so callers skip the HTTP call
+          and emit no speaker labels.
         - api_key (str): ``OPENAI_API_KEY`` (the diarization service shares the
           inference router's credentials). Empty sends no bearer token.
         - timeout (float): ``DIARIZE_TIMEOUT`` seconds. Defaults to
           :data:`DEFAULT_DIARIZE_TIMEOUT`; non-numeric or non-positive values
           warn and fall back to the default.
     """
-    api_base = os.getenv("DIARIZE_API_BASE", "").strip().rstrip("/")
+    api_base = os.getenv("DIARIZE_API_BASE", "").strip().rstrip("/") or _central_endpoint_root()
     api_key = os.getenv("OPENAI_API_KEY", "").strip()
 
     timeout = DEFAULT_DIARIZE_TIMEOUT
@@ -236,16 +270,18 @@ def load_ner_env() -> NerConfig:
 
     Returns:
         NerConfig: Dataclass containing the resolved settings.
-        - api_base (str): ``NER_API_BASE`` with surrounding whitespace and any
-          trailing ``/`` removed. Empty (the default) disables NER, so callers
-          skip the HTTP call and emit no entities.
+        - api_base (str): ``NER_API_BASE`` (a service root, trailing ``/``
+          removed) when set; otherwise it falls back to the central endpoint
+          (:func:`_central_endpoint_root`). Empty — no dedicated override and no
+          central endpoint — disables NER, so callers skip the HTTP call and emit
+          no entities.
         - api_key (str): ``OPENAI_API_KEY`` (the NER service shares the inference
           router's credentials). Empty sends no bearer token.
         - timeout (float): ``NER_TIMEOUT`` seconds. Defaults to
           :data:`DEFAULT_NER_TIMEOUT`; non-numeric or non-positive values warn
           and fall back to the default.
     """
-    api_base = os.getenv("NER_API_BASE", "").strip().rstrip("/")
+    api_base = os.getenv("NER_API_BASE", "").strip().rstrip("/") or _central_endpoint_root()
     api_key = os.getenv("OPENAI_API_KEY", "").strip()
 
     timeout = DEFAULT_NER_TIMEOUT

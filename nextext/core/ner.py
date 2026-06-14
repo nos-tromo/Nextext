@@ -6,10 +6,11 @@ text plus a label set and returns scored entities. This module owns the wire cal
 and the client-side tally onto the ``[Category, Entity, Frequency]`` table that
 the pipeline, CLI exporter, and API schemas already consume.
 
-The endpoint is located via ``NER_API_BASE``; when it is unset NER is disabled and
-callers receive an empty table (see :func:`nextext.utils.env_cfg.load_ner_env`).
-Failures are logged and swallowed: a transcript without entities is preferable to
-a failed job.
+The endpoint is resolved by :func:`nextext.utils.env_cfg.load_ner_env`:
+``NER_API_BASE`` when set, else the central ``OPENAI_API_BASE`` (one trailing
+``/v1`` stripped). When neither resolves NER is disabled and callers receive an
+empty table. Failures are logged and swallowed: a transcript without entities is
+preferable to a failed job.
 """
 
 import re
@@ -73,9 +74,11 @@ def _chunk_text(text: str, word_budget: int = _NER_WORD_BUDGET) -> list[str]:
 def extract_entities(text: str, columns: list[str] | None = None) -> pd.DataFrame:
     """Tally named entities for ``text`` via the out-of-process ``/gliner`` service.
 
-    The service URL is ``{NER_API_BASE}/gliner``. When ``NER_API_BASE`` is unset
-    NER is disabled: a warning is logged and an empty table is returned so callers
-    proceed without entities. Each 512-word chunk is sent as a separate request;
+    The service URL is ``{base}/gliner`` for the resolved NER ``base``
+    (``NER_API_BASE`` or the central ``OPENAI_API_BASE`` with one trailing ``/v1``
+    stripped). When neither resolves NER is disabled: a warning is logged and an
+    empty table is returned so callers proceed without entities. Each 512-word
+    chunk is sent as a separate request;
     per-chunk transport/HTTP/JSON errors are logged and skipped so one bad chunk
     never loses the whole transcript's entities. Entities are kept when their
     score is at least :data:`_NER_THRESHOLD` and their text is at least 3
@@ -98,8 +101,9 @@ def extract_entities(text: str, columns: list[str] | None = None) -> pd.DataFram
     config = load_ner_env()
     if not config.api_base:
         logger.warning(
-            "NER requested but NER_API_BASE is unset; returning no entities. "
-            "Set NER_API_BASE to enable named-entity recognition."
+            "NER requested but no endpoint is configured (NER_API_BASE and "
+            "OPENAI_API_BASE both unset); returning no entities. Set NER_API_BASE "
+            "or the central OPENAI_API_BASE to enable named-entity recognition."
         )
         return empty
     if not text or not text.strip():

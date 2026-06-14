@@ -5,14 +5,16 @@ against an HTTP ``/vad`` endpoint (e.g. ``nos-tromo/vllm-service``) that accepts
 media upload and reports whether the audio contains speech, so silent or
 noise-only files never reach the (remote, possibly metered) Whisper endpoint.
 
-The endpoint is located via ``VAD_API_BASE`` (see
-:func:`nextext.utils.env_cfg.load_vad_env`). The guard is **fail-open**: when the
-endpoint is unset, unreachable, errors, or returns a malformed payload,
+The endpoint is resolved by :func:`nextext.utils.env_cfg.load_vad_env`:
+``VAD_API_BASE`` when set, the central ``OPENAI_API_BASE`` (one trailing ``/v1``
+stripped) by default, or empty when ``VAD_API_BASE`` is an explicit off token
+(``off``/``false``/``no``/``0``). The guard is **fail-open**: when no endpoint
+resolves, or the service is unreachable, errors, or returns a malformed payload,
 :func:`has_speech` returns ``True`` so transcription proceeds. Only an explicit
 ``{"has_speech": false}`` skips the upload — a VAD outage must never silently
 drop a transcription.
 
-Request/response contract for the future vllm-service implementation::
+Request/response contract::
 
     POST {VAD_API_BASE}/vad
         multipart/form-data:
@@ -37,10 +39,11 @@ __all__ = ["has_speech"]
 def has_speech(file_path: Path) -> bool:
     """Report whether ``file_path`` contains speech via the ``/vad`` service.
 
-    The service URL is ``{VAD_API_BASE}/vad``. The guard is fail-open: an unset
-    ``VAD_API_BASE``, any transport/HTTP error, or a malformed payload all
-    resolve to ``True`` so the caller proceeds to transcription. Only an
-    explicit ``{"has_speech": false}`` returns ``False``.
+    The service URL is ``{base}/vad`` for the resolved VAD ``base``. The guard is
+    fail-open: no resolved endpoint (an off token, or no central fallback), any
+    transport/HTTP error, or a malformed payload all resolve to ``True`` so the
+    caller proceeds to transcription. Only an explicit ``{"has_speech": false}``
+    returns ``False``.
 
     Args:
         file_path (Path): Path to the audio/video file to screen. Sent as-is;
