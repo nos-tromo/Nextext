@@ -20,16 +20,40 @@ def test_has_speech_true_when_base_unset(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    """An unset VAD_API_BASE disables the guard and never issues a request.
+    """With no VAD endpoint configured (dedicated or central), the guard issues no request.
 
     Args:
         monkeypatch (pytest.MonkeyPatch): Fixture for patching env vars and httpx.
         tmp_path (Path): Temporary directory fixture for the audio file.
     """
     monkeypatch.delenv("VAD_API_BASE", raising=False)
+    monkeypatch.delenv("OPENAI_API_BASE", raising=False)
 
     def fail_post(url: str, **kwargs: Any) -> httpx.Response:
-        raise AssertionError("httpx.post must not be called when VAD_API_BASE is unset")
+        raise AssertionError("httpx.post must not be called when no VAD endpoint is configured")
+
+    monkeypatch.setattr(vad.httpx, "post", fail_post)
+    audio = tmp_path / "clip.wav"
+    audio.write_bytes(b"data")
+
+    assert has_speech(audio) is True
+
+
+def test_has_speech_off_token_disables_guard_despite_central(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """VAD_API_BASE=off switches the guard off even when a central endpoint is set.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Fixture for patching env vars and httpx.
+        tmp_path (Path): Temporary directory fixture for the audio file.
+    """
+    monkeypatch.setenv("OPENAI_API_BASE", "http://vllm-router:4000/v1")
+    monkeypatch.setenv("VAD_API_BASE", "off")
+
+    def fail_post(url: str, **kwargs: Any) -> httpx.Response:
+        raise AssertionError("httpx.post must not be called when VAD is switched off")
 
     monkeypatch.setattr(vad.httpx, "post", fail_post)
     audio = tmp_path / "clip.wav"

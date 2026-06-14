@@ -265,23 +265,54 @@ def test_load_whisper_env_ollama_requires_explicit_config(
 # ---------------------------------------------------------------------------
 
 
-def test_load_diarization_env_unset_disables_and_defaults(
+def test_load_diarization_env_unset_without_central_disables_and_defaults(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """An unset DIARIZE_API_BASE disables diarization and uses the default timeout.
+    """With neither DIARIZE_API_BASE nor a central endpoint, diarization is disabled.
 
     Args:
         monkeypatch (pytest.MonkeyPatch): Fixture for patching environment variables.
     """
-    monkeypatch.delenv("DIARIZE_API_BASE", raising=False)
-    monkeypatch.delenv("DIARIZE_TIMEOUT", raising=False)
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    _clear_endpoint_env(monkeypatch)
 
     cfg = load_diarization_env()
 
     assert cfg.api_base == ""
     assert cfg.api_key == ""
     assert cfg.timeout == DEFAULT_DIARIZE_TIMEOUT
+
+
+def test_load_diarization_env_falls_back_to_central_with_v1_stripped(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An unset DIARIZE_API_BASE falls back to OPENAI_API_BASE with /v1 stripped.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Fixture for patching environment variables.
+    """
+    _clear_endpoint_env(monkeypatch)
+    monkeypatch.setenv("OPENAI_API_BASE", "http://vllm-router:4000/v1")
+
+    cfg = load_diarization_env()
+
+    assert cfg.api_base == "http://vllm-router:4000"
+
+
+def test_load_diarization_env_dedicated_base_wins_over_central(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A set DIARIZE_API_BASE takes precedence over the central fallback.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Fixture for patching environment variables.
+    """
+    _clear_endpoint_env(monkeypatch)
+    monkeypatch.setenv("OPENAI_API_BASE", "http://central:4000/v1")
+    monkeypatch.setenv("DIARIZE_API_BASE", "http://vllm-router:9000")
+
+    cfg = load_diarization_env()
+
+    assert cfg.api_base == "http://vllm-router:9000"
 
 
 def test_load_diarization_env_strips_whitespace_and_trailing_slash(
@@ -361,23 +392,64 @@ def test_load_diarization_env_invalid_timeout_warns_and_defaults(
 # ---------------------------------------------------------------------------
 
 
-def test_load_ner_env_unset_disables_and_defaults(
+def test_load_ner_env_unset_without_central_disables_and_defaults(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """An unset NER_API_BASE disables NER and uses the default timeout.
+    """With neither NER_API_BASE nor a central endpoint, NER is disabled.
 
     Args:
         monkeypatch (pytest.MonkeyPatch): Fixture for patching environment variables.
     """
-    monkeypatch.delenv("NER_API_BASE", raising=False)
-    monkeypatch.delenv("NER_TIMEOUT", raising=False)
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    _clear_endpoint_env(monkeypatch)
 
     cfg = load_ner_env()
 
     assert cfg.api_base == ""
     assert cfg.api_key == ""
     assert cfg.timeout == DEFAULT_NER_TIMEOUT
+
+
+@pytest.mark.parametrize(
+    ("central", "expected_root"),
+    [
+        ("http://vllm-router:4000/v1", "http://vllm-router:4000"),
+        ("http://vllm-router:4000/v1/", "http://vllm-router:4000"),
+        ("  http://vllm-router:4000/v1  ", "http://vllm-router:4000"),
+        ("http://vllm-router:4000", "http://vllm-router:4000"),
+        ("https://api.openai.com/v1", "https://api.openai.com"),
+    ],
+)
+def test_load_ner_env_falls_back_to_central_stripping_one_v1(
+    monkeypatch: pytest.MonkeyPatch,
+    central: str,
+    expected_root: str,
+) -> None:
+    """An unset NER_API_BASE falls back to OPENAI_API_BASE with one trailing /v1 removed.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Fixture for patching environment variables.
+        central (str): The OPENAI_API_BASE value under test.
+        expected_root (str): The service root the NER client should target.
+    """
+    _clear_endpoint_env(monkeypatch)
+    monkeypatch.setenv("OPENAI_API_BASE", central)
+
+    assert load_ner_env().api_base == expected_root
+
+
+def test_load_ner_env_dedicated_base_wins_and_is_not_v1_stripped(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A set NER_API_BASE beats the central fallback and is used verbatim (no /v1 strip).
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Fixture for patching environment variables.
+    """
+    _clear_endpoint_env(monkeypatch)
+    monkeypatch.setenv("OPENAI_API_BASE", "http://central:4000/v1")
+    monkeypatch.setenv("NER_API_BASE", "http://dedicated:4000/v1")
+
+    assert load_ner_env().api_base == "http://dedicated:4000/v1"
 
 
 def test_load_ner_env_strips_whitespace_and_trailing_slash(
@@ -457,23 +529,72 @@ def test_load_ner_env_invalid_timeout_warns_and_defaults(
 # ---------------------------------------------------------------------------
 
 
-def test_load_vad_env_unset_disables_and_defaults(
+def test_load_vad_env_unset_without_central_disables_and_defaults(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """An unset VAD_API_BASE disables the guard and uses the default timeout.
+    """With neither VAD_API_BASE nor a central endpoint, the guard is disabled.
 
     Args:
         monkeypatch (pytest.MonkeyPatch): Fixture for patching environment variables.
     """
-    monkeypatch.delenv("VAD_API_BASE", raising=False)
-    monkeypatch.delenv("VAD_TIMEOUT", raising=False)
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    _clear_endpoint_env(monkeypatch)
 
     cfg = load_vad_env()
 
     assert cfg.api_base == ""
     assert cfg.api_key == ""
     assert cfg.timeout == DEFAULT_VAD_TIMEOUT
+
+
+def test_load_vad_env_falls_back_to_central_with_v1_stripped(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An unset VAD_API_BASE falls back to OPENAI_API_BASE with /v1 stripped (guard on).
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Fixture for patching environment variables.
+    """
+    _clear_endpoint_env(monkeypatch)
+    monkeypatch.setenv("OPENAI_API_BASE", "http://vllm-router:4000/v1")
+
+    cfg = load_vad_env()
+
+    assert cfg.api_base == "http://vllm-router:4000"
+
+
+def test_load_vad_env_dedicated_base_wins_over_central(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A set VAD_API_BASE takes precedence over the central fallback.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Fixture for patching environment variables.
+    """
+    _clear_endpoint_env(monkeypatch)
+    monkeypatch.setenv("OPENAI_API_BASE", "http://central:4000/v1")
+    monkeypatch.setenv("VAD_API_BASE", "http://vllm-router:7000")
+
+    cfg = load_vad_env()
+
+    assert cfg.api_base == "http://vllm-router:7000"
+
+
+@pytest.mark.parametrize("off_token", ["off", "false", "no", "0", "OFF", "  Off  "])
+def test_load_vad_env_off_token_disables_even_with_central(
+    monkeypatch: pytest.MonkeyPatch,
+    off_token: str,
+) -> None:
+    """An explicit falsy VAD_API_BASE switches the guard off despite a central endpoint.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Fixture for patching environment variables.
+        off_token (str): A falsy token recognised as the guard's off switch.
+    """
+    _clear_endpoint_env(monkeypatch)
+    monkeypatch.setenv("OPENAI_API_BASE", "http://vllm-router:4000/v1")
+    monkeypatch.setenv("VAD_API_BASE", off_token)
+
+    assert load_vad_env().api_base == ""
 
 
 def test_load_vad_env_strips_whitespace_and_trailing_slash(

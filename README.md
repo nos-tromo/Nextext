@@ -12,8 +12,8 @@
 ### Prerequisites 📋
 
 - An OpenAI-compatible inference endpoint reachable via `OPENAI_API_BASE` (e.g. [nos-tromo/vllm-service](https://github.com/nos-tromo/vllm-service) or [Ollama](https://ollama.com/) for the text tasks)
-- An endpoint serving Whisper transcription (`/v1/audio/transcriptions`) — vllm-service provides one; Ollama does not (set `WHISPER_API_BASE` separately in that case)
-- _(optional)_ dedicated `/vad`, `/gliner`, and `/diarize` services — set `VAD_API_BASE` / `NER_API_BASE` / `DIARIZE_API_BASE`; each stage (speech pre-filter / entities / speaker labels) is disabled when its endpoint is unset. Uploads are sent as-is and decoded server-side, so no local `ffmpeg` is required.
+- An endpoint serving Whisper transcription (`/v1/audio/transcriptions`). Most OpenAI-compatible servers provide one; Ollama does not — set `WHISPER_API_BASE` + `WHISPER_MODEL` separately in that case
+- _(optional)_ NER (`/gliner`), speaker diarization (`/diarize`), and the VAD speech pre-filter (`/vad`). These default to the central endpoint (one trailing `/v1` stripped) and otherwise take a dedicated `NER_API_BASE` / `DIARIZE_API_BASE` / `VAD_API_BASE`. NER and diarization run only when a job requests entities / multiple speakers; the VAD guard runs on every transcription and is switched off with `VAD_API_BASE=off`. Uploads are sent as-is and decoded server-side, so no local `ffmpeg` is required.
 
 Without Docker usage:
 
@@ -29,7 +29,7 @@ cd Nextext
 uv sync
 ```
 
-Speaker diarization runs out-of-process against an HTTP `/diarize` service (e.g. [`nos-tromo/vllm-service`](https://github.com/nos-tromo/vllm-service)). Set `DIARIZE_API_BASE` to its root URL to enable it; the gated-model agreements and Hugging Face token live on the service side, not in Nextext.
+Speaker diarization runs out-of-process against an HTTP `/diarize` service. It uses the central endpoint by default, or set `DIARIZE_API_BASE` to a dedicated service root; the gated-model agreements and any Hugging Face token live on the service side, not in Nextext.
 
 ### Docker installation 🐳
 
@@ -60,12 +60,15 @@ Every model class can also be re-pointed at a **dedicated endpoint**, falling ba
 | Model | Dedicated env vars | Endpoint shape |
 |-------|--------------------|----------------|
 | Whisper transcription | `WHISPER_API_BASE` / `WHISPER_API_KEY` / `WHISPER_MODEL` | OpenAI SDK base incl. `/v1` |
-| GLiNER NER | `NER_API_BASE` / `NER_API_KEY` (+ `NER_THRESHOLD`, `NER_TIMEOUT`) | service root, `POST {base}/gliner` |
-| Speaker diarization | `DIARIZATION_API_BASE` / `DIARIZATION_API_KEY` (+ `DIARIZATION_TIMEOUT`) | service root, `POST {base}/diarize` |
+| GLiNER NER | `NER_API_BASE` (+ `NER_TIMEOUT`) | service root, `POST {base}/gliner` |
+| Speaker diarization | `DIARIZE_API_BASE` (+ `DIARIZE_TIMEOUT`) | service root, `POST {base}/diarize` |
+| VAD speech guard | `VAD_API_BASE` (+ `VAD_TIMEOUT`) | service root, `POST {base}/vad` |
 
-For the non-OpenAI-shaped services the central fallback strips one trailing `/v1` from `OPENAI_API_BASE`, which matches the vllm-service LiteLLM pass-throughs (`http://vllm-router:4000/v1` → `http://vllm-router:4000/gliner`).
+The NER, diarization, and VAD services speak a plain service root rather than the OpenAI `/v1` shape, so the central fallback strips one trailing `/v1` from `OPENAI_API_BASE` before appending the service path (`http://vllm-router:4000/v1` → `http://vllm-router:4000/gliner`). Whisper, which speaks `/v1`, uses `OPENAI_API_BASE` verbatim. The three non-OpenAI services reuse `OPENAI_API_KEY` as their bearer token; none takes a dedicated key.
 
-> **Diarization** has no server-side implementation in vllm-service yet. Jobs requesting more than one speaker fail with an actionable error until `DIARIZATION_API_BASE` points at a service implementing `POST /diarize` (multipart `file` + `max_speakers` form field → `{"segments": [{"start", "end", "speaker"}]}` — the full contract lives in `nextext/core/diarization.py`).
+NER and diarization issue a request only when a job asks for entities or more than one speaker, so they need no off switch. The VAD guard runs ahead of every transcription (fail-open: an unreachable service transcribes anyway); switch it off with `VAD_API_BASE=off` (also `false` / `no` / `0`).
+
+> **Diarization** and **VAD** reach plain `POST /diarize` and `POST /vad` services (multipart `file` + form fields → JSON). Point `DIARIZE_API_BASE` / `VAD_API_BASE` — or the central endpoint — at a service implementing them; the full request/response contracts live in `nextext/core/diarization.py` and `nextext/core/vad.py`.
 
 The Nextext compose services join an external Docker network (`inference-net`) so they can reach whichever inference container you deploy on that network. **Create the network and start your inference provider before running the compose stack.**
 

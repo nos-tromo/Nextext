@@ -12,15 +12,16 @@ from nextext.core.ner import extract_entities
 def test_extract_entities_returns_empty_when_base_unset(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """An unset NER_API_BASE disables NER and never issues a request.
+    """With no NER endpoint configured (dedicated or central), NER issues no request.
 
     Args:
         monkeypatch (pytest.MonkeyPatch): Fixture for patching env vars and httpx.
     """
     monkeypatch.delenv("NER_API_BASE", raising=False)
+    monkeypatch.delenv("OPENAI_API_BASE", raising=False)
 
     def fail_post(url: str, **kwargs: Any) -> httpx.Response:
-        raise AssertionError("httpx.post must not be called when NER_API_BASE is unset")
+        raise AssertionError("httpx.post must not be called when no NER endpoint is configured")
 
     monkeypatch.setattr(ner.httpx, "post", fail_post)
 

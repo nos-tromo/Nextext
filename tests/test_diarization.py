@@ -55,16 +55,17 @@ def test_diarize_file_returns_empty_when_base_unset(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    """An unset DIARIZE_API_BASE disables diarization and never issues a request.
+    """With no diarization endpoint configured (dedicated or central), it issues no request.
 
     Args:
         monkeypatch (pytest.MonkeyPatch): Fixture for patching env vars and httpx.
         tmp_path (Path): Temporary directory fixture for the audio file.
     """
     monkeypatch.delenv("DIARIZE_API_BASE", raising=False)
+    monkeypatch.delenv("OPENAI_API_BASE", raising=False)
 
     def fail_post(url: str, **kwargs: Any) -> httpx.Response:
-        raise AssertionError("httpx.post must not be called when DIARIZE_API_BASE is unset")
+        raise AssertionError("httpx.post must not be called when no diarization endpoint is configured")
 
     monkeypatch.setattr(diarization.httpx, "post", fail_post)
     audio = tmp_path / "clip.wav"
