@@ -4,6 +4,15 @@
 - **Status:** Approved (pending spec review)
 - **Topic:** Route named-entity recognition through an out-of-process `/gliner` HTTP service, mirroring the `/diarize` architecture, and remove the in-process GLiNER path.
 
+> **Amendment 2026-06-14 (PR #37):** NER is no longer disabled when `NER_API_BASE`
+> is unset. `load_ner_env()` now falls back to the central `OPENAI_API_BASE` (one
+> trailing `/v1` stripped), so NER reaches `{central-root}/gliner` by default and is
+> disabled only when *neither* `NER_API_BASE` nor `OPENAI_API_BASE` is set.
+> Diarization and VAD gained the same central fallback. The "unset → disabled"
+> statements below (Goals §2, §7, §12, the `load_ner_env` snippet) are updated to
+> match; the per-chunk POSTs, client-side threshold, and output contract are
+> unchanged.
+
 ## 1. Context & Motivation
 
 Today NER is **in-process only**: `WordCounter.named_entity_recognition()`
@@ -27,7 +36,7 @@ router.
 
 **Goals**
 - NER always runs over HTTP against a `/gliner` service selected by `NER_API_BASE`.
-- When `NER_API_BASE` is unset, NER is disabled and yields an empty entity table — exactly mirroring diarization with `DIARIZE_API_BASE` unset.
+- When `NER_API_BASE` is unset, NER falls back to the central `OPENAI_API_BASE` (one trailing `/v1` stripped); it is disabled — empty entity table — only when neither is set. Diarization and VAD share the same fallback.
 - Remove the in-process GLiNER machinery and drop the `gliner` dependency from the backend.
 - Preserve the existing output contract: a `[Category, Entity, Frequency]` DataFrame consumed by the pipeline, CLI exporter, API schemas, and `nextext/app.py`.
 
@@ -105,7 +114,7 @@ class NerConfig:
 DEFAULT_NER_TIMEOUT: float = 120.0
 
 def load_ner_env() -> NerConfig:
-    api_base = os.getenv("NER_API_BASE", "").strip().rstrip("/")
+    api_base = os.getenv("NER_API_BASE", "").strip().rstrip("/") or _central_endpoint_root()
     api_key = os.getenv("OPENAI_API_KEY", "").strip()
     # NER_TIMEOUT parsed like DIARIZE_TIMEOUT: positive float, else warn + default
     ...
@@ -140,8 +149,8 @@ named_entities = extract_entities(text)
 
 ## 7. Behavior When Unset / CLI Implications
 
-- `NER_API_BASE` unset → backend and `nextext-cli` both return an empty entities table; no entities artifact is produced. Identical in spirit to diarization producing no speaker column when `DIARIZE_API_BASE` is unset.
-- The CLI runs in-process, so it now also requires `NER_API_BASE` to produce entities. This is consistent with the CLI already requiring `DIARIZE_API_BASE` for speakers.
+- `NER_API_BASE` unset → falls back to the central `OPENAI_API_BASE`; only when neither is set do the backend and `nextext-cli` return an empty entities table (no entities artifact). Diarization behaves identically with its own central fallback.
+- The CLI runs in-process, so it produces entities whenever an NER endpoint resolves — `NER_API_BASE` or the central `OPENAI_API_BASE`. Consistent with diarization/VAD, which share the same fallback.
 
 ## 8. Configuration Changes
 
@@ -182,7 +191,7 @@ named_entities = extract_entities(text)
 ## 12. Risks & Rollback
 
 - **Latency:** per-chunk requests add round-trips on long transcripts. Mitigation: keep chunk budget at 512; requests are individually fast. Revisit a batch endpoint only if the service grows one.
-- **Behavioral change:** environments that ran in-process NER now produce no entities until `NER_API_BASE` is set. Called out in docs and `.env.example`; this is the intended "mirror diarization" semantics the user approved.
+- **Behavioral change:** environments that ran in-process NER now reach the external `/gliner` service — via `NER_API_BASE` or, by default, the central `OPENAI_API_BASE`. Called out in docs and `.env.example`.
 - **Rollback:** the change is a clean series of 5 commits; reverting commits 3–4 restores in-process GLiNER if needed.
 
 ## 13. Open Decisions (defaults chosen, override on review)
