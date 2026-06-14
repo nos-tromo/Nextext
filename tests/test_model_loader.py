@@ -191,10 +191,16 @@ def test_main_preloads_expected_model_groups(
         "preload_whisper_model",
         lambda model_id, device: calls.append((f"whisper:{device}", model_id)),
     )
+    monkeypatch.setattr(
+        model_loader,
+        "preload_silero_vad",
+        lambda: calls.append(("silero_vad", model_loader.SILERO_VAD_REPO)),
+    )
     model_loader.main()
 
     assert calls == [
         ("nltk", "all"),
         ("spacy", "en_core_web_sm"),
         ("whisper:cpu", "large-v3-turbo"),
+        ("silero_vad", "snakers4/silero-vad"),
     ]
