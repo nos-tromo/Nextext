@@ -13,7 +13,7 @@
 
 - An OpenAI-compatible inference endpoint reachable via `OPENAI_API_BASE` (e.g. [nos-tromo/vllm-service](https://github.com/nos-tromo/vllm-service) or [Ollama](https://ollama.com/) for the text tasks)
 - An endpoint serving Whisper transcription (`/v1/audio/transcriptions`) — vllm-service provides one; Ollama does not (set `WHISPER_API_BASE` separately in that case)
-- [`ffmpeg`](https://ffmpeg.org/) on the PATH for non-Docker usage (decodes uploads for the silence/VAD guards)
+- _(optional)_ dedicated `/vad`, `/gliner`, and `/diarize` services — set `VAD_API_BASE` / `NER_API_BASE` / `DIARIZE_API_BASE`; each stage (speech pre-filter / entities / speaker labels) is disabled when its endpoint is unset. Uploads are sent as-is and decoded server-side, so no local `ffmpeg` is required.
 
 Without Docker usage:
 

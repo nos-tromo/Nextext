@@ -4,12 +4,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Nextext is a modular audio analysis toolkit that transcribes, translates, and analyzes natural language from audio/video files. All model inference runs on external endpoints: Whisper transcription via an OpenAI-compatible audio API, speaker diarization (`/diarize`) and GLiNER NER (`/gliner`) via dedicated out-of-process HTTP services, and LLMs (Ollama, vLLM, or OpenAI-compatible endpoints) for translation, summarization, and hate-speech detection. Only spaCy/NLTK word-level NLP and the ONNX Silero VAD guard run in-process — the backend ships no model weights and needs no GPU.
+Nextext is a modular audio analysis toolkit that transcribes, translates, and analyzes natural language from audio/video files. All model inference runs on external endpoints: Whisper transcription via an OpenAI-compatible audio API, voice-activity detection (`/vad`), speaker diarization (`/diarize`), and GLiNER NER (`/gliner`) via dedicated out-of-process HTTP services, and LLMs (Ollama, vLLM, or OpenAI-compatible endpoints) for translation, summarization, and hate-speech detection. Only spaCy/NLTK word-level NLP runs in-process — the backend ships no model weights, no local audio tooling, and needs no GPU.
 
 ## Project Context
 
-- Local ML runtimes (openai-whisper, pyannote, GLiNER, torch) have been removed; every model call is an HTTP request to an external endpoint. `tests/test_no_torch.py` pins the no-torch invariant — camel-tools' torch/transformers requirements are excluded via `[tool.uv] override-dependencies`.
-- pysilero-vad is pinned `<3` (3.x is a GGML C++ source build; 2.x ships the ONNX model in the wheel).
+- Local ML runtimes (openai-whisper, pyannote, GLiNER, Silero VAD, torch) have been removed; every model call is an HTTP request to an external endpoint. `tests/test_no_torch.py` pins the no-torch invariant — camel-tools' torch/transformers requirements are excluded via `[tool.uv] override-dependencies`.
 - Docker base image is the pinned `ghcr.io/astral-sh/uv:*-python3.12-trixie-slim` across backend and frontend Dockerfiles.
 
 ## Commands
@@ -65,7 +64,7 @@ Tests are in `tests/` using pytest with monkeypatch fixtures and `respx` for moc
 
 **Pipeline flow (server-side):**
 
-1. **Transcription** (always-on) → external Whisper API (`/v1/audio/transcriptions`, always in the source language) behind local RMS + ONNX Silero VAD guards, + optional speaker diarization via the out-of-process `/diarize` HTTP service (when `max speakers > 1`) → `pd.DataFrame`
+1. **Transcription** (always-on) → external Whisper API (`/v1/audio/transcriptions`, always in the source language) behind an external `/vad` speech guard (skipped when `VAD_API_BASE` is unset), + optional speaker diarization via the out-of-process `/diarize` HTTP service (when `max speakers > 1`) → `pd.DataFrame`
 2. **Translation** (optional) → LLM-based segment translation, directly source → target for any target language, via `InferencePipeline`. Whisper's audio-translate task is not used.
 3. **Word-level analysis** (optional) → word counts, named entities via the out-of-process `/gliner` HTTP service, word clouds
 4. **Summarization** (optional) → LLM summary via `InferencePipeline`
@@ -98,7 +97,8 @@ Identity is resolved per request by `resolve_principal`: the trusted header (`NE
 - `nextext/app.py` — Compatibility shim re-exporting helpers from the locations above; preserves the historical import surface for tests and external callers.
 - `nextext/cli.py` — CLI entry point (argparse), single-file processing in-process.
 - `nextext/pipeline.py` — Shared pipeline functions connecting all agents.
-- `nextext/core/transcription.py` — `ExternalWhisperTranscriber` (OpenAI-compatible audio API) + the local RMS/ONNX-VAD pre-upload guards and ffmpeg waveform decoding.
+- `nextext/core/transcription.py` — `ExternalWhisperTranscriber` (OpenAI-compatible audio API); the pre-upload speech guard is delegated to the external `/vad` service via `core/vad.py`.
+- `nextext/core/vad.py` — voice-activity-detection agent: fail-open HTTP client for the out-of-process `/vad` service (`has_speech`); an unset/unreachable endpoint transcribes everything.
 - `nextext/core/diarization.py` — speaker-diarization agent: HTTP client for the out-of-process `/diarize` service + client-side speaker/segment overlap alignment (`assign_speakers_by_overlap`).
 - `nextext/core/ner.py` — named-entity-recognition agent: HTTP client for the out-of-process `/gliner` service (`extract_entities`).
 - `nextext/core/translation.py` — LLM translation with prompt templates.
@@ -122,7 +122,7 @@ Key env vars (see `.env.example`):
 - `INFERENCE_PROVIDER` — `ollama` (default), `vllm`, or `openai`. Selects the Whisper model default and the Ollama `think` handling; prompts are provider-independent.
 - `TEXT_MODEL` — LLM model name shared by translation, summarization, and hate-speech detection
 - `OLLAMA_THINK` — tri-state default for the Ollama `think` request field forwarded by `InferencePipeline.call_model` via `extra_body`. Accepts `1`/`true`/`yes`/`on` (enable), `0`/`false`/`no`/`off` (disable), or unset (omit field, model default). Honoured by Ollama-hosted reasoning models such as Qwen3; a no-op for `vllm`/`openai` providers. Per-call `think=` overrides the env default.
-- `VAD_ENABLED` — `1` (default) runs the ONNX Silero VAD guard before any upload; `0` leaves only the RMS silence check.
+- `VAD_API_BASE` — root URL of the out-of-process `/vad` speech-guard service (e.g. `http://vllm-router:7000`); the client appends `/vad`. Unset (default) disables the guard, so every file is transcribed. The bearer token is reused from `OPENAI_API_KEY`. Fail-open: an unreachable service degrades to transcribing anyway. `VAD_TIMEOUT` — per-request timeout in seconds (default `60`). vllm-service has no `/vad` implementation yet — see `nextext/core/vad.py` for the contract.
 - `NEXTEXT_OFFLINE=1` (default) — gates the spaCy/NLTK downloads (`is_offline()`); the only local downloads left. Offline + uncached spaCy model raises an actionable error.
 - `BACKEND_HOST` (frontend only) — Backend root URL. Defaults to `http://backend:8000` inside compose; set to `http://localhost:8000` for local dev.
 - `BACKEND_PUBLIC_HOST` (frontend only) — Externally reachable backend URL surfaced in UI hints.
@@ -135,7 +135,7 @@ Key env vars (see `.env.example`):
 
 Docker assets live under `docker/`. `docker/compose.yaml` defines two services — no profiles, no GPU reservations:
 
-- `backend` — built from `docker/Dockerfile.backend`, multi-stage `uv` build (no extras; runtime apt is `curl` + `ffmpeg` only). Runs `uvicorn nextext.api.main:app` with a `HEALTHCHECK` against `/api/v1/health`. Reachable only on the `inference-net` network by default; no host port is published.
+- `backend` — built from `docker/Dockerfile.backend`, multi-stage `uv` build (no extras; runtime apt is `curl` only — all inference, including the VAD guard, is external). Runs `uvicorn nextext.api.main:app` with a `HEALTHCHECK` against `/api/v1/health`. Reachable only on the `inference-net` network by default; no host port is published.
 - `frontend` — built from `docker/Dockerfile.frontend` (single-stage `uv`, `--only-group frontend`). The base `docker/compose.yaml` is the production shape and publishes no host ports; `docker/compose.override.yaml` (layered by `make up-dev`) publishes Streamlit on `${NEXTEXT_HOST_PORT:-8501}`.
 
 The stack shares `inference-net` with the inference provider (vllm-service / Ollama). The `Makefile` is the entry point — it points Compose at `docker/compose.yaml`, since a bare `docker compose` from the repo root no longer finds it. Run `make volumes` (one-time, creates the external `nltk-cache`/`spacy-cache` volumes), then `make build && make up` for production shape, or `make build && make up-dev` to publish the Streamlit frontend on the host.
