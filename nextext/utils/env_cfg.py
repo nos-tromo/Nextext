@@ -46,13 +46,23 @@ class InferenceConfig:
 
 @dataclass(frozen=True)
 class VadConfig:
-    """Dataclass for Voice Activity Detection configuration.
+    """Dataclass for the voice-activity-detection service configuration.
+
+    VAD runs out-of-process against an HTTP ``/vad`` endpoint (e.g.
+    ``nos-tromo/vllm-service``); Nextext no longer hosts a local Silero model.
 
     Attributes:
-        enabled: Whether Silero VAD pre-screening is active.
+        api_base: Root URL of the VAD service (e.g. ``http://vllm-router:7000``);
+            the client appends ``/vad``. An empty string disables the speech
+            guard, so every file is transcribed.
+        api_key: Bearer token forwarded to the service, reused from
+            ``OPENAI_API_KEY``. An empty string sends no ``Authorization`` header.
+        timeout: Per-request timeout in seconds for the ``/vad`` call.
     """
 
-    enabled: bool
+    api_base: str
+    api_key: str
+    timeout: float
 
 
 @dataclass(frozen=True)
@@ -106,6 +116,7 @@ EXTERNAL_WHISPER_DEFAULTS: dict[str, str] = {
 
 DEFAULT_DIARIZE_TIMEOUT: float = 600.0
 DEFAULT_NER_TIMEOUT: float = 120.0
+DEFAULT_VAD_TIMEOUT: float = 60.0
 
 
 def _parse_tristate_bool(name: str) -> bool | None:
@@ -151,15 +162,38 @@ def load_inference_env() -> InferenceConfig:
 
 
 def load_vad_env() -> VadConfig:
-    """Loads Voice Activity Detection configuration from environment variables.
+    """Loads voice-activity-detection service configuration from environment variables.
 
     Returns:
-        VadConfig: Dataclass containing the VAD toggle.
-        - enabled (bool): ``True`` (default) when ``VAD_ENABLED`` is ``1``,
-          ``true``, or ``yes``.
+        VadConfig: Dataclass containing the resolved settings.
+        - api_base (str): ``VAD_API_BASE`` with surrounding whitespace and any
+          trailing ``/`` removed. Empty (the default) disables the speech guard,
+          so callers skip the HTTP call and transcribe every file.
+        - api_key (str): ``OPENAI_API_KEY`` (the VAD service shares the inference
+          router's credentials). Empty sends no bearer token.
+        - timeout (float): ``VAD_TIMEOUT`` seconds. Defaults to
+          :data:`DEFAULT_VAD_TIMEOUT`; non-numeric or non-positive values warn
+          and fall back to the default.
     """
-    enabled = str(os.getenv("VAD_ENABLED", "1")).lower() in {"1", "true", "yes"}
-    return VadConfig(enabled=enabled)
+    api_base = os.getenv("VAD_API_BASE", "").strip().rstrip("/")
+    api_key = os.getenv("OPENAI_API_KEY", "").strip()
+
+    timeout = DEFAULT_VAD_TIMEOUT
+    raw_timeout = os.getenv("VAD_TIMEOUT", "").strip()
+    if raw_timeout:
+        try:
+            parsed = float(raw_timeout)
+            if parsed <= 0:
+                raise ValueError
+            timeout = parsed
+        except ValueError:
+            logger.warning(
+                "Invalid VAD_TIMEOUT '{}'. Falling back to {}s.",
+                raw_timeout,
+                DEFAULT_VAD_TIMEOUT,
+            )
+
+    return VadConfig(api_base=api_base, api_key=api_key, timeout=timeout)
 
 
 def load_diarization_env() -> DiarizationConfig:

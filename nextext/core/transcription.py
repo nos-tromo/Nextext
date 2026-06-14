@@ -1,23 +1,22 @@
 """Audio transcription via an external OpenAI-compatible Whisper API.
 
-Local pre-upload guards (RMS energy + ONNX Silero VAD) keep silent and
-noise-only audio away from the remote endpoint; speaker diarization is
-delegated to the external service behind
+An external ``/vad`` speech guard (see :func:`nextext.core.vad.has_speech`)
+keeps silent and noise-only audio away from the remote endpoint; speaker
+diarization is delegated to the external service behind
 :func:`nextext.core.diarization.diarize_file`.
 """
 
-import subprocess as subprocess  # re-exported for tests that monkeypatch through this module
 from datetime import timedelta
 from pathlib import Path as Path  # re-exported for tests that monkeypatch nextext.core.transcription.Path
 from typing import Any
 
-import numpy as np
 import pandas as pd
 from loguru import logger
 from openai import APIStatusError, OpenAI
 
 from nextext.core.diarization import diarize_file
-from nextext.utils.env_cfg import load_inference_env, load_vad_env, load_whisper_env
+from nextext.core.vad import has_speech
+from nextext.utils.env_cfg import load_inference_env, load_whisper_env
 from nextext.utils.mappings_loader import load_mappings
 
 OPENAI_WHISPER_MAX_UPLOAD_BYTES: int = 25 * 1024 * 1024
@@ -27,19 +26,6 @@ OPENAI_WHISPER_MAX_UPLOAD_BYTES: int = 25 * 1024 * 1024
 # ``avg_logprob``, which lets confident hallucinations on silent audio slip
 # through.  Filtering on ``no_speech_prob`` alone catches them.
 NO_SPEECH_THRESHOLD: float = 0.6
-
-# Audio with an RMS energy below this value is treated as silence and skipped
-# before Whisper runs. 0.01 ~ -40 dB; normal speech sits well above 0.03.
-# This catches cases where ``no_speech_prob`` filtering alone is insufficient
-# because Whisper can hallucinate with low ``no_speech_prob`` on quiet noise.
-SILENCE_RMS_THRESHOLD: float = 0.01
-
-# Per-frame speech probability at or above this value counts as speech.
-# 0.5 is the Silero-recommended default decision threshold.
-VAD_SPEECH_THRESHOLD: float = 0.5
-
-# Three-state lazy cache: False = not attempted, None = failed, detector = ready.
-_vad_cache: Any | bool = False
 
 
 def _normalize_whisper_language(value: str | None) -> str | None:
@@ -67,148 +53,6 @@ def _normalize_whisper_language(value: str | None) -> str | None:
     code_to_name = load_mappings("whisper_languages.json")
     name_to_code = {name.lower(): code for code, name in code_to_name.items()}
     return name_to_code.get(value.lower(), value)
-
-
-def _get_vad() -> Any | None:
-    """Lazily construct the Silero VAD detector (ONNX model bundled in the wheel).
-
-    Failure is cached so construction is not retried on every file.
-
-    Returns:
-        Any | None: A ``pysilero_vad.SileroVoiceActivityDetector`` instance,
-            or ``None`` when the detector could not be constructed (broken
-            onnxruntime install, missing optional dependency, etc.).
-    """
-    global _vad_cache
-    if _vad_cache is not False:
-        return _vad_cache
-    try:
-        from pysilero_vad import SileroVoiceActivityDetector
-
-        _vad_cache = SileroVoiceActivityDetector()
-        logger.info("Silero VAD model loaded.")
-    except Exception as exc:
-        logger.warning("Could not load Silero VAD ({}). Falling back to RMS-only.", exc)
-        _vad_cache = None
-    return _vad_cache
-
-
-def _detect_speech_vad(audio: np.ndarray, sample_rate: int = 16000) -> bool | None:
-    """Check whether ``audio`` contains human speech using Silero VAD.
-
-    Feeds consecutive 512-sample frames to the ONNX detector and stops at the
-    first frame whose speech probability reaches
-    :data:`VAD_SPEECH_THRESHOLD` — the pre-transcription guard only needs to
-    know whether *any* speech is present, not where it lies. A trailing
-    partial frame is dropped; at 16 kHz it covers less than 32 ms.
-
-    Args:
-        audio (np.ndarray): Float32 waveform (mono, 16 kHz, [-1.0, 1.0]).
-        sample_rate (int): Sample rate of ``audio``. The bundled Silero
-            model supports 16 kHz only; other rates skip VAD gracefully.
-
-    Returns:
-        bool | None: ``True`` if speech is found, ``False`` if no speech is
-            detected, or ``None`` when the VAD model is unavailable
-            (graceful fallback).
-    """
-    vad = _get_vad()
-    if vad is None:
-        return None
-    if sample_rate != 16000:
-        logger.warning("Silero VAD supports 16 kHz only (got {} Hz). Skipping VAD.", sample_rate)
-        return None
-    vad.reset()
-    frames = audio.astype(np.float32, copy=False)
-    chunk = int(vad.chunk_samples())
-    for offset in range(0, len(frames) - chunk + 1, chunk):
-        if float(vad.process_array(frames[offset : offset + chunk])) >= VAD_SPEECH_THRESHOLD:
-            return True
-    return False
-
-
-def _load_audio_waveform(file_path: Path, sample_rate: int = 16000) -> np.ndarray:
-    """Decode ``file_path`` into a float32 mono waveform via ffmpeg.
-
-    Adapted from openai-whisper's ``whisper.audio.load_audio`` (MIT licence,
-    https://github.com/openai/whisper) so the pre-upload guards keep the
-    exact same decoding step — same resampling, same normalisation — after
-    the local whisper dependency was dropped.
-
-    Args:
-        file_path (Path): Path to the audio/video file to decode.
-        sample_rate (int): Target sample rate in Hz.
-
-    Returns:
-        np.ndarray: Float32 mono waveform sampled at ``sample_rate``,
-        normalised to [-1.0, 1.0].
-
-    Raises:
-        RuntimeError: When the ffmpeg binary is missing or fails to decode
-            the file (the ffmpeg stderr is included in the message).
-    """
-    cmd = [
-        "ffmpeg",
-        "-nostdin",
-        "-threads",
-        "0",
-        "-i",
-        str(file_path),
-        "-f",
-        "s16le",
-        "-ac",
-        "1",
-        "-acodec",
-        "pcm_s16le",
-        "-ar",
-        str(sample_rate),
-        "-",
-    ]
-    try:
-        out = subprocess.run(cmd, capture_output=True, check=True).stdout
-    except FileNotFoundError as exc:
-        raise RuntimeError("ffmpeg binary not found. Install ffmpeg to decode audio files.") from exc
-    except subprocess.CalledProcessError as exc:
-        stderr = exc.stderr.decode(errors="replace") if exc.stderr else ""
-        raise RuntimeError(f"Failed to decode audio with ffmpeg: {stderr.strip()}") from exc
-    return np.frombuffer(out, np.int16).flatten().astype(np.float32) / 32768.0
-
-
-def _audio_has_speech(audio: np.ndarray) -> tuple[bool, str | None]:
-    """Gate an audio waveform against the pre-Whisper hallucination guards.
-
-    Combines the two pre-transcription checks that both the local and
-    external transcribers run. Keeping them in one helper ensures the two
-    paths cannot drift:
-
-    1. **RMS energy** — waveforms below :data:`SILENCE_RMS_THRESHOLD` are
-       treated as digital silence and rejected without invoking Silero.
-    2. **Silero VAD** — when ``VAD_ENABLED`` is set (the default, via
-       :func:`load_vad_env`), waveforms that carry energy but no
-       detectable human speech are rejected. VAD returning ``None``
-       (graceful fallback when the model could not be loaded) is treated
-       as a pass: the RMS check has already run.
-
-    Args:
-        audio (np.ndarray): Float32 mono waveform sampled at 16 kHz (the
-            format returned by :func:`_load_audio_waveform`).
-
-    Returns:
-        tuple[bool, str | None]: ``(True, None)`` when the audio should be
-            sent to Whisper; ``(False, reason)`` when it should be skipped.
-            ``reason`` is a short, log-friendly explanation.
-    """
-    rms = float(np.sqrt(np.mean(audio**2)))
-    if rms < SILENCE_RMS_THRESHOLD:
-        return (
-            False,
-            f"Audio RMS ({rms:.6f}) below silence threshold ({SILENCE_RMS_THRESHOLD})",
-        )
-    if load_vad_env().enabled:
-        has_speech = _detect_speech_vad(audio)
-        if has_speech is False:
-            return False, "VAD detected no speech"
-    return True, None
 
 
 def _filter_no_speech_segments(
@@ -459,13 +303,13 @@ class ExternalWhisperTranscriber:
     def transcription(self) -> None:
         """Call the external Whisper API and store the segment results.
 
-        The same three-layer hallucination guard the local transcriber
-        uses is applied here:
+        Two hallucination guards bracket the request:
 
-        1. **RMS energy + Silero VAD** (see :func:`_audio_has_speech`) —
-           the audio is decoded locally once and the guard runs before
-           any remote request, so silent / noise-only files never reach
-           the paid endpoint.
+        1. **External /vad guard** (see :func:`nextext.core.vad.has_speech`)
+           — the file is screened by the ``/vad`` service before any
+           Whisper request, so silent / noise-only files never reach the
+           paid endpoint. The guard is fail-open: an unset or unreachable
+           service lets the file through.
         2. **no_speech_prob post-filter** — segments whose
            ``no_speech_prob`` exceeds :data:`NO_SPEECH_THRESHOLD` are
            dropped from the returned payload.
@@ -475,12 +319,9 @@ class ExternalWhisperTranscriber:
         ``/v1/audio/translations`` endpoint. ``task`` itself is not
         accepted on either endpoint.
         """
-        audio = _load_audio_waveform(self.file_path)
-        has_speech, skip_reason = _audio_has_speech(audio)
-        if not has_speech:
+        if not has_speech(self.file_path):
             logger.warning(
-                "{} for {}; skipping external transcription request.",
-                skip_reason,
+                "VAD service reported no speech in {}; skipping external transcription request.",
                 self.file_path.name,
             )
             self.transcription_result = {"segments": []}

@@ -1,10 +1,9 @@
-"""Tests for the openai-whisper transcription module."""
+"""Tests for the external Whisper transcription module."""
 
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock
 
-import numpy as np
 import pandas as pd
 import pytest
 
@@ -379,15 +378,9 @@ def test_external_transcriber_transcription_populates_src_lang(
         "_get_client",
         property(lambda self: fake_client),
     )
-    # The new pre-Whisper guard would otherwise decode this test file as
-    # audio; stub both the loader and the guard so the test focuses on
-    # src_lang propagation only.
-    monkeypatch.setattr(
-        transcription,
-        "_load_audio_waveform",
-        lambda _path: np.zeros(1, dtype=np.float32),
-    )
-    monkeypatch.setattr(transcription, "_audio_has_speech", lambda _audio: (True, None))
+    # The external /vad guard would otherwise screen this test file; stub it
+    # to report speech so the test focuses on src_lang propagation only.
+    monkeypatch.setattr(transcription, "has_speech", lambda _path: True)
 
     transcriber.transcription()
 
@@ -403,7 +396,7 @@ def test_external_transcriber_normalizes_full_language_name(
 
     Args:
         monkeypatch (pytest.MonkeyPatch): The pytest monkeypatch fixture for
-            patching the lazy client and the audio guard.
+            patching the lazy client and the /vad guard.
     """
     seg = SimpleNamespace(start=0.0, end=1.0, text="Hallo.", no_speech_prob=0.1)
     fake_response = SimpleNamespace(segments=[seg], language="german")
@@ -424,12 +417,7 @@ def test_external_transcriber_normalizes_full_language_name(
         "_get_client",
         property(lambda self: fake_client),
     )
-    monkeypatch.setattr(
-        transcription,
-        "_load_audio_waveform",
-        lambda _path: np.zeros(1, dtype=np.float32),
-    )
-    monkeypatch.setattr(transcription, "_audio_has_speech", lambda _audio: (True, None))
+    monkeypatch.setattr(transcription, "has_speech", lambda _path: True)
 
     transcriber.transcription()
 
@@ -450,8 +438,8 @@ def _make_external_transcriber() -> ExternalWhisperTranscriber:
 
     Returns:
         ExternalWhisperTranscriber: An instance whose ``file_path`` points
-        at this test module. Callers always stub ``_load_audio_waveform``
-        before ``transcription()`` so the path is never actually decoded.
+        at this test module. Callers always stub ``has_speech`` before
+        ``transcription()`` so the file is never actually screened.
     """
     transcriber = ExternalWhisperTranscriber.__new__(ExternalWhisperTranscriber)
     transcriber.file_path = transcription.Path(__file__)
@@ -466,108 +454,6 @@ def _make_external_transcriber() -> ExternalWhisperTranscriber:
     transcriber.text_column = "text"
     transcriber.transcription_result = None
     return transcriber
-
-
-def test_audio_has_speech_flags_digital_silence(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A near-zero RMS waveform must be rejected before Silero VAD runs.
-
-    The RMS layer is the cheap first line of defence: it fires without
-    consulting Silero VAD. The test monkeypatches ``_detect_speech_vad``
-    to raise if called, which would signal a regression where the RMS
-    short-circuit was removed.
-
-    Args:
-        monkeypatch (pytest.MonkeyPatch): Used to fail-fast if the VAD
-            model is consulted on digital silence.
-    """
-
-    def _must_not_run(_audio: np.ndarray) -> bool:
-        raise AssertionError("VAD must not be consulted for digital silence")
-
-    monkeypatch.setattr(transcription, "_detect_speech_vad", _must_not_run)
-    silent = np.zeros(16000, dtype=np.float32)
-
-    ok, reason = transcription._audio_has_speech(silent)
-
-    assert ok is False
-    assert reason is not None and "RMS" in reason
-
-
-def test_audio_has_speech_rejects_non_speech_when_vad_enabled(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A loud waveform with no VAD-detected speech must be rejected.
-
-    Simulates "energy without speech" (noise, music, tone). Ensures the
-    second layer of the guard fires when :func:`load_vad_env` reports
-    ``enabled=True`` (the default).
-
-    Args:
-        monkeypatch (pytest.MonkeyPatch): Used to stub ``_detect_speech_vad``
-            and pin ``load_vad_env`` to the enabled state.
-    """
-    monkeypatch.setattr(transcription, "_detect_speech_vad", lambda _audio: False)
-    monkeypatch.setattr(transcription, "load_vad_env", lambda: SimpleNamespace(enabled=True))
-    loud = np.ones(16000, dtype=np.float32) * 0.5
-
-    ok, reason = transcription._audio_has_speech(loud)
-
-    assert ok is False
-    assert reason == "VAD detected no speech"
-
-
-def test_audio_has_speech_passes_when_vad_disabled(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """When ``VAD_ENABLED=0`` the guard must skip the Silero check.
-
-    Operators can disable VAD via ``VAD_ENABLED=0``; the RMS layer then
-    stands alone. The test asserts ``_detect_speech_vad`` is never called
-    in that configuration even though the audio *would* be rejected by
-    VAD (``False`` would otherwise trip the guard).
-
-    Args:
-        monkeypatch (pytest.MonkeyPatch): Disables the env toggle and
-            supplies a fail-fast stub for the VAD model.
-    """
-
-    def _must_not_run(_audio: np.ndarray) -> bool:
-        raise AssertionError("VAD must not be consulted when VAD_ENABLED=0")
-
-    monkeypatch.setattr(transcription, "_detect_speech_vad", _must_not_run)
-    monkeypatch.setattr(transcription, "load_vad_env", lambda: SimpleNamespace(enabled=False))
-    loud = np.ones(16000, dtype=np.float32) * 0.5
-
-    ok, reason = transcription._audio_has_speech(loud)
-
-    assert ok is True
-    assert reason is None
-
-
-def test_audio_has_speech_passes_when_vad_model_unavailable(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """VAD returning ``None`` (graceful fallback) must not block ingestion.
-
-    :func:`_detect_speech_vad` returns ``None`` when the Silero model
-    could not be loaded — e.g. offline machine with a cold torch-hub
-    cache. In that case the guard trusts the RMS layer and lets the
-    audio through rather than refusing to transcribe anything.
-
-    Args:
-        monkeypatch (pytest.MonkeyPatch): Stubs ``_detect_speech_vad`` to
-            simulate the unavailable-model branch.
-    """
-    monkeypatch.setattr(transcription, "_detect_speech_vad", lambda _audio: None)
-    monkeypatch.setattr(transcription, "load_vad_env", lambda: SimpleNamespace(enabled=True))
-    loud = np.ones(16000, dtype=np.float32) * 0.5
-
-    ok, reason = transcription._audio_has_speech(loud)
-
-    assert ok is True
-    assert reason is None
 
 
 def test_filter_no_speech_segments_drops_high_prob_entries() -> None:
@@ -617,14 +503,14 @@ def test_filter_no_speech_segments_returns_input_when_nothing_dropped() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_external_transcriber_skips_on_rms_silence(
+def test_external_transcriber_skips_when_vad_reports_no_speech(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Silent audio must short-circuit the external request entirely.
+    """Speech-free audio must short-circuit the external request entirely.
 
     The whole point of guarding the external path is to avoid paying for
     a transcription request whose result would be hallucinated text. The
-    test stubs ``_audio_has_speech`` to report RMS silence, runs
+    test stubs ``has_speech`` to report no speech, runs
     ``transcription()``, and asserts that:
 
     * the method returns cleanly with ``transcription_result`` holding an
@@ -633,62 +519,13 @@ def test_external_transcriber_skips_on_rms_silence(
       ``_get_client`` with a property that raises if accessed.
 
     Args:
-        monkeypatch (pytest.MonkeyPatch): Overrides ``_load_audio_waveform``,
-            ``_audio_has_speech``, and the client property.
+        monkeypatch (pytest.MonkeyPatch): Overrides ``has_speech`` and the client property.
     """
     transcriber = _make_external_transcriber()
-    monkeypatch.setattr(
-        transcription,
-        "_load_audio_waveform",
-        lambda _path: np.zeros(1, dtype=np.float32),
-    )
-    monkeypatch.setattr(
-        transcription,
-        "_audio_has_speech",
-        lambda _audio: (False, "Audio RMS (0.000000) below silence threshold (0.01)"),
-    )
+    monkeypatch.setattr(transcription, "has_speech", lambda _path: False)
 
     def _client_must_not_be_built(_self: Any) -> Any:
         raise AssertionError("external API must not be contacted for silent audio")
-
-    monkeypatch.setattr(
-        type(transcriber),
-        "_get_client",
-        property(_client_must_not_be_built),
-    )
-
-    transcriber.transcription()
-
-    assert transcriber.transcription_result == {"segments": []}
-
-
-def test_external_transcriber_skips_on_vad(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Noise-only audio (VAD negative) must also skip the external request.
-
-    Same contract as :func:`test_external_transcriber_skips_on_rms_silence`
-    but for the second guard layer. Ensures that a VAD-negative verdict
-    produces an empty result and never contacts the remote API.
-
-    Args:
-        monkeypatch (pytest.MonkeyPatch): Overrides ``_load_audio_waveform``,
-            ``_audio_has_speech``, and the client property.
-    """
-    transcriber = _make_external_transcriber()
-    monkeypatch.setattr(
-        transcription,
-        "_load_audio_waveform",
-        lambda _path: np.ones(16000, dtype=np.float32) * 0.5,
-    )
-    monkeypatch.setattr(
-        transcription,
-        "_audio_has_speech",
-        lambda _audio: (False, "VAD detected no speech"),
-    )
-
-    def _client_must_not_be_built(_self: Any) -> Any:
-        raise AssertionError("external API must not be contacted for noise-only audio")
 
     monkeypatch.setattr(
         type(transcriber),
@@ -715,12 +552,11 @@ def test_external_transcriber_applies_no_speech_prob_filter(
     * ``no_speech_prob`` is preserved on the survivor so downstream
       consumers can inspect it if they wish.
 
-    The VAD guard is bypassed with a ``(True, None)`` stub so the test
+    The /vad guard is bypassed with a ``True`` stub so the test
     focuses exclusively on the post-filter behaviour.
 
     Args:
-        monkeypatch (pytest.MonkeyPatch): Overrides ``_load_audio_waveform``,
-            ``_audio_has_speech``, and the client property.
+        monkeypatch (pytest.MonkeyPatch): Overrides ``has_speech`` and the client property.
     """
     kept = SimpleNamespace(start=0.0, end=1.0, text="Hello", no_speech_prob=0.1)
     dropped = SimpleNamespace(start=1.0, end=2.0, text="hallucinated.", no_speech_prob=0.95)
@@ -730,12 +566,7 @@ def test_external_transcriber_applies_no_speech_prob_filter(
     fake_client.audio.transcriptions.create.return_value = fake_response
 
     transcriber = _make_external_transcriber()
-    monkeypatch.setattr(
-        transcription,
-        "_load_audio_waveform",
-        lambda _path: np.ones(16000, dtype=np.float32) * 0.5,
-    )
-    monkeypatch.setattr(transcription, "_audio_has_speech", lambda _audio: (True, None))
+    monkeypatch.setattr(transcription, "has_speech", lambda _path: True)
     monkeypatch.setattr(
         type(transcriber),
         "_get_client",
@@ -764,8 +595,7 @@ def test_external_transcriber_tolerates_missing_no_speech_prob(
     probability must be exactly ``0.0``.
 
     Args:
-        monkeypatch (pytest.MonkeyPatch): Overrides ``_load_audio_waveform``,
-            ``_audio_has_speech``, and the client property.
+        monkeypatch (pytest.MonkeyPatch): Overrides ``has_speech`` and the client property.
     """
     seg = SimpleNamespace(start=0.0, end=1.0, text="Hola.")
     fake_response = SimpleNamespace(segments=[seg], language="es")
@@ -774,12 +604,7 @@ def test_external_transcriber_tolerates_missing_no_speech_prob(
     fake_client.audio.transcriptions.create.return_value = fake_response
 
     transcriber = _make_external_transcriber()
-    monkeypatch.setattr(
-        transcription,
-        "_load_audio_waveform",
-        lambda _path: np.ones(16000, dtype=np.float32) * 0.5,
-    )
-    monkeypatch.setattr(transcription, "_audio_has_speech", lambda _audio: (True, None))
+    monkeypatch.setattr(transcription, "has_speech", lambda _path: True)
     monkeypatch.setattr(
         type(transcriber),
         "_get_client",
@@ -792,212 +617,3 @@ def test_external_transcriber_tolerates_missing_no_speech_prob(
     segments = transcriber.transcription_result["segments"]
     assert len(segments) == 1
     assert segments[0]["no_speech_prob"] == 0.0
-
-
-# ---------------------------------------------------------------------------
-# ONNX Silero VAD frame loop + ffmpeg waveform decoding
-# ---------------------------------------------------------------------------
-
-
-class _FakeVadDetector:
-    """Duck-typed stand-in for ``pysilero_vad.SileroVoiceActivityDetector``."""
-
-    def __init__(self, probabilities: list[float]) -> None:
-        """Initialise the fake with scripted per-frame probabilities.
-
-        Args:
-            probabilities (list[float]): Speech probability returned for the
-                n-th processed frame.
-        """
-        self._probabilities = probabilities
-        self.reset_calls = 0
-        self.frames: list[np.ndarray] = []
-
-    @staticmethod
-    def chunk_samples() -> int:
-        """Return the Silero streaming frame size.
-
-        Returns:
-            int: 512 samples, matching the real detector.
-        """
-        return 512
-
-    def reset(self) -> None:
-        """Record that the detector state was reset."""
-        self.reset_calls += 1
-
-    def process_array(self, frame: np.ndarray) -> float:
-        """Return the scripted probability for the next frame.
-
-        Args:
-            frame (np.ndarray): The 512-sample frame under evaluation.
-
-        Returns:
-            float: The scripted speech probability.
-        """
-        self.frames.append(frame)
-        return self._probabilities[len(self.frames) - 1]
-
-
-def test_detect_speech_vad_short_circuits_on_first_speech_frame(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The frame loop stops at the first frame at/above the speech threshold.
-
-    Args:
-        monkeypatch (pytest.MonkeyPatch): Substitutes the fake detector.
-    """
-    detector = _FakeVadDetector([0.1, 0.9, 0.0])
-    monkeypatch.setattr(transcription, "_get_vad", lambda: detector)
-    audio = np.zeros(512 * 3, dtype=np.float32)
-
-    assert transcription._detect_speech_vad(audio) is True
-    assert detector.reset_calls == 1
-    assert len(detector.frames) == 2  # third frame never evaluated
-    assert all(len(frame) == 512 for frame in detector.frames)
-
-
-def test_detect_speech_vad_returns_false_when_all_frames_silent(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Sub-threshold frames yield False; a trailing partial frame is dropped.
-
-    Args:
-        monkeypatch (pytest.MonkeyPatch): Substitutes the fake detector.
-    """
-    detector = _FakeVadDetector([0.2, 0.3, 0.49])
-    monkeypatch.setattr(transcription, "_get_vad", lambda: detector)
-    audio = np.zeros(512 * 3 + 100, dtype=np.float32)
-
-    assert transcription._detect_speech_vad(audio) is False
-    assert len(detector.frames) == 3
-
-
-def test_detect_speech_vad_unavailable_model_returns_none(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A missing detector resolves to None (graceful RMS-only fallback).
-
-    Args:
-        monkeypatch (pytest.MonkeyPatch): Pins ``_get_vad`` to None.
-    """
-    monkeypatch.setattr(transcription, "_get_vad", lambda: None)
-
-    assert transcription._detect_speech_vad(np.zeros(1024, dtype=np.float32)) is None
-
-
-def test_detect_speech_vad_non_16k_rate_skips(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Sample rates the bundled model cannot handle skip VAD gracefully.
-
-    Args:
-        monkeypatch (pytest.MonkeyPatch): Substitutes the fake detector.
-    """
-    detector = _FakeVadDetector([0.9])
-    monkeypatch.setattr(transcription, "_get_vad", lambda: detector)
-
-    result = transcription._detect_speech_vad(np.zeros(2048, dtype=np.float32), sample_rate=8000)
-
-    assert result is None
-    assert detector.frames == []
-
-
-def test_get_vad_caches_construction_failure(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A failed detector construction is cached and never retried per file.
-
-    Args:
-        monkeypatch (pytest.MonkeyPatch): Resets the module cache and makes
-            the detector constructor raise.
-    """
-    import pysilero_vad
-
-    calls = {"n": 0}
-
-    def _boom() -> None:
-        calls["n"] += 1
-        raise OSError("onnxruntime broken")
-
-    monkeypatch.setattr(transcription, "_vad_cache", False)
-    monkeypatch.setattr(pysilero_vad, "SileroVoiceActivityDetector", _boom)
-
-    assert transcription._get_vad() is None
-    assert transcription._get_vad() is None
-    assert calls["n"] == 1
-
-
-def test_silero_onnx_detector_real_inference() -> None:
-    """The ONNX model bundled in the pysilero-vad wheel loads and scores silence low.
-
-    Guards against API drift in the pinned pysilero-vad 2.x line: the
-    detector must construct without downloads and score a silent frame
-    below the speech threshold.
-    """
-    from pysilero_vad import SileroVoiceActivityDetector
-
-    detector = SileroVoiceActivityDetector()
-    silent = np.zeros(detector.chunk_samples(), dtype=np.float32)
-
-    probability = float(detector.process_array(silent))
-
-    assert 0.0 <= probability < transcription.VAD_SPEECH_THRESHOLD
-
-
-def test_load_audio_waveform_decodes_pcm(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Ffmpeg stdout (s16le PCM) is normalised to float32 in [-1.0, 1.0].
-
-    Args:
-        monkeypatch (pytest.MonkeyPatch): Substitutes ``subprocess.run``.
-    """
-    pcm = np.array([0, 16384, -32768, 32767], dtype=np.int16).tobytes()
-
-    def _fake_run(cmd: list[str], *, capture_output: bool, check: bool) -> SimpleNamespace:
-        assert cmd[0] == "ffmpeg"
-        assert cmd[-1] == "-"
-        assert "16000" in cmd
-        assert capture_output and check
-        return SimpleNamespace(stdout=pcm)
-
-    monkeypatch.setattr(transcription.subprocess, "run", _fake_run)
-
-    waveform = transcription._load_audio_waveform(transcription.Path("clip.wav"))
-
-    assert waveform.dtype == np.float32
-    np.testing.assert_allclose(
-        waveform,
-        np.array([0.0, 0.5, -1.0, 32767 / 32768], dtype=np.float32),
-    )
-
-
-def test_load_audio_waveform_decode_failure_raises_runtime_error(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A failing ffmpeg invocation surfaces its stderr in a RuntimeError.
-
-    Args:
-        monkeypatch (pytest.MonkeyPatch): Substitutes ``subprocess.run``.
-    """
-
-    def _fake_run(cmd: list[str], *, capture_output: bool, check: bool) -> SimpleNamespace:
-        raise transcription.subprocess.CalledProcessError(1, cmd, stderr=b"moov atom not found")
-
-    monkeypatch.setattr(transcription.subprocess, "run", _fake_run)
-
-    with pytest.raises(RuntimeError, match="moov atom not found"):
-        transcription._load_audio_waveform(transcription.Path("broken.mp4"))
-
-
-def test_load_audio_waveform_missing_ffmpeg_raises_runtime_error(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A missing ffmpeg binary raises an actionable RuntimeError.
-
-    Args:
-        monkeypatch (pytest.MonkeyPatch): Substitutes ``subprocess.run``.
-    """
-
-    def _fake_run(cmd: list[str], *, capture_output: bool, check: bool) -> SimpleNamespace:
-        raise FileNotFoundError("ffmpeg")
-
-    monkeypatch.setattr(transcription.subprocess, "run", _fake_run)
-
-    with pytest.raises(RuntimeError, match="ffmpeg binary not found"):
-        transcription._load_audio_waveform(transcription.Path("clip.wav"))

@@ -7,9 +7,11 @@ import pytest
 from nextext.utils.env_cfg import (
     DEFAULT_DIARIZE_TIMEOUT,
     DEFAULT_NER_TIMEOUT,
+    DEFAULT_VAD_TIMEOUT,
     load_diarization_env,
     load_inference_env,
     load_ner_env,
+    load_vad_env,
     load_whisper_env,
 )
 
@@ -23,6 +25,8 @@ _ENDPOINT_ENV_VARS = (
     "NER_TIMEOUT",
     "DIARIZE_API_BASE",
     "DIARIZE_TIMEOUT",
+    "VAD_API_BASE",
+    "VAD_TIMEOUT",
 )
 
 
@@ -446,3 +450,99 @@ def test_load_ner_env_invalid_timeout_warns_and_defaults(
 
     assert cfg.timeout == DEFAULT_NER_TIMEOUT
     assert "NER_TIMEOUT" in sink.getvalue()
+
+
+# ---------------------------------------------------------------------------
+# load_vad_env
+# ---------------------------------------------------------------------------
+
+
+def test_load_vad_env_unset_disables_and_defaults(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An unset VAD_API_BASE disables the guard and uses the default timeout.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Fixture for patching environment variables.
+    """
+    monkeypatch.delenv("VAD_API_BASE", raising=False)
+    monkeypatch.delenv("VAD_TIMEOUT", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    cfg = load_vad_env()
+
+    assert cfg.api_base == ""
+    assert cfg.api_key == ""
+    assert cfg.timeout == DEFAULT_VAD_TIMEOUT
+
+
+def test_load_vad_env_strips_whitespace_and_trailing_slash(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """VAD_API_BASE is normalised: surrounding whitespace and trailing '/' removed.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Fixture for patching environment variables.
+    """
+    monkeypatch.setenv("VAD_API_BASE", "  http://vllm-router:7000/  ")
+
+    cfg = load_vad_env()
+
+    assert cfg.api_base == "http://vllm-router:7000"
+
+
+def test_load_vad_env_reuses_openai_api_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The bearer token is taken from OPENAI_API_KEY (the shared router credential).
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Fixture for patching environment variables.
+    """
+    monkeypatch.setenv("VAD_API_BASE", "http://vllm-router:7000")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-secret")
+
+    cfg = load_vad_env()
+
+    assert cfg.api_key == "sk-secret"
+
+
+def test_load_vad_env_parses_valid_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A valid VAD_TIMEOUT is parsed as a float.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Fixture for patching environment variables.
+    """
+    monkeypatch.setenv("VAD_TIMEOUT", "15")
+
+    cfg = load_vad_env()
+
+    assert cfg.timeout == 15.0
+
+
+@pytest.mark.parametrize("raw_value", ["not-a-number", "0", "-5"])
+def test_load_vad_env_invalid_timeout_warns_and_defaults(
+    monkeypatch: pytest.MonkeyPatch,
+    raw_value: str,
+) -> None:
+    """Non-numeric or non-positive VAD_TIMEOUT warns and falls back to the default.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Fixture for patching environment variables.
+        raw_value (str): An invalid timeout token.
+    """
+    from loguru import logger
+
+    monkeypatch.setenv("VAD_TIMEOUT", raw_value)
+
+    sink = io.StringIO()
+    handler_id = logger.add(sink, level="WARNING")
+    try:
+        cfg = load_vad_env()
+    finally:
+        logger.remove(handler_id)
+
+    assert cfg.timeout == DEFAULT_VAD_TIMEOUT
+    assert "VAD_TIMEOUT" in sink.getvalue()
