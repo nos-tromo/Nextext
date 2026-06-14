@@ -20,22 +20,22 @@ x-logging: &default-logging
 
 services:
   ##########################################################
-  # Nextext backend (CPU) — FastAPI + pipeline + CLI
+  # Nextext backend — FastAPI + pipeline + CLI. CPU-only:
+  # all model inference runs on external endpoints.
   ##########################################################
-  backend-cpu:
-    image: nextext-backend-cpu:${NEXTEXT_VERSION:-latest}
+  backend:
+    image: nextext-backend:${NEXTEXT_VERSION:-latest}
     build:
       context: ..
-      dockerfile: docker/Dockerfile.backend.cpu
+      dockerfile: docker/Dockerfile.backend
     logging: *default-logging
-    environment: &backend-env
+    environment:
       <<: *no-proxy-env
       DIARIZE_API_BASE: ${DIARIZE_API_BASE:-}
-      DIARIZE_TIMEOUT: ${DIARIZE_TIMEOUT:-600}
-      HF_HUB_OFFLINE: ${HF_HUB_OFFLINE:-false}
+      DIARIZE_TIMEOUT: ${DIARIZE_TIMEOUT:-}
       INFERENCE_PROVIDER: ${INFERENCE_PROVIDER:-ollama}
       NER_API_BASE: ${NER_API_BASE:-}
-      NER_TIMEOUT: ${NER_TIMEOUT:-120}
+      NER_TIMEOUT: ${NER_TIMEOUT:-}
       NEXTEXT_API_HOST: ${NEXTEXT_API_HOST:-0.0.0.0}
       NEXTEXT_API_PORT: ${NEXTEXT_API_PORT:-8000}
       NEXTEXT_AUTH_HEADER: ${NEXTEXT_AUTH_HEADER:-X-Auth-User}
@@ -46,57 +46,33 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY}
       PRELOAD_MODELS: ${PRELOAD_MODELS:-false}
       TEXT_MODEL: ${TEXT_MODEL:-}
+      VAD_API_BASE: ${VAD_API_BASE:-}
+      VAD_TIMEOUT: ${VAD_TIMEOUT:-}
+      WHISPER_API_BASE: ${WHISPER_API_BASE:-}
+      WHISPER_API_KEY: ${WHISPER_API_KEY:-}
       WHISPER_MODEL: ${WHISPER_MODEL:-}
     env_file: *env-file
-    volumes: &backend-volumes
-      - huggingface-cache:/root/.cache/huggingface/hub
+    volumes:
       - nltk-cache:/root/nltk_data
       - spacy-cache:/root/.cache/spacy
-      - torch-cache:/root/.cache/torch
-      - whisper-cache:/root/.cache/whisper
-    networks: &backend-networks
+    networks:
       nextext-net:
         aliases:
           - backend
       inference-net:
         aliases:
           - nextext-backend
-    profiles: ["cpu"]
 
   ##########################################################
-  # Nextext backend (CUDA)
+  # Nextext frontend — Streamlit only, talks to backend
   ##########################################################
-  backend-cuda:
-    image: nextext-backend-cuda:${NEXTEXT_VERSION:-latest}
+  frontend:
+    image: nextext-frontend:${NEXTEXT_VERSION:-latest}
     build:
-      context: ..
-      dockerfile: docker/Dockerfile.backend.cuda
-    logging: *default-logging
-    environment:
-      <<: *backend-env
-      NVIDIA_VISIBLE_DEVICES: all
-    env_file: *env-file
-    volumes: *backend-volumes
-    networks: *backend-networks
-    gpus: all
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              capabilities: [gpu]
-    profiles: ["cuda"]
-
-  ##########################################################
-  # Nextext frontend (CPU) — Streamlit only, talks to backend
-  ##########################################################
-  frontend-cpu:
-    image: nextext-frontend-cpu:${NEXTEXT_VERSION:-latest}
-    build: &frontend-build
       context: ..
       dockerfile: docker/Dockerfile.frontend
     logging: *default-logging
-    environment: &frontend-env
+    environment:
       <<: *no-proxy-env
       BACKEND_HOST: ${BACKEND_HOST:-http://backend:8000}
       BACKEND_PUBLIC_HOST: ${BACKEND_PUBLIC_HOST:-http://localhost:8000}
@@ -104,40 +80,19 @@ services:
       STREAMLIT_SERVER_FILE_WATCHER_TYPE: none
       STREAMLIT_SERVER_MAX_UPLOAD_SIZE: 8192
     env_file: *env-file
-    networks: &frontend-networks
+    networks:
       nextext-net:
     depends_on:
-      - backend-cpu
-    profiles: ["cpu"]
-
-  ##########################################################
-  # Nextext frontend (CUDA) — same image, pointing at CUDA backend
-  ##########################################################
-  frontend-cuda:
-    image: nextext-frontend-cuda:${NEXTEXT_VERSION:-latest}
-    build: *frontend-build
-    logging: *default-logging
-    environment:
-      <<: *frontend-env
-    env_file: *env-file
-    networks: *frontend-networks
-    depends_on:
-      - backend-cuda
-    profiles: ["cuda"]
+      - backend
 
 ##########################################################
-# Volumes — model caches live on the backend only.
+# Volumes — spaCy/NLTK language-resource caches only;
+# model inference happens on external endpoints.
 ##########################################################
 volumes:
-  huggingface-cache:
-    external: true
   nltk-cache:
     external: true
   spacy-cache:
-    external: true
-  torch-cache:
-    external: true
-  whisper-cache:
     external: true
 
 ##########################################################

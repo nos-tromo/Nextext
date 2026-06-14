@@ -2,7 +2,6 @@
 
 import os
 from dataclasses import dataclass
-from pathlib import Path
 
 from dotenv import load_dotenv
 from loguru import logger
@@ -10,51 +9,21 @@ from loguru import logger
 load_dotenv()
 
 
-def set_offline_env() -> None:
-    """Log the current offline mode status.
+def is_offline() -> bool:
+    """Report whether Nextext runs in offline mode (``NEXTEXT_OFFLINE``).
 
-    The actual env vars (HF_HUB_OFFLINE, TRANSFORMERS_OFFLINE, etc.) are set at
-    module level immediately after ``load_dotenv()`` so they are available before
-    ``huggingface_hub`` / ``transformers`` cache their values at import time.
-    This function re-applies them (idempotent) and emits a log message.
+    Offline mode gates the spaCy / NLTK resource downloads — the only
+    runtime downloads Nextext still performs; all model inference happens on
+    external endpoints. Defaults to offline (``"1"``) so airgapped
+    deployments are safe out of the box.
+
+    Returns:
+        bool: ``True`` when offline mode is active.
     """
-    if str(os.getenv("NEXTEXT_OFFLINE", "1")).lower() in {"1", "true", "yes"}:
-        os.environ["HF_HUB_OFFLINE"] = "1"
-        os.environ["TRANSFORMERS_OFFLINE"] = "1"
-        os.environ["HF_HUB_DISABLE_TELEMETRY"] = "1"
-        os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
-        os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
-
-        logger.info("Set Hugging Face libraries to offline mode.")
-    else:
-        logger.info("Hugging Face libraries are in online mode.")
-
-    # Apple Silicon: route MPS-unsupported ops (e.g. sparse_coo paths used
-    # by Whisper) to CPU instead of crashing.
-    os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
-
-
-set_offline_env()  # Apply offline settings at module load time
-
-
-@dataclass(frozen=True)
-class PathConfig:
-    """Dataclass for path configuration."""
-
-    prompts: Path
-    hf_hub_cache: Path
-
-
-@dataclass(frozen=True)
-class TranscriptionConfig:
-    """Dataclass for transcription provider configuration."""
-
-    provider: str
-    whisper_model: str
+    return str(os.getenv("NEXTEXT_OFFLINE", "1")).lower() in {"1", "true", "yes"}
 
 
 VALID_INFERENCE_PROVIDERS: frozenset[str] = frozenset({"ollama", "vllm", "openai"})
-VALID_RESIDENCY_STRATEGIES: frozenset[str] = frozenset({"offload", "evict"})
 _TRUE_TOKENS: frozenset[str] = frozenset({"1", "true", "yes", "on"})
 _FALSE_TOKENS: frozenset[str] = frozenset({"0", "false", "no", "off"})
 
@@ -76,26 +45,24 @@ class InferenceConfig:
 
 
 @dataclass(frozen=True)
-class MemoryConfig:
-    """Dataclass for model residency configuration.
-
-    Attributes:
-        default_strategy: Global fallback strategy applied when no per-model
-            override is set. One of :data:`VALID_RESIDENCY_STRATEGIES`.
-    """
-
-    default_strategy: str
-
-
-@dataclass(frozen=True)
 class VadConfig:
-    """Dataclass for Voice Activity Detection configuration.
+    """Dataclass for the voice-activity-detection service configuration.
+
+    VAD runs out-of-process against an HTTP ``/vad`` endpoint (e.g.
+    ``nos-tromo/vllm-service``); Nextext no longer hosts a local Silero model.
 
     Attributes:
-        enabled: Whether Silero VAD pre-screening is active.
+        api_base: Root URL of the VAD service (e.g. ``http://vllm-router:7000``);
+            the client appends ``/vad``. An empty string disables the speech
+            guard, so every file is transcribed.
+        api_key: Bearer token forwarded to the service, reused from
+            ``OPENAI_API_KEY``. An empty string sends no ``Authorization`` header.
+        timeout: Per-request timeout in seconds for the ``/vad`` call.
     """
 
-    enabled: bool
+    api_base: str
+    api_key: str
+    timeout: float
 
 
 @dataclass(frozen=True)
@@ -149,31 +116,7 @@ EXTERNAL_WHISPER_DEFAULTS: dict[str, str] = {
 
 DEFAULT_DIARIZE_TIMEOUT: float = 600.0
 DEFAULT_NER_TIMEOUT: float = 120.0
-
-
-def load_transcription_env() -> TranscriptionConfig:
-    """Loads transcription provider configuration derived from ``INFERENCE_PROVIDER``.
-
-    Returns:
-        TranscriptionConfig: Dataclass containing transcription configuration.
-        - provider (str): ``"local"`` when ``INFERENCE_PROVIDER=ollama`` (the
-          default), otherwise ``"external"``.
-        - whisper_model (str): Model name used by the external Whisper API.
-          Empty string in local mode. Defaults to ``whisper-1`` for ``openai``
-          and ``openai/whisper-large-v3`` for ``vllm``; ``WHISPER_MODEL``
-          overrides the default when set to a non-empty value.
-    """
-    inference_provider = load_inference_env().provider
-
-    if inference_provider == "ollama":
-        return TranscriptionConfig(provider="local", whisper_model="")
-
-    default_model = EXTERNAL_WHISPER_DEFAULTS[inference_provider]
-    override = os.getenv("WHISPER_MODEL", "").strip()
-    return TranscriptionConfig(
-        provider="external",
-        whisper_model=override or default_model,
-    )
+DEFAULT_VAD_TIMEOUT: float = 60.0
 
 
 def _parse_tristate_bool(name: str) -> bool | None:
@@ -218,37 +161,39 @@ def load_inference_env() -> InferenceConfig:
     return InferenceConfig(provider=raw, think=_parse_tristate_bool("OLLAMA_THINK"))
 
 
-def load_memory_env() -> MemoryConfig:
-    """Loads model residency configuration from environment variables.
-
-    Returns:
-        MemoryConfig: Dataclass containing the resolved residency settings.
-        - default_strategy (str): ``"offload"`` (default) or ``"evict"``. Read
-          from ``MODEL_RESIDENCY_STRATEGY``. Unknown values fall back to
-          ``"offload"`` with a warning. Per-model overrides
-          (``MODEL_RESIDENCY_<NAME>``) are resolved inside the model registry
-          and are not surfaced here.
-    """
-    raw = os.getenv("MODEL_RESIDENCY_STRATEGY", "offload").strip().lower()
-    if raw not in VALID_RESIDENCY_STRATEGIES:
-        logger.warning(
-            "Unknown MODEL_RESIDENCY_STRATEGY '{}'. Falling back to 'offload'.",
-            raw,
-        )
-        raw = "offload"
-    return MemoryConfig(default_strategy=raw)
-
-
 def load_vad_env() -> VadConfig:
-    """Loads Voice Activity Detection configuration from environment variables.
+    """Loads voice-activity-detection service configuration from environment variables.
 
     Returns:
-        VadConfig: Dataclass containing the VAD toggle.
-        - enabled (bool): ``True`` (default) when ``VAD_ENABLED`` is ``1``,
-          ``true``, or ``yes``.
+        VadConfig: Dataclass containing the resolved settings.
+        - api_base (str): ``VAD_API_BASE`` with surrounding whitespace and any
+          trailing ``/`` removed. Empty (the default) disables the speech guard,
+          so callers skip the HTTP call and transcribe every file.
+        - api_key (str): ``OPENAI_API_KEY`` (the VAD service shares the inference
+          router's credentials). Empty sends no bearer token.
+        - timeout (float): ``VAD_TIMEOUT`` seconds. Defaults to
+          :data:`DEFAULT_VAD_TIMEOUT`; non-numeric or non-positive values warn
+          and fall back to the default.
     """
-    enabled = str(os.getenv("VAD_ENABLED", "1")).lower() in {"1", "true", "yes"}
-    return VadConfig(enabled=enabled)
+    api_base = os.getenv("VAD_API_BASE", "").strip().rstrip("/")
+    api_key = os.getenv("OPENAI_API_KEY", "").strip()
+
+    timeout = DEFAULT_VAD_TIMEOUT
+    raw_timeout = os.getenv("VAD_TIMEOUT", "").strip()
+    if raw_timeout:
+        try:
+            parsed = float(raw_timeout)
+            if parsed <= 0:
+                raise ValueError
+            timeout = parsed
+        except ValueError:
+            logger.warning(
+                "Invalid VAD_TIMEOUT '{}'. Falling back to {}s.",
+                raw_timeout,
+                DEFAULT_VAD_TIMEOUT,
+            )
+
+    return VadConfig(api_base=api_base, api_key=api_key, timeout=timeout)
 
 
 def load_diarization_env() -> DiarizationConfig:
@@ -321,24 +266,75 @@ def load_ner_env() -> NerConfig:
     return NerConfig(api_base=api_base, api_key=api_key, timeout=timeout)
 
 
-def load_path_env() -> PathConfig:
-    """Loads path configuration from environment variables or defaults.
+@dataclass(frozen=True)
+class WhisperClientConfig:
+    """Dataclass for the external Whisper transcription client.
+
+    Attributes:
+        api_base: OpenAI-SDK base URL (including ``/v1``) of the endpoint
+            serving ``/audio/transcriptions``. Dedicated override via
+            ``WHISPER_API_BASE``; falls back to the central
+            ``OPENAI_API_BASE``. An empty string lets the SDK use its
+            built-in default (``https://api.openai.com/v1``).
+        api_key: Bearer token for the Whisper endpoint. Dedicated override
+            via ``WHISPER_API_KEY``; falls back to ``OPENAI_API_KEY``.
+        model: Model name sent with each request. ``WHISPER_MODEL``
+            overrides the per-provider default.
+    """
+
+    api_base: str
+    api_key: str
+    model: str
+
+
+def load_whisper_env() -> WhisperClientConfig:
+    """Loads external Whisper client configuration from environment variables.
+
+    Every transcription call goes to an OpenAI-compatible audio endpoint —
+    there is no local fallback. The endpoint defaults to the central
+    ``OPENAI_API_BASE``/``OPENAI_API_KEY`` pair and can be re-pointed via the
+    dedicated ``WHISPER_API_BASE``/``WHISPER_API_KEY`` overrides. The model
+    defaults per provider (``openai`` → ``whisper-1``, ``vllm`` →
+    ``openai/whisper-large-v3``); ``WHISPER_MODEL`` overrides.
+
+    ``INFERENCE_PROVIDER=ollama`` serves no transcription API, so both
+    ``WHISPER_API_BASE`` and ``WHISPER_MODEL`` must be set explicitly there
+    (e.g. pointing at the vllm-service audio container or any standalone
+    OpenAI-compatible STT server).
 
     Returns:
-        PathConfig: Dataclass containing path configuration.
-        - prompts (Path): Path to the prompts directory.
-        - hf_hub_cache (Path): Path to the Hugging Face Hub cache directory.
+        WhisperClientConfig: The resolved client configuration.
+
+    Raises:
+        RuntimeError: When ``INFERENCE_PROVIDER=ollama`` and
+            ``WHISPER_API_BASE`` or ``WHISPER_MODEL`` is unset or blank.
     """
-    default_cache_cache: Path = Path.home() / ".cache"
-    default_hf_hub_cache: Path = default_cache_cache / "huggingface" / "hub"
+    provider = load_inference_env().provider
+    dedicated_base = os.getenv("WHISPER_API_BASE", "").strip()
+    api_key = os.getenv("WHISPER_API_KEY", "").strip() or os.getenv("OPENAI_API_KEY", "").strip()
+    model_override = os.getenv("WHISPER_MODEL", "").strip()
 
-    utils_dir: Path = Path(__file__).parent.resolve()
-    default_prompts_dir: Path = utils_dir / "prompts"
+    if provider == "ollama":
+        missing = [
+            name
+            for name, value in (
+                ("WHISPER_API_BASE", dedicated_base),
+                ("WHISPER_MODEL", model_override),
+            )
+            if not value
+        ]
+        if missing:
+            raise RuntimeError(
+                "INFERENCE_PROVIDER=ollama has no Whisper endpoint. Set "
+                + " and ".join(missing)
+                + " to an OpenAI-compatible transcription service"
+                " (e.g. the vllm-service audio container)."
+            )
+        return WhisperClientConfig(api_base=dedicated_base, api_key=api_key, model=model_override)
 
-    return PathConfig(
-        prompts=default_prompts_dir,
-        hf_hub_cache=Path(os.getenv("HF_HUB_CACHE", default_hf_hub_cache)).expanduser(),
-    )
+    api_base = dedicated_base or os.getenv("OPENAI_API_BASE", "").strip()
+    model = model_override or EXTERNAL_WHISPER_DEFAULTS[provider]
+    return WhisperClientConfig(api_base=api_base, api_key=api_key, model=model)
 
 
 @dataclass(frozen=True)

@@ -1,47 +1,28 @@
-"""Tests for the openai-whisper transcription module."""
+"""Tests for the external Whisper transcription module."""
 
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock
 
-import numpy as np
 import pandas as pd
 import pytest
-import torch
 
 from nextext.core import transcription
 from nextext.core.transcription import (
     ExternalWhisperTranscriber,
-    WhisperTranscriber,
+    _assign_speakers,
     _ends_with_punctuation,
     _merge_transcriptions_by_sentence,
     _seconds_to_time,
 )
-from nextext.utils.model_registry import REGISTRY
-
-
-def _build_transcriber() -> WhisperTranscriber:
-    """Build a WhisperTranscriber instance for testing.
-
-    Returns:
-        WhisperTranscriber: A WhisperTranscriber instance with default column settings.
-    """
-    transcriber = WhisperTranscriber.__new__(WhisperTranscriber)
-    transcriber.start_column = "start"
-    transcriber.end_column = "end"
-    transcriber.text_column = "text"
-    transcriber.speaker_column = "speaker"
-    return transcriber
-
 
 # ---------------------------------------------------------------------------
-# Sentence merging (unchanged logic, now delegates to module-level function)
+# Sentence merging
 # ---------------------------------------------------------------------------
 
 
 def test_merge_transcriptions_keeps_final_sentence_without_terminal_punctuation() -> None:
     """_merge_transcriptions_by_sentence keeps the final sentence without terminal punctuation."""
-    transcriber = _build_transcriber()
     data = pd.DataFrame(
         [
             {"start": "0:00:00", "end": "0:00:01", "text": "hello"},
@@ -49,7 +30,7 @@ def test_merge_transcriptions_keeps_final_sentence_without_terminal_punctuation(
         ]
     )
 
-    merged = transcriber._merge_transcriptions_by_sentence(data)
+    merged = _merge_transcriptions_by_sentence(data)
 
     assert list(merged.columns) == ["start", "end", "text"]
     assert merged.to_dict("records") == [{"start": "0:00:00", "end": "0:00:02", "text": "hello world"}]
@@ -57,7 +38,6 @@ def test_merge_transcriptions_keeps_final_sentence_without_terminal_punctuation(
 
 def test_merge_transcriptions_handles_arabic_question_mark() -> None:
     """_merge_transcriptions_by_sentence treats Arabic question marks (؟) as sentence terminators."""
-    transcriber = _build_transcriber()
     data = pd.DataFrame(
         [
             {"start": "0:00:00", "end": "0:00:01", "text": "مرحبا"},
@@ -65,14 +45,13 @@ def test_merge_transcriptions_handles_arabic_question_mark() -> None:
         ]
     )
 
-    merged = transcriber._merge_transcriptions_by_sentence(data)
+    merged = _merge_transcriptions_by_sentence(data)
 
     assert merged.to_dict("records") == [{"start": "0:00:00", "end": "0:00:02", "text": "مرحبا كيف الحال؟"}]
 
 
 def test_merge_transcriptions_preserves_speaker_column() -> None:
     """Test that sentence merging keeps speaker labels for diarized rows."""
-    transcriber = _build_transcriber()
     data = pd.DataFrame(
         [
             {
@@ -90,7 +69,7 @@ def test_merge_transcriptions_preserves_speaker_column() -> None:
         ]
     )
 
-    merged = transcriber._merge_transcriptions_by_sentence(data)
+    merged = _merge_transcriptions_by_sentence(data)
 
     assert list(merged.columns) == ["start", "end", "speaker", "text"]
     assert merged.to_dict("records") == [
@@ -105,7 +84,6 @@ def test_merge_transcriptions_preserves_speaker_column() -> None:
 
 def test_merge_transcriptions_splits_when_speaker_changes() -> None:
     """Test that sentence merging does not blend text across speakers."""
-    transcriber = _build_transcriber()
     data = pd.DataFrame(
         [
             {
@@ -123,7 +101,7 @@ def test_merge_transcriptions_splits_when_speaker_changes() -> None:
         ]
     )
 
-    merged = transcriber._merge_transcriptions_by_sentence(data)
+    merged = _merge_transcriptions_by_sentence(data)
 
     assert merged.to_dict("records") == [
         {
@@ -163,178 +141,158 @@ def test_ends_with_punctuation_detects_terminal_marks() -> None:
     assert _ends_with_punctuation("") is False
 
 
-def test_module_level_merge_function_matches_instance_method() -> None:
-    """Module-level _merge_transcriptions_by_sentence matches the WhisperTranscriber instance method."""
-    transcriber = _build_transcriber()
-    data = pd.DataFrame(
-        [
-            {"start": "0:00:00", "end": "0:00:01", "text": "hello"},
-            {"start": "0:00:01", "end": "0:00:02", "text": "world."},
+# ---------------------------------------------------------------------------
+# Speaker assignment + external diarization wiring
+# ---------------------------------------------------------------------------
+
+
+def test_assign_speakers_uses_maximum_overlap() -> None:
+    """_assign_speakers labels each segment with the longest-overlap speaker."""
+    segments = [{"start": 0.0, "end": 2.0, "text": "hello world"}]
+    speaker_turns = [
+        {"start": 0.0, "end": 1.8, "speaker": "SPEAKER_00"},  # 1.8 s overlap
+        {"start": 1.8, "end": 2.0, "speaker": "SPEAKER_01"},  # 0.2 s overlap
+    ]
+
+    _assign_speakers(segments, speaker_turns)
+
+    assert segments[0]["speaker"] == "SPEAKER_00"
+
+
+def test_assign_speakers_accumulates_split_turns() -> None:
+    """Multiple turns of one speaker accumulate before the winner is picked."""
+    segments = [{"start": 0.0, "end": 3.0, "text": "hello"}]
+    speaker_turns = [
+        {"start": 0.0, "end": 1.0, "speaker": "SPEAKER_00"},
+        {"start": 1.0, "end": 2.4, "speaker": "SPEAKER_01"},  # 1.4 s in one turn
+        {"start": 2.4, "end": 3.0, "speaker": "SPEAKER_00"},  # 1.0 + 0.6 = 1.6 s total
+    ]
+
+    _assign_speakers(segments, speaker_turns)
+
+    assert segments[0]["speaker"] == "SPEAKER_00"
+
+
+def test_assign_speakers_leaves_non_overlapping_segments_unlabeled() -> None:
+    """Segments without any overlapping turn stay speaker-less."""
+    segments = [{"start": 10.0, "end": 12.0, "text": "late tail"}]
+    speaker_turns = [{"start": 0.0, "end": 1.0, "speaker": "SPEAKER_00"}]
+
+    _assign_speakers(segments, speaker_turns)
+
+    assert "speaker" not in segments[0]
+
+
+def test_external_diarization_skips_for_single_speaker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """n_speakers=1 must not contact the external diarization service.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Fails the test if the diarization
+            client is invoked.
+    """
+
+    def _must_not_run(*_args: Any, **_kwargs: Any) -> list[dict[str, Any]]:
+        raise AssertionError("diarize_file must not be called for a single speaker")
+
+    monkeypatch.setattr(transcription, "diarize_file", _must_not_run)
+    transcriber = _make_external_transcriber()
+    transcriber.n_speakers = 1
+    transcriber.transcription_result = {"segments": [{"start": 0.0, "end": 1.0, "text": "hi"}]}
+
+    transcriber.diarization()
+
+    assert "speaker" not in transcriber.transcription_result["segments"][0]
+
+
+def test_external_diarization_skips_when_no_segments(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An empty transcription result must not trigger a diarization upload.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Fails the test if the diarization
+            client is invoked.
+    """
+
+    def _must_not_run(*_args: Any, **_kwargs: Any) -> list[dict[str, Any]]:
+        raise AssertionError("diarize_file must not be called without segments")
+
+    monkeypatch.setattr(transcription, "diarize_file", _must_not_run)
+    transcriber = _make_external_transcriber()
+    transcriber.n_speakers = 2
+    transcriber.transcription_result = {"segments": []}
+
+    transcriber.diarization()
+
+
+def test_external_diarization_assigns_speakers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """diarization() uploads the file once and labels the segments.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Substitutes the diarization client
+            with a stub returning two speaker turns.
+    """
+    calls: list[tuple[Any, int]] = []
+
+    def _fake_diarize(file_path: Any, max_speakers: int) -> list[dict[str, Any]]:
+        calls.append((file_path, max_speakers))
+        return [
+            {"start": 0.0, "end": 1.0, "speaker": "SPEAKER_00"},
+            {"start": 1.0, "end": 2.0, "speaker": "SPEAKER_01"},
         ]
-    )
-    instance_result = transcriber._merge_transcriptions_by_sentence(data)
-    module_result = _merge_transcriptions_by_sentence(data.copy())
-    pd.testing.assert_frame_equal(instance_result, module_result)
+
+    monkeypatch.setattr(transcription, "diarize_file", _fake_diarize)
+    transcriber = _make_external_transcriber()
+    transcriber.n_speakers = 2
+    transcriber.transcription_result = {
+        "segments": [
+            {"start": 0.0, "end": 0.9, "text": "first"},
+            {"start": 1.1, "end": 2.0, "text": "second"},
+        ]
+    }
+
+    transcriber.diarization()
+
+    assert calls == [(transcriber.file_path, 2)]
+    segments = transcriber.transcription_result["segments"]
+    assert segments[0]["speaker"] == "SPEAKER_00"
+    assert segments[1]["speaker"] == "SPEAKER_01"
 
 
-# ---------------------------------------------------------------------------
-# WhisperTranscriber initialisation
-# ---------------------------------------------------------------------------
+def test_external_diarization_requires_transcription_first() -> None:
+    """Calling diarization() before transcription() raises a ValueError."""
+    transcriber = _make_external_transcriber()
+    transcriber.n_speakers = 2
+    transcriber.transcription_result = None
+
+    with pytest.raises(ValueError, match="Run transcription first"):
+        transcriber.diarization()
 
 
-def test_init_skips_language_detection_for_silent_audio(
+def test_external_diarization_failure_propagates(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Silent inputs must not trigger Whisper language detection.
-
-    The pre-Whisper guard runs once in ``__init__`` so silent files never
-    promote a Whisper model to the GPU — important on Apple Silicon, where
-    sparse-tensor ops on the MPS backend would otherwise crash. The test
-    builds a transcriber with all-zero audio and a fail-fast
-    ``_detect_language`` stub: the assertion is the absence of the
-    AssertionError that stub would raise.
+    """A failing diarization service fails the stage (no silent degradation).
 
     Args:
-        monkeypatch (pytest.MonkeyPatch): Used to stub the audio loader and
-            language detector.
+        monkeypatch (pytest.MonkeyPatch): Substitutes the diarization client
+            with a stub that raises.
     """
-    monkeypatch.setattr(
-        WhisperTranscriber,
-        "_load_audio",
-        staticmethod(lambda file, sample_rate=16000: np.zeros(sample_rate)),
-    )
 
-    def _must_not_run(_self: Any) -> str:
-        raise AssertionError("language detection must be skipped for silent audio")
+    def _boom(*_args: Any, **_kwargs: Any) -> list[dict[str, Any]]:
+        raise RuntimeError("No diarization endpoint is configured. Set DIARIZE_API_BASE ...")
 
-    monkeypatch.setattr(WhisperTranscriber, "_detect_language", _must_not_run)
-    monkeypatch.setattr(
-        transcription,
-        "load_mappings",
-        lambda _: {"de": "German", "en": "English"},
-    )
+    monkeypatch.setattr(transcription, "diarize_file", _boom)
+    transcriber = _make_external_transcriber()
+    transcriber.n_speakers = 2
+    transcriber.transcription_result = {"segments": [{"start": 0.0, "end": 1.0, "text": "hi"}]}
 
-    transcriber = WhisperTranscriber(
-        file_path=transcription.Path("sample.wav"),
-        n_speakers=1,
-    )
-
-    assert transcriber._speech_check[0] is False
-    assert transcriber.src_lang == "en"
-
-
-# ---------------------------------------------------------------------------
-# Language detection (new mel-spectrogram based approach)
-# ---------------------------------------------------------------------------
-
-
-def test_detect_language_uses_whisper_mel_spectrogram(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Test that language detection uses the openai-whisper mel spectrogram API.
-
-    Args:
-        monkeypatch (pytest.MonkeyPatch): The pytest monkeypatch fixture for patching.
-    """
-    dummy_mel = torch.zeros(1, 80, 100)
-    dummy_probs = {"de": 0.9, "en": 0.1}
-
-    class DummyModel:
-        def __init__(self) -> None:
-            self.dims = SimpleNamespace(n_mels=80)
-            self._device = torch.device("cpu")
-
-        @property
-        def device(self) -> torch.device:
-            return self._device
-
-        def to(self, device: Any) -> "DummyModel":
-            self._device = device if isinstance(device, torch.device) else torch.device(device)
-            return self
-
-        def detect_language(self, mel: Any) -> tuple[Any, dict[str, float]]:
-            return None, dummy_probs
-
-    dummy_model = DummyModel()
-    loaded_ids: list[str] = []
-
-    def fake_load_model(name: str, device: Any = None) -> DummyModel:
-        loaded_ids.append(name)
-        return dummy_model
-
-    monkeypatch.setattr(transcription.whisper, "load_model", fake_load_model)
-    monkeypatch.setattr(transcription.whisper, "pad_or_trim", lambda audio: audio)
-    monkeypatch.setattr(
-        transcription.whisper,
-        "log_mel_spectrogram",
-        lambda audio, n_mels: dummy_mel,
-    )
-    # Start from a clean registry slot so our patched loader is called.
-    REGISTRY.evict("whisper_turbo")
-
-    t = WhisperTranscriber.__new__(WhisperTranscriber)
-    t.audio = np.zeros(32000, dtype=np.float32)
-    t.transcription_device = "cpu"
-
-    detected = t._detect_language()
-
-    assert detected == "de"
-    assert loaded_ids == ["large-v3-turbo"]
-    REGISTRY.evict("whisper_turbo")
-
-
-# ---------------------------------------------------------------------------
-# Transcription model routing via the registry
-# ---------------------------------------------------------------------------
-
-
-def test_transcription_always_acquires_whisper_turbo(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """transcription() always acquires whisper_turbo and runs a plain transcribe.
-
-    Whisper no longer performs translation locally: the dedicated ``large-v3``
-    translate model is gone and translation is handled downstream by the LLM.
-    Even a historical ``translate`` task must therefore acquire the turbo model
-    and call ``model.transcribe`` with ``task="transcribe"``.
-
-    Args:
-        monkeypatch (pytest.MonkeyPatch): Fixture for patching the model
-            registry and the VAD guard.
-    """
-    acquired_keys: list[str] = []
-    fake_model = MagicMock()
-    fake_model.transcribe.return_value = {"segments": []}
-
-    class _FakeCtx:
-        def __enter__(self) -> Any:
-            return fake_model
-
-        def __exit__(self, *exc: Any) -> None:
-            return None
-
-    class _FakeRegistry:
-        def acquire(self, key: str, *, device: Any = None) -> _FakeCtx:
-            acquired_keys.append(key)
-            return _FakeCtx()
-
-    monkeypatch.setattr(transcription, "REGISTRY", _FakeRegistry())
-    # Disable VAD so the test reaches the Whisper model registry
-    monkeypatch.setattr(transcription, "_get_vad", lambda: None)
-
-    t = WhisperTranscriber.__new__(WhisperTranscriber)
-    t.audio = np.full(16000, 0.05, dtype=np.float32)
-    t.src_lang = "de"
-    t.transcription_result = None
-    # __init__ caches the speech-guard result so transcription() doesn't have
-    # to recompute. Bypassing __init__ in the test means we set it manually.
-    t._speech_check = (True, None)
-
-    t.transcription()
-
-    assert acquired_keys == ["whisper_turbo"]
-    fake_model.transcribe.assert_called_once()
-    assert fake_model.transcribe.call_args.kwargs["task"] == "transcribe"
+    with pytest.raises(RuntimeError, match="DIARIZE_API_BASE"):
+        transcriber.diarization()
 
 
 # ---------------------------------------------------------------------------
@@ -353,7 +311,9 @@ def test_external_transcriber_transcript_output(
     transcriber = ExternalWhisperTranscriber.__new__(ExternalWhisperTranscriber)
     transcriber.file_path = transcription.Path("dummy.wav")
     transcriber.src_lang = "en"
+    transcriber.task = "transcribe"
     transcriber._model_id = "whisper-1"
+    transcriber.n_speakers = 1
     transcriber.start_column = "start"
     transcriber.end_column = "end"
     transcriber.speaker_column = "speaker"
@@ -373,88 +333,21 @@ def test_external_transcriber_transcript_output(
     assert df.iloc[1]["text"] == "How are you?"
 
 
-def test_external_transcriber_transcript_output_includes_speaker_column(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A speaker column is emitted when segments carry diarization labels.
-
-    The external API never returns speakers; the pipeline assigns them after a
-    successful /diarize call. transcript_output must surface them.
-
-    Args:
-        monkeypatch (pytest.MonkeyPatch): The pytest monkeypatch fixture for patching.
-    """
-    transcriber = ExternalWhisperTranscriber.__new__(ExternalWhisperTranscriber)
-    transcriber.file_path = transcription.Path("dummy.wav")
-    transcriber.src_lang = "en"
-    transcriber._model_id = "whisper-1"
-    transcriber.start_column = "start"
-    transcriber.end_column = "end"
-    transcriber.speaker_column = "speaker"
-    transcriber.text_column = "text"
+def test_external_transcriber_transcript_output_includes_speakers() -> None:
+    """Diarized segments surface a speaker column in the output DataFrame."""
+    transcriber = _make_external_transcriber()
+    transcriber.n_speakers = 2
     transcriber.transcription_result = {
         "segments": [
-            {"start": 0.0, "end": 1.5, "speaker": "SPEAKER_00", "text": "Hello world."},
-            {"start": 1.5, "end": 3.0, "speaker": "SPEAKER_01", "text": "How are you?"},
+            {"start": 0.0, "end": 1.5, "text": "Hello there.", "speaker": "SPEAKER_00"},
+            {"start": 1.5, "end": 3.0, "text": "General Kenobi.", "speaker": "SPEAKER_01"},
         ]
     }
 
     df = transcriber.transcript_output()
 
     assert list(df.columns) == ["start", "end", "speaker", "text"]
-    assert len(df) == 2
-    assert df.iloc[0]["speaker"] == "SPEAKER_00"
-    assert df.iloc[1]["speaker"] == "SPEAKER_01"
-
-
-def test_external_transcriber_uses_transcriptions_not_translations(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The external transcriber only ever calls the transcriptions endpoint.
-
-    Whisper's ``/v1/audio/translations`` endpoint is not served by every
-    OpenAI-compatible backend (vLLM returns 404 for it), and translation is
-    now an LLM concern. Even when a ``translate`` task was requested,
-    ``transcription()`` must call ``audio.transcriptions.create`` and never
-    ``audio.translations.create``.
-
-    Args:
-        monkeypatch (pytest.MonkeyPatch): Fixture for patching the lazy client
-            and the audio guard.
-    """
-    seg = SimpleNamespace(start=0.0, end=1.0, text="Bonjour.", no_speech_prob=0.1)
-    fake_response = SimpleNamespace(segments=[seg], language="fr")
-
-    fake_client = MagicMock()
-    fake_client.audio.transcriptions.create.return_value = fake_response
-    # If the (removed) translate path were taken it would still "work" here,
-    # so the assertions below are what actually pin the endpoint choice.
-    fake_client.audio.translations.create.return_value = fake_response
-
-    transcriber = ExternalWhisperTranscriber.__new__(ExternalWhisperTranscriber)
-    transcriber.file_path = transcription.Path(__file__)
-    transcriber.src_lang = None
-    transcriber._model_id = "openai/whisper-large-v3"
-    transcriber._client = None
-    transcriber.transcription_result = None
-
-    monkeypatch.setattr(
-        type(transcriber),
-        "_get_client",
-        property(lambda self: fake_client),
-    )
-    monkeypatch.setattr(
-        transcription,
-        "_load_audio_waveform",
-        lambda _path: np.zeros(1, dtype=np.float32),
-    )
-    monkeypatch.setattr(transcription, "_audio_has_speech", lambda _audio: (True, None))
-
-    transcriber.transcription()
-
-    fake_client.audio.transcriptions.create.assert_called_once()
-    fake_client.audio.translations.create.assert_not_called()
-    assert transcriber.src_lang == "fr"
+    assert df["speaker"].tolist() == ["SPEAKER_00", "SPEAKER_01"]
 
 
 def test_external_transcriber_transcription_populates_src_lang(
@@ -474,6 +367,7 @@ def test_external_transcriber_transcription_populates_src_lang(
     transcriber = ExternalWhisperTranscriber.__new__(ExternalWhisperTranscriber)
     transcriber.file_path = transcription.Path(__file__)  # use an existing file
     transcriber.src_lang = None
+    transcriber.task = "transcribe"
     transcriber._model_id = "whisper-1"
     transcriber._client = None
     transcriber.transcription_result = None
@@ -484,15 +378,9 @@ def test_external_transcriber_transcription_populates_src_lang(
         "_get_client",
         property(lambda self: fake_client),
     )
-    # The new pre-Whisper guard would otherwise decode this test file as
-    # audio; stub both the loader and the guard so the test focuses on
-    # src_lang propagation only.
-    monkeypatch.setattr(
-        transcription,
-        "_load_audio_waveform",
-        lambda _path: np.zeros(1, dtype=np.float32),
-    )
-    monkeypatch.setattr(transcription, "_audio_has_speech", lambda _audio: (True, None))
+    # The external /vad guard would otherwise screen this test file; stub it
+    # to report speech so the test focuses on src_lang propagation only.
+    monkeypatch.setattr(transcription, "has_speech", lambda _path: True)
 
     transcriber.transcription()
 
@@ -508,7 +396,7 @@ def test_external_transcriber_normalizes_full_language_name(
 
     Args:
         monkeypatch (pytest.MonkeyPatch): The pytest monkeypatch fixture for
-            patching the lazy client and the audio guard.
+            patching the lazy client and the /vad guard.
     """
     seg = SimpleNamespace(start=0.0, end=1.0, text="Hallo.", no_speech_prob=0.1)
     fake_response = SimpleNamespace(segments=[seg], language="german")
@@ -519,6 +407,7 @@ def test_external_transcriber_normalizes_full_language_name(
     transcriber = ExternalWhisperTranscriber.__new__(ExternalWhisperTranscriber)
     transcriber.file_path = transcription.Path(__file__)
     transcriber.src_lang = None
+    transcriber.task = "transcribe"
     transcriber._model_id = "whisper-1"
     transcriber._client = None
     transcriber.transcription_result = None
@@ -528,12 +417,7 @@ def test_external_transcriber_normalizes_full_language_name(
         "_get_client",
         property(lambda self: fake_client),
     )
-    monkeypatch.setattr(
-        transcription,
-        "_load_audio_waveform",
-        lambda _path: np.zeros(1, dtype=np.float32),
-    )
-    monkeypatch.setattr(transcription, "_audio_has_speech", lambda _audio: (True, None))
+    monkeypatch.setattr(transcription, "has_speech", lambda _path: True)
 
     transcriber.transcription()
 
@@ -554,13 +438,15 @@ def _make_external_transcriber() -> ExternalWhisperTranscriber:
 
     Returns:
         ExternalWhisperTranscriber: An instance whose ``file_path`` points
-        at this test module. Callers always stub ``_load_audio_waveform``
-        before ``transcription()`` so the path is never actually decoded.
+        at this test module. Callers always stub ``has_speech`` before
+        ``transcription()`` so the file is never actually screened.
     """
     transcriber = ExternalWhisperTranscriber.__new__(ExternalWhisperTranscriber)
     transcriber.file_path = transcription.Path(__file__)
     transcriber.src_lang = None
+    transcriber.task = "transcribe"
     transcriber._model_id = "whisper-1"
+    transcriber.n_speakers = 1
     transcriber._client = None
     transcriber.start_column = "start"
     transcriber.end_column = "end"
@@ -568,108 +454,6 @@ def _make_external_transcriber() -> ExternalWhisperTranscriber:
     transcriber.text_column = "text"
     transcriber.transcription_result = None
     return transcriber
-
-
-def test_audio_has_speech_flags_digital_silence(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A near-zero RMS waveform must be rejected before Silero VAD runs.
-
-    The RMS layer is the cheap first line of defence: it fires without
-    consulting Silero VAD. The test monkeypatches ``_detect_speech_vad``
-    to raise if called, which would signal a regression where the RMS
-    short-circuit was removed.
-
-    Args:
-        monkeypatch (pytest.MonkeyPatch): Used to fail-fast if the VAD
-            model is consulted on digital silence.
-    """
-
-    def _must_not_run(_audio: np.ndarray) -> bool:
-        raise AssertionError("VAD must not be consulted for digital silence")
-
-    monkeypatch.setattr(transcription, "_detect_speech_vad", _must_not_run)
-    silent = np.zeros(16000, dtype=np.float32)
-
-    ok, reason = transcription._audio_has_speech(silent)
-
-    assert ok is False
-    assert reason is not None and "RMS" in reason
-
-
-def test_audio_has_speech_rejects_non_speech_when_vad_enabled(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A loud waveform with no VAD-detected speech must be rejected.
-
-    Simulates "energy without speech" (noise, music, tone). Ensures the
-    second layer of the guard fires when :func:`load_vad_env` reports
-    ``enabled=True`` (the default).
-
-    Args:
-        monkeypatch (pytest.MonkeyPatch): Used to stub ``_detect_speech_vad``
-            and pin ``load_vad_env`` to the enabled state.
-    """
-    monkeypatch.setattr(transcription, "_detect_speech_vad", lambda _audio: False)
-    monkeypatch.setattr(transcription, "load_vad_env", lambda: SimpleNamespace(enabled=True))
-    loud = np.ones(16000, dtype=np.float32) * 0.5
-
-    ok, reason = transcription._audio_has_speech(loud)
-
-    assert ok is False
-    assert reason == "VAD detected no speech"
-
-
-def test_audio_has_speech_passes_when_vad_disabled(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """When ``VAD_ENABLED=0`` the guard must skip the Silero check.
-
-    Operators can disable VAD via ``VAD_ENABLED=0``; the RMS layer then
-    stands alone. The test asserts ``_detect_speech_vad`` is never called
-    in that configuration even though the audio *would* be rejected by
-    VAD (``False`` would otherwise trip the guard).
-
-    Args:
-        monkeypatch (pytest.MonkeyPatch): Disables the env toggle and
-            supplies a fail-fast stub for the VAD model.
-    """
-
-    def _must_not_run(_audio: np.ndarray) -> bool:
-        raise AssertionError("VAD must not be consulted when VAD_ENABLED=0")
-
-    monkeypatch.setattr(transcription, "_detect_speech_vad", _must_not_run)
-    monkeypatch.setattr(transcription, "load_vad_env", lambda: SimpleNamespace(enabled=False))
-    loud = np.ones(16000, dtype=np.float32) * 0.5
-
-    ok, reason = transcription._audio_has_speech(loud)
-
-    assert ok is True
-    assert reason is None
-
-
-def test_audio_has_speech_passes_when_vad_model_unavailable(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """VAD returning ``None`` (graceful fallback) must not block ingestion.
-
-    :func:`_detect_speech_vad` returns ``None`` when the Silero model
-    could not be loaded — e.g. offline machine with a cold torch-hub
-    cache. In that case the guard trusts the RMS layer and lets the
-    audio through rather than refusing to transcribe anything.
-
-    Args:
-        monkeypatch (pytest.MonkeyPatch): Stubs ``_detect_speech_vad`` to
-            simulate the unavailable-model branch.
-    """
-    monkeypatch.setattr(transcription, "_detect_speech_vad", lambda _audio: None)
-    monkeypatch.setattr(transcription, "load_vad_env", lambda: SimpleNamespace(enabled=True))
-    loud = np.ones(16000, dtype=np.float32) * 0.5
-
-    ok, reason = transcription._audio_has_speech(loud)
-
-    assert ok is True
-    assert reason is None
 
 
 def test_filter_no_speech_segments_drops_high_prob_entries() -> None:
@@ -719,14 +503,14 @@ def test_filter_no_speech_segments_returns_input_when_nothing_dropped() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_external_transcriber_skips_on_rms_silence(
+def test_external_transcriber_skips_when_vad_reports_no_speech(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Silent audio must short-circuit the external request entirely.
+    """Speech-free audio must short-circuit the external request entirely.
 
     The whole point of guarding the external path is to avoid paying for
     a transcription request whose result would be hallucinated text. The
-    test stubs ``_audio_has_speech`` to report RMS silence, runs
+    test stubs ``has_speech`` to report no speech, runs
     ``transcription()``, and asserts that:
 
     * the method returns cleanly with ``transcription_result`` holding an
@@ -735,62 +519,13 @@ def test_external_transcriber_skips_on_rms_silence(
       ``_get_client`` with a property that raises if accessed.
 
     Args:
-        monkeypatch (pytest.MonkeyPatch): Overrides ``_load_audio_waveform``,
-            ``_audio_has_speech``, and the client property.
+        monkeypatch (pytest.MonkeyPatch): Overrides ``has_speech`` and the client property.
     """
     transcriber = _make_external_transcriber()
-    monkeypatch.setattr(
-        transcription,
-        "_load_audio_waveform",
-        lambda _path: np.zeros(1, dtype=np.float32),
-    )
-    monkeypatch.setattr(
-        transcription,
-        "_audio_has_speech",
-        lambda _audio: (False, "Audio RMS (0.000000) below silence threshold (0.01)"),
-    )
+    monkeypatch.setattr(transcription, "has_speech", lambda _path: False)
 
     def _client_must_not_be_built(_self: Any) -> Any:
         raise AssertionError("external API must not be contacted for silent audio")
-
-    monkeypatch.setattr(
-        type(transcriber),
-        "_get_client",
-        property(_client_must_not_be_built),
-    )
-
-    transcriber.transcription()
-
-    assert transcriber.transcription_result == {"segments": []}
-
-
-def test_external_transcriber_skips_on_vad(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Noise-only audio (VAD negative) must also skip the external request.
-
-    Same contract as :func:`test_external_transcriber_skips_on_rms_silence`
-    but for the second guard layer. Ensures that a VAD-negative verdict
-    produces an empty result and never contacts the remote API.
-
-    Args:
-        monkeypatch (pytest.MonkeyPatch): Overrides ``_load_audio_waveform``,
-            ``_audio_has_speech``, and the client property.
-    """
-    transcriber = _make_external_transcriber()
-    monkeypatch.setattr(
-        transcription,
-        "_load_audio_waveform",
-        lambda _path: np.ones(16000, dtype=np.float32) * 0.5,
-    )
-    monkeypatch.setattr(
-        transcription,
-        "_audio_has_speech",
-        lambda _audio: (False, "VAD detected no speech"),
-    )
-
-    def _client_must_not_be_built(_self: Any) -> Any:
-        raise AssertionError("external API must not be contacted for noise-only audio")
 
     monkeypatch.setattr(
         type(transcriber),
@@ -817,12 +552,11 @@ def test_external_transcriber_applies_no_speech_prob_filter(
     * ``no_speech_prob`` is preserved on the survivor so downstream
       consumers can inspect it if they wish.
 
-    The VAD guard is bypassed with a ``(True, None)`` stub so the test
+    The /vad guard is bypassed with a ``True`` stub so the test
     focuses exclusively on the post-filter behaviour.
 
     Args:
-        monkeypatch (pytest.MonkeyPatch): Overrides ``_load_audio_waveform``,
-            ``_audio_has_speech``, and the client property.
+        monkeypatch (pytest.MonkeyPatch): Overrides ``has_speech`` and the client property.
     """
     kept = SimpleNamespace(start=0.0, end=1.0, text="Hello", no_speech_prob=0.1)
     dropped = SimpleNamespace(start=1.0, end=2.0, text="hallucinated.", no_speech_prob=0.95)
@@ -832,12 +566,7 @@ def test_external_transcriber_applies_no_speech_prob_filter(
     fake_client.audio.transcriptions.create.return_value = fake_response
 
     transcriber = _make_external_transcriber()
-    monkeypatch.setattr(
-        transcription,
-        "_load_audio_waveform",
-        lambda _path: np.ones(16000, dtype=np.float32) * 0.5,
-    )
-    monkeypatch.setattr(transcription, "_audio_has_speech", lambda _audio: (True, None))
+    monkeypatch.setattr(transcription, "has_speech", lambda _path: True)
     monkeypatch.setattr(
         type(transcriber),
         "_get_client",
@@ -866,8 +595,7 @@ def test_external_transcriber_tolerates_missing_no_speech_prob(
     probability must be exactly ``0.0``.
 
     Args:
-        monkeypatch (pytest.MonkeyPatch): Overrides ``_load_audio_waveform``,
-            ``_audio_has_speech``, and the client property.
+        monkeypatch (pytest.MonkeyPatch): Overrides ``has_speech`` and the client property.
     """
     seg = SimpleNamespace(start=0.0, end=1.0, text="Hola.")
     fake_response = SimpleNamespace(segments=[seg], language="es")
@@ -876,12 +604,7 @@ def test_external_transcriber_tolerates_missing_no_speech_prob(
     fake_client.audio.transcriptions.create.return_value = fake_response
 
     transcriber = _make_external_transcriber()
-    monkeypatch.setattr(
-        transcription,
-        "_load_audio_waveform",
-        lambda _path: np.ones(16000, dtype=np.float32) * 0.5,
-    )
-    monkeypatch.setattr(transcription, "_audio_has_speech", lambda _audio: (True, None))
+    monkeypatch.setattr(transcription, "has_speech", lambda _path: True)
     monkeypatch.setattr(
         type(transcriber),
         "_get_client",

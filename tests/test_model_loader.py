@@ -1,6 +1,5 @@
 """Tests for the Nextext model preload utilities."""
 
-import io
 import sys
 from pathlib import Path
 
@@ -69,6 +68,7 @@ def test_download_spacy_model_uses_persistent_target(
     """
     cache_dir = tmp_path / "spacy-cache"
     monkeypatch.setenv(model_loader.SPACY_MODEL_DIR, str(cache_dir))
+    monkeypatch.setenv("NEXTEXT_OFFLINE", "0")
     captured: list[list[str]] = []
 
     def fake_run(cmd: list[str], check: bool) -> None:
@@ -155,18 +155,13 @@ def test_get_spacy_model_download_url_uses_override_base_url(
 def test_main_preloads_expected_model_groups(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Test that the main preload routine covers all configured model groups.
+    """Test that the main preload routine covers exactly NLTK and spaCy.
 
     Args:
         monkeypatch (pytest.MonkeyPatch): The pytest fixture for modifying environment variables and functions.
     """
     calls: list[tuple[str, str]] = []
 
-    monkeypatch.setattr(
-        model_loader,
-        "_get_default_device",
-        lambda: "cpu",
-    )
     monkeypatch.setattr(
         model_loader,
         "ensure_nltk_resources",
@@ -182,92 +177,101 @@ def test_main_preloads_expected_model_groups(
         "download_spacy_model",
         lambda model_id: calls.append(("spacy", model_id)),
     )
-    monkeypatch.setattr(
-        model_loader,
-        "LOCAL_WHISPER_MODEL_IDS",
-        ("large-v3-turbo",),
-    )
-    monkeypatch.setattr(
-        model_loader,
-        "preload_whisper_model",
-        lambda model_id, device: calls.append((f"whisper:{device}", model_id)),
-    )
-    monkeypatch.setattr(
-        model_loader,
-        "preload_silero_vad",
-        lambda: calls.append(("silero_vad", model_loader.SILERO_VAD_REPO)),
-    )
+
     model_loader.main()
 
     assert calls == [
         ("nltk", "all"),
         ("spacy", "en_core_web_sm"),
-        ("whisper:cpu", "large-v3-turbo"),
-        ("silero_vad", "snakers4/silero-vad"),
     ]
 
 
-def test_preload_silero_vad_degrades_when_load_fails(
+def test_download_spacy_model_offline_uncached_raises(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
-    """A failed Silero VAD download is downgraded to a warning, not raised.
-
-    Mirrors the runtime fallback in ``nextext.core.transcription._get_vad``:
-    VAD is an optional pre-screen, so an unavailable model must not abort the
-    preload — transcription falls back to RMS-only speech detection.
+    """Offline mode with an uncached model raises an actionable error.
 
     Args:
-        monkeypatch (pytest.MonkeyPatch): The pytest fixture for patching the
-            ``torch.hub.load`` entry point.
+        monkeypatch (pytest.MonkeyPatch): The pytest fixture for modifying environment variables and functions.
+        tmp_path (Path): The pytest fixture providing a temporary directory for testing.
     """
-    from loguru import logger
+    cache_dir = tmp_path / "spacy-cache"
+    monkeypatch.setenv(model_loader.SPACY_MODEL_DIR, str(cache_dir))
+    monkeypatch.setenv("NEXTEXT_OFFLINE", "1")
 
-    def fail_load(*args: object, **kwargs: object) -> None:
-        """Simulate a Silero VAD load failure (e.g. missing torchaudio).
+    def fail_run(*args: object, **kwargs: object) -> None:
+        """Fail if subprocess.run is called — offline mode must not download.
 
         Raises:
-            ModuleNotFoundError: Always, mimicking the absent dependency.
+            AssertionError: Always raised — no download may happen offline.
         """
-        raise ModuleNotFoundError("No module named 'torchaudio'")
+        raise AssertionError("subprocess.run must not be called in offline mode")
 
-    monkeypatch.setattr(model_loader.torch.hub, "load", fail_load)
+    monkeypatch.setattr(model_loader.subprocess, "run", fail_run)
 
-    sink = io.StringIO()
-    handler_id = logger.add(sink, level="WARNING")
-    try:
-        model_loader.preload_silero_vad()
-    finally:
-        logger.remove(handler_id)
-
-    assert "Silero VAD" in sink.getvalue()
+    with pytest.raises(FileNotFoundError, match="NEXTEXT_OFFLINE"):
+        model_loader.download_spacy_model("en_core_web_sm")
 
 
-def test_main_does_not_fail_when_silero_vad_unavailable(
+def test_download_spacy_model_offline_cached_is_noop(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
-    """``main`` completes even when the Silero VAD model cannot be loaded.
-
-    The essential preloads (nltk, spaCy, Whisper) are stubbed out so the test
-    isolates the optional VAD step: a failing ``torch.hub.load`` must be
-    tolerated rather than aggregated into the fatal failure list.
+    """Offline mode with a cached model short-circuits without raising.
 
     Args:
-        monkeypatch (pytest.MonkeyPatch): The pytest fixture for patching
-            module functions and the ``torch.hub.load`` entry point.
+        monkeypatch (pytest.MonkeyPatch): The pytest fixture for modifying environment variables.
+        tmp_path (Path): The pytest fixture providing a temporary directory for testing.
     """
-    monkeypatch.setattr(model_loader, "_get_default_device", lambda: "cpu")
-    monkeypatch.setattr(model_loader, "ensure_nltk_resources", lambda: None)
-    monkeypatch.setattr(model_loader, "get_spacy_model_ids", lambda: [])
-    monkeypatch.setattr(model_loader, "LOCAL_WHISPER_MODEL_IDS", ())
+    cache_dir = tmp_path / "spacy-cache"
+    (cache_dir / "en_core_web_sm").mkdir(parents=True)
+    monkeypatch.setenv(model_loader.SPACY_MODEL_DIR, str(cache_dir))
+    monkeypatch.setenv("NEXTEXT_OFFLINE", "1")
 
-    def fail_load(*args: object, **kwargs: object) -> None:
-        """Simulate a Silero VAD load failure (e.g. missing torchaudio).
+    model_loader.download_spacy_model("en_core_web_sm")
+
+
+def test_ensure_nltk_resources_offline_skips_downloads(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Offline mode skips every NLTK download.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): The pytest fixture for modifying environment variables and functions.
+    """
+    monkeypatch.setenv("NEXTEXT_OFFLINE", "1")
+
+    def fail_download(*args: object, **kwargs: object) -> None:
+        """Fail if nltk.download is called — offline mode must not download.
 
         Raises:
-            ModuleNotFoundError: Always, mimicking the absent dependency.
+            AssertionError: Always raised — no download may happen offline.
         """
-        raise ModuleNotFoundError("No module named 'torchaudio'")
+        raise AssertionError("nltk.download must not be called in offline mode")
 
-    monkeypatch.setattr(model_loader.torch.hub, "load", fail_load)
+    monkeypatch.setattr(model_loader.nltk, "download", fail_download)
 
-    model_loader.main()
+    model_loader.ensure_nltk_resources()
+
+
+def test_ensure_nltk_resources_online_downloads_each_resource(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Online mode downloads every configured NLTK resource.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): The pytest fixture for modifying environment variables and functions.
+    """
+    monkeypatch.setenv("NEXTEXT_OFFLINE", "0")
+    downloaded: list[str] = []
+
+    monkeypatch.setattr(
+        model_loader.nltk,
+        "download",
+        lambda resource, quiet: downloaded.append(resource),
+    )
+
+    model_loader.ensure_nltk_resources()
+
+    assert downloaded == list(model_loader.NLTK_RESOURCES)

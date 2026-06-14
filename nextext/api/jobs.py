@@ -2,10 +2,10 @@
 
 The :class:`JobManager` owns an in-memory dictionary of :class:`JobState`
 instances. Jobs are processed by a single async worker constrained to
-serial execution via an ``asyncio.Semaphore(1)``: the GPU model registry
-(``nextext.utils.model_registry``) is thread-safe but contention from
-parallel pipeline runs in one process would oversubscribe the GPU, so
-the safe choice is one job in flight per backend container.
+serial execution via an ``asyncio.Semaphore(1)``: pipeline stages are
+CPU-bound (decoding, DataFrame shaping) around blocking calls to the
+shared inference tier, and one job in flight per backend container keeps
+memory bounded and the remote endpoints fairly shared.
 
 The blocking pipeline runs on a worker thread via
 ``anyio.to_thread.run_sync``. Stage transitions are published to a per-job
@@ -700,15 +700,6 @@ class JobManager:
                         "timestamp": _utcnow().isoformat(),
                     },
                 )
-            finally:
-                # Reclaim GPU resources between jobs (mirrors CLI's finally
-                # block — see ``nextext/cli.py``).
-                try:
-                    from nextext.utils.model_registry import flush_gpu
-
-                    await asyncio.to_thread(flush_gpu)
-                except Exception:  # pragma: no cover - defensive
-                    logger.exception("flush_gpu raised during job teardown.")
 
     def _dispatch_event(
         self,

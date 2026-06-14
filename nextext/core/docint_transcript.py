@@ -120,8 +120,8 @@ def transcript_segments_from_df(df: pd.DataFrame) -> list[dict[str, Any]]:
     """Convert a transcript DataFrame into segment dicts for the JSONL builder.
 
     The DataFrame is the sentence-merged transcript produced by
-    :class:`nextext.core.transcription.WhisperTranscriber.transcript_output`
-    and its external sibling. The ``start`` / ``end`` columns are
+    :meth:`nextext.core.transcription.ExternalWhisperTranscriber.transcript_output`.
+    The ``start`` / ``end`` columns are
     timedelta-style strings; ``speaker`` is optional. The emitted
     ``start_seconds`` / ``end_seconds`` values are integer-valued floats
     derived from those already-rounded strings — see

@@ -4,13 +4,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Nextext is a modular audio analysis toolkit that transcribes, translates, and analyzes natural language from audio/video files. It uses openai-whisper for transcription, an out-of-process `/diarize` HTTP service for speaker diarization, an out-of-process `/gliner` HTTP service for named-entity recognition, spaCy/NLTK for word-level NLP, and LLMs (Ollama, vLLM, or OpenAI-compatible endpoints) for translation, summarization, and hate-speech detection.
+Nextext is a modular audio analysis toolkit that transcribes, translates, and analyzes natural language from audio/video files. All model inference runs on external endpoints: Whisper transcription via an OpenAI-compatible audio API, voice-activity detection (`/vad`), speaker diarization (`/diarize`), and GLiNER NER (`/gliner`) via dedicated out-of-process HTTP services, and LLMs (Ollama, vLLM, or OpenAI-compatible endpoints) for translation, summarization, and hate-speech detection. Only spaCy/NLTK word-level NLP runs in-process — the backend ships no model weights, no local audio tooling, and needs no GPU.
 
 ## Project Context
 
-- WhisperX has been removed from this project; use openai-whisper for transcription. Diarization runs out-of-process via the `/diarize` HTTP service (`DIARIZE_API_BASE`), not in-process pyannote.
-- Target torch install is split by extras (cpu/cuda) via conflicts in pyproject.toml.
-- Docker base image is pinned to `python:3.12.10-slim-bookworm` across all Dockerfiles.
+- Local ML runtimes (openai-whisper, pyannote, GLiNER, Silero VAD, torch) have been removed; every model call is an HTTP request to an external endpoint. `tests/test_no_torch.py` pins the no-torch invariant — camel-tools' torch/transformers requirements are excluded via `[tool.uv] override-dependencies`.
+- Docker base image is the pinned `ghcr.io/astral-sh/uv:*-python3.12-trixie-slim` across backend and frontend Dockerfiles.
 
 ## Commands
 
@@ -18,15 +17,15 @@ Nextext is a modular audio analysis toolkit that transcribes, translates, and an
 # Install dependencies
 uv sync                    # production deps
 uv sync --group dev        # include dev deps (pytest, ruff, mypy, pre-commit)
-uv sync --group frontend   # frontend-only deps (no torch / openai-whisper / spaCy)
+uv sync --group frontend   # frontend-only deps (Streamlit client; no pipeline/NLP libs)
 
 # Run the app
 uv run nextext             # Streamlit web UI on port 8501 (talks to backend over HTTP)
 uv run nextext-api         # FastAPI backend on port 8000
 uv run nextext-cli -f <file> [args]  # CLI mode (in-process, no backend required)
 
-# Preload ML models
-uv run load-models
+# Preload spaCy/NLTK language resources (the only local downloads)
+NEXTEXT_OFFLINE=0 uv run load-models
 
 # Tests
 uv run pytest              # run full test suite
@@ -45,7 +44,7 @@ mypy --no-incremental --ignore-missing-imports --disable-error-code=import-untyp
 - When tests fail, fix the root cause rather than patching tests to match stale/removed code.
 - Verify with `pre-commit run --all-files` (mypy, lint, docstrings) before declaring work complete.
 
-Tests are in `tests/` using pytest with monkeypatch fixtures for mocking ML models and inference. Tests simulate Docker detection and environment configuration. No GPU or model downloads required for tests.
+Tests are in `tests/` using pytest with monkeypatch fixtures and `respx` for mocking the HTTP inference clients (Whisper, NER, diarization). Tests simulate Docker detection and environment configuration. No GPU, no network, and no model downloads required for tests.
 
 ## Docstrings & Style
 
@@ -58,14 +57,14 @@ Tests are in `tests/` using pytest with monkeypatch fixtures for mocking ML mode
 
 **Service split (Docker):**
 
-- **Backend** (`backend-cpu` / `backend-cuda`) — FastAPI app exposing `/api/v1`. Owns the pipeline, GPU model registry, and model caches. Built from `docker/Dockerfile.backend.{cpu,cuda}`.
-- **Frontend** (`frontend-cpu` / `frontend-cuda`) — Streamlit-only container. Talks to the backend via `BACKEND_HOST` (default `http://backend:8000`). Built from `docker/Dockerfile.frontend` (single-stage, ships only the `frontend` dependency group; no torch, no ML libs).
+- **Backend** (`backend`) — FastAPI app exposing `/api/v1`. Owns the pipeline and the HTTP inference clients (Whisper, NER, diarization). CPU-only, built from `docker/Dockerfile.backend`.
+- **Frontend** (`frontend`) — Streamlit-only container. Talks to the backend via `BACKEND_HOST` (default `http://backend:8000`). Built from `docker/Dockerfile.frontend` (single-stage, ships only the `frontend` dependency group).
 
 `nextext-cli` keeps the in-process path: it imports `nextext.pipeline` directly and runs end-to-end without needing a backend container. Lives in the backend image alongside the API.
 
 **Pipeline flow (server-side):**
 
-1. **Transcription** (always-on) → openai-whisper transcription (always in the source language) + optional speaker diarization via the out-of-process `/diarize` HTTP service (when `max speakers > 1`) → `pd.DataFrame`
+1. **Transcription** (always-on) → external Whisper API (`/v1/audio/transcriptions`, always in the source language) behind an external `/vad` speech guard (skipped when `VAD_API_BASE` is unset), + optional speaker diarization via the out-of-process `/diarize` HTTP service (when `max speakers > 1`) → `pd.DataFrame`
 2. **Translation** (optional) → LLM-based segment translation, directly source → target for any target language, via `InferencePipeline`. Whisper's audio-translate task is not used.
 3. **Word-level analysis** (optional) → word counts, named entities via the out-of-process `/gliner` HTTP service, word clouds
 4. **Summarization** (optional) → LLM summary via `InferencePipeline`
@@ -86,7 +85,7 @@ Identity is resolved per request by `resolve_principal`: the trusted header (`NE
 
 **Key modules:**
 
-- `nextext/api/main.py` — FastAPI factory, lifespan (boots `JobManager` + persistence repository).
+- `nextext/api/main.py` — FastAPI factory, lifespan (boots the in-memory `JobManager`).
 - `nextext/api/jobs.py` — `JobManager`, async worker (single in-flight job via `asyncio.Semaphore(1)`), SSE event broker. Holds all jobs in memory; `list_for_owner` powers the frontend's reload re-discovery.
 - `nextext/api/identity.py` — `resolve_principal` FastAPI dependency. Reads the trusted header (`NEXTEXT_AUTH_HEADER`, default `X-Auth-User`); falls back to `NEXTEXT_DEFAULT_IDENTITY` for header-less/dev callers; returns `401` when neither is set. The Streamlit frontend carries the identity in its URL (`?owner=<id>`); there are no server-managed cookies. This is the single seam a real auth track would replace.
 - `nextext/api/routes/` — `health`, `jobs` routers. Per-route ownership checks return `404` on cross-owner access so existence never leaks.
@@ -98,15 +97,15 @@ Identity is resolved per request by `resolve_principal`: the trusted header (`NE
 - `nextext/app.py` — Compatibility shim re-exporting helpers from the locations above; preserves the historical import surface for tests and external callers.
 - `nextext/cli.py` — CLI entry point (argparse), single-file processing in-process.
 - `nextext/pipeline.py` — Shared pipeline functions connecting all agents.
-- `nextext/core/transcription.py` — openai-whisper transcription (local + external OpenAI-compatible paths).
-- `nextext/core/diarization.py` — speaker-diarization agent: HTTP client for the out-of-process `/diarize` service + client-side speaker/segment overlap alignment.
-- `nextext/core/ner.py` — named-entity-recognition agent: HTTP client for the out-of-process `/gliner` service.
+- `nextext/core/transcription.py` — `ExternalWhisperTranscriber` (OpenAI-compatible audio API); the pre-upload speech guard is delegated to the external `/vad` service via `core/vad.py`.
+- `nextext/core/vad.py` — voice-activity-detection agent: fail-open HTTP client for the out-of-process `/vad` service (`has_speech`); an unset/unreachable endpoint transcribes everything.
+- `nextext/core/diarization.py` — speaker-diarization agent: HTTP client for the out-of-process `/diarize` service + client-side speaker/segment overlap alignment (`assign_speakers_by_overlap`).
+- `nextext/core/ner.py` — named-entity-recognition agent: HTTP client for the out-of-process `/gliner` service (`extract_entities`).
 - `nextext/core/translation.py` — LLM translation with prompt templates.
 - `nextext/core/words.py` — NLP word-level analysis (spaCy word counts + word clouds).
 - `nextext/core/hate_speech.py` — LLM-based hate-speech detection.
 - `nextext/core/openai_cfg.py` — `InferencePipeline` for OpenAI-compatible LLM calls.
 - `nextext/core/processing.py` — File I/O and export formatting (CLI).
-- `nextext/utils/model_registry.py` — Centralized GPU model residency manager.
 - `nextext/utils/mappings/` — JSON config files for Whisper/spaCy model names, language codes.
 - `nextext/utils/prompts/` — LLM prompt templates (system, translation, summary).
 
@@ -116,15 +115,15 @@ See `AGENTS.md` for detailed agent documentation including I/O contracts and how
 
 Key env vars (see `.env.example`):
 
-- `INFERENCE_PROVIDER` — `ollama` (default), `vllm`, or `openai`. Selects the inference backend for all LLM calls; it no longer affects the translation prompt — every provider uses the templated prompt in `nextext/utils/prompts/translation.txt` plus a translation system prompt. Still governs transcription routing and the Ollama `think` field.
-- `WHISPER_MODEL` — overrides the external Whisper checkpoint sent as the `model` field to the `/v1/audio/transcriptions` endpoint for the `vllm`/`openai` providers. Defaults to `whisper-1` (`openai`) and `openai/whisper-large-v3` (`vllm`); the value must name a model the external server actually serves (check `GET {OPENAI_API_BASE}/models`). Read per-call via `os.getenv`, so a backend restart is enough to pick up a change. Ignored when `INFERENCE_PROVIDER=ollama` — the local openai-whisper path is pinned to `large-v3-turbo` (`LOCAL_WHISPER_MODEL`).
-- `DIARIZE_API_BASE` — root URL of the out-of-process `/diarize` service (e.g. `http://vllm-router:9000`); the client appends `/diarize`. Unset (default) disables diarization, so `max speakers > 1` is ignored and transcripts carry no speaker column. The bearer token is reused from `OPENAI_API_KEY`. `DIARIZE_TIMEOUT` — per-request timeout in seconds (default `600`).
-- `NER_API_BASE` — root URL of the out-of-process `/gliner` NER service (e.g. `http://vllm-router:4000`); the client appends `/gliner`. Unset (default) disables NER, so transcripts carry no entity table. The bearer token is reused from `OPENAI_API_KEY`. `NER_TIMEOUT` — per-request (per-chunk) timeout in seconds (default `120`).
-- `OPENAI_API_KEY`, `OPENAI_API_BASE` — OpenAI-compatible endpoint credentials; shared across translation, summarization, and hate-speech detection, which all run on `TEXT_MODEL`.
+- `OPENAI_API_KEY`, `OPENAI_API_BASE` — the **central** OpenAI-compatible endpoint; carries translation, summarization, and hate-speech detection (all on `TEXT_MODEL`), supplies the bearer token reused by the NER and diarization clients, and is the fallback for the Whisper endpoint below.
+- `WHISPER_API_BASE` / `WHISPER_API_KEY` / `WHISPER_MODEL` — dedicated Whisper endpoint (OpenAI SDK base incl. `/v1`); falls back to the central pair. Model defaults: `whisper-1` (openai), `openai/whisper-large-v3` (vllm). `INFERENCE_PROVIDER=ollama` has no transcription API, so it requires explicit `WHISPER_API_BASE` + `WHISPER_MODEL` (`load_whisper_env` raises otherwise).
+- `NER_API_BASE` — root URL of the out-of-process `/gliner` NER service (e.g. `http://vllm-router:4000`); the client appends `/gliner`. Unset (default) disables NER, so transcripts carry no entity table. The bearer token is reused from `OPENAI_API_KEY`. Fail-soft: errors degrade to empty entities. `NER_TIMEOUT` — per-request (per-chunk) timeout in seconds (default `120`).
+- `DIARIZE_API_BASE` — root URL of the out-of-process `/diarize` service (e.g. `http://vllm-router:9000`); the client appends `/diarize`. Unset (default) disables diarization, so `max speakers > 1` is ignored and transcripts carry no speaker column. The bearer token is reused from `OPENAI_API_KEY`. Fail-soft: errors degrade to an unlabelled transcript. `DIARIZE_TIMEOUT` — per-request timeout in seconds (default `600`). vllm-service has no `/diarize` implementation yet — see `nextext/core/diarization.py` for the contract.
+- `INFERENCE_PROVIDER` — `ollama` (default), `vllm`, or `openai`. Selects the Whisper model default and the Ollama `think` handling; prompts are provider-independent.
 - `TEXT_MODEL` — LLM model name shared by translation, summarization, and hate-speech detection
 - `OLLAMA_THINK` — tri-state default for the Ollama `think` request field forwarded by `InferencePipeline.call_model` via `extra_body`. Accepts `1`/`true`/`yes`/`on` (enable), `0`/`false`/`no`/`off` (disable), or unset (omit field, model default). Honoured by Ollama-hosted reasoning models such as Qwen3; a no-op for `vllm`/`openai` providers. Per-call `think=` overrides the env default.
-- `NEXTEXT_OFFLINE=1` — offline mode (skip model downloads)
-- `MODEL_RESIDENCY_STRATEGY` — `offload` (default) or `evict`. Controls how the registry releases GPU models between files. Per-model override: `MODEL_RESIDENCY_WHISPER_TURBO`.
+- `VAD_API_BASE` — root URL of the out-of-process `/vad` speech-guard service (e.g. `http://vllm-router:7000`); the client appends `/vad`. Unset (default) disables the guard, so every file is transcribed. The bearer token is reused from `OPENAI_API_KEY`. Fail-open: an unreachable service degrades to transcribing anyway. `VAD_TIMEOUT` — per-request timeout in seconds (default `60`). vllm-service has no `/vad` implementation yet — see `nextext/core/vad.py` for the contract.
+- `NEXTEXT_OFFLINE=1` (default) — gates the spaCy/NLTK downloads (`is_offline()`); the only local downloads left. Offline + uncached spaCy model raises an actionable error.
 - `BACKEND_HOST` (frontend only) — Backend root URL. Defaults to `http://backend:8000` inside compose; set to `http://localhost:8000` for local dev.
 - `BACKEND_PUBLIC_HOST` (frontend only) — Externally reachable backend URL surfaced in UI hints.
 - `NEXTEXT_API_HOST` / `NEXTEXT_API_PORT` (backend only) — uvicorn bind address. Defaults to `0.0.0.0:8000`.
@@ -132,18 +131,14 @@ Key env vars (see `.env.example`):
 - `NEXTEXT_AUTH_HEADER` (backend + frontend) — Name of the trusted identity header. Defaults to `X-Auth-User`. Both sides read the same variable so they agree on the header.
 - `NEXTEXT_DEFAULT_IDENTITY` (backend only) — Fallback identity for header-less / developer callers. Unset by default, so a request without the trusted header gets `401`.
 
-## Memory management
-
-GPU-resident models (`whisper_turbo`) are owned by a process-wide registry in `nextext/utils/model_registry.py`. Callers wrap model use in `with REGISTRY.acquire(name) as model:` so the model is on GPU only for the duration of the block; the registry releases it (offload or evict) on exit. The Streamlit and CLI entry points call `flush_gpu()` between files to reclaim PyTorch allocator reservations. Adding a new GPU model means registering a `ModelSpec` with a `loader` (CPU construction) and `mover` (`.to(device)`).
-
 ## Docker
 
-Docker assets live under `docker/`. `docker/compose.yaml` defines four services across two profiles:
+Docker assets live under `docker/`. `docker/compose.yaml` defines two services — no profiles, no GPU reservations:
 
-- `backend-cpu` / `backend-cuda` — built from `docker/Dockerfile.backend.{cpu,cuda}`, multi-stage `uv` builds. Run `uvicorn nextext.api.main:app` with a `HEALTHCHECK` against `/api/v1/health`. Reachable only on the `inference-net` network by default; no host port is published.
-- `frontend-cpu` / `frontend-cuda` — built from `docker/Dockerfile.frontend` (single-stage `uv`, `--only-group frontend`). The base `docker/compose.yaml` is the production shape and publishes no host ports; `docker/compose.override.yaml` (layered by `make up-dev`) publishes Streamlit on `${NEXTEXT_HOST_PORT:-8501}`.
+- `backend` — built from `docker/Dockerfile.backend`, multi-stage `uv` build (no extras; runtime apt is `curl` only — all inference, including the VAD guard, is external). Runs `uvicorn nextext.api.main:app` with a `HEALTHCHECK` against `/api/v1/health`. Reachable only on the `inference-net` network by default; no host port is published.
+- `frontend` — built from `docker/Dockerfile.frontend` (single-stage `uv`, `--only-group frontend`). The base `docker/compose.yaml` is the production shape and publishes no host ports; `docker/compose.override.yaml` (layered by `make up-dev`) publishes Streamlit on `${NEXTEXT_HOST_PORT:-8501}`.
 
-Both profiles share `inference-net` with Ollama / vLLM. The `Makefile` is the entry point — it points Compose at `docker/compose.yaml`, since a bare `docker compose` from the repo root no longer finds it. The profile (`cpu`/`cuda`) is read from `PROFILE` in `.env` (default `cpu`); override per-invocation as `make up PROFILE=cuda`. Run `make volumes` (one-time, creates the external model-cache volumes), then `make build && make up` for production shape, or `make build && make up-dev` to publish the Streamlit frontend on the host.
+The stack shares `inference-net` with the inference provider (vllm-service / Ollama). The `Makefile` is the entry point — it points Compose at `docker/compose.yaml`, since a bare `docker compose` from the repo root no longer finds it. Run `make volumes` (one-time, creates the external `nltk-cache`/`spacy-cache` volumes), then `make build && make up` for production shape, or `make build && make up-dev` to publish the Streamlit frontend on the host.
 
 ## Persistence model
 

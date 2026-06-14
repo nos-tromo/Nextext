@@ -7,6 +7,7 @@ import pandas as pd
 import pytest
 
 from nextext import pipeline
+from nextext.utils.env_cfg import WhisperClientConfig
 
 
 @pytest.fixture
@@ -54,15 +55,23 @@ def enable_docker_env(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_transcription_pipeline_invokes_transcriber_and_diarizes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A multi-speaker request transcribes, then diarizes via the /diarize client.
+    """The pipeline builds the external transcriber and runs diarization for multi-speaker jobs.
 
     Args:
         monkeypatch (pytest.MonkeyPatch): The monkeypatch fixture for modifying behavior.
     """
-    monkeypatch.setenv("INFERENCE_PROVIDER", "ollama")
+    monkeypatch.setattr(
+        pipeline,
+        "load_whisper_env",
+        lambda: WhisperClientConfig(api_base="http://audio:8000/v1", api_key="k", model="test-model"),
+    )
 
     class DummyTranscriber:
-        """A dummy transcriber recording its parameters and exposing transcription_result."""
+        """A dummy transcriber standing in for ExternalWhisperTranscriber.
+
+        It records the parameters passed to it and whether its methods were called,
+        allowing us to verify the pipeline's behavior.
+        """
 
         instance: "DummyTranscriber"
 
@@ -70,6 +79,7 @@ def test_transcription_pipeline_invokes_transcriber_and_diarizes(
             self,
             file_path: Path,
             src_lang: str,
+            model_id: str,
             n_speakers: int,
         ) -> None:
             """Initialize the dummy transcriber with the given parameters.
@@ -77,11 +87,13 @@ def test_transcription_pipeline_invokes_transcriber_and_diarizes(
             Args:
                 file_path (Path): Path to the audio file.
                 src_lang (str): Source language code.
+                model_id (str): Whisper model name resolved from the env config.
                 n_speakers (int): Maximum speaker count for diarization.
             """
             self.params = {
                 "file_path": file_path,
                 "src_lang": src_lang,
+                "model_id": model_id,
                 "n_speakers": n_speakers,
             }
             self.transcription_called = False
@@ -128,7 +140,7 @@ def test_transcription_pipeline_invokes_transcriber_and_diarizes(
         """
         assign_calls.append((transcription_segments, diarize_segments))
 
-    monkeypatch.setattr(pipeline, "WhisperTranscriber", DummyTranscriber)
+    monkeypatch.setattr(pipeline, "ExternalWhisperTranscriber", DummyTranscriber)
     monkeypatch.setattr(pipeline, "diarize_file", fake_diarize_file)
     monkeypatch.setattr(pipeline, "assign_speakers_by_overlap", fake_assign)
 
@@ -140,6 +152,7 @@ def test_transcription_pipeline_invokes_transcriber_and_diarizes(
 
     instance = DummyTranscriber.instance
     assert instance.params["n_speakers"] == 2
+    assert instance.params["model_id"] == "test-model"
     assert instance.transcription_called is True
     assert diarize_calls["max_speakers"] == 2
     assert len(assign_calls) == 1
@@ -155,7 +168,11 @@ def test_transcription_pipeline_falls_back_to_original_language(
     Args:
         monkeypatch (pytest.MonkeyPatch): The monkeypatch fixture for modifying behavior.
     """
-    monkeypatch.setenv("INFERENCE_PROVIDER", "ollama")
+    monkeypatch.setattr(
+        pipeline,
+        "load_whisper_env",
+        lambda: WhisperClientConfig(api_base="http://audio:8000/v1", api_key="k", model="test-model"),
+    )
 
     class DummyTranscriber:
         """A dummy transcriber that leaves src_lang unset to exercise the fallback path."""
@@ -189,7 +206,7 @@ def test_transcription_pipeline_falls_back_to_original_language(
         """
         pytest.fail("diarize_file should not be called when n_speakers <= 1")
 
-    monkeypatch.setattr(pipeline, "WhisperTranscriber", DummyTranscriber)
+    monkeypatch.setattr(pipeline, "ExternalWhisperTranscriber", DummyTranscriber)
     monkeypatch.setattr(pipeline, "diarize_file", fail_diarize)
 
     df, detected_lang = pipeline.transcription_pipeline(
@@ -210,7 +227,11 @@ def test_transcription_pipeline_skips_diarization_for_empty_transcript(
     Args:
         monkeypatch (pytest.MonkeyPatch): The monkeypatch fixture for modifying behavior.
     """
-    monkeypatch.setenv("INFERENCE_PROVIDER", "ollama")
+    monkeypatch.setattr(
+        pipeline,
+        "load_whisper_env",
+        lambda: WhisperClientConfig(api_base="http://audio:8000/v1", api_key="k", model="test-model"),
+    )
 
     class DummyTranscriber:
         """A dummy transcriber that yields an empty transcript."""
@@ -244,7 +265,7 @@ def test_transcription_pipeline_skips_diarization_for_empty_transcript(
         """
         pytest.fail("diarize_file should not be called for an empty transcript")
 
-    monkeypatch.setattr(pipeline, "WhisperTranscriber", DummyTranscriber)
+    monkeypatch.setattr(pipeline, "ExternalWhisperTranscriber", DummyTranscriber)
     monkeypatch.setattr(pipeline, "diarize_file", fail_diarize)
 
     df, detected_lang = pipeline.transcription_pipeline(

@@ -10,25 +10,10 @@ from nextext.core.diarization import assign_speakers_by_overlap, diarize_file
 from nextext.core.hate_speech import HateSpeechDetector
 from nextext.core.ner import extract_entities
 from nextext.core.openai_cfg import InferencePipeline
+from nextext.core.transcription import ExternalWhisperTranscriber
 from nextext.core.translation import Translator
 from nextext.core.words import WordCounter
-from nextext.utils.env_cfg import load_transcription_env
-
-WhisperTranscriber: Any = None
-ExternalWhisperTranscriber: Any = None
-
-try:
-    from nextext.core.transcription import (
-        ExternalWhisperTranscriber as _ExternalWhisperTranscriber,
-    )
-    from nextext.core.transcription import (
-        WhisperTranscriber as _WhisperTranscriber,
-    )
-except Exception:  # pragma: no cover - environment-specific optional dependency failure
-    pass
-else:
-    WhisperTranscriber = _WhisperTranscriber
-    ExternalWhisperTranscriber = _ExternalWhisperTranscriber
+from nextext.utils.env_cfg import load_whisper_env
 
 
 def transcription_pipeline(
@@ -36,16 +21,16 @@ def transcription_pipeline(
     src_lang: str,
     n_speakers: int,
 ) -> tuple[pd.DataFrame, str]:
-    """Transcribe the audio file using either a local Whisper model or an external API.
+    """Transcribe the audio file via the external Whisper API.
 
-    The transcription provider is derived from ``INFERENCE_PROVIDER``: ``ollama``
-    runs the bundled ``openai-whisper`` locally, while ``openai`` and ``vllm``
-    forward the audio to an OpenAI-compatible ``/v1/audio/transcriptions``
-    endpoint. Whisper always transcribes in the source language; translation to
-    a target language is handled separately by :func:`translation_pipeline`.
+    The audio always goes to an OpenAI-compatible ``/v1/audio/transcriptions``
+    endpoint resolved by :func:`nextext.utils.env_cfg.load_whisper_env`;
+    Nextext ships no local Whisper. Whisper always transcribes in the source
+    language — translation to a target language is handled separately by
+    :func:`translation_pipeline`.
 
-    Diarization is provider-independent: when ``n_speakers > 1`` the audio is
-    sent to the out-of-process ``/diarize`` service (see
+    Diarization runs out-of-process: when ``n_speakers > 1`` and the transcript
+    is non-empty the audio is sent to the ``/diarize`` service (see
     :func:`nextext.core.diarization.diarize_file`) and the returned speaker
     turns are aligned onto the transcript by maximum overlap. It is skipped for
     single-speaker requests and for empty transcripts, and degrades to an
@@ -62,36 +47,18 @@ def transcription_pipeline(
         tuple[pd.DataFrame, str]: The transcript DataFrame and the
             resolved source language code.
     """
-    config = load_transcription_env()
-
-    transcriber: Any
-    if config.provider == "external":
-        if ExternalWhisperTranscriber is None:
-            raise RuntimeError(
-                "Transcription dependencies could not be imported. Please verify the openai package installation."
-            )
-        transcriber = ExternalWhisperTranscriber(
-            file_path=file_path,
-            src_lang=src_lang,
-            model_id=config.whisper_model,
-        )
-    else:
-        if WhisperTranscriber is None:
-            raise RuntimeError(
-                "Transcription dependencies could not be imported. Verify the openai-whisper "
-                "and torchaudio installation."
-            )
-        transcriber = WhisperTranscriber(
-            file_path=file_path,
-            src_lang=src_lang,
-            n_speakers=n_speakers,
-        )
-
+    config = load_whisper_env()
+    transcriber = ExternalWhisperTranscriber(
+        file_path=file_path,
+        src_lang=src_lang,
+        model_id=config.model,
+        n_speakers=n_speakers,
+    )
     transcriber.transcription()
 
-    # Diarization runs against the /diarize HTTP service for every provider.
-    # Skip it for single-speaker requests and for empty transcripts (silent
-    # audio short-circuited by the speech guard) to avoid a needless request.
+    # Diarization runs against the /diarize HTTP service. Skip it for
+    # single-speaker requests and for empty transcripts (silent audio
+    # short-circuited by the speech guard) to avoid a needless request.
     segments = transcriber.transcription_result["segments"] if transcriber.transcription_result else []
     if n_speakers > 1 and segments:
         diarize_segments = diarize_file(file_path, max_speakers=n_speakers)

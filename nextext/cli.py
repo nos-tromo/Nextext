@@ -28,11 +28,8 @@ from nextext.pipeline import (
     translation_pipeline,
     wordlevel_pipeline,
 )
-from nextext.utils.env_cfg import set_offline_env
 from nextext.utils.log_cfg import setup_logging
-from nextext.utils.model_registry import flush_gpu
 
-set_offline_env()
 setup_logging()
 
 
@@ -283,10 +280,7 @@ def main() -> None:
     # Parse command-line arguments
     args = parse_arguments()
 
-    try:
-        _run_main(args)
-    finally:
-        flush_gpu()
+    _run_main(args)
 
 
 def _run_main(args: argparse.Namespace) -> None:

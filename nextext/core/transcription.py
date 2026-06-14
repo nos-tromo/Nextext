@@ -1,29 +1,23 @@
-"""Audio transcription with openai-whisper."""
+"""Audio transcription via an external OpenAI-compatible Whisper API.
 
-import os
+An external ``/vad`` speech guard (see :func:`nextext.core.vad.has_speech`)
+keeps silent and noise-only audio away from the remote endpoint; speaker
+diarization is delegated to the external service behind
+:func:`nextext.core.diarization.diarize_file`.
+"""
+
 from datetime import timedelta
 from pathlib import Path as Path  # re-exported for tests that monkeypatch nextext.core.transcription.Path
-from typing import Any, cast
+from typing import Any
 
-import numpy as np
 import pandas as pd
-import torch as torch
-import whisper as whisper
-from dotenv import load_dotenv
 from loguru import logger
 from openai import APIStatusError, OpenAI
 
-from nextext.utils.env_cfg import load_inference_env, load_vad_env
+from nextext.core.diarization import diarize_file
+from nextext.core.vad import has_speech
+from nextext.utils.env_cfg import load_inference_env, load_whisper_env
 from nextext.utils.mappings_loader import load_mappings
-from nextext.utils.model_registry import REGISTRY, ModelSpec, Strategy
-
-load_dotenv()
-
-# Whisper always transcribes; translation is handled downstream by the LLM
-# (``TEXT_MODEL``), so a single turbo checkpoint covers both language
-# detection and transcription. The heavier ``large-v3`` translate model has
-# been retired along with Whisper's built-in translate task.
-LOCAL_WHISPER_MODEL: str = "large-v3-turbo"
 
 OPENAI_WHISPER_MAX_UPLOAD_BYTES: int = 25 * 1024 * 1024
 
@@ -32,17 +26,6 @@ OPENAI_WHISPER_MAX_UPLOAD_BYTES: int = 25 * 1024 * 1024
 # ``avg_logprob``, which lets confident hallucinations on silent audio slip
 # through.  Filtering on ``no_speech_prob`` alone catches them.
 NO_SPEECH_THRESHOLD: float = 0.6
-
-# Audio with an RMS energy below this value is treated as silence and skipped
-# before Whisper runs. 0.01 ~ -40 dB; normal speech sits well above 0.03.
-# This catches cases where ``no_speech_prob`` filtering alone is insufficient
-# because Whisper can hallucinate with low ``no_speech_prob`` on quiet noise.
-SILENCE_RMS_THRESHOLD: float = 0.01
-
-SILERO_VAD_REPO: str = "snakers4/silero-vad"
-
-# Three-state lazy cache: False = not attempted, None = failed, tuple = ready.
-_vad_cache: tuple[Any, Any] | None | bool = False
 
 
 def _normalize_whisper_language(value: str | None) -> str | None:
@@ -70,107 +53,6 @@ def _normalize_whisper_language(value: str | None) -> str | None:
     code_to_name = load_mappings("whisper_languages.json")
     name_to_code = {name.lower(): code for code, name in code_to_name.items()}
     return name_to_code.get(value.lower(), value)
-
-
-def _get_vad() -> tuple[Any, Any] | None:
-    """Lazily load the Silero VAD model via ``torch.hub``.
-
-    Failure is cached so ``torch.hub.load`` is not retried on every file.
-
-    Returns:
-        tuple[Any, Any] | None: A ``(model, get_speech_timestamps)`` tuple,
-            or ``None`` when the model could not be loaded (network error,
-            missing cache, etc.).
-    """
-    global _vad_cache
-    if _vad_cache is not False:
-        return cast(tuple[Any, Any] | None, _vad_cache)
-    try:
-        model, utils = torch.hub.load(  # type: ignore[no-untyped-call]
-            SILERO_VAD_REPO,
-            model="silero_vad",
-            trust_repo=True,
-        )
-        _vad_cache = (model, utils[0])  # utils[0] = get_speech_timestamps
-        logger.info("Silero VAD model loaded.")
-    except Exception as exc:
-        logger.warning("Could not load Silero VAD ({}). Falling back to RMS-only.", exc)
-        _vad_cache = None
-    return _vad_cache
-
-
-def _detect_speech_vad(audio: np.ndarray, sample_rate: int = 16000) -> bool | None:
-    """Check whether ``audio`` contains human speech using Silero VAD.
-
-    Args:
-        audio (np.ndarray): Float32 waveform (mono, 16 kHz).
-        sample_rate (int): Sample rate of ``audio``.
-
-    Returns:
-        bool | None: ``True`` if speech is found, ``False`` if no speech is
-            detected, or ``None`` when the VAD model is unavailable
-            (graceful fallback).
-    """
-    vad = _get_vad()
-    if vad is None:
-        return None
-    model, get_speech_timestamps = vad
-    tensor = torch.from_numpy(audio).float()
-    timestamps = get_speech_timestamps(tensor, model, sampling_rate=sample_rate)
-    return len(timestamps) > 0
-
-
-def _load_audio_waveform(file_path: Path) -> np.ndarray:
-    """Decode ``file_path`` into a float32 mono 16 kHz waveform.
-
-    Thin wrapper over :func:`whisper.load_audio` so every caller in this
-    module — both the local and the external transcriber — shares the
-    exact same decoding step (same sample rate, same normalisation).
-
-    Args:
-        file_path (Path): Path to the audio file to decode.
-
-    Returns:
-        np.ndarray: Float32 mono waveform sampled at 16 kHz.
-    """
-    return cast(np.ndarray, whisper.load_audio(str(file_path)))
-
-
-def _audio_has_speech(audio: np.ndarray) -> tuple[bool, str | None]:
-    """Gate an audio waveform against the pre-Whisper hallucination guards.
-
-    Combines the two pre-transcription checks that both the local and
-    external transcribers run. Keeping them in one helper ensures the two
-    paths cannot drift:
-
-    1. **RMS energy** — waveforms below :data:`SILENCE_RMS_THRESHOLD` are
-       treated as digital silence and rejected without invoking Silero.
-    2. **Silero VAD** — when ``VAD_ENABLED`` is set (the default, via
-       :func:`load_vad_env`), waveforms that carry energy but no
-       detectable human speech are rejected. VAD returning ``None``
-       (graceful fallback when the model could not be loaded) is treated
-       as a pass: the RMS check has already run.
-
-    Args:
-        audio (np.ndarray): Float32 mono waveform sampled at 16 kHz (the
-            format returned by :func:`_load_audio_waveform`).
-
-    Returns:
-        tuple[bool, str | None]: ``(True, None)`` when the audio should be
-            sent to Whisper; ``(False, reason)`` when it should be skipped.
-            ``reason`` is a short, log-friendly explanation.
-    """
-    rms = float(np.sqrt(np.mean(audio**2)))
-    if rms < SILENCE_RMS_THRESHOLD:
-        return (
-            False,
-            f"Audio RMS ({rms:.6f}) below silence threshold ({SILENCE_RMS_THRESHOLD})",
-        )
-    if load_vad_env().enabled:
-        has_speech = _detect_speech_vad(audio)
-        if has_speech is False:
-            return False, "VAD detected no speech"
-    return True, None
 
 
 def _filter_no_speech_segments(
@@ -309,314 +191,62 @@ def _merge_transcriptions_by_sentence(
     return merged_df
 
 
-def _load_whisper(model_id: str) -> Any:
-    """Load an openai-whisper model onto CPU.
-
-    The registry mover is responsible for moving the instance onto GPU when
-    acquired, so loaders always build on CPU regardless of hardware.
-
-    Args:
-        model_id (str): openai-whisper model identifier.
-
-    Returns:
-        Any: The loaded Whisper model on CPU.
-    """
-    logger.info("Loading Whisper model '{}' on CPU.", model_id)
-    return whisper.load_model(model_id, device="cpu")
-
-
-def _move_torch_module(model: Any, device: str) -> Any:
-    """Move an ``nn.Module``-like object (the Whisper model) to ``device``.
+def _assign_speakers(
+    segments: list[dict[str, Any]],
+    speaker_turns: list[dict[str, Any]],
+) -> None:
+    """Assign speaker labels to transcription segments by maximum overlap.
 
     Args:
-        model (Any): A model with a ``.to()`` method, e.g. a Whisper model.
-        device (str): Target device string, e.g. ``"cuda"`` or ``"cpu"``.
-
-    Returns:
-        Any: The same model instance after the in-place move.
+        segments (list[dict[str, Any]]): Whisper segment dicts carrying
+            ``start``/``end`` seconds; mutated in place — the winning
+            ``speaker`` label is written into each overlapping segment.
+        speaker_turns (list[dict[str, Any]]): Diarization speaker turns as
+            ``{"start", "end", "speaker"}`` dicts, as returned by
+            :func:`nextext.core.diarization.diarize_file`.
     """
-    model.to(torch.device(device))
-    return model
-
-
-# Whisper uses sparse-tensor ops that are not implemented on the Apple Silicon
-# SparseMPS backend; PYTORCH_ENABLE_MPS_FALLBACK=1 only covers the regular MPS
-# backend, so promoting the model to MPS raises NotImplementedError mid-move.
-# Mark it mps_compatible=False so acquire() pins it to CPU on Mac while CUDA is
-# still used where available.
-REGISTRY.register(
-    ModelSpec(
-        name="whisper_turbo",
-        loader=lambda: _load_whisper(LOCAL_WHISPER_MODEL),
-        mover=_move_torch_module,
-        default_strategy=Strategy.OFFLOAD,
-        mps_compatible=False,
-    )
-)
-
-
-class WhisperTranscriber:
-    """Transcribes audio using openai-whisper.
-
-    The GPU-resident Whisper turbo checkpoint is managed through the
-    process-wide :data:`REGISTRY` and acquired lazily on first use.  Between
-    files, call :func:`nextext.utils.model_registry.flush_gpu` to reclaim VRAM.
-
-    Whisper always transcribes; translation to the target language is handled
-    downstream by the LLM (``TEXT_MODEL``), so this class no longer takes a
-    ``task`` and never loads the retired ``large-v3`` translate model.
-    Diarization is no longer performed in-process: the pipeline labels speakers
-    out-of-band via the ``/diarize`` service (see
-    :func:`nextext.core.diarization.diarize_file`). ``n_speakers`` is retained
-    only so :meth:`transcript_output` knows whether to keep a speaker column.
-
-    Attributes:
-        src_lang (str): Source language of the audio, resolved during ``__init__``.
-        n_speakers (int): Maximum speaker count requested. When greater than 1,
-            speaker labels attached upstream by the pipeline are preserved by
-            :meth:`transcript_output`; a value of 1 drops any speaker column.
-        start_column (str): DataFrame column for segment start times.
-        end_column (str): DataFrame column for segment end times.
-        speaker_column (str): DataFrame column for speaker labels.
-        text_column (str): DataFrame column for transcribed text.
-        transcription_device (str): Preferred device for inference
-            (``"cuda"`` or ``"cpu"``).
-        audio (np.ndarray): Audio loaded at 16 kHz by whisper.
-        transcription_result (Optional[dict[str, Any]]): Raw output populated
-            by :meth:`transcription`.
-        df (Optional[pd.DataFrame]): Final DataFrame populated by
-            :meth:`transcript_output`.
-    """
-
-    def __init__(
-        self,
-        file_path: Path,
-        src_lang: str | None = None,
-        n_speakers: int = 1,
-        start_column: str = "start",
-        end_column: str = "end",
-        speaker_column: str = "speaker",
-        text_column: str = "text",
-        whisper_language_file: str = "whisper_languages.json",
-    ) -> None:
-        """Initialize the WhisperTranscriber object.
-
-        Args:
-            file_path (Path): The path to the input file.
-            src_lang (str, optional): The source language of the file. Defaults to None
-                (triggers language detection).
-            n_speakers (int): The maximum number of speakers to identify in the audio. Defaults to 1.
-            start_column (str): The text column with the starting timestamp. Defaults to "start".
-            end_column (str): The text column with the ending timestamp. Defaults to "end".
-            speaker_column (str): The text column with the speaker information. Defaults to "speaker".
-            text_column (str): The text column where the result is stored. Defaults to "text".
-            whisper_language_file (str): Path to the Whisper language mapping file.
-        """
-        self.n_speakers = n_speakers
-        self.start_column = start_column
-        self.end_column = end_column
-        self.speaker_column = speaker_column
-        self.text_column = text_column
-
-        self.transcription_device = "cuda" if torch.cuda.is_available() else "cpu"
-        self.audio = self._load_audio(file_path)
-        # Run the silence/VAD guard once, up-front. If the file has no speech
-        # we skip language detection entirely: there is no point promoting
-        # Whisper to its accelerator for audio we know we will not transcribe.
-        self._speech_check: tuple[bool, str | None] = _audio_has_speech(self.audio)
-
-        whisper_languages = load_mappings(whisper_language_file)
-        if self._speech_check[0]:
-            det_lang = self._detect_language() or "en"
-        else:
-            logger.info("{}; skipping language detection.", self._speech_check[1])
-            det_lang = src_lang or "en"
-        self.src_lang = src_lang if src_lang in whisper_languages.keys() else det_lang
-        logger.info("Using language '{}' for transcription.", self.src_lang)
-
-        self.transcription_result: dict[str, Any] | None = None
-        self.df: pd.DataFrame | None = None
-
-    @staticmethod
-    def _load_audio(file: Path, sample_rate: int = 16000) -> np.ndarray:
-        """Load the audio file as a numpy array using the whisper library.
-
-        Thin delegate over :func:`_load_audio_waveform` kept so existing
-        callers and tests that reach into ``WhisperTranscriber._load_audio``
-        keep working.
-
-        Args:
-            file (Path): The path to the audio file.
-            sample_rate (int): Unused; whisper always resamples to 16000 Hz.
-
-        Returns:
-            np.ndarray: The loaded audio as a float32 array at 16 kHz.
-        """
-        return _load_audio_waveform(file)
-
-    def _detect_language(self, duration_sec: float = 30.0, sample_rate: int = 16000) -> str | None:
-        """Detect the spoken language using ``large-v3-turbo``.
-
-        The Whisper model is acquired via the process-wide model registry and
-        released as soon as detection finishes. Under the OFFLOAD strategy it
-        stays cached on CPU so a subsequent transcription run can re-promote
-        it to GPU without a fresh disk load.
-
-        Args:
-            duration_sec (float): Number of seconds from the start of the audio to use for detection.
-            sample_rate (int): Sample rate for the audio processing. Defaults to 16000.
-
-        Returns:
-            str | None: Detected language code (e.g., ``"en"``).
-
-        Raises:
-            RuntimeError: If language detection fails.
-        """
-        sample_frames = int(duration_sec * sample_rate)
-        audio_clip = whisper.pad_or_trim(self.audio[:sample_frames])
-        with REGISTRY.acquire("whisper_turbo") as model:
-            mel = whisper.log_mel_spectrogram(audio_clip, n_mels=model.dims.n_mels).to(model.device)
-            _, probs = model.detect_language(mel)
-            detected_lang = max(probs, key=probs.get)
-
-        if not detected_lang:
-            raise RuntimeError("Language detection failed.")
-
-        logger.info("Detected language: {}", detected_lang)
-        return cast(str | None, detected_lang)
-
-    def transcription(self) -> None:
-        """Run the transcription process on the loaded audio file using openai-whisper.
-
-        Three pre-/post-transcription guards prevent Whisper hallucinations.
-        Layers 1 & 2 run once in :meth:`__init__` (so silent files never
-        promote a model to GPU); the cached verdict is consulted here:
-
-        1. **RMS energy** — audio below :data:`SILENCE_RMS_THRESHOLD` is
-           digital silence and is skipped instantly.
-        2. **Silero VAD** — when enabled via ``VAD_ENABLED``, audio that
-           contains energy but no human speech is skipped before Whisper
-           runs.
-        3. **no_speech_prob** — segments whose ``no_speech_prob`` exceeds
-           :data:`NO_SPEECH_THRESHOLD` are discarded after transcription.
-        """
-        # Layers 1 & 2: RMS + Silero VAD (computed once in __init__).
-        has_speech, skip_reason = self._speech_check
-        if not has_speech:
-            logger.info("{}; skipping transcription.", skip_reason)
-            self.transcription_result = {"segments": []}
-            return
-
-        # Layer 3: Whisper transcription + no_speech_prob filter
-        try:
-            with REGISTRY.acquire("whisper_turbo") as model:
-                result = model.transcribe(self.audio, task="transcribe", language=self.src_lang)
-            self.transcription_result = {"segments": _filter_no_speech_segments(result["segments"])}
-        except Exception as e:
-            logger.error("Error during transcription: {}", e, exc_info=True)
-            raise
-
-    @staticmethod
-    def _ends_with_punctuation(text: str) -> bool:
-        """Delegate to the module-level sentence-terminator check.
-
-        Args:
-            text (str): The text string to check.
-
-        Returns:
-            bool: ``True`` if ``text`` ends with sentence-ending punctuation.
-        """
-        return _ends_with_punctuation(text)
-
-    @staticmethod
-    def _seconds_to_time(seconds: float) -> str:
-        """Delegate to the module-level ``HH:MM:SS`` formatter.
-
-        Args:
-            seconds (float): The number of seconds to convert.
-
-        Returns:
-            str: The formatted ``HH:MM:SS`` string.
-        """
-        return _seconds_to_time(seconds)
-
-    def _merge_transcriptions_by_sentence(self, data: pd.DataFrame) -> pd.DataFrame:
-        """Merge transcription rows into sentences using instance column names.
-
-        Args:
-            data (pd.DataFrame): The original DataFrame with per-segment rows.
-
-        Returns:
-            pd.DataFrame: A new DataFrame with rows merged by sentence.
-        """
-        return _merge_transcriptions_by_sentence(
-            data,
-            self.start_column,
-            self.end_column,
-            self.speaker_column,
-            self.text_column,
-        )
-
-    def transcript_output(self) -> pd.DataFrame:
-        """Get the transcription result as a DataFrame.
-
-        Returns:
-            pd.DataFrame: A DataFrame containing the transcription results.
-
-        Raises:
-            ValueError: If the transcription result is not available or transcription has not been run.
-        """
-        if self.transcription_result is None or "segments" not in self.transcription_result:
-            raise ValueError("Transcription result is not available. Run transcription first.")
-
-        segments = []
-        has_speaker = any("speaker" in item for item in self.transcription_result["segments"])
-        for item in self.transcription_result["segments"]:
-            row = [
-                _seconds_to_time(item["start"]),
-                _seconds_to_time(item["end"]),
-            ]
-            if has_speaker:
-                row.append(item.get("speaker", "Unknown"))
-            row.append(item["text"])
-            segments.append(row)
-
-        columns: list[str] = [self.start_column, self.end_column]
-        if has_speaker:
-            columns.append(self.speaker_column)
-        columns.append(self.text_column)
-
-        df = pd.DataFrame(segments, columns=pd.Index(columns))
-        if self.n_speakers <= 1 and has_speaker:
-            df.drop(self.speaker_column, axis=1, inplace=True)
-        self.df = self._merge_transcriptions_by_sentence(df)
-        return self.df
+    for segment in segments:
+        seg_start = float(segment["start"])
+        seg_end = float(segment["end"])
+        speaker_durations: dict[str, float] = {}
+        for turn in speaker_turns:
+            overlap_start = max(seg_start, float(turn["start"]))
+            overlap_end = min(seg_end, float(turn["end"]))
+            if overlap_end > overlap_start:
+                speaker = str(turn["speaker"])
+                speaker_durations[speaker] = speaker_durations.get(speaker, 0.0) + (overlap_end - overlap_start)
+        if speaker_durations:
+            segment["speaker"] = max(speaker_durations, key=lambda s: speaker_durations[s])
 
 
 class ExternalWhisperTranscriber:
     """Transcribe audio via an external OpenAI-compatible Whisper API.
 
-    Diarization is not supported; n_speakers is silently ignored. The
-    transcriber only ever calls ``/v1/audio/transcriptions``; translation to
-    the target language is handled downstream by the LLM (``TEXT_MODEL``).
-    Whisper's ``/v1/audio/translations`` endpoint is deliberately not used, as
-    it always emits English and is not served by every OpenAI-compatible
-    backend (vLLM returns 404 for it).
+    Speaker diarization is delegated to the external diarization service
+    (see :func:`nextext.core.diarization.diarize_file`) and merged into the
+    transcribed segments by maximum overlap.
 
     Attributes:
         file_path (Path): Path to the audio file.
         src_lang (str | None): Source language code; populated from API response if not provided.
+        task (str): Task type, "transcribe" or "translate".
+        n_speakers (int): Maximum number of speakers for diarization;
+            values above 1 trigger the external diarization call.
 
     Methods:
         transcription(): Call the external API and store segment results.
+        diarization(): Label segments with speakers via the external service.
         transcript_output(): Return the transcription result as a DataFrame.
     """
 
     def __init__(
         self,
         file_path: Path,
+        trg_lang: str | None = None,
         src_lang: str | None = None,
         model_id: str = "whisper-1",
+        task: str = "transcribe",
+        n_speakers: int = 1,
         start_column: str = "start",
         end_column: str = "end",
         speaker_column: str = "speaker",
@@ -626,16 +256,22 @@ class ExternalWhisperTranscriber:
 
         Args:
             file_path (Path): Path to the audio file.
+            trg_lang (str | None): Accepted for interface compatibility; not forwarded to the API.
             src_lang (str | None): Source language code. Defaults to None (API auto-detects).
             model_id (str): Model name to pass to the external API. Defaults to "whisper-1".
+            task (str): "transcribe" or "translate". Defaults to "transcribe".
+            n_speakers (int): Maximum number of speakers for diarization. Defaults to 1
+                (diarization disabled).
             start_column (str): DataFrame column for segment start times.
             end_column (str): DataFrame column for segment end times.
-            speaker_column (str): Kept for interface compatibility; not used.
+            speaker_column (str): DataFrame column for speaker labels.
             text_column (str): DataFrame column for transcribed text.
         """
         self.file_path = file_path
         self.src_lang = src_lang
+        self.task = task
         self._model_id = model_id
+        self.n_speakers = n_speakers
         self.start_column = start_column
         self.end_column = end_column
         self.speaker_column = speaker_column
@@ -645,14 +281,20 @@ class ExternalWhisperTranscriber:
 
     @property
     def _get_client(self) -> Any:
-        """Lazily create the OpenAI-compatible client from environment variables.
+        """Lazily create the OpenAI-compatible client from the Whisper endpoint config.
+
+        The endpoint resolves via
+        :func:`nextext.utils.env_cfg.load_whisper_env`: the dedicated
+        ``WHISPER_API_BASE``/``WHISPER_API_KEY`` pair when set, else the
+        central ``OPENAI_API_BASE``/``OPENAI_API_KEY``.
 
         Returns:
             Any: The cached OpenAI client instance.
         """
         if self._client is None:
-            client_kwargs: dict[str, Any] = {"api_key": os.getenv("OPENAI_API_KEY", "")}
-            base_url = os.getenv("OPENAI_API_BASE", "").rstrip("/")
+            cfg = load_whisper_env()
+            client_kwargs: dict[str, Any] = {"api_key": cfg.api_key}
+            base_url = cfg.api_base.rstrip("/")
             if base_url:
                 client_kwargs["base_url"] = base_url
             self._client = OpenAI(**client_kwargs)
@@ -661,28 +303,25 @@ class ExternalWhisperTranscriber:
     def transcription(self) -> None:
         """Call the external Whisper API and store the segment results.
 
-        The same three-layer hallucination guard the local transcriber
-        uses is applied here:
+        Two hallucination guards bracket the request:
 
-        1. **RMS energy + Silero VAD** (see :func:`_audio_has_speech`) —
-           the audio is decoded locally once and the guard runs before
-           any remote request, so silent / noise-only files never reach
-           the paid endpoint.
+        1. **External /vad guard** (see :func:`nextext.core.vad.has_speech`)
+           — the file is screened by the ``/vad`` service before any
+           Whisper request, so silent / noise-only files never reach the
+           paid endpoint. The guard is fail-open: an unset or unreachable
+           service lets the file through.
         2. **no_speech_prob post-filter** — segments whose
            ``no_speech_prob`` exceeds :data:`NO_SPEECH_THRESHOLD` are
            dropped from the returned payload.
 
-        Only the ``/v1/audio/transcriptions`` endpoint is called. Whisper's
-        ``/v1/audio/translations`` endpoint is not used: it always emits
-        English and is not served by every OpenAI-compatible backend.
-        Translation to the target language happens downstream in the LLM.
+        Whisper's built-in ``translate`` task always targets English and
+        is exposed by OpenAI-compatible servers as a separate
+        ``/v1/audio/translations`` endpoint. ``task`` itself is not
+        accepted on either endpoint.
         """
-        audio = _load_audio_waveform(self.file_path)
-        has_speech, skip_reason = _audio_has_speech(audio)
-        if not has_speech:
+        if not has_speech(self.file_path):
             logger.warning(
-                "{} for {}; skipping external transcription request.",
-                skip_reason,
+                "VAD service reported no speech in {}; skipping external transcription request.",
                 self.file_path.name,
             )
             self.transcription_result = {"segments": []}
@@ -691,8 +330,9 @@ class ExternalWhisperTranscriber:
         client = self._get_client
         file_size = self.file_path.stat().st_size
         logger.info(
-            "External Whisper request: model='{}' language='{}' file='{}' size={}B",
+            "External Whisper request: model='{}' task='{}' language='{}' file='{}' size={}B",
             self._model_id,
+            self.task,
             self.src_lang,
             self.file_path.name,
             file_size,
@@ -704,21 +344,28 @@ class ExternalWhisperTranscriber:
             raise ValueError(
                 f"Audio file '{self.file_path.name}' is {size_mb:.1f} MB, "
                 f"which exceeds OpenAI's {limit_mb:.0f} MB Whisper upload limit. "
-                "Compress or split the file before retrying, or switch "
-                "INFERENCE_PROVIDER to 'ollama' (local) or 'vllm' (self-hosted, "
-                "no hard cap)."
+                "Compress or split the file before retrying, or point "
+                "WHISPER_API_BASE at a self-hosted endpoint without a hard cap "
+                "(e.g. the vllm-service audio container)."
             )
         try:
             with open(self.file_path, "rb") as f:
-                kwargs: dict[str, Any] = {
-                    "model": self._model_id,
-                    "file": f,
-                    "response_format": "verbose_json",
-                    "timestamp_granularities": ["segment"],
-                }
-                if self.src_lang:
-                    kwargs["language"] = self.src_lang
-                response = client.audio.transcriptions.create(**kwargs)
+                if self.task == "translate":
+                    response = client.audio.translations.create(
+                        model=self._model_id,
+                        file=f,
+                        response_format="verbose_json",
+                    )
+                else:
+                    kwargs: dict[str, Any] = {
+                        "model": self._model_id,
+                        "file": f,
+                        "response_format": "verbose_json",
+                        "timestamp_granularities": ["segment"],
+                    }
+                    if self.src_lang:
+                        kwargs["language"] = self.src_lang
+                    response = client.audio.transcriptions.create(**kwargs)
         except APIStatusError as exc:
             body = getattr(exc, "response", None)
             body_text = body.text if body is not None else ""
@@ -747,16 +394,40 @@ class ExternalWhisperTranscriber:
             self.src_lang,
         )
 
+    def diarization(self) -> None:
+        """Label the transcribed segments with speakers via the external service.
+
+        Uploads the audio file to the diarization endpoint (see
+        :func:`nextext.core.diarization.diarize_file`) and assigns each
+        transcribed segment the speaker with the maximum temporal overlap.
+        Skipped when ``n_speakers <= 1`` or no segments survived
+        transcription (nothing to label — the upload would be wasted).
+
+        The diarization client is fail-soft: when ``DIARIZE_API_BASE`` is
+        unset or the service is unreachable it returns no speaker turns and
+        the segments are left unlabelled (see :mod:`nextext.core.diarization`).
+
+        Raises:
+            ValueError: If transcription has not been run yet.
+        """
+        if self.n_speakers <= 1:
+            logger.info("Skipping diarization as only one speaker is specified.")
+            return
+        if self.transcription_result is None or "segments" not in self.transcription_result:
+            raise ValueError("Transcription result is not available. Run transcription first.")
+        segments = self.transcription_result["segments"]
+        if not segments:
+            logger.info("No transcribed segments to diarize; skipping diarization request.")
+            return
+        speaker_turns = diarize_file(self.file_path, max_speakers=self.n_speakers)
+        _assign_speakers(segments, speaker_turns)
+
     def transcript_output(self) -> pd.DataFrame:
         """Get the external transcription result as a DataFrame.
 
-        A ``speaker`` column is emitted only when the segments carry speaker
-        labels — these are added out-of-band by the pipeline after a successful
-        ``/diarize`` call (the external API itself never returns speakers).
-
         Returns:
-            pd.DataFrame: A DataFrame with ``start``/``end``/``text`` columns,
-                plus a ``speaker`` column when diarization labelled the segments.
+            pd.DataFrame: A DataFrame containing the transcription results,
+            including a speaker column when diarization labeled segments.
 
         Raises:
             ValueError: If transcription has not been run yet.
@@ -764,8 +435,8 @@ class ExternalWhisperTranscriber:
         if self.transcription_result is None or "segments" not in self.transcription_result:
             raise ValueError("Transcription result is not available. Run transcription first.")
 
-        has_speaker = any("speaker" in item for item in self.transcription_result["segments"])
         rows = []
+        has_speaker = any("speaker" in item for item in self.transcription_result["segments"])
         for item in self.transcription_result["segments"]:
             row = [
                 _seconds_to_time(item["start"]),
@@ -782,6 +453,8 @@ class ExternalWhisperTranscriber:
         columns.append(self.text_column)
 
         df = pd.DataFrame(rows, columns=pd.Index(columns))
+        if self.n_speakers <= 1 and has_speaker:
+            df.drop(self.speaker_column, axis=1, inplace=True)
         return _merge_transcriptions_by_sentence(
             df,
             self.start_column,

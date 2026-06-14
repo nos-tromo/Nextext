@@ -1,4 +1,11 @@
-"""Utilities for preloading Nextext language and speech models."""
+"""Utilities for preloading Nextext's spaCy and NLTK language resources.
+
+All model inference runs on external endpoints, so the only assets worth
+preloading are the spaCy model packages (word-level analysis) and the NLTK
+corpora. Downloads are gated by ``NEXTEXT_OFFLINE`` (offline by default —
+see :func:`nextext.utils.env_cfg.is_offline`): airgapped hosts ship the
+caches instead of downloading.
+"""
 
 # Re-exported for tests that monkeypatch through this module.
 import importlib as importlib
@@ -10,12 +17,11 @@ from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as package_version
 from pathlib import Path
 
-import nltk
-import torch as torch  # explicit re-export so tests can monkeypatch torch.hub
-import whisper
+import nltk as nltk
 from dotenv import load_dotenv
 from loguru import logger
 
+from nextext.utils.env_cfg import is_offline
 from nextext.utils.mappings_loader import load_mappings
 
 load_dotenv()
@@ -26,8 +32,6 @@ SPACY_MODEL_PACKAGE_VERSION = "SPACY_MODEL_PACKAGE_VERSION"
 DEFAULT_SPACY_MODEL_DIR = Path.home() / ".cache" / "spacy"
 DEFAULT_SPACY_MODEL_DOWNLOAD_BASE_URL = "https://github.com/explosion/spacy-models/releases/download"
 NLTK_RESOURCES = ("punkt_tab", "stopwords")
-LOCAL_WHISPER_MODEL_IDS: tuple[str, ...] = ("large-v3-turbo",)
-SILERO_VAD_REPO = "snakers4/silero-vad"
 
 
 def get_spacy_model_dir() -> Path:
@@ -142,10 +146,20 @@ def get_spacy_model_ids(
 def ensure_nltk_resources(resources: Iterable[str] = NLTK_RESOURCES) -> None:
     """Download the NLTK resources required by Nextext.
 
+    In offline mode (``NEXTEXT_OFFLINE``, active by default) downloads are
+    skipped; resources already on disk keep working.
+
     Args:
         resources (Iterable[str]): Resource names to fetch.
     """
-    for resource in resources:
+    resolved_resources = list(resources)
+    if is_offline():
+        logger.info(
+            "Offline mode: skipping NLTK resource downloads ({}).",
+            ", ".join(resolved_resources),
+        )
+        return
+    for resource in resolved_resources:
         nltk.download(resource, quiet=True)
         logger.info("Loaded NLTK resource '{}'.", resource)
 
@@ -157,12 +171,20 @@ def download_spacy_model(model_id: str) -> None:
         model_id (str): The name of the spaCy model to download.
 
     Raises:
+        FileNotFoundError: If offline mode is enabled and the model is not
+            already cached.
         subprocess.CalledProcessError: If the subprocess command fails.
     """
     model_dir = ensure_spacy_model_path()
     if is_spacy_model_cached(model_id, model_dir):
         logger.info("spaCy model '{}' already cached in '{}'.", model_id, model_dir)
         return
+
+    if is_offline():
+        raise FileNotFoundError(
+            f"spaCy model '{model_id}' is not cached in '{model_dir}' and offline mode is active. "
+            "Run 'load-models' with NEXTEXT_OFFLINE=0 on a connected host, or ship the cache volume."
+        )
 
     download_url = get_spacy_model_download_url(model_id)
     subprocess.run(
@@ -194,82 +216,14 @@ def preload_spacy_models(model_ids: Iterable[str] | None = None) -> None:
         download_spacy_model(model_id)
 
 
-def preload_whisper_model(model_id: str, device: str = "cpu") -> None:
-    """Download an openai-whisper checkpoint into the local cache.
-
-    The weights are fetched to ``~/.cache/whisper`` (or ``XDG_CACHE_HOME``)
-    without being loaded into host memory, so preloading large checkpoints
-    does not require the RAM needed at inference time.
-
-    Args:
-        model_id (str): The Whisper model ID to preload.
-        device (str): Unused; retained for call-site compatibility.
-    """
-    del device
-
-    if model_id not in whisper._MODELS:
-        raise ValueError(f"Unknown Whisper model '{model_id}'. Available: {sorted(whisper._MODELS)}.")
-
-    default_cache = os.path.join(os.path.expanduser("~"), ".cache")
-    download_root = os.path.join(os.getenv("XDG_CACHE_HOME", default_cache), "whisper")
-
-    logger.info("Downloading Whisper model '{}' to '{}'.", model_id, download_root)
-    checkpoint_path = whisper._download(whisper._MODELS[model_id], download_root, in_memory=False)
-    logger.info("Whisper model '{}' cached at '{}'.", model_id, checkpoint_path)
-
-
-def preload_whisper_models(
-    model_ids: Iterable[str] | None = None,
-    device: str = "cpu",
-) -> None:
-    """Preload the local openai-whisper models used by Nextext.
-
-    Args:
-        model_ids (Iterable[str] | None): Optional explicit model IDs to
-            preload. Defaults to :data:`LOCAL_WHISPER_MODEL_IDS`.
-        device (str): Device used for the preload step.
-    """
-    resolved_model_ids = list(model_ids or LOCAL_WHISPER_MODEL_IDS)
-    for model_id in resolved_model_ids:
-        preload_whisper_model(model_id, device=device)
-
-
-def preload_silero_vad() -> None:
-    """Download and cache the Silero VAD model via ``torch.hub``.
-
-    VAD is an optional pre-screen accelerator. A failure here is logged as a
-    warning rather than raised, mirroring the runtime fallback in
-    ``nextext.core.transcription._get_vad``: transcription degrades to
-    RMS-only speech detection when the model is unavailable (e.g. ``torchaudio``
-    is not installed in a CPU-only environment).
-    """
-    logger.info("Downloading Silero VAD model from '{}'.", SILERO_VAD_REPO)
-    try:
-        torch.hub.load(SILERO_VAD_REPO, model="silero_vad", trust_repo=True)  # type: ignore[no-untyped-call]
-    except Exception as exc:
-        logger.warning("Could not preload Silero VAD ({}). Transcription will fall back to RMS-only.", exc)
-        return
-    logger.info("Silero VAD model cached.")
-
-
-def _get_default_device() -> str:
-    """Resolve the preferred device for preload operations.
-
-    Returns:
-        str: ``cuda`` when available, otherwise ``cpu``.
-    """
-    return "cuda" if torch.cuda.is_available() else "cpu"
-
-
 def main() -> None:
-    """Preload Nextext's local language and speech models.
+    """Preload Nextext's spaCy and NLTK language resources.
 
     Raises:
         RuntimeError: If any preload operation fails.
     """
     failures: list[str] = []
-    device = _get_default_device()
-    logger.info("Preloading Nextext models on device '{}'.", device)
+    logger.info("Preloading Nextext language resources (offline={}).", is_offline())
 
     try:
         ensure_nltk_resources()
@@ -282,21 +236,10 @@ def main() -> None:
         except Exception as exc:
             failures.append(f"spaCy {model_id} ({exc})")
 
-    for model_id in LOCAL_WHISPER_MODEL_IDS:
-        try:
-            preload_whisper_model(model_id, device=device)
-        except Exception as exc:
-            failures.append(f"Whisper {model_id} ({exc})")
-
-    # Silero VAD is an optional pre-screen; preload_silero_vad() degrades to a
-    # warning (RMS-only fallback) instead of raising, so it stays out of the
-    # fatal failure aggregation above.
-    preload_silero_vad()
-
     if failures:
         raise RuntimeError("Failed to preload models: " + "; ".join(failures))
 
-    logger.info("All Nextext preload models are available.")
+    logger.info("All Nextext preload resources are available.")
 
 
 if __name__ == "__main__":
