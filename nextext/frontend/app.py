@@ -93,10 +93,10 @@ def _get_client(owner_id: str) -> BackendClient:
     cannot accidentally share a client (and therefore an identity).
 
     Args:
-        owner_id: Stable UUID4 hex from the browser's ``localStorage``.
+        owner_id: Stable per-browser id carried in the page URL (``?owner=``).
 
     Returns:
-        BackendClient: A long-lived client with the ``X-Owner-Id``
+        BackendClient: A long-lived client with the trusted identity
             header pre-bound.
     """
     return BackendClient(owner_id=owner_id)
@@ -218,30 +218,71 @@ def _render_event_delta(container: Any, event: StageEvent) -> None:
             container.warning(f"**Hate speech:** {flagged} segment(s) flagged")
 
 
-def _process_uploaded_files(
+def _submit_files(
+    client: BackendClient,
     uploaded_files: Sequence[Any],
     opts: dict[str, Any],
-    results_container: Any | None = None,
-) -> list[dict[str, Any]]:
-    """Submit each uploaded file as a backend job and collect snapshots.
+) -> list[dict[str, str]]:
+    """Submit every uploaded file up front and return their job handles.
+
+    Submitting the whole batch before tracking means the backend has
+    queued every job, so a browser reload mid-run can re-discover and
+    resume them via :meth:`BackendClient.list_jobs`.
 
     Args:
+        client: Backend client bound to the caller's identity.
         uploaded_files: Streamlit ``UploadedFile`` objects.
         opts: Pipeline options matching :class:`JobOptions`.
+
+    Returns:
+        list[dict[str, str]]: ``[{"job_id": ..., "file_name": ...}, ...]``
+            for every file the backend accepted, in upload order.
+    """
+    jobs: list[dict[str, str]] = []
+    for index, uploaded_file in enumerate(uploaded_files, start=1):
+        raw_name = str(getattr(uploaded_file, "name", f"File {index}"))
+        file_name = Path(raw_name).name or f"File {index}"
+        if hasattr(uploaded_file, "seek"):
+            uploaded_file.seek(0)
+        payload = uploaded_file.read()
+        try:
+            job_id = client.submit_job(file_name, payload, opts)
+        except Exception as exc:
+            logger.exception("Failed to submit job for {}.", file_name)
+            st.warning(f"Could not submit {file_name}: {exc}")
+            continue
+        jobs.append({"job_id": job_id, "file_name": file_name})
+    return jobs
+
+
+def _track_jobs(
+    client: BackendClient,
+    jobs: Sequence[dict[str, str]],
+    results_container: Any | None = None,
+) -> list[dict[str, Any]]:
+    """Follow queued/running jobs to completion and collect their results.
+
+    Re-attachable by design: a job that is still running (e.g. after a
+    browser reload) replays its event history on subscribe, so the live
+    progress view resumes where it left off; a job that already finished
+    is read straight from its snapshot without re-running anything.
+
+    Args:
+        client: Backend client bound to the caller's identity.
+        jobs: ``[{"job_id": ..., "file_name": ...}, ...]`` to follow.
         results_container: Optional Streamlit container for inline progress.
 
     Returns:
-        list[dict[str, Any]]: Result payloads in upload order.
+        list[dict[str, Any]]: Normalized result payloads, in input order.
     """
-    client = _get_client(_get_owner_id())
-    total_files = len(uploaded_files)
+    total_files = len(jobs)
     total_stages = len(PIPELINE_STAGE_LABELS)
     progress_bar = st.progress(0.0, text="Preparing files…")
     results: list[dict[str, Any]] = []
 
-    for file_index, uploaded_file in enumerate(uploaded_files, start=1):
-        raw_name = str(getattr(uploaded_file, "name", f"File {file_index}"))
-        file_name = Path(raw_name).name or f"File {file_index}"
+    for file_index, job in enumerate(jobs, start=1):
+        job_id = job["job_id"]
+        file_name = job.get("file_name") or job_id
 
         file_status = None
         if results_container is not None:
@@ -251,72 +292,60 @@ def _process_uploaded_files(
                 state="running",
             )
 
-        if hasattr(uploaded_file, "seek"):
-            uploaded_file.seek(0)
-        payload = uploaded_file.read()
-        try:
-            job_id = client.submit_job(file_name, payload, opts)
-        except Exception as exc:
-            logger.exception("Failed to submit job for {}.", file_name)
-            if file_status is not None:
-                file_status.update(
-                    label=f"{file_name} — submit failed: {exc}",
-                    state="error",
-                    expanded=False,
-                )
-            continue
-
-        terminal: StageEvent | None = None
-        try:
-            for event in client.subscribe_events(job_id):
-                stage_index = int(event.data.get("stage_index", 0))
-                stage_name = str(event.data.get("stage") or "Processing")
-                progress_bar.progress(
-                    progress_value(
-                        file_index=file_index,
-                        total_files=total_files,
-                        stage_index=min(stage_index, total_stages - 1),
-                        total_stages=total_stages,
-                    ),
-                    text=(f"Processing file {file_index}/{total_files}: {file_name} ({stage_name})"),
-                )
-                if file_status is not None and event.name == "stage_completed":
-                    _render_event_delta(file_status, event)
-                if event.name in {"job_completed", "job_failed"}:
-                    terminal = event
-                    break
-        except Exception as exc:
-            logger.exception("SSE subscription failed for {}.", file_name)
-            if file_status is not None:
-                file_status.update(
-                    label=f"{file_name} — stream failed: {exc}",
-                    state="error",
-                    expanded=False,
-                )
-            continue
-
-        if terminal is None or terminal.name == "job_failed":
-            error = terminal.data.get("error") if terminal is not None else "Unknown failure"
-            if file_status is not None:
-                file_status.update(
-                    label=f"{file_name} — failed: {error}",
-                    state="error",
-                    expanded=False,
-                )
-            else:
-                st.warning(f"File {file_index}/{total_files} failed — {file_name}: {error}")
-            continue
-
         try:
             snapshot = client.get_snapshot(job_id)
         except Exception as exc:
             logger.exception("Failed to fetch snapshot for {}.", job_id)
             if file_status is not None:
-                file_status.update(
-                    label=f"{file_name} — snapshot failed: {exc}",
-                    state="error",
-                    expanded=False,
-                )
+                file_status.update(label=f"{file_name} — unavailable: {exc}", state="error", expanded=False)
+            continue
+
+        status = str(snapshot.get("status", ""))
+        if status in {"queued", "running"}:
+            try:
+                for event in client.subscribe_events(job_id):
+                    stage_index = int(event.data.get("stage_index", 0))
+                    stage_name = str(event.data.get("stage") or "Processing")
+                    progress_bar.progress(
+                        progress_value(
+                            file_index=file_index,
+                            total_files=total_files,
+                            stage_index=min(stage_index, total_stages - 1),
+                            total_stages=total_stages,
+                        ),
+                        text=(f"Processing file {file_index}/{total_files}: {file_name} ({stage_name})"),
+                    )
+                    if file_status is not None and event.name == "stage_completed":
+                        _render_event_delta(file_status, event)
+                    if event.name in {"job_completed", "job_failed"}:
+                        break
+            except Exception as exc:
+                logger.exception("SSE subscription failed for {}.", file_name)
+                if file_status is not None:
+                    file_status.update(label=f"{file_name} — stream failed: {exc}", state="error", expanded=False)
+                continue
+            try:
+                snapshot = client.get_snapshot(job_id)
+            except Exception as exc:
+                logger.exception("Failed to fetch snapshot for {}.", job_id)
+                if file_status is not None:
+                    file_status.update(label=f"{file_name} — snapshot failed: {exc}", state="error", expanded=False)
+                continue
+            status = str(snapshot.get("status", ""))
+
+        if status == "failed":
+            error = snapshot.get("error") or "Unknown failure"
+            if file_status is not None:
+                file_status.update(label=f"{file_name} — failed: {error}", state="error", expanded=False)
+            else:
+                st.warning(f"File {file_index}/{total_files} failed — {file_name}: {error}")
+            continue
+
+        if status != "completed":
+            # A still-queued/running job with no terminal event, or one that
+            # was interrupted by a backend restart — surface and move on.
+            if file_status is not None:
+                file_status.update(label=f"{file_name} — {status or 'unavailable'}", state="error", expanded=False)
             continue
 
         file_result = _normalize_snapshot_result(snapshot)
@@ -334,11 +363,7 @@ def _process_uploaded_files(
                     f"{file_name}: {file_result.get('skip_reason', 'No processable content.')}"
                 )
         elif file_status is not None:
-            file_status.update(
-                label=f"{file_name} — complete",
-                state="complete",
-                expanded=False,
-            )
+            file_status.update(label=f"{file_name} — complete", state="complete", expanded=False)
         results.append(file_result)
         st.session_state["results"] = list(results)
         progress_bar.progress(
@@ -348,6 +373,58 @@ def _process_uploaded_files(
 
     progress_bar.progress(1.0, text=f"Processed {total_files} file(s).")
     return results
+
+
+def _finalize_results(results: list[dict[str, Any]]) -> None:
+    """Store collected results in session state and report batch status.
+
+    Args:
+        results: Normalized result payloads from :func:`_track_jobs`.
+    """
+    if not results:
+        st.error("No files could be processed.")
+        return
+    st.session_state["results"] = results
+    st.session_state["result"] = results[0]
+    st.session_state["selected_result_file"] = results[0]["file_name"]
+    st.session_state.setdefault("results_timestamp", datetime.now().strftime("%Y%m%d_%H%M%S"))
+    skipped_count = sum(1 for r in results if r.get("skipped"))
+    if skipped_count == len(results):
+        st.warning("All files were skipped — no speech detected.")
+    elif skipped_count > 0:
+        st.success(
+            f"Done! {len(results) - skipped_count} of {len(results)} file(s) produced results. "
+            f"Select another tab to view."
+        )
+    else:
+        st.success("Done! Select another tab to view results.")
+
+
+def _resume_active_jobs() -> None:
+    """Re-attach to this owner's jobs after a browser reload.
+
+    A refresh clears ``st.session_state`` but the owner identity survives
+    in the URL (``?owner=<id>``), so the backend can still list the
+    caller's in-memory jobs. We follow them to completion — resuming the
+    live progress view for any still running and re-rendering those
+    already finished — then store the results so the tabs populate.
+    """
+    client = _get_client(_get_owner_id())
+    try:
+        discovered = client.list_jobs()
+    except Exception:
+        logger.exception("Could not list jobs while resuming after reload.")
+        return
+    if not discovered:
+        return
+    # ``list_jobs`` is newest-first; present in submission order for a
+    # stable, deterministic layout across reloads.
+    jobs = [{"job_id": str(j["job_id"]), "file_name": str(j.get("file_name", j["job_id"]))} for j in discovered]
+    jobs.reverse()
+    with st.expander("Resuming your jobs…", expanded=True):
+        results_container = st.container()
+    results = _track_jobs(client, jobs, results_container=results_container)
+    _finalize_results(results)
 
 
 def _results_archive_bytes(
@@ -496,16 +573,6 @@ def _start_page() -> None:
         )
         speakers = st.number_input("Max speakers", 1, 10, value=1, step=1)
 
-    persist = st.checkbox(
-        "Save results across browser sessions",
-        value=False,
-        help=(
-            "Stored on the server until you delete them via the Saved jobs "
-            "sidebar. Leave this off so results live only in memory and "
-            "disappear after the configured TTL."
-        ),
-    )
-
     src_lang_code = _name_to_code(src_lang_maps).get(src_lang_name)
     trg_lang_code = _name_to_code(trg_lang_maps).get(
         trg_lang_name,
@@ -522,36 +589,19 @@ def _start_page() -> None:
         words=words,
         summarization=summarization,
         hate_speech=hate_speech,
-        persist=persist,
     )
 
     if run and uploaded_files:
-        st.session_state.pop("_results_archive", None)
-        st.session_state.pop("_docint_jsonl", None)
+        for key in ("_results_archive", "_docint_jsonl", "results", "result"):
+            st.session_state.pop(key, None)
+        st.session_state["results_timestamp"] = datetime.now().strftime("%Y%m%d_%H%M%S")
+        client = _get_client(_get_owner_id())
+        jobs = _submit_files(client, uploaded_files, st.session_state["opts"])
+        st.session_state["active_jobs"] = jobs
         with st.expander("Processing progress", expanded=True):
             results_container = st.container()
-        results = _process_uploaded_files(
-            uploaded_files,
-            st.session_state["opts"],
-            results_container=results_container,
-        )
-        if results:
-            st.session_state["results"] = results
-            st.session_state["result"] = results[0]
-            st.session_state["selected_result_file"] = results[0]["file_name"]
-            st.session_state["results_timestamp"] = datetime.now().strftime("%Y%m%d_%H%M%S")
-            skipped_count = sum(1 for r in results if r.get("skipped"))
-            if skipped_count == len(results):
-                st.warning("All files were skipped — no speech detected.")
-            elif skipped_count > 0:
-                st.success(
-                    f"Done! {len(results) - skipped_count} of {len(results)} "
-                    f"file(s) produced results. Select another tab to view."
-                )
-            else:
-                st.success("Done! Select another tab to view results.")
-        else:
-            st.error("No files could be processed.")
+        results = _track_jobs(client, jobs, results_container=results_container)
+        _finalize_results(results)
 
 
 def _render_transcript_tab(result: dict[str, Any]) -> None:
@@ -670,72 +720,6 @@ def _render_hate_tab(result: dict[str, Any]) -> None:
             st.write(f"**Flagged text:** {item.get('text', '')}")
 
 
-def _load_saved_job(job_id: str) -> None:
-    """Load a persisted snapshot into ``st.session_state["results"]``.
-
-    Used by the Saved-jobs sidebar to re-open a previously stored run
-    inside the result tabs without re-running the pipeline.
-
-    Args:
-        job_id: Job identifier returned by ``client.list_jobs``.
-    """
-    try:
-        snapshot = _get_client(_get_owner_id()).get_snapshot(job_id)
-    except Exception as exc:
-        st.sidebar.error(f"Could not load job {job_id}: {exc}")
-        return
-    if snapshot.get("status") != "completed":
-        st.sidebar.warning(
-            f"Job {snapshot.get('file_name', job_id)} is "
-            f"{snapshot.get('status', 'unknown')}; only completed jobs can be reloaded."
-        )
-        return
-    result = _normalize_snapshot_result(snapshot)
-    result["file_name"] = snapshot.get("file_name") or job_id
-    st.session_state["results"] = [result]
-    st.session_state["result"] = result
-    st.session_state["selected_result_file"] = result["file_name"]
-    st.session_state["results_timestamp"] = datetime.now().strftime("%Y%m%d_%H%M%S")
-    st.session_state.pop("_results_archive", None)
-    st.session_state.pop("_docint_jsonl", None)
-
-
-def _render_saved_jobs_sidebar() -> None:
-    """Populate the sidebar with the caller's persistent jobs.
-
-    Lets users reopen previously-saved work and delete entries they no
-    longer need. Silently skips when the backend is unreachable so the
-    main UI stays usable.
-    """
-    with st.sidebar:
-        st.markdown("### 💾 Saved jobs")
-        try:
-            jobs = _get_client(_get_owner_id()).list_jobs()
-        except Exception:
-            st.caption("Backend unreachable — saved jobs unavailable.")
-            return
-        if not jobs:
-            st.caption("Tick **Save results across browser sessions** before running to keep results here.")
-            return
-        for job in jobs:
-            status_label = str(job.get("status", "unknown"))
-            file_name = str(job.get("file_name", job["job_id"]))
-            label = f"📄 {file_name} — {status_label}"
-            cols = st.columns([4, 1])
-            with cols[0]:
-                if st.button(label, key=f"saved_open_{job['job_id']}"):
-                    _load_saved_job(job["job_id"])
-                    st.rerun()
-            with cols[1]:
-                if st.button("🗑", key=f"saved_delete_{job['job_id']}"):
-                    try:
-                        _get_client(_get_owner_id()).delete_job(job["job_id"])
-                    except Exception as exc:
-                        st.error(f"Delete failed: {exc}")
-                    else:
-                        st.rerun()
-
-
 def main() -> None:
     """Run the Streamlit app with tab-based navigation."""
     st.set_page_config(page_title="Nextext", layout="wide")
@@ -748,14 +732,18 @@ def main() -> None:
     st.title("Nextext")
     st.subheader("Transcribe, translate, and analyze audio/video files")
 
-    _render_saved_jobs_sidebar()
-
     tab_params, tab_transcript, tab_summary, tab_words, tab_hate = st.tabs(
         ["Parameters", "Transcript", "Summary", "Word-level Analysis", "Hate Speech"]
     )
 
     with tab_params:
         _start_page()
+
+    # Reload recovery: a refresh clears session state, but the owner id
+    # survives in the URL — re-discover this owner's jobs from the backend
+    # and resume tracking so an in-flight run is never lost on reload.
+    if not st.session_state.get("results"):
+        _resume_active_jobs()
 
     results = st.session_state.get("results")
     if results is None and "result" in st.session_state:

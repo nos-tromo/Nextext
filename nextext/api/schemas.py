@@ -32,15 +32,6 @@ class JobOptions(BaseModel):
     words: bool = False
     summarization: bool = False
     hate_speech: bool = False
-    persist: bool = Field(
-        default=False,
-        description=(
-            "When true, the backend stores the job index in SQLite and "
-            "the artifacts on disk so they survive container restarts. "
-            "Default is false to keep job content out of durable storage "
-            "unless the user explicitly opts in."
-        ),
-    )
 
 
 class JobCreateResponse(BaseModel):
@@ -154,7 +145,7 @@ class LanguagesResponse(BaseModel):
 
 
 class JobListItem(BaseModel):
-    """Compact view of a persistent job for the listing endpoint."""
+    """Compact view of an in-memory job for the listing endpoint."""
 
     job_id: str
     status: JobStatus

@@ -11,7 +11,6 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from nextext.api.identity import OWNER_HEADER
 from nextext.api.jobs import (
     PIPELINE_STAGE_LABELS,
     JobManager,
@@ -19,6 +18,10 @@ from nextext.api.jobs import (
     PushEvent,
 )
 from nextext.api.main import create_app
+
+# Default trusted identity header (matches the backend's NEXTEXT_AUTH_HEADER
+# default). Tests send the owner id under this header on every request.
+OWNER_HEADER = "X-Auth-User"
 
 # Two stable, distinct owner ids for fixtures that need to model two
 # different browsers without minting random values inside tests.
@@ -31,8 +34,8 @@ def _client_with_owner(app: FastAPI, owner_id: str) -> TestClient:
 
     Args:
         app: The FastAPI application to wrap.
-        owner_id: 32-character hex UUID value used as the ``X-Owner-Id``
-            header on outgoing requests.
+        owner_id: Identity value sent as the trusted identity header on
+            outgoing requests.
 
     Returns:
         TestClient: A client preconfigured with the owner header.
@@ -132,10 +135,7 @@ def stub_app_client() -> Iterator[tuple[TestClient, JobManager]]:
 
     @asynccontextmanager
     async def _patched_lifespan(_app: Any) -> AsyncIterator[None]:
-        manager = JobManager(
-            pipeline_runner=stub_pipeline_runner,
-            ttl_seconds=3600,
-        )
+        manager = JobManager(pipeline_runner=stub_pipeline_runner)
         await manager.start()
         _app.state.job_manager = manager
         try:

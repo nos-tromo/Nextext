@@ -1,81 +1,61 @@
-"""Header-based owner identity for the Nextext API.
+"""Request-principal resolution for the Nextext API.
 
-The backend has no authentication. Identity is anonymous and lives in
-the browser's ``localStorage`` (managed by the Streamlit frontend). The
-browser sends a stable UUID4 hex in the ``X-Owner-Id`` header on every
-request; the backend uses that value to scope persistent rows so a
-browser sees only its own saved jobs.
+The backend has no authentication. Identity is resolved per request from a
+trusted header (default ``X-Auth-User``), with an optional environment-variable
+fallback so developers — and any header-less client — resolve to a single
+configured identity instead of being rejected:
 
-Why not a cookie? A cookie set by the FastAPI backend would attach to
-the *Streamlit server's* ``httpx.Client`` jar — not to the user's
-browser — because the backend is internal-only and the browser never
-talks to it directly. Cookies in that arrangement are process-wide,
-shared across browsers, and lost on backend redeploys. A header
-sourced from the browser's own ``localStorage`` survives tab close,
-browser restart, and backend redeploys, and isolates each browser from
-every other.
+1. If the configured trusted header is present, return its value.
+2. Otherwise, if ``NEXTEXT_DEFAULT_IDENTITY`` is configured, return it (the
+   dev / pre-auth fallback).
+3. Otherwise fail closed with HTTP 401.
 
-Trust model is unchanged: the backend trusts anyone who can reach
-``inference-net``. The header just lets the backend tell two browsers
-apart for the purpose of filtering rows.
+The Streamlit frontend carries a stable per-browser identifier in its URL
+(``?owner=<uuid>``) and forwards it under the trusted header on every request,
+so two browsers stay isolated for the purpose of scoping their in-memory jobs.
+
+Trust model: the backend trusts anyone who can reach ``inference-net``. The
+header just lets the backend tell callers apart. This module is the single
+seam a real auth track would replace — swap the header read for a
+verified-token read and nothing downstream (ownership checks, routes) changes.
 """
 
 from __future__ import annotations
 
-import re
-import uuid
+from fastapi import HTTPException, Request, status
 
-from fastapi import Header, HTTPException, status
-
-OWNER_HEADER = "X-Owner-Id"
-_UUID4_PATTERN = re.compile(r"^[0-9a-f]{32}$")
+from nextext.utils.env_cfg import load_principal_env
 
 
-def _is_valid_owner_id(value: str | None) -> bool:
-    """Return whether ``value`` is a 32-char hex string that parses as a UUID4.
+def resolve_principal(request: Request) -> str:
+    """FastAPI dependency that resolves the calling principal (owner id).
 
-    A strict parser rejects malformed values so the database never
-    records a non-UUID owner identifier — which would break the
-    rehydration path that reconstructs per-job filesystem paths from
-    ``job_id`` and reuses the owner column as the privacy boundary.
+    Resolution order:
+
+    1. If the configured trusted header is present and non-blank, return it.
+    2. Otherwise, if a default identity is configured, return it.
+    3. Otherwise fail closed with HTTP 401.
 
     Args:
-        value: Raw header value (or ``None``).
+        request: The incoming FastAPI/Starlette request.
 
     Returns:
-        bool: ``True`` only when ``value`` is exactly 32 hex characters
-            that parse as a UUID.
-    """
-    if not value or not _UUID4_PATTERN.match(value):
-        return False
-    try:
-        uuid.UUID(hex=value)
-    except (TypeError, ValueError):
-        return False
-    return True
-
-
-def get_owner_id(
-    x_owner_id: str | None = Header(default=None, alias=OWNER_HEADER),
-) -> str:
-    """FastAPI dependency that returns the caller's owner identifier.
-
-    Args:
-        x_owner_id: Value of the ``X-Owner-Id`` request header.
-
-    Returns:
-        str: The validated 32-char hex UUID.
+        str: The resolved principal identifier used to scope owned jobs.
 
     Raises:
-        HTTPException: 400 when the header is missing or malformed.
+        HTTPException: 401 when neither the trusted header nor a configured
+            default identity is available.
     """
-    if not _is_valid_owner_id(x_owner_id):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=(f"Missing or invalid {OWNER_HEADER} header; expected a 32-character hex UUID."),
-        )
-    assert x_owner_id is not None  # Narrowed by _is_valid_owner_id above.
-    return x_owner_id
+    cfg = load_principal_env()
+    header_value = request.headers.get(cfg.header_name)
+    if header_value and header_value.strip():
+        return header_value.strip()
+    if cfg.default_identity:
+        return cfg.default_identity
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Missing authenticated principal.",
+    )
 
 
-__all__ = ["OWNER_HEADER", "get_owner_id"]
+__all__ = ["resolve_principal"]

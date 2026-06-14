@@ -21,7 +21,7 @@ def _make_client(
 
     Args:
         handler: A function ``(httpx.Request) -> httpx.Response``.
-        owner_id: Value sent in the ``X-Owner-Id`` header. Defaults to a
+        owner_id: Value sent in the trusted identity header. Defaults to a
             32-char hex sentinel used across the frontend test suite.
 
     Returns:
@@ -219,33 +219,8 @@ def test_list_jobs_returns_jobs_array() -> None:
     assert jobs[0]["job_id"] == "abc"
 
 
-def test_submit_job_threads_persist_flag_into_options() -> None:
-    """The persist flag should reach the backend inside ``options``."""
-    seen: dict[str, bytes] = {}
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        seen["body"] = request.content
-        return httpx.Response(
-            201,
-            json={
-                "job_id": "p1",
-                "status": "queued",
-                "created_at": "2026-05-01T00:00:00Z",
-            },
-        )
-
-    with _make_client(handler) as client:
-        client.submit_job(
-            "clip.wav",
-            b"AUDIO",
-            {"task": "transcribe", "persist": True},
-        )
-
-    assert b'"persist": true' in seen["body"]
-
-
-def test_owner_id_is_sent_as_x_owner_id_header() -> None:
-    """Every request must carry the configured ``X-Owner-Id`` header."""
+def test_owner_id_is_sent_as_identity_header() -> None:
+    """Every request must carry the configured trusted identity header."""
     captured: list[str | None] = []
 
     def handler(request: httpx.Request) -> httpx.Response:

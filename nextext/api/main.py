@@ -10,25 +10,9 @@ from fastapi import FastAPI
 from loguru import logger
 
 from nextext.api.jobs import JobManager
-from nextext.api.persistence import init_repository
 from nextext.api.routes import router as api_router
 from nextext.utils.env_cfg import set_offline_env
 from nextext.utils.log_cfg import setup_logging
-
-
-def _resolve_job_ttl() -> int:
-    """Resolve the per-job TTL in seconds from the environment.
-
-    Returns:
-        int: TTL in seconds. Defaults to one hour when ``NEXTEXT_JOB_TTL_SECONDS``
-            is unset or invalid.
-    """
-    raw = os.getenv("NEXTEXT_JOB_TTL_SECONDS", "3600").strip()
-    try:
-        ttl = int(raw)
-    except ValueError:
-        ttl = 3600
-    return max(ttl, 60)
 
 
 @asynccontextmanager
@@ -43,21 +27,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """
     set_offline_env()
     setup_logging()
-    repository = init_repository()
-    job_manager = JobManager(
-        ttl_seconds=_resolve_job_ttl(),
-        repository=repository,
-    )
+    job_manager = JobManager()
     await job_manager.start()
     app.state.job_manager = job_manager
-    app.state.repository = repository
     logger.info("Nextext API started")
     try:
         yield
     finally:
         logger.info("Nextext API shutting down.")
         await job_manager.stop()
-        repository.close()
 
 
 def create_app() -> FastAPI:

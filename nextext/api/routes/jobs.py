@@ -1,9 +1,9 @@
 """Job lifecycle routes under ``/api/v1/jobs``.
 
 Per-route ownership checks enforce the privacy boundary established by
-:class:`nextext.api.identity.IdentityMiddleware`: any read or mutation
-on a job other than the caller's own is reported as ``404 Not Found``
-so the existence of the row never leaks across owners.
+:func:`nextext.api.identity.resolve_principal`: any read or mutation on a
+job other than the caller's own is reported as ``404 Not Found`` so the
+existence of the row never leaks across owners.
 """
 
 from __future__ import annotations
@@ -31,7 +31,7 @@ from loguru import logger
 from pydantic import ValidationError
 
 from nextext.api.artifacts import SUPPORTED_ARTIFACTS, render_artifact
-from nextext.api.identity import get_owner_id
+from nextext.api.identity import resolve_principal
 from nextext.api.jobs import JobManager, JobState
 from nextext.api.schemas import (
     JobCreateResponse,
@@ -174,7 +174,7 @@ async def create_job(
         description="JSON-encoded `JobOptions` payload.",
     ),
     manager: JobManager = Depends(get_job_manager),  # noqa: B008 — FastAPI dependency marker
-    owner_id: str = Depends(get_owner_id),
+    owner_id: str = Depends(resolve_principal),
 ) -> JobCreateResponse:
     """Accept a multipart upload and queue a new pipeline job.
 
@@ -182,7 +182,7 @@ async def create_job(
         file: Multipart audio/video upload.
         options: JSON-encoded ``JobOptions`` form field.
         manager: Job manager dependency.
-        owner_id: Cookie-derived owner identifier.
+        owner_id: Resolved principal (owner identifier).
 
     Returns:
         JobCreateResponse: Identifier and timestamps for the new job.
@@ -205,9 +205,8 @@ async def create_job(
         options=parsed_options,
     )
     logger.info(
-        "Accepted job {} (persist={}, {} bytes).",
+        "Accepted job {} ({} bytes).",
         state.job_id,
-        state.persistent,
         file_path.stat().st_size,
     )
     return JobCreateResponse(
@@ -220,22 +219,22 @@ async def create_job(
 @router.get("", response_model=JobListResponse)
 async def list_jobs(
     manager: JobManager = Depends(get_job_manager),  # noqa: B008 — FastAPI dependency marker
-    owner_id: str = Depends(get_owner_id),
+    owner_id: str = Depends(resolve_principal),
 ) -> JobListResponse:
-    """Return the caller's persistent jobs, newest first.
+    """Return the caller's in-memory jobs, newest first.
 
-    Ephemeral jobs intentionally do not show up — the frontend already
-    holds their identifiers in ``st.session_state`` and reaping them
-    when the browser closes is the privacy contract.
+    Jobs live only in memory and are scoped by owner. The frontend calls
+    this on load to re-discover its own jobs after a browser reload —
+    re-attaching to any still running and re-rendering those finished.
 
     Args:
         manager: Job manager dependency.
-        owner_id: Cookie-derived owner identifier.
+        owner_id: Resolved principal (owner identifier).
 
     Returns:
-        JobListResponse: Owned persistent jobs.
+        JobListResponse: The caller's jobs.
     """
-    states = await manager.list_persistent(owner_id)
+    states = await manager.list_for_owner(owner_id)
     items = [
         JobListItem(
             job_id=state.job_id,
@@ -267,7 +266,7 @@ async def _require_job(
     Args:
         job_id: Job identifier.
         manager: Job manager dependency.
-        owner_id: Cookie-derived owner identifier.
+        owner_id: Resolved principal (owner identifier).
 
     Returns:
         JobState: The matching state.
@@ -289,14 +288,14 @@ async def _require_job(
 async def get_job(
     job_id: str,
     manager: JobManager = Depends(get_job_manager),  # noqa: B008 — FastAPI dependency marker
-    owner_id: str = Depends(get_owner_id),
+    owner_id: str = Depends(resolve_principal),
 ) -> JobSnapshot:
     """Return a point-in-time view of one job.
 
     Args:
         job_id: Job identifier.
         manager: Job manager dependency.
-        owner_id: Cookie-derived owner identifier.
+        owner_id: Resolved principal (owner identifier).
 
     Returns:
         JobSnapshot: Current job state.
@@ -309,14 +308,14 @@ async def get_job(
 async def delete_job(
     job_id: str,
     manager: JobManager = Depends(get_job_manager),  # noqa: B008 — FastAPI dependency marker
-    owner_id: str = Depends(get_owner_id),
+    owner_id: str = Depends(resolve_principal),
 ) -> Response:
     """Remove a job, its tempfile, and signal SSE subscribers.
 
     Args:
         job_id: Job identifier.
         manager: Job manager dependency.
-        owner_id: Cookie-derived owner identifier.
+        owner_id: Resolved principal (owner identifier).
 
     Returns:
         Response: Empty 204 response.
@@ -334,14 +333,14 @@ async def delete_job(
 async def stream_job_events(
     job_id: str,
     manager: JobManager = Depends(get_job_manager),  # noqa: B008 — FastAPI dependency marker
-    owner_id: str = Depends(get_owner_id),
+    owner_id: str = Depends(resolve_principal),
 ) -> StreamingResponse:
     """Stream SSE events for one job.
 
     Args:
         job_id: Job identifier.
         manager: Job manager dependency.
-        owner_id: Cookie-derived owner identifier.
+        owner_id: Resolved principal (owner identifier).
 
     Returns:
         StreamingResponse: ``text/event-stream`` connection that closes when
@@ -365,7 +364,7 @@ async def download_artifact(
     job_id: str,
     name: str,
     manager: JobManager = Depends(get_job_manager),  # noqa: B008 — FastAPI dependency marker
-    owner_id: str = Depends(get_owner_id),
+    owner_id: str = Depends(resolve_principal),
 ) -> Response:
     """Return one artifact byte stream for a completed job.
 
@@ -373,7 +372,7 @@ async def download_artifact(
         job_id: Job identifier.
         name: Artifact name (e.g. ``transcript.csv``).
         manager: Job manager dependency.
-        owner_id: Cookie-derived owner identifier.
+        owner_id: Resolved principal (owner identifier).
 
     Returns:
         Response: Binary payload with the appropriate media type.
