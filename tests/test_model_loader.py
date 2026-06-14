@@ -1,5 +1,6 @@
 """Tests for the Nextext model preload utilities."""
 
+import io
 import sys
 from pathlib import Path
 
@@ -193,15 +194,80 @@ def test_main_preloads_expected_model_groups(
     )
     monkeypatch.setattr(
         model_loader,
-        "preload_gliner_model",
-        lambda: calls.append(("gliner", model_loader.GLINER_MODEL_ID)),
+        "preload_silero_vad",
+        lambda: calls.append(("silero_vad", model_loader.SILERO_VAD_REPO)),
     )
-
     model_loader.main()
 
     assert calls == [
         ("nltk", "all"),
         ("spacy", "en_core_web_sm"),
         ("whisper:cpu", "large-v3-turbo"),
-        ("gliner", model_loader.GLINER_MODEL_ID),
+        ("silero_vad", "snakers4/silero-vad"),
     ]
+
+
+def test_preload_silero_vad_degrades_when_load_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failed Silero VAD download is downgraded to a warning, not raised.
+
+    Mirrors the runtime fallback in ``nextext.core.transcription._get_vad``:
+    VAD is an optional pre-screen, so an unavailable model must not abort the
+    preload — transcription falls back to RMS-only speech detection.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): The pytest fixture for patching the
+            ``torch.hub.load`` entry point.
+    """
+    from loguru import logger
+
+    def fail_load(*args: object, **kwargs: object) -> None:
+        """Simulate a Silero VAD load failure (e.g. missing torchaudio).
+
+        Raises:
+            ModuleNotFoundError: Always, mimicking the absent dependency.
+        """
+        raise ModuleNotFoundError("No module named 'torchaudio'")
+
+    monkeypatch.setattr(model_loader.torch.hub, "load", fail_load)
+
+    sink = io.StringIO()
+    handler_id = logger.add(sink, level="WARNING")
+    try:
+        model_loader.preload_silero_vad()
+    finally:
+        logger.remove(handler_id)
+
+    assert "Silero VAD" in sink.getvalue()
+
+
+def test_main_does_not_fail_when_silero_vad_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``main`` completes even when the Silero VAD model cannot be loaded.
+
+    The essential preloads (nltk, spaCy, Whisper) are stubbed out so the test
+    isolates the optional VAD step: a failing ``torch.hub.load`` must be
+    tolerated rather than aggregated into the fatal failure list.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): The pytest fixture for patching
+            module functions and the ``torch.hub.load`` entry point.
+    """
+    monkeypatch.setattr(model_loader, "_get_default_device", lambda: "cpu")
+    monkeypatch.setattr(model_loader, "ensure_nltk_resources", lambda: None)
+    monkeypatch.setattr(model_loader, "get_spacy_model_ids", lambda: [])
+    monkeypatch.setattr(model_loader, "LOCAL_WHISPER_MODEL_IDS", ())
+
+    def fail_load(*args: object, **kwargs: object) -> None:
+        """Simulate a Silero VAD load failure (e.g. missing torchaudio).
+
+        Raises:
+            ModuleNotFoundError: Always, mimicking the absent dependency.
+        """
+        raise ModuleNotFoundError("No module named 'torchaudio'")
+
+    monkeypatch.setattr(model_loader.torch.hub, "load", fail_load)
+
+    model_loader.main()

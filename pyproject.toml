@@ -16,7 +16,6 @@ dependencies = [
     "arabic-reshaper>=3.0.0",
     "camel-tools>=1.5.2",
     "fastapi>=0.115",
-    "gliner>=0.2.0",
     "httpx>=0.27",
     "huggingface-hub>=0.26.2",
     "langdetect>=1.0.9",

@@ -1,7 +1,6 @@
 """Utilities for preloading Nextext language and speech models."""
 
 # Re-exported for tests that monkeypatch through this module.
-import gc as gc
 import importlib as importlib
 import os
 import subprocess as subprocess
@@ -12,10 +11,9 @@ from importlib.metadata import version as package_version
 from pathlib import Path
 
 import nltk
-import torch
+import torch as torch  # explicit re-export so tests can monkeypatch torch.hub
 import whisper
 from dotenv import load_dotenv
-from gliner import GLiNER
 from loguru import logger
 
 from nextext.utils.mappings_loader import load_mappings
@@ -29,7 +27,6 @@ DEFAULT_SPACY_MODEL_DIR = Path.home() / ".cache" / "spacy"
 DEFAULT_SPACY_MODEL_DOWNLOAD_BASE_URL = "https://github.com/explosion/spacy-models/releases/download"
 NLTK_RESOURCES = ("punkt_tab", "stopwords")
 LOCAL_WHISPER_MODEL_IDS: tuple[str, ...] = ("large-v3-turbo",)
-GLINER_MODEL_ID = "gliner-community/gliner_large-v2.5"
 SILERO_VAD_REPO = "snakers4/silero-vad"
 
 
@@ -238,23 +235,21 @@ def preload_whisper_models(
 
 
 def preload_silero_vad() -> None:
-    """Download and cache the Silero VAD model via ``torch.hub``."""
-    logger.info("Downloading Silero VAD model from '{}'.", SILERO_VAD_REPO)
-    torch.hub.load(SILERO_VAD_REPO, model="silero_vad", trust_repo=True)  # type: ignore[no-untyped-call]
-    logger.info("Silero VAD model cached.")
+    """Download and cache the Silero VAD model via ``torch.hub``.
 
-
-def preload_gliner_model(model_id: str = GLINER_MODEL_ID) -> None:
-    """Download and cache the GLiNER NER model.
-
-    Args:
-        model_id (str): The Hugging Face model ID for GLiNER.
+    VAD is an optional pre-screen accelerator. A failure here is logged as a
+    warning rather than raised, mirroring the runtime fallback in
+    ``nextext.core.transcription._get_vad``: transcription degrades to
+    RMS-only speech detection when the model is unavailable (e.g. ``torchaudio``
+    is not installed in a CPU-only environment).
     """
-    logger.info("Loading GLiNER model '{}'.", model_id)
-    model = GLiNER.from_pretrained(model_id)
-    del model
-    gc.collect()
-    logger.info("GLiNER model '{}' cached.", model_id)
+    logger.info("Downloading Silero VAD model from '{}'.", SILERO_VAD_REPO)
+    try:
+        torch.hub.load(SILERO_VAD_REPO, model="silero_vad", trust_repo=True)  # type: ignore[no-untyped-call]
+    except Exception as exc:
+        logger.warning("Could not preload Silero VAD ({}). Transcription will fall back to RMS-only.", exc)
+        return
+    logger.info("Silero VAD model cached.")
 
 
 def _get_default_device() -> str:
@@ -293,15 +288,10 @@ def main() -> None:
         except Exception as exc:
             failures.append(f"Whisper {model_id} ({exc})")
 
-    try:
-        preload_silero_vad()
-    except Exception as exc:
-        failures.append(f"Silero VAD ({exc})")
-
-    try:
-        preload_gliner_model()
-    except Exception as exc:
-        failures.append(f"GLiNER {GLINER_MODEL_ID} ({exc})")
+    # Silero VAD is an optional pre-screen; preload_silero_vad() degrades to a
+    # warning (RMS-only fallback) instead of raising, so it stays out of the
+    # fatal failure aggregation above.
+    preload_silero_vad()
 
     if failures:
         raise RuntimeError("Failed to preload models: " + "; ".join(failures))

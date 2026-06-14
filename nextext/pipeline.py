@@ -8,6 +8,7 @@ from matplotlib.figure import Figure
 
 from nextext.core.diarization import assign_speakers_by_overlap, diarize_file
 from nextext.core.hate_speech import HateSpeechDetector
+from nextext.core.ner import extract_entities
 from nextext.core.openai_cfg import InferencePipeline
 from nextext.core.translation import Translator
 from nextext.core.words import WordCounter
@@ -215,7 +216,7 @@ def wordlevel_pipeline(
     word_analysis.text_to_doc()
     word_analysis.lemmatize_doc()
     word_counts = word_analysis.count_words()
-    named_entities = word_analysis.named_entity_recognition()
+    named_entities = extract_entities(word_analysis.text)
     wordcloud = word_analysis.create_wordcloud()
 
     return word_counts, named_entities, wordcloud

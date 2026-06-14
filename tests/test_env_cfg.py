@@ -6,8 +6,10 @@ import pytest
 
 from nextext.utils.env_cfg import (
     DEFAULT_DIARIZE_TIMEOUT,
+    DEFAULT_NER_TIMEOUT,
     load_diarization_env,
     load_inference_env,
+    load_ner_env,
     load_transcription_env,
 )
 
@@ -254,3 +256,99 @@ def test_load_diarization_env_invalid_timeout_warns_and_defaults(
 
     assert cfg.timeout == DEFAULT_DIARIZE_TIMEOUT
     assert "DIARIZE_TIMEOUT" in sink.getvalue()
+
+
+# ---------------------------------------------------------------------------
+# load_ner_env
+# ---------------------------------------------------------------------------
+
+
+def test_load_ner_env_unset_disables_and_defaults(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An unset NER_API_BASE disables NER and uses the default timeout.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Fixture for patching environment variables.
+    """
+    monkeypatch.delenv("NER_API_BASE", raising=False)
+    monkeypatch.delenv("NER_TIMEOUT", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    cfg = load_ner_env()
+
+    assert cfg.api_base == ""
+    assert cfg.api_key == ""
+    assert cfg.timeout == DEFAULT_NER_TIMEOUT
+
+
+def test_load_ner_env_strips_whitespace_and_trailing_slash(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """NER_API_BASE is normalised: surrounding whitespace and trailing '/' removed.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Fixture for patching environment variables.
+    """
+    monkeypatch.setenv("NER_API_BASE", "  http://vllm-router:4000/  ")
+
+    cfg = load_ner_env()
+
+    assert cfg.api_base == "http://vllm-router:4000"
+
+
+def test_load_ner_env_reuses_openai_api_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The bearer token is taken from OPENAI_API_KEY (the shared router credential).
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Fixture for patching environment variables.
+    """
+    monkeypatch.setenv("NER_API_BASE", "http://vllm-router:4000")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-secret")
+
+    cfg = load_ner_env()
+
+    assert cfg.api_key == "sk-secret"
+
+
+def test_load_ner_env_parses_valid_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A valid NER_TIMEOUT is parsed as a float.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Fixture for patching environment variables.
+    """
+    monkeypatch.setenv("NER_TIMEOUT", "45")
+
+    cfg = load_ner_env()
+
+    assert cfg.timeout == 45.0
+
+
+@pytest.mark.parametrize("raw_value", ["not-a-number", "0", "-5"])
+def test_load_ner_env_invalid_timeout_warns_and_defaults(
+    monkeypatch: pytest.MonkeyPatch,
+    raw_value: str,
+) -> None:
+    """Non-numeric or non-positive NER_TIMEOUT warns and falls back to the default.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Fixture for patching environment variables.
+        raw_value (str): An invalid timeout token.
+    """
+    from loguru import logger
+
+    monkeypatch.setenv("NER_TIMEOUT", raw_value)
+
+    sink = io.StringIO()
+    handler_id = logger.add(sink, level="WARNING")
+    try:
+        cfg = load_ner_env()
+    finally:
+        logger.remove(handler_id)
+
+    assert cfg.timeout == DEFAULT_NER_TIMEOUT
+    assert "NER_TIMEOUT" in sink.getvalue()

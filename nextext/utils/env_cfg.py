@@ -121,12 +121,34 @@ class DiarizationConfig:
     timeout: float
 
 
+@dataclass(frozen=True)
+class NerConfig:
+    """Dataclass for the named-entity-recognition service configuration.
+
+    NER runs out-of-process against an HTTP ``/gliner`` endpoint (e.g.
+    ``nos-tromo/vllm-service`` behind the LiteLLM router); Nextext no longer
+    hosts GLiNER in-process.
+
+    Attributes:
+        api_base: Root URL of the NER service (e.g. ``http://vllm-router:4000``);
+            the client appends ``/gliner``. An empty string disables NER.
+        api_key: Bearer token forwarded to the service, reused from
+            ``OPENAI_API_KEY``. An empty string sends no ``Authorization`` header.
+        timeout: Per-request timeout in seconds for each chunk's ``/gliner`` call.
+    """
+
+    api_base: str
+    api_key: str
+    timeout: float
+
+
 EXTERNAL_WHISPER_DEFAULTS: dict[str, str] = {
     "openai": "whisper-1",
     "vllm": "openai/whisper-large-v3",
 }
 
 DEFAULT_DIARIZE_TIMEOUT: float = 600.0
+DEFAULT_NER_TIMEOUT: float = 120.0
 
 
 def load_transcription_env() -> TranscriptionConfig:
@@ -262,6 +284,41 @@ def load_diarization_env() -> DiarizationConfig:
             )
 
     return DiarizationConfig(api_base=api_base, api_key=api_key, timeout=timeout)
+
+
+def load_ner_env() -> NerConfig:
+    """Loads named-entity-recognition service configuration from environment variables.
+
+    Returns:
+        NerConfig: Dataclass containing the resolved settings.
+        - api_base (str): ``NER_API_BASE`` with surrounding whitespace and any
+          trailing ``/`` removed. Empty (the default) disables NER, so callers
+          skip the HTTP call and emit no entities.
+        - api_key (str): ``OPENAI_API_KEY`` (the NER service shares the inference
+          router's credentials). Empty sends no bearer token.
+        - timeout (float): ``NER_TIMEOUT`` seconds. Defaults to
+          :data:`DEFAULT_NER_TIMEOUT`; non-numeric or non-positive values warn
+          and fall back to the default.
+    """
+    api_base = os.getenv("NER_API_BASE", "").strip().rstrip("/")
+    api_key = os.getenv("OPENAI_API_KEY", "").strip()
+
+    timeout = DEFAULT_NER_TIMEOUT
+    raw_timeout = os.getenv("NER_TIMEOUT", "").strip()
+    if raw_timeout:
+        try:
+            parsed = float(raw_timeout)
+            if parsed <= 0:
+                raise ValueError
+            timeout = parsed
+        except ValueError:
+            logger.warning(
+                "Invalid NER_TIMEOUT '{}'. Falling back to {}s.",
+                raw_timeout,
+                DEFAULT_NER_TIMEOUT,
+            )
+
+    return NerConfig(api_base=api_base, api_key=api_key, timeout=timeout)
 
 
 def load_path_env() -> PathConfig:
