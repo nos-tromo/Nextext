@@ -39,10 +39,10 @@ ENV DEBIAN_FRONTEND=noninteractive \
 
 WORKDIR /app
 
-# curl for the healthcheck; ffmpeg decodes uploads for the pre-upload
-# silence/VAD guards (all model inference runs on external endpoints).
+# curl for the healthcheck only; all model inference (including the VAD
+# speech guard) runs on external endpoints, so no local audio tooling is needed.
 RUN apt-get update -y && apt-get install -y --no-install-recommends \
-    curl ffmpeg \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /app /app
