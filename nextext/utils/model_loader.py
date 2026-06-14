@@ -11,7 +11,7 @@ from importlib.metadata import version as package_version
 from pathlib import Path
 
 import nltk
-import torch
+import torch as torch  # explicit re-export so tests can monkeypatch torch.hub
 import whisper
 from dotenv import load_dotenv
 from loguru import logger
@@ -235,9 +235,20 @@ def preload_whisper_models(
 
 
 def preload_silero_vad() -> None:
-    """Download and cache the Silero VAD model via ``torch.hub``."""
+    """Download and cache the Silero VAD model via ``torch.hub``.
+
+    VAD is an optional pre-screen accelerator. A failure here is logged as a
+    warning rather than raised, mirroring the runtime fallback in
+    ``nextext.core.transcription._get_vad``: transcription degrades to
+    RMS-only speech detection when the model is unavailable (e.g. ``torchaudio``
+    is not installed in a CPU-only environment).
+    """
     logger.info("Downloading Silero VAD model from '{}'.", SILERO_VAD_REPO)
-    torch.hub.load(SILERO_VAD_REPO, model="silero_vad", trust_repo=True)  # type: ignore[no-untyped-call]
+    try:
+        torch.hub.load(SILERO_VAD_REPO, model="silero_vad", trust_repo=True)  # type: ignore[no-untyped-call]
+    except Exception as exc:
+        logger.warning("Could not preload Silero VAD ({}). Transcription will fall back to RMS-only.", exc)
+        return
     logger.info("Silero VAD model cached.")
 
 
@@ -277,10 +288,10 @@ def main() -> None:
         except Exception as exc:
             failures.append(f"Whisper {model_id} ({exc})")
 
-    try:
-        preload_silero_vad()
-    except Exception as exc:
-        failures.append(f"Silero VAD ({exc})")
+    # Silero VAD is an optional pre-screen; preload_silero_vad() degrades to a
+    # warning (RMS-only fallback) instead of raising, so it stays out of the
+    # fatal failure aggregation above.
+    preload_silero_vad()
 
     if failures:
         raise RuntimeError("Failed to preload models: " + "; ".join(failures))
