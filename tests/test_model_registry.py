@@ -8,7 +8,6 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from nextext.core import words  # noqa: F401 — registers the gliner spec
 from nextext.utils import model_registry
 from nextext.utils.env_cfg import MemoryConfig, load_memory_env
 from nextext.utils.model_registry import (
@@ -179,8 +178,8 @@ def test_mps_compatible_false_falls_back_to_cpu_on_apple_silicon(
 ) -> None:
     """Specs with mps_compatible=False pin to CPU even when MPS is the only accelerator.
 
-    This is the Whisper/pyannote path: their sparse-tensor ops crash on the SparseMPS
-    backend, so they must never be auto-targeted at MPS regardless of ``_default_device``.
+    This is the Whisper path: its sparse-tensor ops crash on the SparseMPS
+    backend, so it must never be auto-targeted at MPS regardless of ``_default_device``.
     """
     _force_apple_silicon(monkeypatch)
     registry = ModelRegistry()
@@ -205,19 +204,6 @@ def test_explicit_device_override_beats_mps_gate(
 
     with registry.acquire("fake", device="mps") as model:
         assert model.device == "mps"
-
-
-def test_gliner_spec_opts_out_of_mps() -> None:
-    """The production GLiNER spec must pin to CPU on Apple Silicon.
-
-    gliner_large-v2.5 on torch 2.8 runs on MPS without raising but silently
-    returns zero predictions on ~512-word chunks (CPU returns the correct
-    entities on the same input). Since the failure is silent, the spec opts
-    out of MPS so Mac users get correct NER on CPU; CUDA still wins where
-    available.
-    """
-    spec = model_registry.REGISTRY._specs["gliner"]
-    assert spec.mps_compatible is False
 
 
 # ---------------------------------------------------------------------------

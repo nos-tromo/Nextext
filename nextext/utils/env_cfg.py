@@ -30,7 +30,7 @@ def set_offline_env() -> None:
         logger.info("Hugging Face libraries are in online mode.")
 
     # Apple Silicon: route MPS-unsupported ops (e.g. sparse_coo paths used
-    # by Whisper / pyannote) to CPU instead of crashing.
+    # by Whisper) to CPU instead of crashing.
     os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
 
 
@@ -98,10 +98,57 @@ class VadConfig:
     enabled: bool
 
 
+@dataclass(frozen=True)
+class DiarizationConfig:
+    """Dataclass for the speaker-diarization service configuration.
+
+    Diarization runs out-of-process against an HTTP ``/diarize`` endpoint
+    (e.g. ``nos-tromo/vllm-service``); Nextext no longer hosts pyannote.
+
+    Attributes:
+        api_base: Root URL of the diarization service (e.g.
+            ``http://vllm-router:9000``); the client appends ``/diarize``. An
+            empty string disables diarization entirely.
+        api_key: Bearer token forwarded to the service, reused from
+            ``OPENAI_API_KEY``. An empty string sends no ``Authorization``
+            header (the keyless ``diarize-only`` backend ignores it anyway).
+        timeout: Per-request timeout in seconds for the diarization call,
+            which can run for minutes on long or CPU-served audio.
+    """
+
+    api_base: str
+    api_key: str
+    timeout: float
+
+
+@dataclass(frozen=True)
+class NerConfig:
+    """Dataclass for the named-entity-recognition service configuration.
+
+    NER runs out-of-process against an HTTP ``/gliner`` endpoint (e.g.
+    ``nos-tromo/vllm-service`` behind the LiteLLM router); Nextext no longer
+    hosts GLiNER in-process.
+
+    Attributes:
+        api_base: Root URL of the NER service (e.g. ``http://vllm-router:4000``);
+            the client appends ``/gliner``. An empty string disables NER.
+        api_key: Bearer token forwarded to the service, reused from
+            ``OPENAI_API_KEY``. An empty string sends no ``Authorization`` header.
+        timeout: Per-request timeout in seconds for each chunk's ``/gliner`` call.
+    """
+
+    api_base: str
+    api_key: str
+    timeout: float
+
+
 EXTERNAL_WHISPER_DEFAULTS: dict[str, str] = {
     "openai": "whisper-1",
     "vllm": "openai/whisper-large-v3",
 }
+
+DEFAULT_DIARIZE_TIMEOUT: float = 600.0
+DEFAULT_NER_TIMEOUT: float = 120.0
 
 
 def load_transcription_env() -> TranscriptionConfig:
@@ -202,6 +249,76 @@ def load_vad_env() -> VadConfig:
     """
     enabled = str(os.getenv("VAD_ENABLED", "1")).lower() in {"1", "true", "yes"}
     return VadConfig(enabled=enabled)
+
+
+def load_diarization_env() -> DiarizationConfig:
+    """Loads speaker-diarization service configuration from environment variables.
+
+    Returns:
+        DiarizationConfig: Dataclass containing the resolved settings.
+        - api_base (str): ``DIARIZE_API_BASE`` with surrounding whitespace and
+          any trailing ``/`` removed. Empty (the default) disables diarization,
+          so callers skip the HTTP call and emit no speaker labels.
+        - api_key (str): ``OPENAI_API_KEY`` (the diarization service shares the
+          inference router's credentials). Empty sends no bearer token.
+        - timeout (float): ``DIARIZE_TIMEOUT`` seconds. Defaults to
+          :data:`DEFAULT_DIARIZE_TIMEOUT`; non-numeric or non-positive values
+          warn and fall back to the default.
+    """
+    api_base = os.getenv("DIARIZE_API_BASE", "").strip().rstrip("/")
+    api_key = os.getenv("OPENAI_API_KEY", "").strip()
+
+    timeout = DEFAULT_DIARIZE_TIMEOUT
+    raw_timeout = os.getenv("DIARIZE_TIMEOUT", "").strip()
+    if raw_timeout:
+        try:
+            parsed = float(raw_timeout)
+            if parsed <= 0:
+                raise ValueError
+            timeout = parsed
+        except ValueError:
+            logger.warning(
+                "Invalid DIARIZE_TIMEOUT '{}'. Falling back to {}s.",
+                raw_timeout,
+                DEFAULT_DIARIZE_TIMEOUT,
+            )
+
+    return DiarizationConfig(api_base=api_base, api_key=api_key, timeout=timeout)
+
+
+def load_ner_env() -> NerConfig:
+    """Loads named-entity-recognition service configuration from environment variables.
+
+    Returns:
+        NerConfig: Dataclass containing the resolved settings.
+        - api_base (str): ``NER_API_BASE`` with surrounding whitespace and any
+          trailing ``/`` removed. Empty (the default) disables NER, so callers
+          skip the HTTP call and emit no entities.
+        - api_key (str): ``OPENAI_API_KEY`` (the NER service shares the inference
+          router's credentials). Empty sends no bearer token.
+        - timeout (float): ``NER_TIMEOUT`` seconds. Defaults to
+          :data:`DEFAULT_NER_TIMEOUT`; non-numeric or non-positive values warn
+          and fall back to the default.
+    """
+    api_base = os.getenv("NER_API_BASE", "").strip().rstrip("/")
+    api_key = os.getenv("OPENAI_API_KEY", "").strip()
+
+    timeout = DEFAULT_NER_TIMEOUT
+    raw_timeout = os.getenv("NER_TIMEOUT", "").strip()
+    if raw_timeout:
+        try:
+            parsed = float(raw_timeout)
+            if parsed <= 0:
+                raise ValueError
+            timeout = parsed
+        except ValueError:
+            logger.warning(
+                "Invalid NER_TIMEOUT '{}'. Falling back to {}s.",
+                raw_timeout,
+                DEFAULT_NER_TIMEOUT,
+            )
+
+    return NerConfig(api_base=api_base, api_key=api_key, timeout=timeout)
 
 
 def load_path_env() -> PathConfig:

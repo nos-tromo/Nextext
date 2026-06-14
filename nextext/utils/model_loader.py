@@ -1,7 +1,6 @@
 """Utilities for preloading Nextext language and speech models."""
 
 # Re-exported for tests that monkeypatch through this module.
-import gc as gc
 import importlib as importlib
 import os
 import subprocess as subprocess
@@ -11,17 +10,12 @@ from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as package_version
 from pathlib import Path
 
-import huggingface_hub as huggingface_hub
 import nltk
-import torch
+import torch as torch  # explicit re-export so tests can monkeypatch torch.hub
 import whisper
 from dotenv import load_dotenv
-from gliner import GLiNER
 from loguru import logger
-from pyannote.audio import Pipeline as DiarizationPipeline
 
-from nextext.core.transcription import _configure_torch_safe_globals
-from nextext.utils.env_cfg import load_inference_env
 from nextext.utils.mappings_loader import load_mappings
 
 load_dotenv()
@@ -32,12 +26,8 @@ SPACY_MODEL_PACKAGE_VERSION = "SPACY_MODEL_PACKAGE_VERSION"
 DEFAULT_SPACY_MODEL_DIR = Path.home() / ".cache" / "spacy"
 DEFAULT_SPACY_MODEL_DOWNLOAD_BASE_URL = "https://github.com/explosion/spacy-models/releases/download"
 NLTK_RESOURCES = ("punkt_tab", "stopwords")
-LOCAL_WHISPER_MODEL_IDS: tuple[str, ...] = ("large-v3-turbo", "large-v3")
-GLINER_MODEL_ID = "gliner-community/gliner_large-v2.5"
+LOCAL_WHISPER_MODEL_IDS: tuple[str, ...] = ("large-v3-turbo",)
 SILERO_VAD_REPO = "snakers4/silero-vad"
-DIARIZATION_MODEL_ID = "pyannote/speaker-diarization-3.1"
-DIARIZATION_DEPENDENCY_IDS = ("pyannote/segmentation-3.0",)
-TRANSLATION_MODEL_ENV = "TRANSLATION_MODEL"
 
 
 def get_spacy_model_dir() -> Path:
@@ -204,13 +194,6 @@ def preload_spacy_models(model_ids: Iterable[str] | None = None) -> None:
         download_spacy_model(model_id)
 
 
-def _cleanup_torch_resources() -> None:
-    """Release transient Torch resources after model preloading."""
-    if hasattr(torch, "cuda") and torch.cuda.is_available():
-        torch.cuda.empty_cache()
-    gc.collect()
-
-
 def preload_whisper_model(model_id: str, device: str = "cpu") -> None:
     """Download an openai-whisper checkpoint into the local cache.
 
@@ -252,100 +235,21 @@ def preload_whisper_models(
 
 
 def preload_silero_vad() -> None:
-    """Download and cache the Silero VAD model via ``torch.hub``."""
+    """Download and cache the Silero VAD model via ``torch.hub``.
+
+    VAD is an optional pre-screen accelerator. A failure here is logged as a
+    warning rather than raised, mirroring the runtime fallback in
+    ``nextext.core.transcription._get_vad``: transcription degrades to
+    RMS-only speech detection when the model is unavailable (e.g. ``torchaudio``
+    is not installed in a CPU-only environment).
+    """
     logger.info("Downloading Silero VAD model from '{}'.", SILERO_VAD_REPO)
-    torch.hub.load(SILERO_VAD_REPO, model="silero_vad", trust_repo=True)  # type: ignore[no-untyped-call]
+    try:
+        torch.hub.load(SILERO_VAD_REPO, model="silero_vad", trust_repo=True)  # type: ignore[no-untyped-call]
+    except Exception as exc:
+        logger.warning("Could not preload Silero VAD ({}). Transcription will fall back to RMS-only.", exc)
+        return
     logger.info("Silero VAD model cached.")
-
-
-def preload_diarization_model(
-    auth_token: str | None,
-    device: str = "cpu",
-) -> None:
-    """Preload the pyannote speaker diarization pipeline.
-
-    Args:
-        auth_token (str | None): Hugging Face token used for private gated
-            model access.
-        device (str): Device used for the preload step.
-    """
-    if not auth_token:
-        logger.warning(
-            "Skipping diarization preload. '{}' also depends on {}.",
-            DIARIZATION_MODEL_ID,
-            ", ".join(DIARIZATION_DEPENDENCY_IDS),
-        )
-        return
-
-    _configure_torch_safe_globals()
-    logger.info("Loading diarization model '{}'.", DIARIZATION_MODEL_ID)
-    pipeline = DiarizationPipeline.from_pretrained(
-        DIARIZATION_MODEL_ID,
-        use_auth_token=auth_token,
-    )
-    pipeline.to(torch.device(device))
-    del pipeline
-    _cleanup_torch_resources()
-
-
-def preload_gliner_model(model_id: str = GLINER_MODEL_ID) -> None:
-    """Download and cache the GLiNER NER model.
-
-    Args:
-        model_id (str): The Hugging Face model ID for GLiNER.
-    """
-    logger.info("Loading GLiNER model '{}'.", model_id)
-    model = GLiNER.from_pretrained(model_id)
-    del model
-    gc.collect()
-    logger.info("GLiNER model '{}' cached.", model_id)
-
-
-def preload_translation_model(
-    model_id: str | None = None,
-    provider: str | None = None,
-    hf_token: str | None = None,
-) -> None:
-    """Ensure the translation model is available for the configured inference provider.
-
-    For ``ollama``, pulls the model via the Ollama CLI. For ``vllm``, downloads
-    the model weights from Hugging Face Hub. For ``openai``, the model is remote
-    and no local action is needed.
-
-    Args:
-        model_id (str | None): Override for the translation model identifier.
-            Defaults to the ``TRANSLATION_MODEL`` environment variable.
-        provider (str | None): Override for the inference provider. Defaults to
-            the value resolved by :func:`~nextext.utils.env_cfg.load_inference_env`.
-        hf_token (str | None): Hugging Face Hub token used when downloading
-            model weights (``vllm`` provider only).
-    """
-    resolved_model_id = model_id or os.getenv(TRANSLATION_MODEL_ENV)
-    if not resolved_model_id:
-        logger.warning(
-            "Skipping translation model preload: '{}' is not set.",
-            TRANSLATION_MODEL_ENV,
-        )
-        return
-
-    resolved_provider = provider or load_inference_env().provider
-
-    if resolved_provider == "ollama":
-        logger.info("Pulling translation model '{}' via Ollama.", resolved_model_id)
-        subprocess.run(["ollama", "pull", resolved_model_id], check=True)
-        logger.info("Translation model '{}' is available in Ollama.", resolved_model_id)
-    elif resolved_provider == "vllm":
-        logger.info(
-            "Downloading translation model '{}' from Hugging Face Hub.",
-            resolved_model_id,
-        )
-        huggingface_hub.snapshot_download(resolved_model_id, token=hf_token)
-        logger.info("Translation model '{}' cached from Hugging Face Hub.", resolved_model_id)
-    else:
-        logger.info(
-            "Translation model '{}' is hosted remotely; no local preload required.",
-            resolved_model_id,
-        )
 
 
 def _get_default_device() -> str:
@@ -384,25 +288,10 @@ def main() -> None:
         except Exception as exc:
             failures.append(f"Whisper {model_id} ({exc})")
 
-    try:
-        preload_silero_vad()
-    except Exception as exc:
-        failures.append(f"Silero VAD ({exc})")
-
-    try:
-        preload_diarization_model(os.getenv("HF_HUB_TOKEN"), device=device)
-    except Exception as exc:
-        failures.append(f"Diarization {DIARIZATION_MODEL_ID} ({exc})")
-
-    try:
-        preload_gliner_model()
-    except Exception as exc:
-        failures.append(f"GLiNER {GLINER_MODEL_ID} ({exc})")
-
-    try:
-        preload_translation_model(hf_token=os.getenv("HF_HUB_TOKEN"))
-    except Exception as exc:
-        failures.append(f"Translation model ({exc})")
+    # Silero VAD is an optional pre-screen; preload_silero_vad() degrades to a
+    # warning (RMS-only fallback) instead of raising, so it stays out of the
+    # fatal failure aggregation above.
+    preload_silero_vad()
 
     if failures:
         raise RuntimeError("Failed to preload models: " + "; ".join(failures))

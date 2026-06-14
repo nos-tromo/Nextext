@@ -12,9 +12,10 @@ This document describes every agent, how they interact, and what they expect fro
 
 | Agent | Module & entry point | Consumes | Produces | Activated by |
 | --- | --- | --- | --- | --- |
-| Transcription & Diarization | `nextext/core/transcription.py` → `WhisperTranscriber` / `ExternalWhisperTranscriber`, `transcription_pipeline` | Audio file path, Hugging Face token, Whisper settings | Timestamped transcript `pd.DataFrame` (`start`, `end`, `speaker`, `text`) | Always-on |
+| Transcription & Diarization | `nextext/core/transcription.py` → `WhisperTranscriber` / `ExternalWhisperTranscriber`, `transcription_pipeline`; diarization client in `nextext/core/diarization.py` | Audio file path, Whisper settings, speaker count (`DIARIZE_API_BASE` for diarization) | Timestamped transcript `pd.DataFrame` (`start`, `end`, `speaker`, `text`) | Always-on |
 | Translation | `nextext/core/translation.py` → `Translator`, `translation_pipeline` | Transcript `pd.DataFrame`, source and target ISO codes, inference provider | Mutated `pd.DataFrame` translated segment-wise | CLI `--task translate`, Streamlit "Task" switch |
-| Word Intelligence | `nextext/core/words.py` → `WordCounter`, `wordlevel_pipeline` | Transcript text, resolved language | Word counts, entity table, noun sentiment table, graph HTML, word cloud `Figure` | CLI `-w/--words`, Streamlit "Word-level analysis" |
+| Word Intelligence | `nextext/core/words.py` → `WordCounter`, `wordlevel_pipeline` | Transcript text, resolved language | Word counts, noun sentiment table, graph HTML, word cloud `Figure` | CLI `-w/--words`, Streamlit "Word-level analysis" |
+| Named Entity Recognition | `nextext/core/ner.py` → `extract_entities` (called by `wordlevel_pipeline`) | Transcript text | Entity table (`[Category, Entity, Frequency]`) via the out-of-process `/gliner` service | CLI `-w/--words`, Streamlit "Word-level analysis" |
 | Summarization | `nextext/pipeline.py` → `summarization_pipeline` + `InferencePipeline` | Full transcript text | Summary string in the configured output language | CLI `-sum/--summarize`, Streamlit "Summarisation" |
 | Hate Speech Detection | `nextext/core/hate_speech.py` → `HateSpeechDetector`, `hate_speech_pipeline` | Transcript `pd.DataFrame`, inference provider | List of flagged segment dicts (`hate_speech`, `category`, `confidence`, `reason`, `text`) | CLI `-hs/--hate-speech`, Streamlit "Hate speech detection" |
 | File Export | `nextext/core/processing.py` → `FileProcessor.write_file_output` | Any agent result | Files in `output/<input-file>/` (`.txt`, `.csv`, `.xlsx`, `.png`) | CLI workflow |
@@ -31,29 +32,29 @@ This document describes every agent, how they interact, and what they expect fro
 
 ## Transcription & Diarization Agent
 
-- **Key files:** `nextext/core/transcription.py`, `transcription_pipeline()` (`nextext/pipeline.py`).
-- **Responsibilities:** Load audio, auto-detect language when not provided, run openai-whisper transcription, optional pyannote-based diarization (`n_speakers > 1`), and emit a normalized DataFrame used by every downstream agent.
-- **Inputs:** `Path` to audio/video, task (`transcribe` or `translate`), target ISO code, optional source code, speaker count.
+- **Key files:** `nextext/core/transcription.py`, `nextext/core/diarization.py`, `transcription_pipeline()` (`nextext/pipeline.py`).
+- **Responsibilities:** Load audio, auto-detect language when not provided, run openai-whisper transcription, optional speaker diarization via the out-of-process `/diarize` HTTP service (`n_speakers > 1`), and emit a normalized DataFrame used by every downstream agent.
+- **Inputs:** `Path` to audio/video, optional source code, speaker count. (Whisper always transcribes; the `transcribe`/`translate` task is a job-level flag that gates the downstream Translation agent, not a transcription input.)
 - **Outputs:** `pd.DataFrame` with `start`, `end`, `speaker`, `text`; detected source language stored in `WhisperTranscriber.src_lang`.
-- **Providers:** Derived from `INFERENCE_PROVIDER`. `ollama` (default) runs local openai-whisper with hardcoded models (`large-v3-turbo` for transcribe, `large-v3` for translate). `openai` and `vllm` forward the audio to an OpenAI-compatible `/v1/audio/transcriptions` endpoint via `ExternalWhisperTranscriber` (no diarization). The external model defaults to `whisper-1` (openai) or `openai/whisper-large-v3` (vllm) and can be overridden via `WHISPER_MODEL`.
-- **Dependencies:** `openai-whisper`, `torch`, `pyannote-audio` (diarization only, gated by Hugging Face token). GPU detection is automatic.
-- **Operational notes:** The `large-v3-turbo` model is loaded once and reused for both mel-spectrogram language detection and the transcribe task; the translate task releases it and loads `large-v3`. Diarization assigns speakers via maximum segment overlap from the pyannote timeline. Speaker column is omitted when `n_speakers == 1`.
+- **Providers:** Derived from `INFERENCE_PROVIDER`. `ollama` (default) runs local openai-whisper with a single hardcoded `large-v3-turbo` model (Whisper always transcribes; translation is performed downstream by the LLM). `openai` and `vllm` forward the audio to an OpenAI-compatible `/v1/audio/transcriptions` endpoint via `ExternalWhisperTranscriber`. The external model defaults to `whisper-1` (openai) or `openai/whisper-large-v3` (vllm) and can be overridden via `WHISPER_MODEL`. Diarization is provider-independent: regardless of the transcription provider, `n_speakers > 1` triggers a call to the `/diarize` service.
+- **Dependencies:** `openai-whisper`, `torch`, and `httpx` (the `/diarize` HTTP client). Diarization no longer requires a local `pyannote-audio` install or a Hugging Face token — those now live on the diarization service side. GPU detection is automatic.
+- **Operational notes:** The `large-v3-turbo` model is loaded once and reused for both mel-spectrogram language detection and transcription; Whisper no longer performs the audio-translate task, so the heavier `large-v3` model has been retired. Diarization (`nextext/core/diarization.py`) POSTs the audio to the `/diarize` service and assigns speakers to transcript segments by maximum overlap (`assign_speakers_by_overlap`); when `DIARIZE_API_BASE` is unset or the request fails it logs and continues without speaker labels. The speaker column is omitted when `n_speakers == 1`.
 
 ## Translation Agent
 
 - **Key files:** `nextext/core/translation.py`, `translation_pipeline()` (`nextext/pipeline.py`).
-- **Responsibilities:** Detect the transcript language via `langdetect` when needed, prompt TranslateGemma via the shared inference service, and rewrite each transcript segment to the requested target language.
+- **Responsibilities:** Detect the transcript language via `langdetect` when needed, prompt the shared chat model via the inference service, and rewrite each transcript segment to the requested target language.
 - **Inputs:** Transcript `pd.DataFrame` (only the `text` column is used), target ISO 639-1 code, optional resolved source code from transcription, shared `InferencePipeline`.
 - **Outputs:** In-place replacement of the `text` column; `Translator.src_lang` is populated for logging and downstream toggles.
 - **Dependencies:** `langdetect`, `pycountry`, plus an OpenAI-compatible chat completions backend selected by `INFERENCE_PROVIDER` (`ollama` by default, `vllm`, or `openai`).
-- **Operational notes:** Translation is skipped when the resolved source language already equals the target. The runtime requires an explicit `TRANSLATION_MODEL` environment variable when translation is enabled. The prompt shape depends on `INFERENCE_PROVIDER`: `ollama` and `openai` use the templated prompt in `nextext/utils/prompts/translation.txt` with a system message, while `vllm` sends a single user message in the delimiter format (`<<<source>>>{src}<<<target>>>{trg}<<<text>>>{text}`) required by `Infomaniak-AI/vllm-translategemma-4b-it` — the model card specifies user/assistant roles only, so the system prompt is omitted on that path.
+- **Operational notes:** This is the only translation path — Whisper's audio-translate task is no longer used — so English targets are translated here too. Translation is skipped only when the resolved source language already equals the target (see `should_translate()` in `nextext/pipeline.py`). Translation runs on `TEXT_MODEL` — the same model used for summarization — over the templated prompt in `nextext/utils/prompts/translation.txt` plus a translation system prompt, identically for every `INFERENCE_PROVIDER`.
 
 ## Word Intelligence Agent
 
 - **Key files:** `nextext/core/words.py`, `wordlevel_pipeline()` (`nextext/pipeline.py`), spaCy mappings in `nextext/utils/mappings/spacy_models.json`.
-- **Responsibilities:** Turn transcript text into linguistic diagnostics—top words, named entities, noun sentiment table, noun-verb-adjective network, and a matplotlib word cloud.
+- **Responsibilities:** Turn transcript text into linguistic diagnostics—top words, noun sentiment table, noun-verb-adjective network, and a matplotlib word cloud.
 - **Inputs:** `pd.DataFrame` with `text`, resolved language code (source for `transcribe`, target for `translate`).
-- **Outputs:** Tuple `(word_counts_df, entities_df, noun_sentiment_df, noun_graph_html_path, wordcloud_figure)`.
+- **Outputs:** Tuple `(word_counts_df, entities_df, wordcloud_figure)` — the entity DataFrame is populated by the out-of-process NER agent (`nextext/core/ner.py`), empty when `NER_API_BASE` is unset.
 - **Dependencies:** `spacy`, `pyvis`, `matplotlib`, `camel_tools`, `arabic_reshaper`, `networkx`; fonts loaded via `nextext/utils/font_loader.py` to keep multilingual rendering stable.
 - **Operational notes:** Call `text_to_doc()` then `lemmatize_doc()` before counting; spaCy models are downloaded on demand, so make sure the environment can write to the cache or pre-bundle them.
 
@@ -79,10 +80,10 @@ This document describes every agent, how they interact, and what they expect fro
 ## Inference Service Agent
 
 - **Key files:** `nextext/core/openai_cfg.py` and prompts directory `nextext/utils/prompts/`.
-- **Responsibilities:** Construct prompts, pick provider-specific models, create an OpenAI-compatible client, perform provider health checks, and expose `call_model()` to translation and summarization.
+- **Responsibilities:** Construct prompts, resolve the configured `TEXT_MODEL`, create an OpenAI-compatible client, perform provider health checks, and expose `call_model()` to translation and summarization.
 - **Inputs:** Prompt keyword (`system`, `summary`, `translation`, `hate_speech`), runtime options (temperature, stop tokens, max tokens, `include_system_prompt`), provider configuration (`INFERENCE_PROVIDER`, `OPENAI_API_BASE`, `OPENAI_API_KEY`).
 - **Outputs:** Raw string response from the configured chat completion endpoint; `sys_prompt` ensures outputs are emitted in the configured language when the system role is included.
-- **Operational notes:** Ollama remains the default provider and is reached through its `/v1/chat/completions` compatibility layer. `INFERENCE_PROVIDER=vllm` targets a LiteLLM-fronted `nos-tromo/vllm-service` stack (LiteLLM dispatches by `model` field, so both `TEXT_MODEL` and `TRANSLATION_MODEL` must be registered on the same endpoint). `INFERENCE_PROVIDER=openai` targets the hosted OpenAI API. `call_model(include_system_prompt=False)` is used by the vLLM translation path only — all other callers keep the default system prompt. `OPENAI_API_KEY` is required for every provider. `OLLAMA_THINK` (tri-state: `1`/`true`/`yes`/`on` to enable, `0`/`false`/`no`/`off` to disable, unset to omit) sets a process-wide default for the Ollama `think` request field; `call_model(think=...)` overrides it per call. Forwarded via `extra_body`, so it is a no-op on vLLM/OpenAI.
+- **Operational notes:** Ollama remains the default provider and is reached through its `/v1/chat/completions` compatibility layer. `INFERENCE_PROVIDER=vllm` targets a LiteLLM-fronted `nos-tromo/vllm-service` stack (LiteLLM dispatches by `model` field, so `TEXT_MODEL` must be registered on the endpoint). `INFERENCE_PROVIDER=openai` targets the hosted OpenAI API. `call_model(include_system_prompt=False)` sends a single user message for models or endpoints that accept only `user`/`assistant` roles; all standard callers keep the default system prompt. `OPENAI_API_KEY` is required for every provider. `OLLAMA_THINK` (tri-state: `1`/`true`/`yes`/`on` to enable, `0`/`false`/`no`/`off` to disable, unset to omit) sets a process-wide default for the Ollama `think` request field; `call_model(think=...)` overrides it per call. Forwarded via `extra_body`, so it is a no-op on vLLM/OpenAI.
 
 ## File Export Agent
 

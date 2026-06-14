@@ -6,7 +6,9 @@ from typing import Any
 import pandas as pd
 from matplotlib.figure import Figure
 
+from nextext.core.diarization import assign_speakers_by_overlap, diarize_file
 from nextext.core.hate_speech import HateSpeechDetector
+from nextext.core.ner import extract_entities
 from nextext.core.openai_cfg import InferencePipeline
 from nextext.core.translation import Translator
 from nextext.core.words import WordCounter
@@ -31,9 +33,7 @@ else:
 
 def transcription_pipeline(
     file_path: Path,
-    trg_lang: str,
     src_lang: str,
-    task: str,
     n_speakers: int,
 ) -> tuple[pd.DataFrame, str]:
     """Transcribe the audio file using either a local Whisper model or an external API.
@@ -41,14 +41,22 @@ def transcription_pipeline(
     The transcription provider is derived from ``INFERENCE_PROVIDER``: ``ollama``
     runs the bundled ``openai-whisper`` locally, while ``openai`` and ``vllm``
     forward the audio to an OpenAI-compatible ``/v1/audio/transcriptions``
-    endpoint. External transcription does not support diarization.
+    endpoint. Whisper always transcribes in the source language; translation to
+    a target language is handled separately by :func:`translation_pipeline`.
+
+    Diarization is provider-independent: when ``n_speakers > 1`` the audio is
+    sent to the out-of-process ``/diarize`` service (see
+    :func:`nextext.core.diarization.diarize_file`) and the returned speaker
+    turns are aligned onto the transcript by maximum overlap. It is skipped for
+    single-speaker requests and for empty transcripts, and degrades to an
+    unlabelled transcript when ``DIARIZE_API_BASE`` is unset or the service is
+    unreachable.
 
     Args:
         file_path (Path): Path to the audio file.
-        trg_lang (str): Target language code for translation check.
         src_lang (str): Source language code.
-        task (str): Task to perform (transcribe or translate).
-        n_speakers (int): Number of speakers for diarization (local provider only).
+        n_speakers (int): Maximum speaker count for diarization. Values greater
+            than 1 trigger a ``/diarize`` request; 1 disables diarization.
 
     Returns:
         tuple[pd.DataFrame, str]: The transcript DataFrame and the
@@ -56,41 +64,43 @@ def transcription_pipeline(
     """
     config = load_transcription_env()
 
+    transcriber: Any
     if config.provider == "external":
         if ExternalWhisperTranscriber is None:
             raise RuntimeError(
                 "Transcription dependencies could not be imported. Please verify the openai package installation."
             )
-        external_transcriber = ExternalWhisperTranscriber(
+        transcriber = ExternalWhisperTranscriber(
             file_path=file_path,
-            trg_lang=trg_lang,
             src_lang=src_lang,
             model_id=config.whisper_model,
-            task=task,
         )
-        external_transcriber.transcription()
-        df = external_transcriber.transcript_output()
-        updated_src_lang = external_transcriber.src_lang or src_lang
-        return df, updated_src_lang
     else:
         if WhisperTranscriber is None:
             raise RuntimeError(
                 "Transcription dependencies could not be imported. Verify the openai-whisper "
                 "and torchaudio installation."
             )
-        local_transcriber = WhisperTranscriber(
+        transcriber = WhisperTranscriber(
             file_path=file_path,
-            trg_lang=trg_lang,
             src_lang=src_lang,
-            task=task,
             n_speakers=n_speakers,
         )
-        local_transcriber.transcription()
-        if n_speakers > 1:
-            local_transcriber.diarization()
-        df = local_transcriber.transcript_output()
-        updated_src_lang = local_transcriber.src_lang or src_lang
-        return df, updated_src_lang
+
+    transcriber.transcription()
+
+    # Diarization runs against the /diarize HTTP service for every provider.
+    # Skip it for single-speaker requests and for empty transcripts (silent
+    # audio short-circuited by the speech guard) to avoid a needless request.
+    segments = transcriber.transcription_result["segments"] if transcriber.transcription_result else []
+    if n_speakers > 1 and segments:
+        diarize_segments = diarize_file(file_path, max_speakers=n_speakers)
+        if diarize_segments:
+            assign_speakers_by_overlap(segments, diarize_segments)
+
+    df = transcriber.transcript_output()
+    updated_src_lang = transcriber.src_lang or src_lang
+    return df, updated_src_lang
 
 
 def normalize_language_code(lang_code: str | None) -> str | None:
@@ -105,6 +115,28 @@ def normalize_language_code(lang_code: str | None) -> str | None:
     if lang_code is None:
         return None
     return lang_code.split("-", 1)[0]
+
+
+def should_translate(task: str, src_lang: str | None, trg_lang: str) -> bool:
+    """Decide whether the LLM translation stage should run.
+
+    Whisper only transcribes, so every translation is performed downstream by
+    the LLM (``TEXT_MODEL``). Translation runs when a ``translate`` task was
+    requested and the resolved source language differs from the target: a
+    same-language request is a no-op, and an English target is translated like
+    any other (there is no longer a Whisper audio-translate hop to English).
+
+    Args:
+        task (str): The requested task, ``"transcribe"`` or ``"translate"``.
+        src_lang (str | None): The resolved source language code.
+        trg_lang (str): The target language code.
+
+    Returns:
+        bool: ``True`` when the translation stage should run.
+    """
+    if task != "translate":
+        return False
+    return normalize_language_code(src_lang) != normalize_language_code(trg_lang)
 
 
 def translation_pipeline(
@@ -184,7 +216,7 @@ def wordlevel_pipeline(
     word_analysis.text_to_doc()
     word_analysis.lemmatize_doc()
     word_counts = word_analysis.count_words()
-    named_entities = word_analysis.named_entity_recognition()
+    named_entities = extract_entities(word_analysis.text)
     wordcloud = word_analysis.create_wordcloud()
 
     return word_counts, named_entities, wordcloud

@@ -1,6 +1,6 @@
 """Centralized GPU-model residency manager for Nextext.
 
-Models that can live on GPU (Whisper, diarization, GLiNER, ...) register a
+Models that can live on GPU (e.g. Whisper) register a
 :class:`ModelSpec` with the process-wide :data:`REGISTRY`. Callers wrap use of
 the model in ``with REGISTRY.acquire(name) as model:`` to ensure the model is
 on the target device during use and released (either moved back to CPU or
@@ -44,7 +44,7 @@ class ModelSpec:
     """Loader / mover configuration for a managed model.
 
     Attributes:
-        name: Registry key, e.g. ``"gliner"``, ``"whisper_turbo"``.
+        name: Registry key, e.g. ``"whisper_turbo"``.
         loader: Zero-arg callable that builds the model on CPU.
         mover: Callable ``(model, device) -> model`` that moves the model to
             the requested device and returns it (possibly the same object).
@@ -52,8 +52,8 @@ class ModelSpec:
         gpu_capable: Set ``False`` for CPU-only caches (e.g. spaCy); disables
             device moves and forces an effective strategy of ``OFFLOAD``.
         mps_compatible: Set ``False`` for models whose ops are not supported
-            on the Apple Silicon MPS backend (notably Whisper and pyannote,
-            which rely on sparse-tensor constructors that raise
+            on the Apple Silicon MPS backend (notably Whisper, which relies
+            on sparse-tensor constructors that raise
             ``NotImplementedError`` on SparseMPS even with
             ``PYTORCH_ENABLE_MPS_FALLBACK=1``). When ``False`` the default
             device picker skips MPS and falls back to CPU. Ignored when
@@ -83,7 +83,7 @@ def _default_device(*, allow_mps: bool = True) -> str:
     Args:
         allow_mps: When ``False``, the Apple Silicon MPS backend is skipped
             and CPU is returned instead. Set by the registry for specs that
-            declare ``mps_compatible=False`` (e.g. Whisper, pyannote), whose
+            declare ``mps_compatible=False`` (e.g. Whisper), whose
             sparse-tensor paths crash on SparseMPS.
 
     Returns:

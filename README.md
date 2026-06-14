@@ -28,7 +28,7 @@ cd Nextext
 uv sync
 ```
 
-To enable speaker diarization, accept the user agreement for the following models: [`pyannote/segmentation-3.0`](https://huggingface.co/pyannote/segmentation-3.0) and [`speaker-diarization-3.1`](https://huggingface.co/pyannote/speaker-diarization-3.1).
+Speaker diarization runs out-of-process against an HTTP `/diarize` service (e.g. [`nos-tromo/vllm-service`](https://github.com/nos-tromo/vllm-service)). Set `DIARIZE_API_BASE` to its root URL to enable it; the gated-model agreements and Hugging Face token live on the service side, not in Nextext.
 
 ### Docker installation 🐳
 
@@ -187,14 +187,12 @@ Pull models into the running Ollama container:
 
 ```bash
 docker exec ollama ollama pull gemma3:12b-it-qat
-docker exec ollama ollama pull translategemma:4b
 ```
 
 Then set the model names in `.env`:
 
 ```bash
 TEXT_MODEL=gemma3:12b-it-qat
-TRANSLATION_MODEL=translategemma:4b
 ```
 
 #### Local preload command 🌐
@@ -204,9 +202,10 @@ uv run load-models
 ```
 
 `load-models` preloads Nextext's NLTK resources, configured spaCy
-packages, WhisperX speech models, WhisperX alignment models, and the
-default diarization pipeline when `HF_HUB_TOKEN` is available. The
-legacy alias `uv run load-spacy-models` still works.
+packages, the openai-whisper `large-v3-turbo` checkpoint, the Silero
+VAD model, and the GLiNER NER model. Diarization is no longer preloaded
+— it runs against the out-of-process `/diarize` service. The legacy
+alias `uv run load-spacy-models` still works.
 
 #### Offline usage 🚫🌐
 

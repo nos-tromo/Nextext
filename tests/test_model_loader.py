@@ -1,5 +1,6 @@
 """Tests for the Nextext model preload utilities."""
 
+import io
 import sys
 from pathlib import Path
 
@@ -184,7 +185,7 @@ def test_main_preloads_expected_model_groups(
     monkeypatch.setattr(
         model_loader,
         "LOCAL_WHISPER_MODEL_IDS",
-        ("large-v3-turbo", "large-v3"),
+        ("large-v3-turbo",),
     )
     monkeypatch.setattr(
         model_loader,
@@ -193,139 +194,80 @@ def test_main_preloads_expected_model_groups(
     )
     monkeypatch.setattr(
         model_loader,
-        "preload_diarization_model",
-        lambda auth_token, device: calls.append((f"diarization:{device}", auth_token or "")),
+        "preload_silero_vad",
+        lambda: calls.append(("silero_vad", model_loader.SILERO_VAD_REPO)),
     )
-    monkeypatch.setattr(
-        model_loader,
-        "preload_gliner_model",
-        lambda: calls.append(("gliner", model_loader.GLINER_MODEL_ID)),
-    )
-    monkeypatch.setattr(
-        model_loader,
-        "preload_translation_model",
-        lambda **kwargs: calls.append(("translation", "")),
-    )
-    monkeypatch.setenv("HF_HUB_TOKEN", "secret-token")
-
     model_loader.main()
 
     assert calls == [
         ("nltk", "all"),
         ("spacy", "en_core_web_sm"),
         ("whisper:cpu", "large-v3-turbo"),
-        ("whisper:cpu", "large-v3"),
-        ("diarization:cpu", "secret-token"),
-        ("gliner", model_loader.GLINER_MODEL_ID),
-        ("translation", ""),
+        ("silero_vad", "snakers4/silero-vad"),
     ]
 
 
-def test_preload_translation_model_skips_when_no_model_set(
+def test_preload_silero_vad_degrades_when_load_fails(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Test that translation model preload is skipped when TRANSLATION_MODEL is unset.
+    """A failed Silero VAD download is downgraded to a warning, not raised.
+
+    Mirrors the runtime fallback in ``nextext.core.transcription._get_vad``:
+    VAD is an optional pre-screen, so an unavailable model must not abort the
+    preload — transcription falls back to RMS-only speech detection.
 
     Args:
-        monkeypatch (pytest.MonkeyPatch): The pytest fixture for modifying environment
-            variables and functions.
+        monkeypatch (pytest.MonkeyPatch): The pytest fixture for patching the
+            ``torch.hub.load`` entry point.
     """
-    monkeypatch.delenv(model_loader.TRANSLATION_MODEL_ENV, raising=False)
+    from loguru import logger
 
-    def should_not_be_called(*args: object, **kwargs: object) -> None:
-        """Raise if called.
+    def fail_load(*args: object, **kwargs: object) -> None:
+        """Simulate a Silero VAD load failure (e.g. missing torchaudio).
 
         Raises:
-            AssertionError: Always, to signal an unexpected call.
+            ModuleNotFoundError: Always, mimicking the absent dependency.
         """
-        raise AssertionError("Should not be called when TRANSLATION_MODEL is unset")
+        raise ModuleNotFoundError("No module named 'torchaudio'")
 
-    monkeypatch.setattr(model_loader.subprocess, "run", should_not_be_called)
-    monkeypatch.setattr(model_loader.huggingface_hub, "snapshot_download", should_not_be_called)
+    monkeypatch.setattr(model_loader.torch.hub, "load", fail_load)
 
-    model_loader.preload_translation_model()
+    sink = io.StringIO()
+    handler_id = logger.add(sink, level="WARNING")
+    try:
+        model_loader.preload_silero_vad()
+    finally:
+        logger.remove(handler_id)
+
+    assert "Silero VAD" in sink.getvalue()
 
 
-def test_preload_translation_model_ollama_pulls_model(
+def test_main_does_not_fail_when_silero_vad_unavailable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Test that the Ollama provider pulls the translation model via the CLI.
+    """``main`` completes even when the Silero VAD model cannot be loaded.
+
+    The essential preloads (nltk, spaCy, Whisper) are stubbed out so the test
+    isolates the optional VAD step: a failing ``torch.hub.load`` must be
+    tolerated rather than aggregated into the fatal failure list.
 
     Args:
-        monkeypatch (pytest.MonkeyPatch): The pytest fixture for modifying environment
-            variables and functions.
+        monkeypatch (pytest.MonkeyPatch): The pytest fixture for patching
+            module functions and the ``torch.hub.load`` entry point.
     """
-    monkeypatch.setenv("INFERENCE_PROVIDER", "ollama")
-    monkeypatch.setenv(model_loader.TRANSLATION_MODEL_ENV, "llama3")
-    captured: list[tuple[list[str], bool]] = []
+    monkeypatch.setattr(model_loader, "_get_default_device", lambda: "cpu")
+    monkeypatch.setattr(model_loader, "ensure_nltk_resources", lambda: None)
+    monkeypatch.setattr(model_loader, "get_spacy_model_ids", lambda: [])
+    monkeypatch.setattr(model_loader, "LOCAL_WHISPER_MODEL_IDS", ())
 
-    def fake_run(cmd: list[str], check: bool) -> None:
-        """Capture the subprocess command.
-
-        Args:
-            cmd (list[str]): The command passed to subprocess.run.
-            check (bool): The check flag passed to subprocess.run.
-        """
-        captured.append((cmd, check))
-
-    monkeypatch.setattr(model_loader.subprocess, "run", fake_run)
-
-    model_loader.preload_translation_model()
-
-    assert captured == [(["ollama", "pull", "llama3"], True)]
-
-
-def test_preload_translation_model_vllm_downloads_from_hf(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Test that the vLLM provider downloads the translation model from Hugging Face Hub.
-
-    Args:
-        monkeypatch (pytest.MonkeyPatch): The pytest fixture for modifying environment
-            variables and functions.
-    """
-    model = "Infomaniak-AI/vllm-translategemma-4b-it"
-    monkeypatch.setenv("INFERENCE_PROVIDER", "vllm")
-    monkeypatch.setenv(model_loader.TRANSLATION_MODEL_ENV, model)
-    captured: list[dict[str, object]] = []
-
-    def fake_snapshot_download(model_id: str, token: str | None = None) -> None:
-        """Capture the snapshot_download call.
-
-        Args:
-            model_id (str): The model ID passed to snapshot_download.
-            token (str | None): The token passed to snapshot_download.
-        """
-        captured.append({"model_id": model_id, "token": token})
-
-    monkeypatch.setattr(model_loader.huggingface_hub, "snapshot_download", fake_snapshot_download)
-
-    model_loader.preload_translation_model(hf_token="hf-token")
-
-    assert captured == [{"model_id": model, "token": "hf-token"}]
-
-
-def test_preload_translation_model_openai_is_noop(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Test that the OpenAI provider does not trigger any local download.
-
-    Args:
-        monkeypatch (pytest.MonkeyPatch): The pytest fixture for modifying environment
-            variables and functions.
-    """
-    monkeypatch.setenv("INFERENCE_PROVIDER", "openai")
-    monkeypatch.setenv(model_loader.TRANSLATION_MODEL_ENV, "gpt-4o")
-
-    def should_not_be_called(*args: object, **kwargs: object) -> None:
-        """Raise if called.
+    def fail_load(*args: object, **kwargs: object) -> None:
+        """Simulate a Silero VAD load failure (e.g. missing torchaudio).
 
         Raises:
-            AssertionError: Always, to signal an unexpected call.
+            ModuleNotFoundError: Always, mimicking the absent dependency.
         """
-        raise AssertionError("No local download should occur for the OpenAI provider")
+        raise ModuleNotFoundError("No module named 'torchaudio'")
 
-    monkeypatch.setattr(model_loader.subprocess, "run", should_not_be_called)
-    monkeypatch.setattr(model_loader.huggingface_hub, "snapshot_download", should_not_be_called)
+    monkeypatch.setattr(model_loader.torch.hub, "load", fail_load)
 
-    model_loader.preload_translation_model()
+    model_loader.main()
