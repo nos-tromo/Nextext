@@ -280,6 +280,7 @@ def _run_pipeline_blocking(state: JobState, push_event: PushEvent) -> dict[str, 
     from nextext.pipeline import (
         hate_speech_pipeline,
         normalize_language_code,
+        should_translate,
         summarization_pipeline,
         transcription_pipeline,
         translation_pipeline,
@@ -337,9 +338,7 @@ def _run_pipeline_blocking(state: JobState, push_event: PushEvent) -> dict[str, 
     _notify(0)
     df, updated_src_lang = transcription_pipeline(
         file_path=state.file_path,
-        trg_lang=file_opts["trg_lang"],
         src_lang=file_opts["src_lang"] or "",
-        task=file_opts["task"],
         n_speakers=file_opts["speakers"],
     )
     file_opts["src_lang"] = updated_src_lang
@@ -372,9 +371,14 @@ def _run_pipeline_blocking(state: JobState, push_event: PushEvent) -> dict[str, 
     )
 
     # Translation -------------------------------------------------------------
+    # Whisper only transcribes; the LLM performs every translation, directly
+    # from the source language to the target. Engage it whenever a translate
+    # task was requested and the resolved source differs from the target (so an
+    # English target is translated too, and a same-language request is a no-op).
     _notify(1)
     inference_pipeline: InferencePipeline | None = None
-    if file_opts["task"] == "translate" and file_opts["trg_lang"] != "en":
+    needs_translation = should_translate(file_opts["task"], file_opts["src_lang"], file_opts["trg_lang"])
+    if needs_translation:
         inference_pipeline = InferencePipeline(out_language=language_name(file_opts["trg_lang"]))
         if not inference_pipeline.get_health():
             raise ConnectionError(

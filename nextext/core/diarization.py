@@ -1,121 +1,141 @@
-"""HTTP client for the external speaker-diarization service.
+"""Speaker-diarization agent: HTTP client for the out-of-process ``/diarize`` service.
 
-Nextext no longer runs pyannote locally — speaker diarization is delegated
-to an external HTTP service. vllm-service does not ship one yet; this module
-defines the contract such a service must implement:
+Nextext no longer hosts pyannote in-process. Diarization runs against an HTTP
+``/diarize`` endpoint (e.g. ``nos-tromo/vllm-service``) that accepts a media
+upload and returns chronological speaker turns. This module owns both the wire
+call and the client-side alignment of those turns onto Whisper's transcript
+segments (by maximum temporal overlap), keeping the contract in one place.
 
-    POST {DIARIZATION_API_BASE}/diarize
-        multipart/form-data:
-            file:          the audio bytes (any ffmpeg-decodable format)
-            max_speakers:  int form field — upper bound on distinct speakers
-        Authorization: Bearer <DIARIZATION_API_KEY>   (optional)
-
-    200 OK
-        {"segments": [{"start": 0.0, "end": 5.12, "speaker": "SPEAKER_00"}, ...]}
-
-``start``/``end`` are seconds as floats; ``speaker`` is an opaque label that
-is surfaced verbatim in the transcript. The endpoint resolves via
-:func:`nextext.utils.env_cfg.load_diarization_client_env` (dedicated
-``DIARIZATION_API_BASE`` override, central ``OPENAI_API_BASE``-root
-fallback).
-
-Unlike NER — which degrades softly to fewer entities — diarization fails
-hard: silently dropping speaker attribution would change analysis results
-without anyone noticing, so every failure raises with an actionable message.
+The endpoint is located via ``DIARIZE_API_BASE``; when it is unset diarization is
+disabled and callers simply receive no speaker labels (see
+:func:`nextext.utils.env_cfg.load_diarization_env`). Failures are logged and
+swallowed: a transcript without speakers is preferable to a failed job.
 """
 
 from pathlib import Path
 from typing import Any
 
-import httpx
+import httpx as httpx  # explicit re-export so tests can monkeypatch diarization.httpx
 from loguru import logger
 
-from nextext.utils.env_cfg import DiarizationClientConfig, load_diarization_client_env
+from nextext.utils.env_cfg import load_diarization_env
 
-_SETUP_HINT = (
-    "Speaker diarization requires an external diarization service. Set "
-    "DIARIZATION_API_BASE (and DIARIZATION_API_KEY if it needs auth) to a "
-    "server implementing POST /diarize; selecting a single speaker disables "
-    "diarization."
-)
+__all__ = ["assign_speakers_by_overlap", "diarize_file"]
 
 
 def diarize_file(
     file_path: Path,
-    max_speakers: int,
-    cfg: DiarizationClientConfig | None = None,
+    *,
+    num_speakers: int | None = None,
+    min_speakers: int | None = None,
+    max_speakers: int | None = None,
 ) -> list[dict[str, Any]]:
-    """Run speaker diarization on an audio file via the external service.
+    """Request speaker turns for an audio file from the ``/diarize`` service.
+
+    The service URL is ``{DIARIZE_API_BASE}/diarize``. When ``DIARIZE_API_BASE``
+    is unset diarization is disabled: a warning is logged and an empty list is
+    returned so the caller proceeds without speaker labels. Any transport or
+    HTTP error is likewise logged and swallowed into an empty list.
+
+    ``num_speakers`` (exact count) is mutually exclusive with
+    ``min_speakers``/``max_speakers`` on the server side; the frontend's
+    "max speakers" control maps to ``max_speakers``.
 
     Args:
-        file_path (Path): Path to the audio file to upload.
-        max_speakers (int): Upper bound on distinct speakers, forwarded as a
-            form field.
-        cfg (DiarizationClientConfig | None): Override client configuration.
-            When ``None``, reads from the environment via
-            :func:`nextext.utils.env_cfg.load_diarization_client_env`.
+        file_path (Path): Path to the audio/video file to diarize. Sent as-is;
+            the server resamples to 16 kHz mono via ffmpeg.
+        num_speakers (int | None): Exact number of speakers, if known.
+        min_speakers (int | None): Lower bound on the speaker count.
+        max_speakers (int | None): Upper bound on the speaker count.
 
     Returns:
-        list[dict[str, Any]]: Speaker turns as
-        ``{"start": float, "end": float, "speaker": str}`` dicts.
-
-    Raises:
-        RuntimeError: When no endpoint is configured, the service is
-            unreachable, responds with an error status (a 404 explicitly
-            calls out that the configured service does not implement
-            diarization), or returns a malformed payload.
+        list[dict[str, Any]]: Chronological speaker turns, each a mapping with
+            ``start`` / ``end`` (absolute seconds) and ``speaker`` keys. Empty
+            when diarization is disabled or the request fails.
     """
-    effective_cfg = cfg if cfg is not None else load_diarization_client_env()
-    if not effective_cfg.api_base:
-        raise RuntimeError("No diarization endpoint is configured. " + _SETUP_HINT)
+    config = load_diarization_env()
+    if not config.api_base:
+        logger.warning(
+            "Diarization requested but DIARIZE_API_BASE is unset; returning no "
+            "speaker turns. Set DIARIZE_API_BASE to enable speaker labels."
+        )
+        return []
+
+    data: dict[str, int] = {}
+    if num_speakers is not None:
+        data["num_speakers"] = num_speakers
+    if min_speakers is not None:
+        data["min_speakers"] = min_speakers
+    if max_speakers is not None:
+        data["max_speakers"] = max_speakers
 
     headers: dict[str, str] = {}
-    if effective_cfg.api_key:
-        headers["Authorization"] = f"Bearer {effective_cfg.api_key}"
+    if config.api_key:
+        headers["Authorization"] = f"Bearer {config.api_key}"
 
-    url = f"{effective_cfg.api_base}/diarize"
+    url = f"{config.api_base}/diarize"
     try:
-        with file_path.open("rb") as audio:
+        with open(file_path, "rb") as audio:
             response = httpx.post(
                 url,
-                files={"file": (file_path.name, audio)},
-                data={"max_speakers": str(max_speakers)},
+                files={"file": (file_path.name, audio, "application/octet-stream")},
+                data=data,
                 headers=headers,
-                timeout=effective_cfg.timeout,
+                timeout=config.timeout,
             )
-    except httpx.HTTPError as exc:
-        raise RuntimeError(f"Could not reach the diarization service at {url}: {exc}. " + _SETUP_HINT) from exc
-
-    if response.status_code == 404:
-        raise RuntimeError(
-            f"{url} does not exist (HTTP 404) — the configured service does not implement diarization. " + _SETUP_HINT
-        )
-    if response.is_error:
-        raise RuntimeError(f"Diarization service returned HTTP {response.status_code}: {response.text[:500]}")
-
-    try:
+        response.raise_for_status()
         payload = response.json()
-    except Exception as exc:
-        raise RuntimeError(f"Diarization service returned a non-JSON payload: {exc}") from exc
+    except httpx.HTTPStatusError as exc:
+        logger.error(
+            "Diarization request to {} failed ({}): {}",
+            url,
+            exc.response.status_code,
+            exc.response.text[:500],
+        )
+        return []
+    except (httpx.HTTPError, ValueError, OSError) as exc:
+        logger.error("Diarization request to {} failed: {}", url, exc)
+        return []
 
-    raw_segments = payload.get("segments") if isinstance(payload, dict) else None
-    if not isinstance(raw_segments, list):
-        raise RuntimeError("Diarization service returned an unexpected payload shape (missing 'segments' list).")
+    if not isinstance(payload, dict):
+        logger.error("Diarization response from {} was not a JSON object; ignoring.", url)
+        return []
 
-    segments: list[dict[str, Any]] = []
-    for item in raw_segments:
-        if not isinstance(item, dict):
-            raise RuntimeError(f"Diarization segment is malformed: {item!r}")
-        try:
-            segments.append(
-                {
-                    "start": float(item["start"]),
-                    "end": float(item["end"]),
-                    "speaker": str(item["speaker"]),
-                }
-            )
-        except (KeyError, TypeError, ValueError) as exc:
-            raise RuntimeError(f"Diarization segment is malformed: {item!r}") from exc
-
-    logger.info("Diarization service returned {} speaker turns.", len(segments))
+    segments = list(payload.get("segments", []))
+    logger.info("Diarization complete: {} speaker turns from '{}'.", len(segments), file_path.name)
     return segments
+
+
+def assign_speakers_by_overlap(
+    transcription_segments: list[dict[str, Any]],
+    diarize_segments: list[dict[str, Any]],
+) -> None:
+    """Label transcript segments with the maximally-overlapping speaker.
+
+    For each transcription segment, the total temporal overlap against every
+    diarization turn is accumulated per speaker, and the speaker with the
+    greatest overlap wins. Segments that overlap no turn are left untouched
+    (they gain no ``speaker`` key). ``transcription_segments`` is mutated in
+    place. This mirrors the previous in-process pyannote alignment, but reads
+    the speaker turns from the ``/diarize`` response rather than a pyannote
+    ``Annotation``.
+
+    Args:
+        transcription_segments (list[dict[str, Any]]): Whisper segments with
+            float ``start`` / ``end`` keys (seconds). Each gains a ``speaker``
+            key when an overlapping turn exists.
+        diarize_segments (list[dict[str, Any]]): Speaker turns from
+            :func:`diarize_file`, each with ``start`` / ``end`` / ``speaker``.
+    """
+    for segment in transcription_segments:
+        seg_start = float(segment["start"])
+        seg_end = float(segment["end"])
+        speaker_durations: dict[str, float] = {}
+        for turn in diarize_segments:
+            overlap_start = max(seg_start, float(turn["start"]))
+            overlap_end = min(seg_end, float(turn["end"]))
+            if overlap_end > overlap_start:
+                speaker = str(turn["speaker"])
+                speaker_durations[speaker] = speaker_durations.get(speaker, 0.0) + (overlap_end - overlap_start)
+        if speaker_durations:
+            segment["speaker"] = max(speaker_durations, key=lambda s: speaker_durations[s])

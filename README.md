@@ -29,6 +29,8 @@ cd Nextext
 uv sync
 ```
 
+Speaker diarization runs out-of-process against an HTTP `/diarize` service (e.g. [`nos-tromo/vllm-service`](https://github.com/nos-tromo/vllm-service)). Set `DIARIZE_API_BASE` to its root URL to enable it; the gated-model agreements and Hugging Face token live on the service side, not in Nextext.
+
 ### Docker installation 🐳
 
 #### Shared Docker volumes
@@ -213,7 +215,8 @@ NEXTEXT_OFFLINE=0 uv run load-models
 ```
 
 `load-models` preloads Nextext's NLTK resources and the configured spaCy
-packages. The legacy alias `uv run load-spacy-models` still works.
+packages — the only assets fetched locally; all model inference is remote.
+The legacy alias `uv run load-spacy-models` still works.
 
 #### Offline usage 🚫🌐
 

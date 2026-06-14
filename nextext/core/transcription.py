@@ -398,7 +398,7 @@ class ExternalWhisperTranscriber:
     def __init__(
         self,
         file_path: Path,
-        trg_lang: str,
+        trg_lang: str | None = None,
         src_lang: str | None = None,
         model_id: str = "whisper-1",
         task: str = "transcribe",
@@ -412,7 +412,7 @@ class ExternalWhisperTranscriber:
 
         Args:
             file_path (Path): Path to the audio file.
-            trg_lang (str): Accepted for interface compatibility; not forwarded to the API.
+            trg_lang (str | None): Accepted for interface compatibility; not forwarded to the API.
             src_lang (str | None): Source language code. Defaults to None (API auto-detects).
             model_id (str): Model name to pass to the external API. Defaults to "whisper-1".
             task (str): "transcribe" or "translate". Defaults to "transcribe".
@@ -562,11 +562,12 @@ class ExternalWhisperTranscriber:
         Skipped when ``n_speakers <= 1`` or no segments survived
         transcription (nothing to label — the upload would be wasted).
 
+        The diarization client is fail-soft: when ``DIARIZE_API_BASE`` is
+        unset or the service is unreachable it returns no speaker turns and
+        the segments are left unlabelled (see :mod:`nextext.core.diarization`).
+
         Raises:
             ValueError: If transcription has not been run yet.
-            RuntimeError: When the external diarization service is not
-                configured, unreachable, or returns an invalid response
-                (fail-hard; see :mod:`nextext.core.diarization`).
         """
         if self.n_speakers <= 1:
             logger.info("Skipping diarization as only one speaker is specified.")
@@ -577,7 +578,7 @@ class ExternalWhisperTranscriber:
         if not segments:
             logger.info("No transcribed segments to diarize; skipping diarization request.")
             return
-        speaker_turns = diarize_file(self.file_path, self.n_speakers)
+        speaker_turns = diarize_file(self.file_path, max_speakers=self.n_speakers)
         _assign_speakers(segments, speaker_turns)
 
     def transcript_output(self) -> pd.DataFrame:

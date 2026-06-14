@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Nextext is a modular audio analysis toolkit that transcribes, translates, and analyzes natural language from audio/video files. All model inference runs on external endpoints: Whisper transcription via an OpenAI-compatible audio API, speaker diarization and GLiNER NER via dedicated HTTP services, and LLMs (Ollama, vLLM, or OpenAI-compatible endpoints) for translation, summarization, and hate-speech detection. Only spaCy/NLTK word-level NLP and the ONNX Silero VAD guard run in-process — the backend ships no model weights and needs no GPU.
+Nextext is a modular audio analysis toolkit that transcribes, translates, and analyzes natural language from audio/video files. All model inference runs on external endpoints: Whisper transcription via an OpenAI-compatible audio API, speaker diarization (`/diarize`) and GLiNER NER (`/gliner`) via dedicated out-of-process HTTP services, and LLMs (Ollama, vLLM, or OpenAI-compatible endpoints) for translation, summarization, and hate-speech detection. Only spaCy/NLTK word-level NLP and the ONNX Silero VAD guard run in-process — the backend ships no model weights and needs no GPU.
 
 ## Project Context
 
@@ -65,9 +65,9 @@ Tests are in `tests/` using pytest with monkeypatch fixtures and `respx` for moc
 
 **Pipeline flow (server-side):**
 
-1. **Transcription** (always-on) → external Whisper API (`/v1/audio/transcriptions`) behind local RMS + ONNX Silero VAD guards, + optional external diarization (`POST /diarize`) → `pd.DataFrame`
-2. **Translation** (optional) → LLM-based segment translation via `InferencePipeline`
-3. **Word-level analysis** (optional) → word counts, remote GLiNER named entities, word clouds
+1. **Transcription** (always-on) → external Whisper API (`/v1/audio/transcriptions`, always in the source language) behind local RMS + ONNX Silero VAD guards, + optional speaker diarization via the out-of-process `/diarize` HTTP service (when `max speakers > 1`) → `pd.DataFrame`
+2. **Translation** (optional) → LLM-based segment translation, directly source → target for any target language, via `InferencePipeline`. Whisper's audio-translate task is not used.
+3. **Word-level analysis** (optional) → word counts, named entities via the out-of-process `/gliner` HTTP service, word clouds
 4. **Summarization** (optional) → LLM summary via `InferencePipeline`
 5. **Hate-speech detection** (optional) → per-segment LLM classification
 6. **Artifacts** → backend renders `.txt`, `.csv`, `.xlsx`, `.png`, `.jsonl`, ZIP on demand at `/api/v1/jobs/{id}/artifacts/{name}`
@@ -99,10 +99,10 @@ Identity is resolved per request by `resolve_principal`: the trusted header (`NE
 - `nextext/cli.py` — CLI entry point (argparse), single-file processing in-process.
 - `nextext/pipeline.py` — Shared pipeline functions connecting all agents.
 - `nextext/core/transcription.py` — `ExternalWhisperTranscriber` (OpenAI-compatible audio API) + the local RMS/ONNX-VAD pre-upload guards and ffmpeg waveform decoding.
-- `nextext/core/diarization.py` — HTTP client for the external diarization service; the module docstring carries the `POST /diarize` contract. Fail-hard.
-- `nextext/core/ner_client.py` — HTTP client for the remote GLiNER service (`POST {NER_API_BASE}/gliner`, docint parity). Fail-soft.
+- `nextext/core/diarization.py` — speaker-diarization agent: HTTP client for the out-of-process `/diarize` service + client-side speaker/segment overlap alignment (`assign_speakers_by_overlap`).
+- `nextext/core/ner.py` — named-entity-recognition agent: HTTP client for the out-of-process `/gliner` service (`extract_entities`).
 - `nextext/core/translation.py` — LLM translation with prompt templates.
-- `nextext/core/words.py` — NLP word-level analysis (spaCy locally, NER via `ner_client`).
+- `nextext/core/words.py` — NLP word-level analysis (spaCy word counts + word clouds).
 - `nextext/core/hate_speech.py` — LLM-based hate-speech detection.
 - `nextext/core/openai_cfg.py` — `InferencePipeline` for OpenAI-compatible LLM calls.
 - `nextext/core/processing.py` — File I/O and export formatting (CLI).
@@ -115,10 +115,10 @@ See `AGENTS.md` for detailed agent documentation including I/O contracts and how
 
 Key env vars (see `.env.example`):
 
-- `OPENAI_API_KEY`, `OPENAI_API_BASE` — the **central** OpenAI-compatible endpoint; carries translation, summarization, and hate-speech detection (all on `TEXT_MODEL`) and is the fallback for every per-model endpoint below.
+- `OPENAI_API_KEY`, `OPENAI_API_BASE` — the **central** OpenAI-compatible endpoint; carries translation, summarization, and hate-speech detection (all on `TEXT_MODEL`), supplies the bearer token reused by the NER and diarization clients, and is the fallback for the Whisper endpoint below.
 - `WHISPER_API_BASE` / `WHISPER_API_KEY` / `WHISPER_MODEL` — dedicated Whisper endpoint (OpenAI SDK base incl. `/v1`); falls back to the central pair. Model defaults: `whisper-1` (openai), `openai/whisper-large-v3` (vllm). `INFERENCE_PROVIDER=ollama` has no transcription API, so it requires explicit `WHISPER_API_BASE` + `WHISPER_MODEL` (`load_whisper_env` raises otherwise).
-- `NER_API_BASE` / `NER_API_KEY` / `NER_THRESHOLD` / `NER_TIMEOUT` — remote GLiNER service (`POST {base}/gliner`). Base falls back to `OPENAI_API_BASE` with one trailing `/v1` stripped (`openai_api_root()`), matching the LiteLLM pass-through. Fail-soft: errors degrade to empty entities.
-- `DIARIZATION_API_BASE` / `DIARIZATION_API_KEY` / `DIARIZATION_TIMEOUT` — external diarization service (`POST {base}/diarize`); same `/v1`-strip fallback. Fail-hard: multi-speaker jobs error actionably when unset/unreachable (no server exists in vllm-service yet).
+- `NER_API_BASE` — root URL of the out-of-process `/gliner` NER service (e.g. `http://vllm-router:4000`); the client appends `/gliner`. Unset (default) disables NER, so transcripts carry no entity table. The bearer token is reused from `OPENAI_API_KEY`. Fail-soft: errors degrade to empty entities. `NER_TIMEOUT` — per-request (per-chunk) timeout in seconds (default `120`).
+- `DIARIZE_API_BASE` — root URL of the out-of-process `/diarize` service (e.g. `http://vllm-router:9000`); the client appends `/diarize`. Unset (default) disables diarization, so `max speakers > 1` is ignored and transcripts carry no speaker column. The bearer token is reused from `OPENAI_API_KEY`. Fail-soft: errors degrade to an unlabelled transcript. `DIARIZE_TIMEOUT` — per-request timeout in seconds (default `600`). vllm-service has no `/diarize` implementation yet — see `nextext/core/diarization.py` for the contract.
 - `INFERENCE_PROVIDER` — `ollama` (default), `vllm`, or `openai`. Selects the Whisper model default and the Ollama `think` handling; prompts are provider-independent.
 - `TEXT_MODEL` — LLM model name shared by translation, summarization, and hate-speech detection
 - `OLLAMA_THINK` — tri-state default for the Ollama `think` request field forwarded by `InferencePipeline.call_model` via `extra_body`. Accepts `1`/`true`/`yes`/`on` (enable), `0`/`false`/`no`/`off` (disable), or unset (omit field, model default). Honoured by Ollama-hosted reasoning models such as Qwen3; a no-op for `vllm`/`openai` providers. Per-call `think=` overrides the env default.

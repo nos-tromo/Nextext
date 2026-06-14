@@ -1,6 +1,5 @@
-"""Word-level analysis: counts, remote GLiNER NER, and word clouds via spaCy + NLTK."""
+"""Word-level analysis: counts and word clouds via spaCy + NLTK."""
 
-import re
 from collections import Counter
 
 import arabic_reshaper
@@ -9,13 +8,13 @@ import pandas as pd
 import spacy
 from bidi.algorithm import get_display
 from camel_tools.tokenizers.word import simple_word_tokenize
+from dotenv import load_dotenv
 from loguru import logger
 from matplotlib.figure import Figure
 from spacy.language import Language
 from spacy.tokens import Doc
 from wordcloud import WordCloud
 
-from nextext.core.ner_client import build_remote_ner_extractor
 from nextext.utils.font_loader import load_font_file
 from nextext.utils.mappings_loader import load_mappings
 from nextext.utils.model_loader import (
@@ -23,44 +22,7 @@ from nextext.utils.model_loader import (
     ensure_spacy_model_path,
 )
 
-# ---------------------------------------------------------------------------
-# Remote GLiNER NER — sentence-aware chunking for the HTTP extractor
-# ---------------------------------------------------------------------------
-
-_GLINER_WORD_BUDGET = 512
-_SENTENCE_RE = re.compile(
-    r".+?(?:[.!?]+[\"')\]]*(?=\s+|$)|\n{2,}|$)",
-    re.DOTALL,
-)
-
-
-def _chunk_text(text: str, word_budget: int = _GLINER_WORD_BUDGET) -> list[str]:
-    """Split text into sentence-packed chunks within a word budget.
-
-    Args:
-        text (str): Raw input text.
-        word_budget (int): Maximum whitespace-delimited words per chunk.
-
-    Returns:
-        list[str]: Ordered list of text chunks suitable for repeated GLiNER
-            inference.
-    """
-    sentences = [m.group(0).strip() for m in _SENTENCE_RE.finditer(text.strip()) if m.group(0).strip()] or [
-        text.strip()
-    ]
-    chunks: list[str] = []
-    current_words: list[str] = []
-    for sentence in sentences:
-        words = sentence.split()
-        if len(current_words) + len(words) > word_budget:
-            if current_words:
-                chunks.append(" ".join(current_words))
-            current_words = words[:word_budget]
-        else:
-            current_words.extend(words)
-    if current_words:
-        chunks.append(" ".join(current_words))
-    return chunks
+load_dotenv()
 
 
 class WordCounter:
@@ -88,8 +50,6 @@ class WordCounter:
             Tokenize/lemmatize the text into ``tokenized_doc`` + ``tokenized_nouns``.
         count_words(n_words=30, columns=...) -> pd.DataFrame:
             Count word frequencies; return a top-N DataFrame.
-        named_entity_recognition(columns=...) -> pd.DataFrame:
-            Run NER and return a DataFrame.
         create_wordcloud() -> Figure:
             Render a word-cloud visualisation of word frequencies.
     """
@@ -221,46 +181,6 @@ class WordCounter:
             .reset_index(drop=True)
         )
         return df
-
-    def named_entity_recognition(self, columns: list[str] | None = None) -> pd.DataFrame:
-        """Perform named entity recognition via the remote GLiNER service.
-
-        Each sentence-packed chunk of at most 512 words is sent to the
-        external NER endpoint (see :mod:`nextext.core.ner_client`). The
-        extractor is fail-soft: chunk-level failures are logged inside the
-        client and yield no entities, so a flaky service degrades to fewer
-        entities instead of failing the word-level stage.
-
-        Args:
-            columns (list[str]): Column names for the resulting DataFrame.
-                Defaults to ["Category", "Entity", "Frequency"].
-
-        Returns:
-            pd.DataFrame: DataFrame containing named entities and their counts.
-        """
-        if columns is None:
-            columns = ["Category", "Entity", "Frequency"]
-        if not self.text or not self.text.strip():
-            logger.error("Text is empty. Cannot run NER.")
-            return pd.DataFrame(columns=pd.Index(columns)).reset_index(drop=True)
-
-        extract = build_remote_ner_extractor()
-        all_entities: list[tuple[str, str]] = []
-        for chunk in _chunk_text(self.text):
-            for entity in extract(chunk):
-                text_val = str(entity.get("text") or "").strip()
-                label = str(entity.get("type") or "").strip()
-                if text_val and label and len(text_val) >= 3:
-                    all_entities.append((label.upper(), text_val))
-
-        if not all_entities:
-            return pd.DataFrame(columns=pd.Index(columns)).reset_index(drop=True)
-
-        entity_counts = Counter(all_entities)
-        return pd.DataFrame(
-            [(label, text, count) for (label, text), count in entity_counts.items()],
-            columns=pd.Index(columns),
-        ).reset_index(drop=True)
 
     def create_wordcloud(self) -> Figure | None:
         """Create a wordcloud of the most frequent words.

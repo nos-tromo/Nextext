@@ -8,7 +8,7 @@ repos:
 
   # mypy is a local hook so it uses the project venv — strict mode needs
   # to see every dep's decorators/base classes (FastAPI, openai-whisper,
-  # pyannote, GLiNER, etc.); pre-commit's isolated env can't keep up.
+  # GLiNER, etc.); pre-commit's isolated env can't keep up.
   # Pinned to mypy==<canonical> in dev deps; canonical at
   # nos-tromo/.github/configs/python-strict/precommit-versions.yaml.
   - repo: local

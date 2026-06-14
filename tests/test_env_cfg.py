@@ -5,11 +5,12 @@ import io
 import pytest
 
 from nextext.utils.env_cfg import (
-    load_diarization_client_env,
+    DEFAULT_DIARIZE_TIMEOUT,
+    DEFAULT_NER_TIMEOUT,
+    load_diarization_env,
     load_inference_env,
-    load_ner_client_env,
+    load_ner_env,
     load_whisper_env,
-    openai_api_root,
 )
 
 _ENDPOINT_ENV_VARS = (
@@ -19,12 +20,9 @@ _ENDPOINT_ENV_VARS = (
     "WHISPER_API_KEY",
     "WHISPER_MODEL",
     "NER_API_BASE",
-    "NER_API_KEY",
-    "NER_THRESHOLD",
     "NER_TIMEOUT",
-    "DIARIZATION_API_BASE",
-    "DIARIZATION_API_KEY",
-    "DIARIZATION_TIMEOUT",
+    "DIARIZE_API_BASE",
+    "DIARIZE_TIMEOUT",
 )
 
 
@@ -128,48 +126,6 @@ def test_load_inference_env_ollama_think_invalid_warns_and_returns_none(
     log_output = sink.getvalue()
     assert "OLLAMA_THINK" in log_output
     assert "maybe" not in log_output
-
-
-# ---------------------------------------------------------------------------
-# openai_api_root
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.parametrize(
-    ("base", "expected"),
-    [
-        ("http://vllm-router:4000/v1", "http://vllm-router:4000"),
-        ("http://vllm-router:4000/v1/", "http://vllm-router:4000"),
-        ("http://gliner-only:8000", "http://gliner-only:8000"),
-        ("https://api.openai.com/v1", "https://api.openai.com"),
-        ("http://host/v1/extra", "http://host/v1/extra"),
-    ],
-)
-def test_openai_api_root_strips_one_trailing_v1(monkeypatch: pytest.MonkeyPatch, base: str, expected: str) -> None:
-    """Only a trailing /v1 segment is stripped from OPENAI_API_BASE.
-
-    Args:
-        monkeypatch (pytest.MonkeyPatch): The pytest fixture for patching
-            environment variables.
-        base (str): The OPENAI_API_BASE value under test.
-        expected (str): The expected derived root URL.
-    """
-    _clear_endpoint_env(monkeypatch)
-    monkeypatch.setenv("OPENAI_API_BASE", base)
-
-    assert openai_api_root() == expected
-
-
-def test_openai_api_root_unset_returns_empty(monkeypatch: pytest.MonkeyPatch) -> None:
-    """An unset OPENAI_API_BASE derives an empty root.
-
-    Args:
-        monkeypatch (pytest.MonkeyPatch): The pytest fixture for patching
-            environment variables.
-    """
-    _clear_endpoint_env(monkeypatch)
-
-    assert openai_api_root() == ""
 
 
 # ---------------------------------------------------------------------------
@@ -301,126 +257,192 @@ def test_load_whisper_env_ollama_requires_explicit_config(
 
 
 # ---------------------------------------------------------------------------
-# load_ner_client_env
+# load_diarization_env
 # ---------------------------------------------------------------------------
 
 
-def test_load_ner_client_env_defaults_to_central_root(monkeypatch: pytest.MonkeyPatch) -> None:
-    """NER endpoint derives from OPENAI_API_BASE with /v1 stripped.
-
-    Args:
-        monkeypatch (pytest.MonkeyPatch): The pytest fixture for patching
-            environment variables.
-    """
-    _clear_endpoint_env(monkeypatch)
-    monkeypatch.setenv("OPENAI_API_BASE", "http://vllm-router:4000/v1")
-    monkeypatch.setenv("OPENAI_API_KEY", "central-key")
-
-    cfg = load_ner_client_env()
-
-    assert cfg.api_base == "http://vllm-router:4000"
-    assert cfg.api_key == "central-key"
-    assert cfg.threshold == 0.3
-    assert cfg.timeout == 30.0
-
-
-def test_load_ner_client_env_dedicated_overrides_win(monkeypatch: pytest.MonkeyPatch) -> None:
-    """NER_API_BASE / NER_API_KEY / NER_THRESHOLD / NER_TIMEOUT beat the defaults.
-
-    Args:
-        monkeypatch (pytest.MonkeyPatch): The pytest fixture for patching
-            environment variables.
-    """
-    _clear_endpoint_env(monkeypatch)
-    monkeypatch.setenv("OPENAI_API_BASE", "http://vllm-router:4000/v1")
-    monkeypatch.setenv("OPENAI_API_KEY", "central-key")
-    monkeypatch.setenv("NER_API_BASE", "http://gliner-only:8000/")
-    monkeypatch.setenv("NER_API_KEY", "ner-key")
-    monkeypatch.setenv("NER_THRESHOLD", "0.45")
-    monkeypatch.setenv("NER_TIMEOUT", "12.5")
-
-    cfg = load_ner_client_env()
-
-    assert cfg.api_base == "http://gliner-only:8000"
-    assert cfg.api_key == "ner-key"
-    assert cfg.threshold == 0.45
-    assert cfg.timeout == 12.5
-
-
-def test_load_ner_client_env_without_any_key(monkeypatch: pytest.MonkeyPatch) -> None:
-    """No NER_API_KEY and no OPENAI_API_KEY resolves to api_key=None.
-
-    Args:
-        monkeypatch (pytest.MonkeyPatch): The pytest fixture for patching
-            environment variables.
-    """
-    _clear_endpoint_env(monkeypatch)
-    monkeypatch.setenv("NER_API_BASE", "http://gliner-only:8000")
-
-    cfg = load_ner_client_env()
-
-    assert cfg.api_base == "http://gliner-only:8000"
-    assert cfg.api_key is None
-
-
-# ---------------------------------------------------------------------------
-# load_diarization_client_env
-# ---------------------------------------------------------------------------
-
-
-def test_load_diarization_client_env_defaults_to_central_root(
+def test_load_diarization_env_unset_disables_and_defaults(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Diarization endpoint derives from OPENAI_API_BASE with /v1 stripped.
+    """An unset DIARIZE_API_BASE disables diarization and uses the default timeout.
 
     Args:
-        monkeypatch (pytest.MonkeyPatch): The pytest fixture for patching
-            environment variables.
+        monkeypatch (pytest.MonkeyPatch): Fixture for patching environment variables.
     """
-    _clear_endpoint_env(monkeypatch)
-    monkeypatch.setenv("OPENAI_API_BASE", "http://vllm-router:4000/v1")
-    monkeypatch.setenv("OPENAI_API_KEY", "central-key")
+    monkeypatch.delenv("DIARIZE_API_BASE", raising=False)
+    monkeypatch.delenv("DIARIZE_TIMEOUT", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
 
-    cfg = load_diarization_client_env()
-
-    assert cfg.api_base == "http://vllm-router:4000"
-    assert cfg.api_key == "central-key"
-    assert cfg.timeout == 600.0
-
-
-def test_load_diarization_client_env_dedicated_overrides_win(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """DIARIZATION_* variables beat the central fallback.
-
-    Args:
-        monkeypatch (pytest.MonkeyPatch): The pytest fixture for patching
-            environment variables.
-    """
-    _clear_endpoint_env(monkeypatch)
-    monkeypatch.setenv("OPENAI_API_BASE", "http://vllm-router:4000/v1")
-    monkeypatch.setenv("OPENAI_API_KEY", "central-key")
-    monkeypatch.setenv("DIARIZATION_API_BASE", "http://diarize:8000")
-    monkeypatch.setenv("DIARIZATION_API_KEY", "diarize-key")
-    monkeypatch.setenv("DIARIZATION_TIMEOUT", "90")
-
-    cfg = load_diarization_client_env()
-
-    assert cfg.api_base == "http://diarize:8000"
-    assert cfg.api_key == "diarize-key"
-    assert cfg.timeout == 90.0
-
-
-def test_load_diarization_client_env_unset_everything(monkeypatch: pytest.MonkeyPatch) -> None:
-    """With no endpoint variables at all the base is empty and the key None.
-
-    Args:
-        monkeypatch (pytest.MonkeyPatch): The pytest fixture for patching
-            environment variables.
-    """
-    _clear_endpoint_env(monkeypatch)
-
-    cfg = load_diarization_client_env()
+    cfg = load_diarization_env()
 
     assert cfg.api_base == ""
-    assert cfg.api_key is None
+    assert cfg.api_key == ""
+    assert cfg.timeout == DEFAULT_DIARIZE_TIMEOUT
+
+
+def test_load_diarization_env_strips_whitespace_and_trailing_slash(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """DIARIZE_API_BASE is normalised: surrounding whitespace and trailing '/' removed.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Fixture for patching environment variables.
+    """
+    monkeypatch.setenv("DIARIZE_API_BASE", "  http://vllm-router:9000/  ")
+
+    cfg = load_diarization_env()
+
+    assert cfg.api_base == "http://vllm-router:9000"
+
+
+def test_load_diarization_env_reuses_openai_api_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The bearer token is taken from OPENAI_API_KEY (the shared router credential).
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Fixture for patching environment variables.
+    """
+    monkeypatch.setenv("DIARIZE_API_BASE", "http://vllm-router:9000")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-secret")
+
+    cfg = load_diarization_env()
+
+    assert cfg.api_key == "sk-secret"
+
+
+def test_load_diarization_env_parses_valid_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A valid DIARIZE_TIMEOUT is parsed as a float.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Fixture for patching environment variables.
+    """
+    monkeypatch.setenv("DIARIZE_TIMEOUT", "120")
+
+    cfg = load_diarization_env()
+
+    assert cfg.timeout == 120.0
+
+
+@pytest.mark.parametrize("raw_value", ["not-a-number", "0", "-5"])
+def test_load_diarization_env_invalid_timeout_warns_and_defaults(
+    monkeypatch: pytest.MonkeyPatch,
+    raw_value: str,
+) -> None:
+    """Non-numeric or non-positive DIARIZE_TIMEOUT warns and falls back to the default.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Fixture for patching environment variables.
+        raw_value (str): An invalid timeout token.
+    """
+    from loguru import logger
+
+    monkeypatch.setenv("DIARIZE_TIMEOUT", raw_value)
+
+    sink = io.StringIO()
+    handler_id = logger.add(sink, level="WARNING")
+    try:
+        cfg = load_diarization_env()
+    finally:
+        logger.remove(handler_id)
+
+    assert cfg.timeout == DEFAULT_DIARIZE_TIMEOUT
+    assert "DIARIZE_TIMEOUT" in sink.getvalue()
+
+
+# ---------------------------------------------------------------------------
+# load_ner_env
+# ---------------------------------------------------------------------------
+
+
+def test_load_ner_env_unset_disables_and_defaults(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An unset NER_API_BASE disables NER and uses the default timeout.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Fixture for patching environment variables.
+    """
+    monkeypatch.delenv("NER_API_BASE", raising=False)
+    monkeypatch.delenv("NER_TIMEOUT", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    cfg = load_ner_env()
+
+    assert cfg.api_base == ""
+    assert cfg.api_key == ""
+    assert cfg.timeout == DEFAULT_NER_TIMEOUT
+
+
+def test_load_ner_env_strips_whitespace_and_trailing_slash(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """NER_API_BASE is normalised: surrounding whitespace and trailing '/' removed.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Fixture for patching environment variables.
+    """
+    monkeypatch.setenv("NER_API_BASE", "  http://vllm-router:4000/  ")
+
+    cfg = load_ner_env()
+
+    assert cfg.api_base == "http://vllm-router:4000"
+
+
+def test_load_ner_env_reuses_openai_api_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The bearer token is taken from OPENAI_API_KEY (the shared router credential).
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Fixture for patching environment variables.
+    """
+    monkeypatch.setenv("NER_API_BASE", "http://vllm-router:4000")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-secret")
+
+    cfg = load_ner_env()
+
+    assert cfg.api_key == "sk-secret"
+
+
+def test_load_ner_env_parses_valid_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A valid NER_TIMEOUT is parsed as a float.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Fixture for patching environment variables.
+    """
+    monkeypatch.setenv("NER_TIMEOUT", "45")
+
+    cfg = load_ner_env()
+
+    assert cfg.timeout == 45.0
+
+
+@pytest.mark.parametrize("raw_value", ["not-a-number", "0", "-5"])
+def test_load_ner_env_invalid_timeout_warns_and_defaults(
+    monkeypatch: pytest.MonkeyPatch,
+    raw_value: str,
+) -> None:
+    """Non-numeric or non-positive NER_TIMEOUT warns and falls back to the default.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Fixture for patching environment variables.
+        raw_value (str): An invalid timeout token.
+    """
+    from loguru import logger
+
+    monkeypatch.setenv("NER_TIMEOUT", raw_value)
+
+    sink = io.StringIO()
+    handler_id = logger.add(sink, level="WARNING")
+    try:
+        cfg = load_ner_env()
+    finally:
+        logger.remove(handler_id)
+
+    assert cfg.timeout == DEFAULT_NER_TIMEOUT
+    assert "NER_TIMEOUT" in sink.getvalue()

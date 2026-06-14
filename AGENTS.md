@@ -12,9 +12,10 @@ This document describes every agent, how they interact, and what they expect fro
 
 | Agent | Module & entry point | Consumes | Produces | Activated by |
 | --- | --- | --- | --- | --- |
-| Transcription & Diarization | `nextext/core/transcription.py` → `ExternalWhisperTranscriber`, `transcription_pipeline`; `nextext/core/diarization.py` → `diarize_file` | Audio file path, Whisper/diarization endpoint config | Timestamped transcript `pd.DataFrame` (`start`, `end`, `speaker`, `text`) | Always-on |
+| Transcription & Diarization | `nextext/core/transcription.py` → `ExternalWhisperTranscriber`, `transcription_pipeline`; `nextext/core/diarization.py` → `diarize_file`, `assign_speakers_by_overlap` | Audio file path, Whisper endpoint config, speaker count (`DIARIZE_API_BASE` for diarization) | Timestamped transcript `pd.DataFrame` (`start`, `end`, `speaker`, `text`) | Always-on |
 | Translation | `nextext/core/translation.py` → `Translator`, `translation_pipeline` | Transcript `pd.DataFrame`, source and target ISO codes, inference provider | Mutated `pd.DataFrame` translated segment-wise | CLI `--task translate`, Streamlit "Task" switch |
-| Word Intelligence | `nextext/core/words.py` → `WordCounter`, `wordlevel_pipeline` | Transcript text, resolved language | Word counts, entity table, noun sentiment table, graph HTML, word cloud `Figure` | CLI `-w/--words`, Streamlit "Word-level analysis" |
+| Word Intelligence | `nextext/core/words.py` → `WordCounter`, `wordlevel_pipeline` | Transcript text, resolved language | Word counts, noun sentiment table, graph HTML, word cloud `Figure` | CLI `-w/--words`, Streamlit "Word-level analysis" |
+| Named Entity Recognition | `nextext/core/ner.py` → `extract_entities` (called by `wordlevel_pipeline`) | Transcript text | Entity table (`[Category, Entity, Frequency]`) via the out-of-process `/gliner` service | CLI `-w/--words`, Streamlit "Word-level analysis" |
 | Summarization | `nextext/pipeline.py` → `summarization_pipeline` + `InferencePipeline` | Full transcript text | Summary string in the configured output language | CLI `-sum/--summarize`, Streamlit "Summarisation" |
 | Hate Speech Detection | `nextext/core/hate_speech.py` → `HateSpeechDetector`, `hate_speech_pipeline` | Transcript `pd.DataFrame`, inference provider | List of flagged segment dicts (`hate_speech`, `category`, `confidence`, `reason`, `text`) | CLI `-hs/--hate-speech`, Streamlit "Hate speech detection" |
 | File Export | `nextext/core/processing.py` → `FileProcessor.write_file_output` | Any agent result | Files in `output/<input-file>/` (`.txt`, `.csv`, `.xlsx`, `.png`) | CLI workflow |
@@ -31,13 +32,13 @@ This document describes every agent, how they interact, and what they expect fro
 
 ## Transcription & Diarization Agent
 
-- **Key files:** `nextext/core/transcription.py`, `transcription_pipeline()` (`nextext/pipeline.py`).
-- **Responsibilities:** Decode audio locally (ffmpeg) for the RMS + ONNX Silero VAD pre-upload guards, forward the file to an OpenAI-compatible `/v1/audio/transcriptions` endpoint, optionally label speakers via the external diarization service (`n_speakers > 1`), and emit a normalized DataFrame used by every downstream agent.
-- **Inputs:** `Path` to audio/video, task (`transcribe` or `translate`), target ISO code, optional source code, speaker count.
+- **Key files:** `nextext/core/transcription.py`, `nextext/core/diarization.py`, `transcription_pipeline()` (`nextext/pipeline.py`).
+- **Responsibilities:** Decode audio locally (ffmpeg) for the RMS + ONNX Silero VAD pre-upload guards, forward the file to an OpenAI-compatible `/v1/audio/transcriptions` endpoint, optionally label speakers via the out-of-process `/diarize` HTTP service (`n_speakers > 1`), and emit a normalized DataFrame used by every downstream agent.
+- **Inputs:** `Path` to audio/video, optional source code, speaker count. (Whisper always transcribes; the `transcribe`/`translate` task is a job-level flag that gates the downstream Translation agent, not a transcription input.)
 - **Outputs:** `pd.DataFrame` with `start`, `end`, `speaker`, `text`; the source language resolves from the API response (`ExternalWhisperTranscriber.src_lang`).
-- **Endpoints:** Whisper resolves via `load_whisper_env()` — `WHISPER_API_BASE`/`WHISPER_API_KEY` with central `OPENAI_API_BASE`/`OPENAI_API_KEY` fallback; model defaults `whisper-1` (openai) / `openai/whisper-large-v3` (vllm), overridable via `WHISPER_MODEL`; `INFERENCE_PROVIDER=ollama` requires both explicitly. Diarization posts the file to `{DIARIZATION_API_BASE}/diarize` (contract in `nextext/core/diarization.py`) and fails hard with an actionable error when the service is missing — vllm-service does not implement it yet.
+- **Endpoints:** Whisper resolves via `load_whisper_env()` — `WHISPER_API_BASE`/`WHISPER_API_KEY` with central `OPENAI_API_BASE`/`OPENAI_API_KEY` fallback; model defaults `whisper-1` (openai) / `openai/whisper-large-v3` (vllm), overridable via `WHISPER_MODEL`; `INFERENCE_PROVIDER=ollama` requires both explicitly. Diarization posts the file to `{DIARIZE_API_BASE}/diarize` (contract in `nextext/core/diarization.py`); it is fail-soft — when `DIARIZE_API_BASE` is unset or the request fails it logs and continues without speaker labels. vllm-service does not implement `/diarize` yet.
 - **Dependencies:** `openai` SDK, `httpx`, `pysilero-vad` (ONNX, bundled model), system `ffmpeg`. No torch, no GPU.
-- **Operational notes:** Silent (RMS) or speech-free (VAD) audio never reaches the remote endpoint; surviving segments pass a `no_speech_prob` post-filter. Diarization assigns speakers via maximum segment overlap and is skipped when no segments survived transcription. Speaker column is omitted when `n_speakers == 1`.
+- **Operational notes:** Silent (RMS) or speech-free (VAD) audio never reaches the remote endpoint; surviving segments pass a `no_speech_prob` post-filter. Diarization assigns speakers via maximum segment overlap (`assign_speakers_by_overlap`) and is skipped when `n_speakers == 1` or no segments survived transcription. The speaker column is omitted when no segment was labelled.
 
 ## Translation Agent
 
@@ -46,16 +47,17 @@ This document describes every agent, how they interact, and what they expect fro
 - **Inputs:** Transcript `pd.DataFrame` (only the `text` column is used), target ISO 639-1 code, optional resolved source code from transcription, shared `InferencePipeline`.
 - **Outputs:** In-place replacement of the `text` column; `Translator.src_lang` is populated for logging and downstream toggles.
 - **Dependencies:** `langdetect`, `pycountry`, plus an OpenAI-compatible chat completions backend selected by `INFERENCE_PROVIDER` (`ollama` by default, `vllm`, or `openai`).
-- **Operational notes:** Translation is skipped when the resolved source language already equals the target. Translation runs on `TEXT_MODEL` — the same model used for summarization — over the templated prompt in `nextext/utils/prompts/translation.txt` plus a translation system prompt, identically for every `INFERENCE_PROVIDER`.
+- **Operational notes:** This is the only translation path — Whisper's audio-translate task is no longer used — so English targets are translated here too. Translation is skipped only when the resolved source language already equals the target (see `should_translate()` in `nextext/pipeline.py`). Translation runs on `TEXT_MODEL` — the same model used for summarization — over the templated prompt in `nextext/utils/prompts/translation.txt` plus a translation system prompt, identically for every `INFERENCE_PROVIDER`.
 
 ## Word Intelligence Agent
 
 - **Key files:** `nextext/core/words.py`, `wordlevel_pipeline()` (`nextext/pipeline.py`), spaCy mappings in `nextext/utils/mappings/spacy_models.json`.
-- **Responsibilities:** Turn transcript text into linguistic diagnostics—top words, named entities (via the remote GLiNER service), noun sentiment table, noun-verb-adjective network, and a matplotlib word cloud.
+- **Responsibilities:** Turn transcript text into linguistic diagnostics—top words, named entities (via the out-of-process GLiNER `/gliner` service), and a matplotlib word cloud.
 - **Inputs:** `pd.DataFrame` with `text`, resolved language code (source for `transcribe`, target for `translate`).
-- **Outputs:** Tuple `(word_counts_df, entities_df, noun_sentiment_df, noun_graph_html_path, wordcloud_figure)`.
-- **Dependencies:** `spacy`, `matplotlib`, `camel_tools` (pure-Python tokenizer only), `arabic_reshaper`; fonts loaded via `nextext/utils/font_loader.py` to keep multilingual rendering stable. NER runs remotely through `nextext/core/ner_client.py` (`POST {NER_API_BASE}/gliner`, central-root fallback) — fail-soft: errors degrade to an empty entity table.
-- **Operational notes:** Call `text_to_doc()` then `lemmatize_doc()` before counting; spaCy models download on demand only when `NEXTEXT_OFFLINE=0` (offline + uncached raises actionably). Text is chunked into ≤512-word sentence-packed chunks before each NER request.
+- **Outputs:** Tuple `(word_counts_df, entities_df, wordcloud_figure)` — the entity DataFrame is populated by the out-of-process NER agent (`nextext/core/ner.py`), empty when `NER_API_BASE` is unset.
+- **Dependencies:** `spacy`, `matplotlib`, `camel_tools` (pure-Python tokenizer only), `arabic_reshaper`; fonts loaded via `nextext/utils/font_loader.py` to keep multilingual rendering stable. NER runs remotely through `nextext/core/ner.py` (`POST {NER_API_BASE}/gliner`) — fail-soft: errors degrade to an empty entity table.
+- **Operational notes:** Call `text_to_doc()` then `lemmatize_doc()` before counting; spaCy models download on demand only when `NEXTEXT_OFFLINE=0` (offline + uncached raises actionably). `extract_entities` chunks text into ≤512-word sentence-packed chunks before each `/gliner` request.
+
 
 ## Summarization Agent
 

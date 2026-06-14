@@ -1,221 +1,207 @@
-"""Tests for the external speaker-diarization HTTP client."""
+"""Tests for the speaker-diarization agent (HTTP client + overlap alignment)."""
 
 from pathlib import Path
+from typing import Any
 
 import httpx
 import pytest
-import respx
 
-from nextext.core.diarization import diarize_file
-from nextext.utils.env_cfg import DiarizationClientConfig
+from nextext.core import diarization
+from nextext.core.diarization import assign_speakers_by_overlap, diarize_file
 
-_BASE = "http://diarize:8000"
+# ---------------------------------------------------------------------------
+# assign_speakers_by_overlap
+# ---------------------------------------------------------------------------
 
 
-def _make_cfg(api_key: str | None = None) -> DiarizationClientConfig:
-    """Build an explicit client configuration for tests.
+def test_assign_speakers_uses_maximum_overlap() -> None:
+    """The speaker with the greatest cumulative overlap is assigned to a segment."""
+    segments: list[dict[str, Any]] = [{"start": 0.0, "end": 2.0, "text": "hello world"}]
+    turns = [
+        {"start": 0.0, "end": 1.8, "speaker": "SPEAKER_00"},  # 1.8s overlap
+        {"start": 1.8, "end": 2.0, "speaker": "SPEAKER_01"},  # 0.2s overlap
+    ]
+
+    assign_speakers_by_overlap(segments, turns)
+
+    assert segments[0]["speaker"] == "SPEAKER_00"
+
+
+def test_assign_speakers_leaves_non_overlapping_segment_untouched() -> None:
+    """A segment that overlaps no diarization turn gains no speaker key."""
+    segments: list[dict[str, Any]] = [{"start": 5.0, "end": 6.0, "text": "x"}]
+    turns = [{"start": 0.0, "end": 1.0, "speaker": "SPEAKER_00"}]
+
+    assign_speakers_by_overlap(segments, turns)
+
+    assert "speaker" not in segments[0]
+
+
+def test_assign_speakers_empty_segments_is_noop() -> None:
+    """Aligning against zero transcription segments is a safe no-op."""
+    segments: list[dict[str, Any]] = []
+
+    assign_speakers_by_overlap(segments, [{"start": 0.0, "end": 1.0, "speaker": "SPEAKER_00"}])
+
+    assert segments == []
+
+
+# ---------------------------------------------------------------------------
+# diarize_file
+# ---------------------------------------------------------------------------
+
+
+def test_diarize_file_returns_empty_when_base_unset(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """An unset DIARIZE_API_BASE disables diarization and never issues a request.
 
     Args:
-        api_key (str | None): Bearer token, or ``None`` for no auth header.
-
-    Returns:
-        DiarizationClientConfig: The assembled configuration.
+        monkeypatch (pytest.MonkeyPatch): Fixture for patching env vars and httpx.
+        tmp_path (Path): Temporary directory fixture for the audio file.
     """
-    return DiarizationClientConfig(api_base=_BASE, api_key=api_key, timeout=5.0)
+    monkeypatch.delenv("DIARIZE_API_BASE", raising=False)
+
+    def fail_post(url: str, **kwargs: Any) -> httpx.Response:
+        raise AssertionError("httpx.post must not be called when DIARIZE_API_BASE is unset")
+
+    monkeypatch.setattr(diarization.httpx, "post", fail_post)
+    audio = tmp_path / "clip.wav"
+    audio.write_bytes(b"data")
+
+    assert diarize_file(audio, max_speakers=3) == []
 
 
-@pytest.fixture
-def audio_file(tmp_path: Path) -> Path:
-    """Provide a small on-disk stand-in for an audio upload.
+def test_diarize_file_posts_correctly_and_parses(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """The request targets /diarize with the speaker field, bearer auth, and timeout.
 
     Args:
-        tmp_path (Path): pytest-provided temporary directory.
-
-    Returns:
-        Path: Path to a small binary file.
+        monkeypatch (pytest.MonkeyPatch): Fixture for patching env vars and httpx.
+        tmp_path (Path): Temporary directory fixture for the audio file.
     """
-    file_path = tmp_path / "clip.wav"
-    file_path.write_bytes(b"RIFF....WAVEfake")
-    return file_path
+    monkeypatch.setenv("DIARIZE_API_BASE", "http://router:9000/")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-secret")
+    monkeypatch.delenv("DIARIZE_TIMEOUT", raising=False)
+    captured: dict[str, Any] = {}
 
-
-@respx.mock
-def test_diarize_file_parses_segments(audio_file: Path) -> None:
-    """A successful response yields float-coerced speaker turns.
-
-    Args:
-        audio_file (Path): The fake audio upload.
-    """
-    route = respx.post(f"{_BASE}/diarize").mock(
-        return_value=httpx.Response(
+    def fake_post(url: str, **kwargs: Any) -> httpx.Response:
+        captured["url"] = url
+        captured.update(kwargs)
+        return httpx.Response(
             200,
             json={
-                "segments": [
-                    {"start": 0, "end": 5.12, "speaker": "SPEAKER_00"},
-                    {"start": "5.12", "end": 9.5, "speaker": "SPEAKER_01"},
-                ]
+                "segments": [{"start": 0.0, "end": 1.0, "speaker": "SPEAKER_00"}],
+                "speakers": ["SPEAKER_00"],
             },
+            request=httpx.Request("POST", url),
         )
-    )
 
-    segments = diarize_file(audio_file, max_speakers=2, cfg=_make_cfg())
+    monkeypatch.setattr(diarization.httpx, "post", fake_post)
+    audio = tmp_path / "clip.mp4"
+    audio.write_bytes(b"bytes")
 
-    assert segments == [
-        {"start": 0.0, "end": 5.12, "speaker": "SPEAKER_00"},
-        {"start": 5.12, "end": 9.5, "speaker": "SPEAKER_01"},
-    ]
-    request = route.calls.last.request
-    body = request.read()
-    assert b'name="max_speakers"' in body
-    assert b"2" in body
-    assert b'filename="clip.wav"' in body
+    segments = diarize_file(audio, max_speakers=4)
 
-
-@respx.mock
-def test_diarize_file_sends_bearer_header_when_key_set(audio_file: Path) -> None:
-    """A configured API key is carried as a Bearer Authorization header.
-
-    Args:
-        audio_file (Path): The fake audio upload.
-    """
-    route = respx.post(f"{_BASE}/diarize").mock(return_value=httpx.Response(200, json={"segments": []}))
-
-    diarize_file(audio_file, max_speakers=2, cfg=_make_cfg(api_key="sk-diarize"))
-
-    assert route.calls.last.request.headers["Authorization"] == "Bearer sk-diarize"
+    assert segments == [{"start": 0.0, "end": 1.0, "speaker": "SPEAKER_00"}]
+    assert captured["url"] == "http://router:9000/diarize"
+    assert captured["data"] == {"max_speakers": 4}
+    assert captured["headers"]["Authorization"] == "Bearer sk-secret"
+    assert captured["timeout"] == 600.0
+    assert captured["files"]["file"][0] == "clip.mp4"
 
 
-@respx.mock
-def test_diarize_file_omits_auth_header_without_key(audio_file: Path) -> None:
-    """Without an API key no Authorization header is sent.
+def test_diarize_file_omits_authorization_without_key(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """No Authorization header is sent when OPENAI_API_KEY is empty.
 
     Args:
-        audio_file (Path): The fake audio upload.
+        monkeypatch (pytest.MonkeyPatch): Fixture for patching env vars and httpx.
+        tmp_path (Path): Temporary directory fixture for the audio file.
     """
-    route = respx.post(f"{_BASE}/diarize").mock(return_value=httpx.Response(200, json={"segments": []}))
+    monkeypatch.setenv("DIARIZE_API_BASE", "http://router:9000")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    captured: dict[str, Any] = {}
 
-    diarize_file(audio_file, max_speakers=2, cfg=_make_cfg(api_key=None))
+    def fake_post(url: str, **kwargs: Any) -> httpx.Response:
+        captured.update(kwargs)
+        return httpx.Response(200, json={"segments": []}, request=httpx.Request("POST", url))
 
-    assert "Authorization" not in route.calls.last.request.headers
+    monkeypatch.setattr(diarization.httpx, "post", fake_post)
+    audio = tmp_path / "clip.wav"
+    audio.write_bytes(b"x")
+
+    diarize_file(audio, max_speakers=2)
+
+    assert "Authorization" not in captured["headers"]
 
 
-def test_diarize_file_unset_base_raises_actionable_error(audio_file: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """An empty endpoint configuration raises before any network access.
+def test_diarize_file_swallows_http_status_error(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A non-2xx response is logged and yields an empty list.
 
     Args:
-        audio_file (Path): The fake audio upload.
-        monkeypatch (pytest.MonkeyPatch): Clears the central endpoint
-            variables so the env-derived config is empty too.
+        monkeypatch (pytest.MonkeyPatch): Fixture for patching env vars and httpx.
+        tmp_path (Path): Temporary directory fixture for the audio file.
     """
-    cfg = DiarizationClientConfig(api_base="", api_key=None, timeout=5.0)
+    monkeypatch.setenv("DIARIZE_API_BASE", "http://router:9000")
 
-    with pytest.raises(RuntimeError) as excinfo:
-        diarize_file(audio_file, max_speakers=2, cfg=cfg)
+    def fake_post(url: str, **kwargs: Any) -> httpx.Response:
+        return httpx.Response(500, text="boom", request=httpx.Request("POST", url))
 
-    message = str(excinfo.value)
-    assert "DIARIZATION_API_BASE" in message
-    assert "diarize" in message
+    monkeypatch.setattr(diarization.httpx, "post", fake_post)
+    audio = tmp_path / "clip.wav"
+    audio.write_bytes(b"x")
+
+    assert diarize_file(audio, max_speakers=2) == []
 
 
-@respx.mock
-def test_diarize_file_404_names_missing_service(audio_file: Path) -> None:
-    """A 404 explains that the configured service lacks diarization.
+def test_diarize_file_swallows_transport_error(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A transport error (e.g. connection refused) is logged and yields an empty list.
 
     Args:
-        audio_file (Path): The fake audio upload.
+        monkeypatch (pytest.MonkeyPatch): Fixture for patching env vars and httpx.
+        tmp_path (Path): Temporary directory fixture for the audio file.
     """
-    respx.post(f"{_BASE}/diarize").mock(return_value=httpx.Response(404, text="not found"))
+    monkeypatch.setenv("DIARIZE_API_BASE", "http://router:9000")
 
-    with pytest.raises(RuntimeError) as excinfo:
-        diarize_file(audio_file, max_speakers=2, cfg=_make_cfg())
+    def fake_post(url: str, **kwargs: Any) -> httpx.Response:
+        raise httpx.ConnectError("no route to host")
 
-    message = str(excinfo.value)
-    assert "does not implement diarization" in message
-    assert "DIARIZATION_API_BASE" in message
+    monkeypatch.setattr(diarization.httpx, "post", fake_post)
+    audio = tmp_path / "clip.wav"
+    audio.write_bytes(b"x")
+
+    assert diarize_file(audio, max_speakers=2) == []
 
 
-@respx.mock
-def test_diarize_file_server_error_raises(audio_file: Path) -> None:
-    """A 5xx response surfaces the status code and body excerpt.
+def test_diarize_file_handles_non_dict_payload(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A JSON payload that is not an object is rejected and yields an empty list.
 
     Args:
-        audio_file (Path): The fake audio upload.
+        monkeypatch (pytest.MonkeyPatch): Fixture for patching env vars and httpx.
+        tmp_path (Path): Temporary directory fixture for the audio file.
     """
-    respx.post(f"{_BASE}/diarize").mock(return_value=httpx.Response(500, text="cuda OOM"))
+    monkeypatch.setenv("DIARIZE_API_BASE", "http://router:9000")
 
-    with pytest.raises(RuntimeError, match=r"HTTP 500.*cuda OOM"):
-        diarize_file(audio_file, max_speakers=2, cfg=_make_cfg())
+    def fake_post(url: str, **kwargs: Any) -> httpx.Response:
+        return httpx.Response(200, json=["not", "a", "dict"], request=httpx.Request("POST", url))
 
+    monkeypatch.setattr(diarization.httpx, "post", fake_post)
+    audio = tmp_path / "clip.wav"
+    audio.write_bytes(b"x")
 
-@respx.mock
-def test_diarize_file_connect_error_raises_actionable_error(audio_file: Path) -> None:
-    """Network-level failures raise with the setup hint.
-
-    Args:
-        audio_file (Path): The fake audio upload.
-    """
-    respx.post(f"{_BASE}/diarize").mock(side_effect=httpx.ConnectError("refused"))
-
-    with pytest.raises(RuntimeError) as excinfo:
-        diarize_file(audio_file, max_speakers=2, cfg=_make_cfg())
-
-    message = str(excinfo.value)
-    assert "Could not reach" in message
-    assert "DIARIZATION_API_BASE" in message
-
-
-@respx.mock
-@pytest.mark.parametrize(
-    "payload",
-    [
-        {"unexpected": "shape"},
-        {"segments": "not-a-list"},
-        ["not", "a", "dict"],
-    ],
-)
-def test_diarize_file_malformed_payload_raises(audio_file: Path, payload: object) -> None:
-    """Payloads without a segments list raise a RuntimeError.
-
-    Args:
-        audio_file (Path): The fake audio upload.
-        payload (object): The malformed response payload under test.
-    """
-    respx.post(f"{_BASE}/diarize").mock(return_value=httpx.Response(200, json=payload))
-
-    with pytest.raises(RuntimeError, match="unexpected payload shape"):
-        diarize_file(audio_file, max_speakers=2, cfg=_make_cfg())
-
-
-@respx.mock
-@pytest.mark.parametrize(
-    "segment",
-    [
-        "not-a-dict",
-        {"start": 0.0, "end": 1.0},
-        {"start": "x", "end": 1.0, "speaker": "SPEAKER_00"},
-    ],
-)
-def test_diarize_file_malformed_segment_raises(audio_file: Path, segment: object) -> None:
-    """Malformed segment entries fail hard instead of being skipped.
-
-    Args:
-        audio_file (Path): The fake audio upload.
-        segment (object): The malformed segment entry under test.
-    """
-    respx.post(f"{_BASE}/diarize").mock(return_value=httpx.Response(200, json={"segments": [segment]}))
-
-    with pytest.raises(RuntimeError, match="malformed"):
-        diarize_file(audio_file, max_speakers=2, cfg=_make_cfg())
-
-
-@respx.mock
-def test_diarize_file_non_json_payload_raises(audio_file: Path) -> None:
-    """A non-JSON body raises a RuntimeError naming the problem.
-
-    Args:
-        audio_file (Path): The fake audio upload.
-    """
-    respx.post(f"{_BASE}/diarize").mock(return_value=httpx.Response(200, text="<html>proxy error</html>"))
-
-    with pytest.raises(RuntimeError, match="non-JSON"):
-        diarize_file(audio_file, max_speakers=2, cfg=_make_cfg())
+    assert diarize_file(audio, max_speakers=2) == []

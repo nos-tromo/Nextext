@@ -285,14 +285,14 @@ def test_external_diarization_failure_propagates(
     """
 
     def _boom(*_args: Any, **_kwargs: Any) -> list[dict[str, Any]]:
-        raise RuntimeError("No diarization endpoint is configured. Set DIARIZATION_API_BASE ...")
+        raise RuntimeError("No diarization endpoint is configured. Set DIARIZE_API_BASE ...")
 
     monkeypatch.setattr(transcription, "diarize_file", _boom)
     transcriber = _make_external_transcriber()
     transcriber.n_speakers = 2
     transcriber.transcription_result = {"segments": [{"start": 0.0, "end": 1.0, "text": "hi"}]}
 
-    with pytest.raises(RuntimeError, match="DIARIZATION_API_BASE"):
+    with pytest.raises(RuntimeError, match="DIARIZE_API_BASE"):
         transcriber.diarization()
 
 

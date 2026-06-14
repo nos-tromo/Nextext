@@ -3,7 +3,7 @@
 docint (the sibling RAG app) no longer runs its own Whisper-backed audio
 reader; it ingests structured transcripts produced by Nextext. This module
 owns the serialization format so the wire contract lives next to the
-Whisper/pyannote pipeline that produces it.
+Whisper transcription pipeline that produces it.
 
 The payload is UTF-8 JSON Lines — one JSON object per sentence-level
 segment, newline terminated (including the final line). Optional keys are
@@ -204,7 +204,7 @@ def _segment_to_record(
             source audio, or ``None`` to omit the key.
         language (str | None): ISO 639-1 language code of the transcript
             text. May be ``None`` when unknown.
-        task (str): Whisper task, ``"transcribe"`` or ``"translate"``.
+        task (str): Task performed, ``"transcribe"`` or ``"translate"``.
 
     Returns:
         dict[str, Any]: The ordered record ready for ``json.dumps``.
@@ -269,7 +269,7 @@ def build_docint_jsonl(
     - ``source_file_hash`` (str, optional) — ``sha256:<hex>`` digest of the
       source audio. Omitted entirely when ``source_file_hash`` is ``None``.
     - ``language`` (str | None) — ISO 639-1 language code or ``None``.
-    - ``task`` (str) — Whisper task, ``"transcribe"`` or ``"translate"``.
+    - ``task`` (str) — task performed, ``"transcribe"`` or ``"translate"``.
     - ``sentence_index`` (int) — 0-based line index.
     - ``start_seconds`` / ``end_seconds`` (float) — raw segment offsets.
     - ``start_ts`` / ``end_ts`` (str) — zero-padded ``HH:MM:SS`` strings.
