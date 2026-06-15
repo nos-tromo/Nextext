@@ -27,9 +27,9 @@ describe('apiGet', () => {
     const body = await apiGet<{ status: string }>('/health')
 
     expect(body.status).toBe('ok')
-    const [url, init] = fetchFn.mock.calls[0]
+    const [url, init] = fetchFn.mock.calls[0] as unknown as [string, RequestInit]
     expect(url).toBe('/api/v1/health')
-    expect((init as RequestInit).headers).toMatchObject({
+    expect((init).headers).toMatchObject({
       [OWNER_HEADER]: 'a'.repeat(32),
     })
   })
@@ -48,8 +48,8 @@ describe('apiSend', () => {
   it('serializes a JSON body and sets content-type', async () => {
     const fetchFn = mockFetch(201, { job_id: 'j1' })
     await apiSend('POST', '/jobs', { json: { a: 1 } })
-    const [, init] = fetchFn.mock.calls[0]
-    const ri = init as RequestInit
+    const [, init] = fetchFn.mock.calls[0] as unknown as [string, RequestInit]
+    const ri = init
     expect(ri.method).toBe('POST')
     expect(ri.body).toBe(JSON.stringify({ a: 1 }))
     expect(ri.headers).toMatchObject({ 'content-type': 'application/json' })
@@ -60,8 +60,8 @@ describe('apiSend', () => {
     const fd = new FormData()
     fd.append('x', 'y')
     await apiSend('POST', '/jobs', { form: fd })
-    const [, init] = fetchFn.mock.calls[0]
-    const ri = init as RequestInit
+    const [, init] = fetchFn.mock.calls[0] as unknown as [string, RequestInit]
+    const ri = init
     expect(ri.body).toBe(fd)
     expect(ri.headers).not.toHaveProperty('content-type')
   })
