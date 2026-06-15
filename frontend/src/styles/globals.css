@@ -1,0 +1,19 @@
+@import 'tailwindcss';
+
+:root {
+  --app-font: 'Inter', system-ui, sans-serif;
+  color-scheme: dark;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: theme(colors.background);
+  color: theme(colors.foreground);
+  font-family: var(--app-font);
+}
