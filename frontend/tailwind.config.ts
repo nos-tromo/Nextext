@@ -19,7 +19,7 @@ export default {
       },
       fontFamily: {
         sans: ['var(--app-font)', 'system-ui', 'sans-serif'],
-        mono: ['var(--app-font)', 'ui-monospace', 'monospace'],
+        mono: ['ui-monospace', 'SFMono-Regular', 'Menlo', 'monospace'],
       },
     },
   },
