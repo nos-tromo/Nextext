@@ -6,7 +6,7 @@ import json
 import os
 from collections.abc import Iterator
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import Any, BinaryIO, cast
 
 import httpx
 from loguru import logger
@@ -86,20 +86,22 @@ class BackendClient:
     def submit_job(
         self,
         file_name: str,
-        payload: bytes,
+        content: bytes | BinaryIO,
         options: dict[str, Any],
     ) -> str:
         """Submit a file to the backend and return its job id.
 
         Args:
             file_name: Display name of the file.
-            payload: Raw file bytes.
+            content: Raw file bytes, or a binary file-like object. A file-like
+                object is streamed to the backend in chunks by httpx, so the
+                frontend never holds an extra full in-memory copy of the file.
             options: Pipeline options dict matching :class:`JobOptions`.
 
         Returns:
             str: The new job's id.
         """
-        files = {"file": (file_name, payload)}
+        files = {"file": (file_name, content, "application/octet-stream")}
         data = {"options": json.dumps(options)}
         response = self.client.post("/api/v1/jobs", files=files, data=data)
         response.raise_for_status()

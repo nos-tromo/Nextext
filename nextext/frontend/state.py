@@ -14,6 +14,45 @@ from typing import Any
 import pandas as pd
 
 
+def check_batch_within_limit(
+    files: Sequence[Any],
+    max_total_bytes: int,
+) -> str | None:
+    """Validate that a selected upload batch fits the in-memory cap.
+
+    Streamlit's ``file_uploader`` holds every selected file in the Streamlit
+    server's memory at once, so a multi-GB batch can exhaust RAM before any
+    pipeline work begins. This guard sums the reported file sizes and returns
+    an actionable message when the batch exceeds ``max_total_bytes`` instead
+    of letting the process get OOM-killed.
+
+    Args:
+        files: Selected Streamlit ``UploadedFile`` objects (anything exposing
+            a numeric ``size`` attribute). Entries without a usable ``size``
+            count as zero bytes.
+        max_total_bytes: Maximum combined batch size, in bytes.
+
+    Returns:
+        str | None: ``None`` when the batch is within the cap; otherwise a
+            human-readable error message naming the limit and the CLI escape
+            hatch for large local batches.
+    """
+    total = 0
+    for file in files:
+        size = getattr(file, "size", 0)
+        if isinstance(size, int) and size > 0:
+            total += size
+    if total <= max_total_bytes:
+        return None
+    gib = 1 << 30
+    return (
+        f"Selected files total {total / gib:.1f} GB, over the "
+        f"{max_total_bytes / gib:.1f} GB limit. The web UI keeps the whole batch "
+        "in memory — upload fewer files at once, raise NEXTEXT_MAX_BATCH_MB if the "
+        "frontend has the RAM, or use `nextext-cli` for large local batches."
+    )
+
+
 def default_target_language(
     language_maps: dict[str, str],
     language_names: Sequence[str],
