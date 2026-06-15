@@ -85,3 +85,11 @@ pre-commit:
 # Run the test suite.
 test:
 	uv run pytest -q
+
+.PHONY: build-web bundle-web
+
+build-web:        ## Build only the React web image
+	DOCKER_BUILDKIT=1 $(COMPOSE) build web
+
+bundle-web:       ## Save the web image to an airgap tarball
+	./scripts/bundle_web_image.sh
