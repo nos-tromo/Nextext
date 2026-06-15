@@ -26,7 +26,7 @@ help:
 	@echo "  make network    create the external inference-net"
 	@echo "  make volumes    create the external Docker volumes"
 	@echo "  make build      build the backend + frontend images"
-	@echo "  make bundle     ship images as a versioned .tar.gz pair"
+	@echo "  make bundle     ship the built images as a versioned .tar.gz"
 	@echo "  make up         run the stack (no rebuild, no host ports)"
 	@echo "  make up-dev     like 'up', but publishes the frontend port on the host"
 	@echo "  make stop       stop the containers"
@@ -52,7 +52,7 @@ volumes:
 build:
 	DOCKER_BUILDKIT=1 $(COMPOSE) build
 
-# Build images and ship as a versioned .tar.gz pair (built + pulled).
+# Build images and ship them as a versioned .tar.gz of locally-built images.
 bundle:
 	./scripts/bundle_images.sh
 
