@@ -9,3 +9,7 @@ services:
   frontend:
     ports:
       - "${NEXTEXT_HOST_PORT:-8501}:8501"
+
+  web:
+    ports:
+      - "${NEXTEXT_WEB_HOST_PORT:-8502}:80"
