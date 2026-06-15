@@ -76,9 +76,17 @@ README.md
 docker/
 Dockerfile*
 
+# React frontend build exclusions
+frontend/node_modules
+frontend/.tsc-out
+**/*.tsbuildinfo
+
 # Exceptions
 !**/prompts/
 !**/prompts/hate_speech.txt
 !**/prompts/summary.txt
 !**/prompts/system.txt
 !**/prompts/translation.txt
+# frontend/src/lib is needed for the React build (the **/lib/ rule above would
+# otherwise exclude it from the Docker build context).
+!frontend/src/lib/
