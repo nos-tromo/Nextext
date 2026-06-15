@@ -78,7 +78,10 @@ services:
       BACKEND_PUBLIC_HOST: ${BACKEND_PUBLIC_HOST:-http://localhost:8000}
       STREAMLIT_BROWSER_GATHER_USAGE_STATS: "false"
       STREAMLIT_SERVER_FILE_WATCHER_TYPE: none
-      STREAMLIT_SERVER_MAX_UPLOAD_SIZE: 8192
+      # Streamlit's per-file cap (MB); tracks the backend's per-file hard cap.
+      STREAMLIT_SERVER_MAX_UPLOAD_SIZE: ${NEXTEXT_MAX_UPLOAD_MB:-8192}
+      # Combined batch the UI accepts at once — Streamlit holds it all in memory.
+      NEXTEXT_MAX_BATCH_MB: ${NEXTEXT_MAX_BATCH_MB:-2048}
     env_file: *env-file
     networks:
       nextext-net:
