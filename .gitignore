@@ -62,6 +62,10 @@
 # ==================================
 # Exceptions
 # ==================================
+# React frontend (frontend/) — unblock file types the pattern rules would swallow
+!frontend/index.html
+!frontend/src/lib/
+!frontend/nginx/*.conf
 !**/.github/
 !**/.github/workflows/
 !**/.github/workflows/ci.yml
