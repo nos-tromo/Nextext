@@ -142,6 +142,13 @@ Docker assets live under `docker/`. `docker/compose.yaml` defines two services �
 
 The stack shares `inference-net` with the inference provider (vllm-service / Ollama). The `Makefile` is the entry point — it points Compose at `docker/compose.yaml`, since a bare `docker compose` from the repo root no longer finds it. Run `make volumes` (one-time, creates the external `nltk-cache`/`spacy-cache` volumes), then `make build && make up` for production shape, or `make build && make up-dev` to publish the Streamlit frontend on the host.
 
+A React SPA (`frontend/`, served by nginx via `docker/Dockerfile.frontend.react`,
+compose service `web`) is being migrated in to replace the Streamlit `frontend`.
+It proxies `/api/v1` same-origin (no `BACKEND_HOST`), so the browser uploads
+stream through nginx to the backend without buffering whole files in any Python
+process. Build with `make build-web`; dev port `NEXTEXT_WEB_HOST_PORT` (8502).
+Implementation plans live in `docs/superpowers/plans/`.
+
 ## Persistence model
 
 Jobs live only in memory. `JobManager` holds them in a dict keyed by `job_id` and scoped by `owner_id`; there is no SQLite index, no on-disk artifacts, and no TTL sweeper. A job is retained until the owner `DELETE`s it or the backend process exits — nothing ever cuts off a long-running job.

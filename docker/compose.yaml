@@ -88,6 +88,25 @@ services:
     depends_on:
       - backend
 
+  ##########################################################
+  # React SPA (nginx). Same-origin proxy to the backend.
+  # Coexists with `frontend` (Streamlit) until teardown.
+  ##########################################################
+  web:
+    image: nextext-web:${NEXTEXT_VERSION:-latest}
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.frontend.react
+    logging: *default-logging
+    environment:
+      <<: *no-proxy-env
+      NEXTEXT_CLIENT_MAX_BODY_SIZE: ${NEXTEXT_CLIENT_MAX_BODY_SIZE:-8192m}
+    env_file: *env-file
+    networks:
+      nextext-net:
+    depends_on:
+      - backend
+
 ##########################################################
 # Volumes — spaCy/NLTK language-resource caches only;
 # model inference happens on external endpoints.
