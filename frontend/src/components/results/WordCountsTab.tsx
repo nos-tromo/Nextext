@@ -4,6 +4,7 @@ import type { JobResult } from '../../api/types'
 interface WordCountsTabProps {
   jobId: string
   result: JobResult
+  stem: string
 }
 
 /**
@@ -12,8 +13,9 @@ interface WordCountsTabProps {
  *
  * @param jobId - The job identifier, forwarded to {@link DownloadButtons}.
  * @param result - The completed job result containing the word count list.
+ * @param stem - Upload filename without extension; used to prefix download names.
  */
-export function WordCountsTab({ jobId, result }: WordCountsTabProps) {
+export function WordCountsTab({ jobId, result, stem }: WordCountsTabProps) {
   if (!result.word_counts || result.word_counts.length === 0) {
     return <p className="text-sm text-muted-foreground">No word counts available for this job.</p>
   }
@@ -41,8 +43,8 @@ export function WordCountsTab({ jobId, result }: WordCountsTabProps) {
       <DownloadButtons
         jobId={jobId}
         items={[
-          { name: 'wordcounts.csv', label: 'CSV', fileName: 'wordcounts.csv' },
-          { name: 'wordcounts.xlsx', label: 'XLSX', fileName: 'wordcounts.xlsx' },
+          { name: 'wordcounts.csv', label: 'CSV', fileName: `${stem}_wordcounts.csv` },
+          { name: 'wordcounts.xlsx', label: 'XLSX', fileName: `${stem}_wordcounts.xlsx` },
         ]}
       />
     </div>

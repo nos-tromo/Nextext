@@ -1,0 +1,59 @@
+import { DownloadButtons } from './DownloadButtons'
+import { transcriptHasSpeaker } from '../../lib/transcriptTable'
+import type { TranscriptSegment } from '../../api/types'
+
+interface TranscriptTabProps {
+  jobId: string
+  segments: TranscriptSegment[]
+  stem: string
+}
+
+/**
+ * Displays the transcript as a time-stamped table with an optional Speaker
+ * column (shown only when at least one segment carries a speaker label).
+ * Provides CSV, XLSX, and JSONL download buttons with stem-prefixed filenames.
+ *
+ * @param jobId - The job identifier, forwarded to {@link DownloadButtons}.
+ * @param segments - Transcript segments from the completed job result.
+ * @param stem - Upload filename without extension; used to prefix download names.
+ */
+export function TranscriptTab({ jobId, segments, stem }: TranscriptTabProps) {
+  const hasSpeaker = transcriptHasSpeaker(segments)
+
+  return (
+    <div className="space-y-4">
+      <div className="overflow-x-auto rounded-md border border-border">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-border bg-muted text-muted-foreground">
+              <th className="px-4 py-2 text-left font-medium">Start</th>
+              <th className="px-4 py-2 text-left font-medium">End</th>
+              {hasSpeaker && <th className="px-4 py-2 text-left font-medium">Speaker</th>}
+              <th className="px-4 py-2 text-left font-medium">Text</th>
+            </tr>
+          </thead>
+          <tbody>
+            {segments.map((seg, i) => (
+              <tr key={i} className="border-b border-border last:border-0 hover:bg-accent/40">
+                <td className="px-4 py-2 tabular-nums text-muted-foreground">{seg.start ?? '—'}</td>
+                <td className="px-4 py-2 tabular-nums text-muted-foreground">{seg.end ?? '—'}</td>
+                {hasSpeaker && (
+                  <td className="px-4 py-2 text-muted-foreground">{seg.speaker ?? '—'}</td>
+                )}
+                <td className="px-4 py-2 text-foreground">{seg.text}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <DownloadButtons
+        jobId={jobId}
+        items={[
+          { name: 'transcript.csv', label: 'CSV', fileName: `${stem}_transcript.csv` },
+          { name: 'transcript.xlsx', label: 'XLSX', fileName: `${stem}_transcript.xlsx` },
+          { name: 'docint.jsonl', label: 'JSONL', fileName: `${stem}_docint.jsonl` },
+        ]}
+      />
+    </div>
+  )
+}

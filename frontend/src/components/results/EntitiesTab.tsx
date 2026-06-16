@@ -4,6 +4,7 @@ import type { JobResult } from '../../api/types'
 interface EntitiesTabProps {
   jobId: string
   result: JobResult
+  stem: string
 }
 
 /**
@@ -13,8 +14,9 @@ interface EntitiesTabProps {
  *
  * @param jobId - The job identifier, forwarded to {@link DownloadButtons}.
  * @param result - The completed job result containing the named entity list.
+ * @param stem - Upload filename without extension; used to prefix download names.
  */
-export function EntitiesTab({ jobId, result }: EntitiesTabProps) {
+export function EntitiesTab({ jobId, result, stem }: EntitiesTabProps) {
   if (!result.named_entities || result.named_entities.length === 0) {
     return <p className="text-sm text-muted-foreground">No named entities found for this job.</p>
   }
@@ -44,8 +46,8 @@ export function EntitiesTab({ jobId, result }: EntitiesTabProps) {
       <DownloadButtons
         jobId={jobId}
         items={[
-          { name: 'entities.csv', label: 'CSV', fileName: 'entities.csv' },
-          { name: 'entities.xlsx', label: 'XLSX', fileName: 'entities.xlsx' },
+          { name: 'entities.csv', label: 'CSV', fileName: `${stem}_entities.csv` },
+          { name: 'entities.xlsx', label: 'XLSX', fileName: `${stem}_entities.xlsx` },
         ]}
       />
     </div>

@@ -5,6 +5,7 @@ import type { HateSpeechFinding, JobResult } from '../../api/types'
 interface HateSpeechTabProps {
   jobId: string
   result: JobResult
+  stem: string
 }
 
 const CONFIDENCE_CLASSES: Record<HateSpeechFinding['confidence'], string> = {
@@ -20,8 +21,9 @@ const CONFIDENCE_CLASSES: Record<HateSpeechFinding['confidence'], string> = {
  *
  * @param jobId - The job identifier, forwarded to {@link DownloadButtons}.
  * @param result - The completed job result containing the hate-speech findings.
+ * @param stem - Upload filename without extension; used to prefix download names.
  */
-export function HateSpeechTab({ jobId, result }: HateSpeechTabProps) {
+export function HateSpeechTab({ jobId, result, stem }: HateSpeechTabProps) {
   if (!result.hate_speech_findings || result.hate_speech_findings.length === 0) {
     return <p className="text-sm text-muted-foreground">No hate-speech findings for this job.</p>
   }
@@ -73,8 +75,8 @@ export function HateSpeechTab({ jobId, result }: HateSpeechTabProps) {
       <DownloadButtons
         jobId={jobId}
         items={[
-          { name: 'hate_speech.csv', label: 'CSV', fileName: 'hate_speech.csv' },
-          { name: 'hate_speech.xlsx', label: 'XLSX', fileName: 'hate_speech.xlsx' },
+          { name: 'hate_speech.csv', label: 'CSV', fileName: `${stem}_hate_speech.csv` },
+          { name: 'hate_speech.xlsx', label: 'XLSX', fileName: `${stem}_hate_speech.xlsx` },
         ]}
       />
     </div>

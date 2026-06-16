@@ -6,6 +6,7 @@ import type { JobResult } from '../../api/types'
 interface SummaryTabProps {
   jobId: string
   result: JobResult
+  stem: string
 }
 
 /**
@@ -14,8 +15,9 @@ interface SummaryTabProps {
  *
  * @param jobId - The job identifier, forwarded to {@link DownloadButtons}.
  * @param result - The completed job result containing the summary text.
+ * @param stem - Upload filename without extension; used to prefix download names.
  */
-export function SummaryTab({ jobId, result }: SummaryTabProps) {
+export function SummaryTab({ jobId, result, stem }: SummaryTabProps) {
   if (!result.summary) {
     return <p className="text-sm text-muted-foreground">No summary produced for this job.</p>
   }
@@ -27,7 +29,7 @@ export function SummaryTab({ jobId, result }: SummaryTabProps) {
       </div>
       <DownloadButtons
         jobId={jobId}
-        items={[{ name: 'summary.txt', label: 'TXT', fileName: 'summary.txt' }]}
+        items={[{ name: 'summary.txt', label: 'TXT', fileName: `${stem}_summary.txt` }]}
       />
     </div>
   )
