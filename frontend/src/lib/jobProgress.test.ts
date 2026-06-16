@@ -50,8 +50,9 @@ describe('jobProgress reducer', () => {
     expect(twice).toEqual(once)
   })
 
-  it('seeds error from snapshot on reload', () => {
-    const s = initialJobProgress('failed', 'backend exploded')
-    expect(s).toMatchObject({ status: 'failed', error: 'backend exploded', terminal: true })
+  it('seeds error only for a failed initial status', () => {
+    expect(initialJobProgress('failed', 'boom')).toMatchObject({ status: 'failed', error: 'boom', terminal: true })
+    expect(initialJobProgress('completed', 'boom')).toMatchObject({ status: 'completed', error: null })
+    expect(initialJobProgress()).toMatchObject({ status: 'queued', error: null })
   })
 })

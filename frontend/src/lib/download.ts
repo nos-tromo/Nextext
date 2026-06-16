@@ -64,12 +64,15 @@ export async function fetchArtifactObjectUrl(jobId: string, name: string): Promi
  */
 export async function downloadArtifact(jobId: string, name: string, fileName: string): Promise<void> {
   const url = await fetchArtifactObjectUrl(jobId, name)
-  const anchor = document.createElement('a')
-  anchor.href = url
-  anchor.download = fileName
-  anchor.style.display = 'none'
-  document.body.appendChild(anchor)
-  anchor.click()
-  document.body.removeChild(anchor)
-  URL.revokeObjectURL(url)
+  try {
+    const anchor = document.createElement('a')
+    anchor.href = url
+    anchor.download = fileName
+    anchor.style.display = 'none'
+    document.body.appendChild(anchor)
+    anchor.click()
+    document.body.removeChild(anchor)
+  } finally {
+    URL.revokeObjectURL(url)
+  }
 }

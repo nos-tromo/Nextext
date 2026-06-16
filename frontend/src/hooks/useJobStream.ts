@@ -5,14 +5,15 @@ import { toJobEvent } from '../lib/jobEvents'
 import { initialJobProgress, reduceJobEvent, type JobProgress, type JobProgressStatus } from '../lib/jobProgress'
 
 const RECONNECT_DELAY_MS = 1500
-/** Maximum number of reconnect attempts before giving up on a non-terminal stream. */
+/** Maximum number of consecutive reconnect attempts before giving up on a non-terminal stream. */
 export const MAX_RECONNECTS = 5
 
 /**
  * Subscribe to a job's SSE event stream and return live JobProgress. Reconnects
- * on a non-terminal drop up to {@link MAX_RECONNECTS} times (the backend replays
- * history on connect; the reducer is idempotent, so re-reading is safe). Cleans
- * up on unmount via AbortController.
+ * on a non-terminal drop up to {@link MAX_RECONNECTS} consecutive times — any
+ * received event resets the budget (the backend replays history on connect; the
+ * reducer is idempotent, so re-reading is safe). Cleans up on unmount via
+ * AbortController.
  *
  * @param jobId - The job to stream.
  * @param initialStatus - Status seed from a cached snapshot (default `'queued'`).
@@ -37,6 +38,7 @@ export function useJobStream(
           for await (const frame of streamSse(jobEventsPath(jobId), controller.signal)) {
             const event = toJobEvent(frame)
             if (!event) continue
+            reconnects = 0 // a real event resets the consecutive-failure budget
             state = reduceJobEvent(state, event)
             setProgress(state)
             if (state.terminal) return

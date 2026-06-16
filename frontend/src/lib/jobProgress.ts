@@ -27,7 +27,7 @@ export function initialJobProgress(status: JobProgressStatus = 'queued', error: 
     stageIndex: 0,
     stageLabel: null,
     progress: status === 'completed' ? 1 : 0,
-    error,
+    error: status === 'failed' ? error : null,
     skipped: false,
     terminal: TERMINAL.has(status),
   }
