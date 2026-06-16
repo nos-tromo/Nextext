@@ -1,5 +1,8 @@
 """Tests for the external Whisper transcription module."""
 
+from collections.abc import Iterator
+from contextlib import contextmanager
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock
@@ -7,7 +10,7 @@ from unittest.mock import MagicMock
 import pandas as pd
 import pytest
 
-from nextext.core import transcription
+from nextext.core import audio, transcription
 from nextext.core.transcription import (
     ExternalWhisperTranscriber,
     _assign_speakers,
@@ -15,6 +18,19 @@ from nextext.core.transcription import (
     _merge_transcriptions_by_sentence,
     _seconds_to_time,
 )
+
+
+@contextmanager
+def _passthrough_normalize(file_path: Path) -> Iterator[Path]:
+    """Stand-in for normalize_for_transcription that yields the input unchanged.
+
+    Args:
+        file_path (Path): The path passed through verbatim.
+
+    Yields:
+        Path: ``file_path`` unchanged.
+    """
+    yield file_path
 
 # ---------------------------------------------------------------------------
 # Sentence merging
@@ -381,6 +397,7 @@ def test_external_transcriber_transcription_populates_src_lang(
     # The external /vad guard would otherwise screen this test file; stub it
     # to report speech so the test focuses on src_lang propagation only.
     monkeypatch.setattr(transcription, "has_speech", lambda _path: True)
+    monkeypatch.setattr(transcription, "normalize_for_transcription", _passthrough_normalize)
 
     transcriber.transcription()
 
@@ -418,6 +435,7 @@ def test_external_transcriber_normalizes_full_language_name(
         property(lambda self: fake_client),
     )
     monkeypatch.setattr(transcription, "has_speech", lambda _path: True)
+    monkeypatch.setattr(transcription, "normalize_for_transcription", _passthrough_normalize)
 
     transcriber.transcription()
 
@@ -567,6 +585,7 @@ def test_external_transcriber_applies_no_speech_prob_filter(
 
     transcriber = _make_external_transcriber()
     monkeypatch.setattr(transcription, "has_speech", lambda _path: True)
+    monkeypatch.setattr(transcription, "normalize_for_transcription", _passthrough_normalize)
     monkeypatch.setattr(
         type(transcriber),
         "_get_client",
@@ -605,6 +624,7 @@ def test_external_transcriber_tolerates_missing_no_speech_prob(
 
     transcriber = _make_external_transcriber()
     monkeypatch.setattr(transcription, "has_speech", lambda _path: True)
+    monkeypatch.setattr(transcription, "normalize_for_transcription", _passthrough_normalize)
     monkeypatch.setattr(
         type(transcriber),
         "_get_client",
@@ -617,3 +637,77 @@ def test_external_transcriber_tolerates_missing_no_speech_prob(
     segments = transcriber.transcription_result["segments"]
     assert len(segments) == 1
     assert segments[0]["no_speech_prob"] == 0.0
+
+
+def test_transcription_normalizes_before_upload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """transcription() routes the upload through normalize_for_transcription.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Patches the client, VAD guard, and
+            the normalization seam.
+    """
+    seg = SimpleNamespace(start=0.0, end=1.0, text="Hi.", no_speech_prob=0.1)
+    fake_response = SimpleNamespace(segments=[seg], language="en")
+    fake_client = MagicMock()
+    fake_client.audio.transcriptions.create.return_value = fake_response
+
+    transcriber = ExternalWhisperTranscriber.__new__(ExternalWhisperTranscriber)
+    transcriber.file_path = transcription.Path(__file__)
+    transcriber.src_lang = "en"
+    transcriber.task = "transcribe"
+    transcriber._model_id = "whisper-1"
+    transcriber._client = None
+    transcriber.transcription_result = None
+
+    monkeypatch.setattr(type(transcriber), "_get_client", property(lambda self: fake_client))
+    monkeypatch.setattr(transcription, "has_speech", lambda _path: True)
+
+    seen: list[Path] = []
+
+    @contextmanager
+    def _spy(file_path: Path) -> Iterator[Path]:
+        seen.append(file_path)
+        yield file_path
+
+    monkeypatch.setattr(transcription, "normalize_for_transcription", _spy)
+
+    transcriber.transcription()
+
+    assert seen == [transcriber.file_path]
+    fake_client.audio.transcriptions.create.assert_called_once()
+
+
+def test_transcription_raises_on_undecodable_audio(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An AudioDecodeError from normalization aborts before any API call.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Patches the client, VAD guard, and
+            the normalization seam to raise.
+    """
+    fake_client = MagicMock()
+    transcriber = ExternalWhisperTranscriber.__new__(ExternalWhisperTranscriber)
+    transcriber.file_path = transcription.Path("voice.ogg")
+    transcriber.src_lang = None
+    transcriber.task = "transcribe"
+    transcriber._model_id = "whisper-1"
+    transcriber._client = None
+    transcriber.transcription_result = None
+
+    monkeypatch.setattr(type(transcriber), "_get_client", property(lambda self: fake_client))
+    monkeypatch.setattr(transcription, "has_speech", lambda _path: True)
+
+    @contextmanager
+    def _raise(file_path: Path) -> Iterator[Path]:
+        raise audio.AudioDecodeError(f"Could not decode '{file_path.name}'.")
+        yield file_path  # unreachable; only here so @contextmanager treats this as a generator
+
+    monkeypatch.setattr(transcription, "normalize_for_transcription", _raise)
+
+    with pytest.raises(audio.AudioDecodeError):
+        transcriber.transcription()
+
+    fake_client.audio.transcriptions.create.assert_not_called()
