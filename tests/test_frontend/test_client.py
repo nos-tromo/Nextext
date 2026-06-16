@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 from collections.abc import Callable
 
 import httpx
@@ -62,6 +63,46 @@ def test_submit_job_sends_multipart_and_returns_id() -> None:
     assert b"clip.wav" in seen["body"]
     assert b'"task": "transcribe"' in seen["body"]
     assert b"multipart/form-data" in seen["content_type"]
+
+
+def test_submit_job_streams_file_object_in_chunks() -> None:
+    """A file-like body is streamed in bounded chunks, never read whole.
+
+    Guards the memory-safety contract: passing an ``UploadedFile`` (rather
+    than a ``bytes`` blob) must let httpx pull the body incrementally so the
+    frontend never holds an extra full copy of the file.
+    """
+    chunk_lengths: list[int] = []
+    payload_size = 256 * 1024
+
+    class _RecordingFile(io.BytesIO):
+        def read(self, size: int | None = -1) -> bytes:
+            chunk = super().read(-1 if size is None else size)
+            if chunk:
+                chunk_lengths.append(len(chunk))
+            return chunk
+
+    body = _RecordingFile(b"x" * payload_size)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            201,
+            json={
+                "job_id": "streamed",
+                "status": "queued",
+                "created_at": "2024-01-01T00:00:00Z",
+            },
+        )
+
+    with _make_client(handler) as client:
+        job_id = client.submit_job("clip.wav", body, {"task": "transcribe"})
+
+    assert job_id == "streamed"
+    assert chunk_lengths, "expected the body to be read in chunks"
+    # No single read returned the whole payload, and it took more than one
+    # read to drain it — i.e. httpx streamed rather than slurping.
+    assert max(chunk_lengths) < payload_size
+    assert len(chunk_lengths) > 1
 
 
 def test_get_snapshot_returns_decoded_payload() -> None:
