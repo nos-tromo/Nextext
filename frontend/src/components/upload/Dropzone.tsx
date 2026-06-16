@@ -32,7 +32,10 @@ export function Dropzone({ onFiles, disabled = false }: DropzoneProps) {
       aria-disabled={disabled}
       onClick={() => !disabled && inputRef.current?.click()}
       onKeyDown={(e) => {
-        if (!disabled && (e.key === 'Enter' || e.key === ' ')) inputRef.current?.click()
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault()
+          if (!disabled) inputRef.current?.click()
+        }
       }}
       onDragOver={(e) => {
         e.preventDefault()
