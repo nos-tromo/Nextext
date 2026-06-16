@@ -110,6 +110,47 @@ export interface StageEventData {
   result_delta: Record<string, unknown> | null
 }
 
+export interface StageStartedEvent {
+  stage: string
+  stage_index: number
+  progress: number
+  timestamp: string
+}
+
+export interface StageCompletedEvent {
+  stage: string
+  stage_index: number
+  progress: number
+  timestamp: string
+  result_delta: Record<string, unknown> | null
+}
+
+export interface JobCompletedEvent {
+  job_id: string
+  skipped: boolean
+  timestamp: string
+}
+
+export interface JobFailedEvent {
+  job_id: string
+  error: string
+  timestamp: string
+}
+
+export interface JobCancelledEvent {
+  job_id: string
+  timestamp: string
+}
+
+export type JobEvent =
+  | { name: 'stage_started'; data: StageStartedEvent }
+  | { name: 'stage_completed'; data: StageCompletedEvent }
+  | { name: 'job_completed'; data: JobCompletedEvent }
+  | { name: 'job_failed'; data: JobFailedEvent }
+  | { name: 'job_cancelled'; data: JobCancelledEvent }
+
+export type JobEventName = JobEvent['name']
+
 export interface HealthResponse {
   status: 'ok'
   inference: boolean

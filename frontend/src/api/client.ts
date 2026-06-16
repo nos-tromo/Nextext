@@ -37,8 +37,8 @@ async function parse<T>(res: Response): Promise<T> {
   return body as T
 }
 
-export async function apiGet<T>(path: string): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, { headers: identityHeaders() })
+export async function apiGet<T>(path: string, signal?: AbortSignal): Promise<T> {
+  const res = await fetch(`${API_BASE}${path}`, { headers: identityHeaders(), signal })
   return parse<T>(res)
 }
 
