@@ -40,9 +40,11 @@ export function ResultPanel({ jobId, fileName }: ResultPanelProps) {
   const query = useJobResult(jobId, true)
   const [activeTab, setActiveTab] = useState<TabId>('transcript')
 
-  // Derive stem: strip everything from the last '.' onward (or use the full name).
+  // Derive stem: strip everything from the last '.' onward (or use the full
+  // name). Fall back to 'result' so an empty/extension-only name can't yield
+  // an empty stem (which would produce filenames like "_archive.zip").
   const dotIdx = fileName.lastIndexOf('.')
-  const stem = dotIdx > 0 ? fileName.slice(0, dotIdx) : fileName
+  const stem = (dotIdx > 0 ? fileName.slice(0, dotIdx) : fileName) || 'result'
 
   if (query.isLoading) {
     return <Spinner label="Loading results…" />

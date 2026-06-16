@@ -167,11 +167,11 @@ describe('ResultPanel', () => {
       ),
     )
 
-    const { getAllByRole } = mountResultPanel('j1', 'clip.wav')
+    const screenApi = mountResultPanel('j1', 'clip.wav')
 
     await waitFor(() => {
-      const btns = getAllByRole('button', { name: 'Download all (.zip)' })
-      expect(btns.length).toBeGreaterThan(0)
+      const btn = screenApi.getByRole('button', { name: 'Download all (.zip)' })
+      expect(btn).toBeInTheDocument()
     })
   })
 })
