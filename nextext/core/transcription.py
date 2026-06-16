@@ -14,6 +14,7 @@ import pandas as pd
 from loguru import logger
 from openai import APIStatusError, OpenAI
 
+from nextext.core.audio import normalize_for_transcription
 from nextext.core.diarization import diarize_file
 from nextext.core.vad import has_speech
 from nextext.utils.env_cfg import load_inference_env, load_whisper_env
@@ -314,6 +315,12 @@ class ExternalWhisperTranscriber:
            ``no_speech_prob`` exceeds :data:`NO_SPEECH_THRESHOLD` are
            dropped from the returned payload.
 
+        Before the request the upload is re-encoded to 16 kHz mono FLAC
+        (see :func:`nextext.core.audio.normalize_for_transcription`) so
+        libsndfile-only Whisper servers can decode any source format; an
+        undecodable file raises
+        :class:`~nextext.core.audio.AudioDecodeError`.
+
         Whisper's built-in ``translate`` task always targets English and
         is exposed by OpenAI-compatible servers as a separate
         ``/v1/audio/translations`` endpoint. ``task`` itself is not
@@ -327,54 +334,57 @@ class ExternalWhisperTranscriber:
             self.transcription_result = {"segments": []}
             return
 
-        client = self._get_client
-        file_size = self.file_path.stat().st_size
-        logger.info(
-            "External Whisper request: model='{}' task='{}' language='{}' file='{}' size={}B",
-            self._model_id,
-            self.task,
-            self.src_lang,
-            self.file_path.name,
-            file_size,
-        )
         provider = load_inference_env().provider
-        if provider == "openai" and file_size > OPENAI_WHISPER_MAX_UPLOAD_BYTES:
-            size_mb = file_size / (1024 * 1024)
-            limit_mb = OPENAI_WHISPER_MAX_UPLOAD_BYTES / (1024 * 1024)
-            raise ValueError(
-                f"Audio file '{self.file_path.name}' is {size_mb:.1f} MB, "
-                f"which exceeds OpenAI's {limit_mb:.0f} MB Whisper upload limit. "
-                "Compress or split the file before retrying, or point "
-                "WHISPER_API_BASE at a self-hosted endpoint without a hard cap "
-                "(e.g. the vllm-service audio container)."
+        with normalize_for_transcription(self.file_path) as audio_path:
+            file_size = audio_path.stat().st_size
+            logger.info(
+                "External Whisper request: model='{}' task='{}' language='{}' "
+                "file='{}' (normalized from '{}') size={}B",
+                self._model_id,
+                self.task,
+                self.src_lang,
+                audio_path.name,
+                self.file_path.name,
+                file_size,
             )
-        try:
-            with open(self.file_path, "rb") as f:
-                if self.task == "translate":
-                    response = client.audio.translations.create(
-                        model=self._model_id,
-                        file=f,
-                        response_format="verbose_json",
-                    )
-                else:
-                    kwargs: dict[str, Any] = {
-                        "model": self._model_id,
-                        "file": f,
-                        "response_format": "verbose_json",
-                        "timestamp_granularities": ["segment"],
-                    }
-                    if self.src_lang:
-                        kwargs["language"] = self.src_lang
-                    response = client.audio.transcriptions.create(**kwargs)
-        except APIStatusError as exc:
-            body = getattr(exc, "response", None)
-            body_text = body.text if body is not None else ""
-            logger.error(
-                "External Whisper API error {}: {}",
-                exc.status_code,
-                body_text or exc.message,
-            )
-            raise
+            if provider == "openai" and file_size > OPENAI_WHISPER_MAX_UPLOAD_BYTES:
+                size_mb = file_size / (1024 * 1024)
+                limit_mb = OPENAI_WHISPER_MAX_UPLOAD_BYTES / (1024 * 1024)
+                raise ValueError(
+                    f"Audio file '{self.file_path.name}' is {size_mb:.1f} MB after "
+                    f"normalization, which exceeds OpenAI's {limit_mb:.0f} MB Whisper "
+                    "upload limit. Compress or split the file before retrying, or point "
+                    "WHISPER_API_BASE at a self-hosted endpoint without a hard cap "
+                    "(e.g. the vllm-service audio container)."
+                )
+            client = self._get_client
+            try:
+                with open(audio_path, "rb") as f:
+                    if self.task == "translate":
+                        response = client.audio.translations.create(
+                            model=self._model_id,
+                            file=f,
+                            response_format="verbose_json",
+                        )
+                    else:
+                        kwargs: dict[str, Any] = {
+                            "model": self._model_id,
+                            "file": f,
+                            "response_format": "verbose_json",
+                            "timestamp_granularities": ["segment"],
+                        }
+                        if self.src_lang:
+                            kwargs["language"] = self.src_lang
+                        response = client.audio.transcriptions.create(**kwargs)
+            except APIStatusError as exc:
+                body = getattr(exc, "response", None)
+                body_text = body.text if body is not None else ""
+                logger.error(
+                    "External Whisper API error {}: {}",
+                    exc.status_code,
+                    body_text or exc.message,
+                )
+                raise
         raw_segments = [
             {
                 "start": seg.start,
