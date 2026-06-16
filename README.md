@@ -1,6 +1,6 @@
 # Nextext 🎙️
 
-**Nextext** is a modular toolkit for transcribing, translating, and analyzing natural language from audio and video files. All model inference (Whisper transcription, LLM text tasks, GLiNER NER, speaker diarization) runs on **external OpenAI-compatible / HTTP endpoints** — the app itself ships no model weights and needs no GPU. It consists of two cooperating services: a FastAPI **backend** that owns the pipeline and a Streamlit **frontend** that talks to the backend over HTTP. The same toolkit also exposes a CLI for in-process batch processing.
+**Nextext** is a modular toolkit for transcribing, translating, and analyzing natural language from audio and video files. All model inference (Whisper transcription, LLM text tasks, GLiNER NER, speaker diarization) runs on **external OpenAI-compatible / HTTP endpoints** — the app itself ships no model weights and needs no GPU. It consists of two cooperating services: a FastAPI **backend** that owns the pipeline and a React SPA **frontend** (served by nginx) that talks to the backend same-origin via `/api/v1`. The same toolkit also exposes a CLI for in-process batch processing.
 
 > This is a personal project that is under heavy development. It could, and likely does, contain bugs, incomplete code,
 > or other unintended issues. As such, the software is provided as-is, without warranty of any kind.
@@ -124,11 +124,11 @@ alone) is the production shape and publishes no host ports.
 The stack brings up two containers:
 
 - **Backend** (`backend`) — FastAPI on port 8000 (internal). Owns the pipeline, the HTTP inference clients, and the in-memory job store. Exposes `/api/v1/health`, `/api/v1/languages`, `/api/v1/jobs/*`. Not published to the host by default.
-- **Frontend** (`frontend`) — Streamlit on port 8501. A thin HTTP client over the backend; ships only the `frontend` dependency group.
+- **Frontend** (`frontend`) — React SPA served by nginx on port 80 (internal). nginx proxies `/api/v1` to the backend same-origin, so browser uploads stream through nginx without buffering whole files in Python.
 
 Jobs live only in memory — there is no durable storage and no TTL, so a long-running job is never cut off and is retained until you delete it or the backend restarts. Identity is anonymous: the frontend mints a per-browser id and stamps it into the URL (`?owner=<id>`) on first visit, sending it to the backend as the trusted identity header (`X-Auth-User` by default) to scope your jobs. Because that id survives a refresh, reloading the page mid-run re-discovers your jobs and resumes the live progress view; closing the tab and reopening the bare host starts a fresh identity. Developers calling the API directly can skip the header and set `NEXTEXT_DEFAULT_IDENTITY` instead. There is no authentication — the backend trusts whoever can reach `inference-net`.
 
-Launch the UI: `http://localhost:8501/`. The frontend reaches the backend via `BACKEND_HOST` (default `http://backend:8000` inside the compose network).
+With `make up-dev`, the frontend is published on `http://localhost:${NEXTEXT_HOST_PORT:-8501}/` (nginx → React SPA).
 
 Each build is tagged `nextext-{backend,frontend}:${NEXTEXT_VERSION}`, where
 `NEXTEXT_VERSION` defaults to `latest`. Override it (e.g. for releases)
@@ -230,32 +230,40 @@ ship the `nltk-cache` / `spacy-cache` volumes alongside the image bundle.
 
 ## Usage 🚀
 
-### Streamlit 🌈
+### React SPA 🌐
 
-The Streamlit frontend talks to the FastAPI backend over HTTP. Start both in two terminals:
+The recommended way to run Nextext is via Docker:
+
+```bash
+make build      # build backend + frontend images
+make up-dev     # start both; frontend published on http://localhost:${NEXTEXT_HOST_PORT:-8501}/
+```
+
+Open `http://localhost:8501` (or your configured `NEXTEXT_HOST_PORT`) in your browser. nginx serves the React SPA and proxies `/api/v1` to the backend — no separate backend URL is needed in the browser.
+
+For local development without Docker, start the backend and the Vite dev server in two terminals:
 
 ```bash
 # Terminal 1 — FastAPI backend on http://localhost:8000
 uv run nextext-api
 
-# Terminal 2 — Streamlit frontend on http://localhost:8501
-BACKEND_HOST=http://localhost:8000 uv run nextext
+# Terminal 2 — React Vite dev server (proxies /api/v1 to localhost:8000)
+cd frontend && pnpm dev
 ```
 
-Open `http://localhost:8501` in your browser. The `BACKEND_HOST` env var defaults to the Docker-internal alias `http://backend:8000`; override it as shown when running outside compose.
+Open `http://localhost:5173` (default Vite port).
 
-The backend exposes the same workflow as the UI under `/api/v1/jobs` (multipart upload + SSE event stream + per-artifact downloads) so any HTTP client — `curl`, scripts, other services — can drive the pipeline directly. See `docker/compose.yaml` and `docker/Dockerfile.backend` for production deployment.
+The backend exposes the full workflow under `/api/v1/jobs` (multipart upload + SSE event stream + per-artifact downloads) so any HTTP client — `curl`, scripts, other services — can drive the pipeline directly. See `docker/compose.yaml` and `docker/Dockerfile.backend` for production deployment.
 
 #### Increasing file upload size limit 📂
 
-By default, Streamlit limits the maximum file upload size to 200MB. To increase this limit, modify `~/.streamlit/config.toml` (you might have to create `config.toml` first). Add or update the following line under the `[server]` section:
+The nginx upload limit is controlled by the `NEXTEXT_CLIENT_MAX_BODY_SIZE` env var (defaults to `8192m`). Override it in your `.env` file:
 
-```toml
-[server]
-maxUploadSize = 1024  # Set this value to the required limit in megabytes
+```bash
+NEXTEXT_CLIENT_MAX_BODY_SIZE=16384m   # 16 GB
 ```
 
-This example sets the limit to 1024MB (1GB). Restart the Streamlit app after making this change for the new limit to take effect.
+The backend's hard cap is set independently by `NEXTEXT_MAX_UPLOAD_MB` (defaults to `8192` MB).
 
 ### CLI 💻
 
@@ -285,8 +293,8 @@ done
 ## ...to be continued ⏳
 
 - ~~🐳 Dockerize the application~~
+- ~~🎨 React SPA frontend~~
 - 🛠️ Refactor proper logging and error handling
-- 🎨 Polish Streamlit frontend
 - 🤖 Integrate LLM chatbot into UI
 - 📊 Add comprehensive report output
 - 🚫 Fix offline usage

@@ -17,12 +17,14 @@ Nextext is a modular audio analysis toolkit that transcribes, translates, and an
 # Install dependencies
 uv sync                    # production deps
 uv sync --group dev        # include dev deps (pytest, ruff, mypy, pre-commit)
-uv sync --group frontend   # frontend-only deps (Streamlit client; no pipeline/NLP libs)
 
 # Run the app
-uv run nextext             # Streamlit web UI on port 8501 (talks to backend over HTTP)
 uv run nextext-api         # FastAPI backend on port 8000
 uv run nextext-cli -f <file> [args]  # CLI mode (in-process, no backend required)
+
+# Frontend (React SPA) — run via Docker or the Vite dev server
+make build && make up-dev  # Docker: builds backend + frontend, publishes on NEXTEXT_HOST_PORT
+# cd frontend && pnpm dev  # local Vite dev server (proxies /api/v1 to localhost:8000)
 
 # Preload spaCy/NLTK language resources (the only local downloads)
 NEXTEXT_OFFLINE=0 uv run load-models
@@ -53,12 +55,12 @@ Tests are in `tests/` using pytest with monkeypatch fixtures and `respx` for moc
 
 ## Architecture
 
-**Agent-based design:** Each feature is a stateless agent (module) with narrow input/output. The FastAPI backend orchestrates them; the Streamlit frontend is a thin HTTP client that never imports the pipeline directly.
+**Agent-based design:** Each feature is a stateless agent (module) with narrow input/output. The FastAPI backend orchestrates them; the React frontend is a static SPA served by nginx that never imports the pipeline directly.
 
 **Service split (Docker):**
 
 - **Backend** (`backend`) — FastAPI app exposing `/api/v1`. Owns the pipeline and the HTTP inference clients (Whisper, NER, diarization). CPU-only, built from `docker/Dockerfile.backend`.
-- **Frontend** (`frontend`) — Streamlit-only container. Talks to the backend via `BACKEND_HOST` (default `http://backend:8000`). Built from `docker/Dockerfile.frontend` (single-stage, ships only the `frontend` dependency group).
+- **Frontend** (`frontend`) — React SPA (node → nginx multi-stage build) in `frontend/`. Serves the compiled bundle and proxies `/api/v1` same-origin to the backend — no `BACKEND_HOST` env var needed. Built from `docker/Dockerfile.frontend`; `cd frontend && pnpm {dev,build,test,lint,typecheck}` for local development.
 
 `nextext-cli` keeps the in-process path: it imports `nextext.pipeline` directly and runs end-to-end without needing a backend container. Lives in the backend image alongside the API.
 
@@ -81,20 +83,16 @@ Tests are in `tests/` using pytest with monkeypatch fixtures and `respx` for moc
 - `DELETE /jobs/{id}` — cleanup (owner-scoped).
 - `GET /health`, `GET /languages` — meta endpoints.
 
-Identity is resolved per request by `resolve_principal`: the trusted header (`NEXTEXT_AUTH_HEADER`, default `X-Auth-User`) if present, else `NEXTEXT_DEFAULT_IDENTITY` (the dev / header-less fallback), else `401`. The value scopes the caller's in-memory jobs; cross-owner reads return `404` so existence never leaks. The Streamlit frontend mints a per-browser id and carries it in its URL via `st.query_params` (`?owner=<id>`) on first visit, reading it back on every rerun so the identity survives reloads and bookmarks. There is no authentication — the backend trusts whoever can reach `inference-net` — and no durable storage: jobs live only in memory.
+Identity is resolved per request by `resolve_principal`: the trusted header (`NEXTEXT_AUTH_HEADER`, default `X-Auth-User`) if present, else `NEXTEXT_DEFAULT_IDENTITY` (the dev / header-less fallback), else `401`. The value scopes the caller's in-memory jobs; cross-owner reads return `404` so existence never leaks. The React frontend mints a per-browser id and carries it in its URL (`?owner=<id>`) on first visit, reading it back on every reload so the identity survives browser refreshes. There is no authentication — the backend trusts whoever can reach `inference-net` — and no durable storage: jobs live only in memory.
 
 **Key modules:**
 
 - `nextext/api/main.py` — FastAPI factory, lifespan (boots the in-memory `JobManager`).
 - `nextext/api/jobs.py` — `JobManager`, async worker (single in-flight job via `asyncio.Semaphore(1)`), SSE event broker. Holds all jobs in memory; `list_for_owner` powers the frontend's reload re-discovery.
-- `nextext/api/identity.py` — `resolve_principal` FastAPI dependency. Reads the trusted header (`NEXTEXT_AUTH_HEADER`, default `X-Auth-User`); falls back to `NEXTEXT_DEFAULT_IDENTITY` for header-less/dev callers; returns `401` when neither is set. The Streamlit frontend carries the identity in its URL (`?owner=<id>`); there are no server-managed cookies. This is the single seam a real auth track would replace.
+- `nextext/api/identity.py` — `resolve_principal` FastAPI dependency. Reads the trusted header (`NEXTEXT_AUTH_HEADER`, default `X-Auth-User`); falls back to `NEXTEXT_DEFAULT_IDENTITY` for header-less/dev callers; returns `401` when neither is set. The React frontend carries the identity in its URL (`?owner=<id>`); there are no server-managed cookies. This is the single seam a real auth track would replace.
 - `nextext/api/routes/` — `health`, `jobs` routers. Per-route ownership checks return `404` on cross-owner access so existence never leaks.
 - `nextext/api/artifacts.py` — Per-job artifact byte materializers (CSV/XLSX/PNG/JSONL/ZIP) rendered on demand from the in-memory `state.result`.
 - `nextext/api/schemas.py` — Pydantic request/response models for jobs, snapshots, and the SSE event payloads.
-- `nextext/frontend/app.py` — Streamlit entry point talking to the backend.
-- `nextext/frontend/client.py` — `BackendClient` (httpx wrapper) with SSE parsing.
-- `nextext/frontend/state.py` — Pure UI helpers (no pipeline imports).
-- `nextext/app.py` — Compatibility shim re-exporting helpers from the locations above; preserves the historical import surface for tests and external callers.
 - `nextext/cli.py` — CLI entry point (argparse), single-file processing in-process.
 - `nextext/pipeline.py` — Shared pipeline functions connecting all agents.
 - `nextext/core/transcription.py` — `ExternalWhisperTranscriber` (OpenAI-compatible audio API); the pre-upload speech guard is delegated to the external `/vad` service via `core/vad.py`.
@@ -124,8 +122,8 @@ Key env vars (see `.env.example`):
 - `OLLAMA_THINK` — tri-state default for the Ollama `think` request field forwarded by `InferencePipeline.call_model` via `extra_body`. Accepts `1`/`true`/`yes`/`on` (enable), `0`/`false`/`no`/`off` (disable), or unset (omit field, model default). Honoured by Ollama-hosted reasoning models such as Qwen3; a no-op for `vllm`/`openai` providers. Per-call `think=` overrides the env default.
 - `VAD_API_BASE` — root URL of the out-of-process `/vad` speech-guard service (e.g. `http://vllm-router:7000`); the client appends `/vad`. Defaults to the central `OPENAI_API_BASE` (one trailing `/v1` stripped), so the guard runs ahead of every transcription; set `VAD_API_BASE=off` (or `false`/`no`/`0`) to switch it off, or a URL to override. The bearer token is reused from `OPENAI_API_KEY`. Fail-open: an unreachable service degrades to transcribing anyway. `VAD_TIMEOUT` — per-request timeout in seconds (default `60`). See `nextext/core/vad.py` for the `/vad` request/response contract.
 - `NEXTEXT_OFFLINE=1` (default) — gates the spaCy/NLTK downloads (`is_offline()`); the only local downloads left. Offline + uncached spaCy model raises an actionable error.
-- `BACKEND_HOST` (frontend only) — Backend root URL. Defaults to `http://backend:8000` inside compose; set to `http://localhost:8000` for local dev.
-- `BACKEND_PUBLIC_HOST` (frontend only) — Externally reachable backend URL surfaced in UI hints.
+- `NEXTEXT_HOST_PORT` (frontend, dev/override only) — host port published by `make up-dev` for the nginx frontend container. Defaults to `8501`; maps to nginx port 80.
+- `NEXTEXT_CLIENT_MAX_BODY_SIZE` (frontend) — nginx `client_max_body_size` for the `/api/v1` upload proxy. Defaults to `8192m`.
 - `NEXTEXT_API_HOST` / `NEXTEXT_API_PORT` (backend only) — uvicorn bind address. Defaults to `0.0.0.0:8000`.
 - `NEXTEXT_MAX_UPLOAD_MB` (backend only) — Hard cap on per-upload bytes. Defaults to `8192`.
 - `NEXTEXT_AUTH_HEADER` (backend + frontend) — Name of the trusted identity header. Defaults to `X-Auth-User`. Both sides read the same variable so they agree on the header.
@@ -135,17 +133,12 @@ Key env vars (see `.env.example`):
 
 Docker assets live under `docker/`. `docker/compose.yaml` defines two services — no profiles, no GPU reservations:
 
-- `backend` — built from `docker/Dockerfile.backend`, multi-stage `uv` build (no extras; runtime apt is `curl` only — all inference, including the VAD guard, is external). Runs `uvicorn nextext.api.main:app` with a `HEALTHCHECK` against `/api/v1/health`. Reachable only on the `inference-net` network by default; no host port is published.
-- `frontend` — built from `docker/Dockerfile.frontend` (single-stage `uv`, `--only-group frontend`). The base `docker/compose.yaml` is the production shape and publishes no host ports; `docker/compose.override.yaml` (layered by `make up-dev`) publishes Streamlit on `${NEXTEXT_HOST_PORT:-8501}`.
+- `backend` — built from `docker/Dockerfile.backend`, multi-stage `uv` build (no extras; runtime apt is `curl` only — all inference, including the VAD guard, is external). Runs `uvicorn nextext.api.main:app` with a `HEALTHCHECK` against `/api/v1/health`. Reachable only on the `nextext-net` network by default; no host port is published.
+- `frontend` — React SPA compiled and served by nginx. Built from `docker/Dockerfile.frontend` (node build → nginx image). The nginx config proxies `/api/v1` same-origin to the backend, so browser uploads stream through nginx without buffering whole files in any Python process. The base `docker/compose.yaml` is the production shape and publishes no host ports; `docker/compose.override.yaml` (layered by `make up-dev`) publishes nginx on `${NEXTEXT_HOST_PORT:-8501}`.
 
-The stack shares `inference-net` with the inference provider (vllm-service / Ollama). The `Makefile` is the entry point — it points Compose at `docker/compose.yaml`, since a bare `docker compose` from the repo root no longer finds it. Run `make volumes` (one-time, creates the external `nltk-cache`/`spacy-cache` volumes), then `make build && make up` for production shape, or `make build && make up-dev` to publish the Streamlit frontend on the host.
+The stack shares `inference-net` with the inference provider (vllm-service / Ollama). The `Makefile` is the entry point — it points Compose at `docker/compose.yaml`, since a bare `docker compose` from the repo root no longer finds it. Run `make volumes` (one-time, creates the external `nltk-cache`/`spacy-cache` volumes), then `make build && make up` for production shape, or `make build && make up-dev` to publish the frontend on the host.
 
-A React SPA (`frontend/`, served by nginx via `docker/Dockerfile.frontend.react`,
-compose service `web`) is being migrated in to replace the Streamlit `frontend`.
-It proxies `/api/v1` same-origin (no `BACKEND_HOST`), so the browser uploads
-stream through nginx to the backend without buffering whole files in any Python
-process. Build with `make build-web`; dev port `NEXTEXT_WEB_HOST_PORT` (8502).
-Implementation plans live in `docs/superpowers/plans/`.
+The React SPA source lives in `frontend/`; run `cd frontend && pnpm {dev,build,test,lint,typecheck}` for local development without Docker.
 
 ## Persistence model
 

@@ -4,7 +4,7 @@ Nextext breaks the speech-to-insight workflow into specialized agents (self-cont
 
 - The CLI (`nextext/cli.py`) — runs the pipeline in-process; no backend required.
 - The FastAPI backend (`nextext/api/`) — wraps the same pipeline behind a job-based HTTP API (`POST /api/v1/jobs` → SSE `/events` → `/artifacts/{name}`).
-- The Streamlit frontend (`nextext/frontend/app.py`) — a thin HTTP client over the backend; never imports the pipeline directly.
+- The React frontend (`frontend/`) — a static SPA served by nginx that talks to `/api/v1` same-origin; never imports the pipeline directly.
 
 This document describes every agent, how they interact, and what they expect from the runtime environment.
 
@@ -13,20 +13,20 @@ This document describes every agent, how they interact, and what they expect fro
 | Agent | Module & entry point | Consumes | Produces | Activated by |
 | --- | --- | --- | --- | --- |
 | Transcription & Diarization | `nextext/core/transcription.py` → `ExternalWhisperTranscriber`, `transcription_pipeline`; `nextext/core/diarization.py` → `diarize_file`, `assign_speakers_by_overlap` | Audio file path, Whisper endpoint config, speaker count (`DIARIZE_API_BASE` for diarization) | Timestamped transcript `pd.DataFrame` (`start`, `end`, `speaker`, `text`) | Always-on |
-| Translation | `nextext/core/translation.py` → `Translator`, `translation_pipeline` | Transcript `pd.DataFrame`, source and target ISO codes, inference provider | Mutated `pd.DataFrame` translated segment-wise | CLI `--task translate`, Streamlit "Task" switch |
-| Word Intelligence | `nextext/core/words.py` → `WordCounter`, `wordlevel_pipeline` | Transcript text, resolved language | Word counts, noun sentiment table, graph HTML, word cloud `Figure` | CLI `-w/--words`, Streamlit "Word-level analysis" |
-| Named Entity Recognition | `nextext/core/ner.py` → `extract_entities` (called by `wordlevel_pipeline`) | Transcript text | Entity table (`[Category, Entity, Frequency]`) via the out-of-process `/gliner` service | CLI `-w/--words`, Streamlit "Word-level analysis" |
-| Summarization | `nextext/pipeline.py` → `summarization_pipeline` + `InferencePipeline` | Full transcript text | Summary string in the configured output language | CLI `-sum/--summarize`, Streamlit "Summarisation" |
-| Hate Speech Detection | `nextext/core/hate_speech.py` → `HateSpeechDetector`, `hate_speech_pipeline` | Transcript `pd.DataFrame`, inference provider | List of flagged segment dicts (`hate_speech`, `category`, `confidence`, `reason`, `text`) | CLI `-hs/--hate-speech`, Streamlit "Hate speech detection" |
+| Translation | `nextext/core/translation.py` → `Translator`, `translation_pipeline` | Transcript `pd.DataFrame`, source and target ISO codes, inference provider | Mutated `pd.DataFrame` translated segment-wise | CLI `--task translate`, React UI task option |
+| Word Intelligence | `nextext/core/words.py` → `WordCounter`, `wordlevel_pipeline` | Transcript text, resolved language | Word counts, noun sentiment table, graph HTML, word cloud `Figure` | CLI `-w/--words`, React UI word-level analysis option |
+| Named Entity Recognition | `nextext/core/ner.py` → `extract_entities` (called by `wordlevel_pipeline`) | Transcript text | Entity table (`[Category, Entity, Frequency]`) via the out-of-process `/gliner` service | CLI `-w/--words`, React UI word-level analysis option |
+| Summarization | `nextext/pipeline.py` → `summarization_pipeline` + `InferencePipeline` | Full transcript text | Summary string in the configured output language | CLI `-sum/--summarize`, React UI summarization option |
+| Hate Speech Detection | `nextext/core/hate_speech.py` → `HateSpeechDetector`, `hate_speech_pipeline` | Transcript `pd.DataFrame`, inference provider | List of flagged segment dicts (`hate_speech`, `category`, `confidence`, `reason`, `text`) | CLI `-hs/--hate-speech`, React UI hate speech option |
 | File Export | `nextext/core/processing.py` → `FileProcessor.write_file_output` | Any agent result | Files in `output/<input-file>/` (`.txt`, `.csv`, `.xlsx`, `.png`) | CLI workflow |
 | Inference Service | `nextext/core/openai_cfg.py` → `InferencePipeline` | Prompt template + runtime options | Raw string from an OpenAI-compatible chat endpoint | Shared dependency for translation, summary, and hate speech agents |
 
 ## Execution Flow
 
-1. **Interface orchestrator** (CLI or Streamlit) collects user options and instantiates `transcription_pipeline`.
+1. **Interface orchestrator** (CLI or React frontend via the backend API) collects user options and instantiates `transcription_pipeline`.
 2. **Transcription agent** returns a `pd.DataFrame` and detected language code; the orchestration state is updated with the resolved language.
-3. **Optional agents** (translation, word-level, summary) fire in the order shown in `nextext/app.py` or `nextext/cli.py`, each mutating or extending the transcript payload.
-4. **Outputs** are cached in `st.session_state` for the UI or routed through the `FileProcessor` for CLI batch exports.
+3. **Optional agents** (translation, word-level, summary) fire in the order shown in `nextext/cli.py` (CLI) or the backend job worker (`nextext/api/jobs.py`), each mutating or extending the transcript payload.
+4. **Outputs** are held in the backend job store for the UI (served via `/api/v1/jobs/{id}/artifacts/{name}`) or routed through the `FileProcessor` for CLI batch exports.
 
 > The agents themselves remain stateless; any UI or CLI state is maintained by the orchestrator wrappers.
 
@@ -76,7 +76,7 @@ This document describes every agent, how they interact, and what they expect fro
 - **Outputs:** `list[dict]` — each entry contains `hate_speech=True`, `category`, `confidence` (`high`/`medium`/`low`), `reason`, and the original `text`. Only flagged segments are included; an empty list means no hate speech was found.
 - **Categories:** racism, sexism, homophobia, religious hatred, xenophobia, disability discrimination, none.
 - **Dependencies:** OpenAI-compatible chat completions via `InferencePipeline`; same provider configuration as translation and summarization.
-- **Operational notes:** The LLM response is parsed as JSON with regex fallback for prose-wrapped output. Parsing failures produce a safe default (`hate_speech=False`). Text is truncated to `max_chars` before sending to the model. CLI results are exported as a CSV via `FileProcessor`; Streamlit displays each flagged entry in a collapsible expander.
+- **Operational notes:** The LLM response is parsed as JSON with regex fallback for prose-wrapped output. Parsing failures produce a safe default (`hate_speech=False`). Text is truncated to `max_chars` before sending to the model. CLI results are exported as a CSV via `FileProcessor`; the React UI downloads the hate speech CSV via the backend artifacts endpoint.
 
 ## Inference Service Agent
 
@@ -92,11 +92,11 @@ This document describes every agent, how they interact, and what they expect fro
 - **Responsibilities:** Create `output/<input-file>/` directories and serialize any agent output (text, list, DataFrame, Matplotlib figure) to disk.
 - **Inputs:** Label describing the payload, optional target language suffix.
 - **Outputs:** `.txt`, `.csv`, `.xlsx`, or `.png` files depending on type; log statements confirm each save path.
-- **Operational notes:** Only the CLI uses `FileProcessor`; the Streamlit UI instead keeps the artifacts in memory and displays/downloads them directly.
+- **Operational notes:** Only the CLI uses `FileProcessor`; the React UI downloads artifacts via the backend's `/api/v1/jobs/{id}/artifacts/{name}` endpoints, which materialise them on demand from the in-memory job result.
 
-## Orchestrators (CLI & Streamlit)
+## Orchestrators (CLI & React frontend)
 
-- **Streamlit UI (`nextext/app.py`):** Stores user choices in `st.session_state["opts"]`, uploads files into a temporary path, and runs `_run_pipeline()`. Results are cached per session; UI tabs read from `st.session_state["result"]`.
+- **React frontend (`frontend/`):** A static SPA served by nginx. The user selects options in the upload form, the browser posts the file to `POST /api/v1/jobs` (same-origin, proxied by nginx), and subscribes to the SSE event stream (`GET /api/v1/jobs/{id}/events`) for live progress. Completed artifacts are downloaded from `/api/v1/jobs/{id}/artifacts/{name}`. The frontend never imports the Python pipeline.
 - **CLI (`nextext/cli.py`):** `parse_arguments()` maps command-line flags to agent toggles. `main()` wires the pipelines sequentially and persists outputs via `FileProcessor`.
 - **Shared behaviour:** Both orchestrators guard optional agents behind flags, update the resolved language after transcription, and instantiate a shared `InferencePipeline` when translation or summarization is requested.
 
@@ -104,8 +104,8 @@ This document describes every agent, how they interact, and what they expect fro
 
 1. **Create the module:** Place new agent code under `nextext/core/` (or `nextext/pipeline.py` if it is a thin wrapper). Keep the public function signature narrow and return plain Python or pandas objects.
 2. **Expose a pipeline hook:** Add a helper function in `nextext/pipeline.py` so both orchestrators can call the agent without duplicating logic.
-3. **Wire toggles:** Update `nextext/app.py` (checkbox/radio button + session state) and `nextext/cli.py` (argument flag) so users can opt in/out.
+3. **Wire toggles:** Update the backend job worker (`nextext/api/jobs.py`) to honour the new option flag, and add the corresponding UI option in the React frontend (`frontend/src/`) and CLI argument in `nextext/cli.py`.
 4. **Document configuration:** Extend this file and, if needed, add prompt templates or mapping entries under `nextext/utils/`.
-5. **Persist outputs:** Decide whether the result is UI-only or needs a saved artifact; if so, use `FileProcessor.write_file_output()` to follow the existing naming convention.
+5. **Persist outputs:** Decide whether the result is UI-only or needs a saved artifact; if so, register it in `nextext/api/artifacts.py` (for the React frontend) and `FileProcessor.write_file_output()` (for CLI) to follow the existing naming convention.
 
-By keeping each agent isolated and documented here, Nextext can scale its audio-analysis capabilities without creating tight coupling between new features and the UI/CLI front ends.
+By keeping each agent isolated and documented here, Nextext can scale its audio-analysis capabilities without creating tight coupling between new features and the React frontend or CLI.
