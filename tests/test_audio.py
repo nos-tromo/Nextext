@@ -57,9 +57,7 @@ def test_normalize_produces_16k_mono_flac(tmp_path: Path) -> None:
     assert not captured.exists()  # temp file cleaned up on context exit
 
 
-def test_normalize_raises_on_undecodable_input(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_normalize_raises_on_undecodable_input(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Non-audio bytes raise AudioDecodeError and leave no temp file behind.
 
     Args:
