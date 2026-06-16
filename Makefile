@@ -61,7 +61,7 @@ up:
 	DOCKER_BUILDKIT=1 $(COMPOSE) up --no-build
 
 # Like 'up' but layers compose.override.yaml on top to publish the
-# Streamlit frontend port on the host.
+# frontend (React SPA) port on the host.
 up-dev:
 	DOCKER_BUILDKIT=1 $(COMPOSE_DEV) up --no-build
 
@@ -86,10 +86,3 @@ pre-commit:
 test:
 	uv run pytest -q
 
-.PHONY: build-web bundle-web
-
-build-web:        ## Build only the React web image
-	DOCKER_BUILDKIT=1 $(COMPOSE) build web
-
-bundle-web:       ## Save the web image to an airgap tarball
-	./scripts/bundle_web_image.sh
