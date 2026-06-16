@@ -128,7 +128,8 @@ Key env vars (see `.env.example`):
 - `BACKEND_HOST` (frontend only) — Backend root URL. Defaults to `http://backend:8000` inside compose; set to `http://localhost:8000` for local dev.
 - `BACKEND_PUBLIC_HOST` (frontend only) — Externally reachable backend URL surfaced in UI hints.
 - `NEXTEXT_API_HOST` / `NEXTEXT_API_PORT` (backend only) — uvicorn bind address. Defaults to `0.0.0.0:8000`.
-- `NEXTEXT_MAX_UPLOAD_MB` (backend only) — Hard cap on per-upload bytes. Defaults to `8192`.
+- `NEXTEXT_MAX_UPLOAD_MB` (backend only) — Hard cap on per-file upload bytes (backend streams the upload to disk in 1 MiB chunks; also drives Streamlit's `STREAMLIT_SERVER_MAX_UPLOAD_SIZE` per-file cap in compose). Defaults to `8192`.
+- `NEXTEXT_MAX_BATCH_MB` (frontend only) — Cap on the combined size of one multi-file upload selection. Streamlit's `file_uploader` holds the whole batch in the frontend process's memory at once, so the UI refuses an oversized batch (with an actionable message pointing at `nextext-cli`) instead of OOM-crashing. Defaults to `2048`. Large local batches belong in `nextext-cli`, which reads from disk and never buffers whole files.
 - `NEXTEXT_AUTH_HEADER` (backend + frontend) — Name of the trusted identity header. Defaults to `X-Auth-User`. Both sides read the same variable so they agree on the header.
 - `NEXTEXT_DEFAULT_IDENTITY` (backend only) — Fallback identity for header-less / developer callers. Unset by default, so a request without the trusted header gets `401`.
 

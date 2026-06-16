@@ -10,6 +10,7 @@ chains to it, so the Streamlit Docker image can ship with only the
 from __future__ import annotations
 
 import io
+import os
 import re
 import sys
 import uuid
@@ -27,6 +28,7 @@ from streamlit.web import cli as st_cli
 
 from nextext.frontend.client import BackendClient, StageEvent
 from nextext.frontend.state import (
+    check_batch_within_limit,
     default_target_language,
     download_file_name,
     named_entities_list_to_dataframe,
@@ -47,6 +49,26 @@ PIPELINE_STAGE_LABELS: tuple[str, ...] = (
 
 OWNER_PARAM = "owner"
 _UUID4_HEX_RE = re.compile(r"^[0-9a-f]{32}$")
+
+_DEFAULT_MAX_BATCH_MB = 2048
+
+
+def _max_batch_bytes() -> int:
+    """Resolve the in-memory batch cap from ``NEXTEXT_MAX_BATCH_MB``.
+
+    Streamlit holds the whole upload selection in memory at once, so this
+    caps the combined batch size the UI accepts before submitting. Defaults
+    to ``_DEFAULT_MAX_BATCH_MB`` MiB; a non-integer value falls back to it.
+
+    Returns:
+        int: The cap in bytes.
+    """
+    raw = os.getenv("NEXTEXT_MAX_BATCH_MB", str(_DEFAULT_MAX_BATCH_MB)).strip()
+    try:
+        mb = int(raw)
+    except ValueError:
+        mb = _DEFAULT_MAX_BATCH_MB
+    return max(mb, 1) * (1 << 20)
 
 
 def _ensure_owner_id() -> str:
@@ -244,9 +266,11 @@ def _submit_files(
         file_name = Path(raw_name).name or f"File {index}"
         if hasattr(uploaded_file, "seek"):
             uploaded_file.seek(0)
-        payload = uploaded_file.read()
+        # Hand the file object straight to the client so httpx streams it in
+        # chunks; reading it into bytes here would hold a second full copy of
+        # every file in memory on top of Streamlit's own upload buffer.
         try:
-            job_id = client.submit_job(file_name, payload, opts)
+            job_id = client.submit_job(file_name, uploaded_file, opts)
         except Exception as exc:
             logger.exception("Failed to submit job for {}.", file_name)
             st.warning(f"Could not submit {file_name}: {exc}")
@@ -541,6 +565,10 @@ def _start_page() -> None:
         accept_multiple_files=True,
     )
 
+    batch_error = check_batch_within_limit(uploaded_files, _max_batch_bytes()) if uploaded_files else None
+    if batch_error:
+        st.error(batch_error)
+
     try:
         languages = _fetch_languages()
     except Exception as exc:
@@ -579,7 +607,7 @@ def _start_page() -> None:
         default_trg_lang_code,
     )
 
-    run = st.button("▶️ Run", disabled=not uploaded_files)
+    run = st.button("▶️ Run", disabled=not uploaded_files or batch_error is not None)
 
     st.session_state["opts"] = dict(
         src_lang=src_lang_code,
@@ -591,7 +619,7 @@ def _start_page() -> None:
         hate_speech=hate_speech,
     )
 
-    if run and uploaded_files:
+    if run and uploaded_files and not batch_error:
         for key in ("_results_archive", "_docint_jsonl", "results", "result"):
             st.session_state.pop(key, None)
         st.session_state["results_timestamp"] = datetime.now().strftime("%Y%m%d_%H%M%S")
