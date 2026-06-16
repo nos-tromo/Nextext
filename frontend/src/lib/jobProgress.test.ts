@@ -49,4 +49,9 @@ describe('jobProgress reducer', () => {
     for (const e of [...events, ...events]) twice = reduceJobEvent(twice, e)
     expect(twice).toEqual(once)
   })
+
+  it('seeds error from snapshot on reload', () => {
+    const s = initialJobProgress('failed', 'backend exploded')
+    expect(s).toMatchObject({ status: 'failed', error: 'backend exploded', terminal: true })
+  })
 })

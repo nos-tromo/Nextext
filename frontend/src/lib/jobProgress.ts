@@ -14,14 +14,20 @@ export interface JobProgress {
 
 const TERMINAL: ReadonlySet<JobProgressStatus> = new Set(['completed', 'failed', 'cancelled'])
 
-/** Seed progress from a known starting status (e.g. a snapshot on reload). */
-export function initialJobProgress(status: JobProgressStatus = 'queued'): JobProgress {
+/**
+ * Seed progress from a known starting status (e.g. a snapshot on reload).
+ *
+ * @param status - The job's current status. Defaults to `'queued'`.
+ * @param error - Optional error message, carried from a `failed` snapshot.
+ * @returns A {@link JobProgress} seeded from the snapshot values.
+ */
+export function initialJobProgress(status: JobProgressStatus = 'queued', error: string | null = null): JobProgress {
   return {
     status,
     stageIndex: 0,
     stageLabel: null,
     progress: status === 'completed' ? 1 : 0,
-    error: null,
+    error,
     skipped: false,
     terminal: TERMINAL.has(status),
   }
