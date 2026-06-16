@@ -64,36 +64,15 @@ services:
           - nextext-backend
 
   ##########################################################
-  # Nextext frontend — Streamlit only, talks to backend
+  # Nextext frontend — React SPA (nginx). Same-origin proxy
+  # to the backend; browser uploads stream through nginx
+  # without buffering whole files in any Python process.
   ##########################################################
   frontend:
     image: nextext-frontend:${NEXTEXT_VERSION:-latest}
     build:
       context: ..
       dockerfile: docker/Dockerfile.frontend
-    logging: *default-logging
-    environment:
-      <<: *no-proxy-env
-      BACKEND_HOST: ${BACKEND_HOST:-http://backend:8000}
-      BACKEND_PUBLIC_HOST: ${BACKEND_PUBLIC_HOST:-http://localhost:8000}
-      STREAMLIT_BROWSER_GATHER_USAGE_STATS: "false"
-      STREAMLIT_SERVER_FILE_WATCHER_TYPE: none
-      STREAMLIT_SERVER_MAX_UPLOAD_SIZE: 8192
-    env_file: *env-file
-    networks:
-      nextext-net:
-    depends_on:
-      - backend
-
-  ##########################################################
-  # React SPA (nginx). Same-origin proxy to the backend.
-  # Coexists with `frontend` (Streamlit) until teardown.
-  ##########################################################
-  web:
-    image: nextext-web:${NEXTEXT_VERSION:-latest}
-    build:
-      context: ..
-      dockerfile: docker/Dockerfile.frontend.react
     logging: *default-logging
     environment:
       <<: *no-proxy-env

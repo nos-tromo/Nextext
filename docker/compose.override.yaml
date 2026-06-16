@@ -1,4 +1,4 @@
-### Dev override — publishes the Nextext Streamlit frontend on the host.
+### Dev override — publishes the Nextext frontend (React SPA) on the host.
 ###
 ### NOT auto-loaded: it lives in docker/ and the Makefile passes explicit -f
 ### flags. `make up-dev` layers this on top of docker/compose.yaml so the
@@ -8,8 +8,4 @@
 services:
   frontend:
     ports:
-      - "${NEXTEXT_HOST_PORT:-8501}:8501"
-
-  web:
-    ports:
-      - "${NEXTEXT_WEB_HOST_PORT:-8502}:80"
+      - "${NEXTEXT_HOST_PORT:-8501}:80"
