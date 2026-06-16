@@ -3,7 +3,6 @@ import { render, screen, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 
 vi.mock('../api/sse', () => ({
-  // eslint-disable-next-line require-yield
   async *streamSse() {},
 }))
 
