@@ -1,9 +1,7 @@
 """Materialize per-job artifacts (CSV/XLSX/PNG/TXT/JSONL/ZIP) from job state.
 
-These helpers port the ZIP-archive builders that previously lived in
-``nextext/app.py`` (lines 66-281) so the API can serve byte payloads
-directly without rebuilding them in the Streamlit frontend. Jobs live only
-in memory, so every renderer runs against ``state.result`` directly.
+Artifacts are rendered on demand from the in-memory ``state.result``; they are
+never written to disk.
 """
 
 from __future__ import annotations

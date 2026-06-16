@@ -260,16 +260,15 @@ PushEvent = Callable[[str, dict[str, Any]], None]
 def _run_pipeline_blocking(state: JobState, push_event: PushEvent) -> dict[str, Any]:
     """Run the full Nextext pipeline for one job, emitting SSE events.
 
-    Ported from :func:`nextext.app._run_pipeline`; instead of writing into
-    a Streamlit ``stage_container``, this version publishes stage transitions
-    through ``push_event`` so SSE subscribers see the same progression.
+    Stage transitions are published through ``push_event`` so SSE subscribers
+    see the same progression as the job advances through the pipeline.
 
     Args:
         state: The job to process.
         push_event: Thread-safe callable for emitting SSE events.
 
     Returns:
-        dict[str, Any]: In-memory result payload mirroring the Streamlit shape.
+        dict[str, Any]: In-memory result payload for the completed job.
 
     Raises:
         ConnectionError: If the configured inference provider is unreachable.
