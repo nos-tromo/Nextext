@@ -31,22 +31,24 @@ export function useArtifactImage(
     let revoked = false
     let objectUrl: string | null = null
 
-    setState({ url: null, loading: true, error: null })
-
-    fetchArtifactObjectUrl(jobId, artifactName)
-      .then((url) => {
+    async function load(): Promise<void> {
+      setState({ url: null, loading: true, error: null })
+      try {
+        const url = await fetchArtifactObjectUrl(jobId, artifactName)
         objectUrl = url
         if (!revoked) {
           setState({ url, loading: false, error: null })
         } else {
           URL.revokeObjectURL(url)
         }
-      })
-      .catch((err: unknown) => {
+      } catch (err: unknown) {
         if (!revoked) {
           setState({ url: null, loading: false, error: err instanceof Error ? err.message : String(err) })
         }
-      })
+      }
+    }
+
+    void load()
 
     return () => {
       revoked = true
