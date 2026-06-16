@@ -26,7 +26,7 @@ describe('jobProgress reducer', () => {
   })
 
   it('marks completed + carries skipped', () => {
-    let s = reduceJobEvent(initialJobProgress(), {
+    const s = reduceJobEvent(initialJobProgress(), {
       name: 'job_completed',
       data: { job_id: 'j1', skipped: true, timestamp: 't' },
     })
