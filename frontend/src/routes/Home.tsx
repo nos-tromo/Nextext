@@ -1,26 +1,19 @@
-import { useHealth } from '../hooks/useHealth'
-import { useLanguages } from '../hooks/useLanguages'
-import { Spinner } from '../components/common/Spinner'
-import { ErrorBanner } from '../components/common/ErrorBanner'
+import { useSubmitBatch } from '../hooks/useJobs'
+import { UploadForm } from '../components/upload/UploadForm'
+import { BatchProgress } from '../components/jobs/BatchProgress'
 
 export function Home() {
-  const health = useHealth()
-  const languages = useLanguages()
-
-  if (health.isLoading || languages.isLoading) return <Spinner label="Contacting backend…" />
-  if (health.error) return <ErrorBanner message={`Backend unreachable: ${String(health.error)}`} />
-
+  const submit = useSubmitBatch()
   return (
-    <div className="space-y-4">
-      <p className="text-sm text-muted-foreground">
-        Backend OK — version {health.data?.version}, inference{' '}
-        {health.data?.inference ? 'reachable' : 'unreachable'}.
-      </p>
-      <p className="text-sm text-muted-foreground">
-        {languages.data?.whisper.length ?? 0} source languages,{' '}
-        {languages.data?.target.length ?? 0} target languages loaded.
-      </p>
-      <p className="text-foreground">Job UI arrives in Plan 02.</p>
+    <div className="space-y-8">
+      <section>
+        <h2 className="mb-3 text-base font-semibold">New job</h2>
+        <UploadForm pending={submit.isPending} onRun={(files, options) => submit.mutate({ files, options })} />
+      </section>
+      <section>
+        <h2 className="mb-3 text-base font-semibold">Jobs</h2>
+        <BatchProgress />
+      </section>
     </div>
   )
 }
