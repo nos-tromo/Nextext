@@ -39,8 +39,9 @@ ENV DEBIAN_FRONTEND=noninteractive \
 
 WORKDIR /app
 
-# curl for the healthcheck only; all model inference (including the VAD
-# speech guard) runs on external endpoints, so no local audio tooling is needed.
+# curl for the healthcheck only; all model inference (including the VAD speech
+# guard) runs on external endpoints. Audio is normalized to FLAC in-process via
+# the PyAV wheel (bundled ffmpeg), so no apt audio tooling is installed here.
 RUN apt-get update -y && apt-get install -y --no-install-recommends \
     curl \
     && rm -rf /var/lib/apt/lists/*
