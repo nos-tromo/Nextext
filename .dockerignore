@@ -87,6 +87,8 @@ frontend/.tsc-out
 !**/prompts/summary.txt
 !**/prompts/system.txt
 !**/prompts/translation.txt
-# frontend/src/lib is needed for the React build (the **/lib/ rule above would
-# otherwise exclude it from the Docker build context).
+# frontend/src/lib and frontend/src/components/results are needed for the React
+# build (the **/lib/ and **/results/ rules above would otherwise exclude them
+# from the Docker build context).
 !frontend/src/lib/
+!frontend/src/components/results/
