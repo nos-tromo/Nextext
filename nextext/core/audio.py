@@ -5,8 +5,10 @@ The external Whisper endpoint (vLLM behind LiteLLM) decodes uploads with
 containers/codecs libsndfile cannot read (Ogg Opus, m4a, mp4, mkv, webm, ...)
 with an HTTP 400 "Invalid or unsupported audio file". This agent decodes the
 upload with PyAV (bundled ffmpeg) and re-encodes it to 16 kHz mono FLAC --
-lossless, libsndfile-native, on Whisper's accepted-format list, and far smaller
-than WAV -- so every upload reaches the endpoint in a form it can always decode.
+losslessly compressed, libsndfile-native, on Whisper's accepted-format list, and
+far smaller than WAV -- so every upload reaches the endpoint in a form it can
+always decode. (The 16 kHz mono downmix is itself a deliberate, lossy reduction;
+FLAC then stores that signal without further loss.)
 
 Unlike the fail-open VAD guard (:func:`nextext.core.vad.has_speech`),
 normalization is **fail-closed**: an undecodable input raises
