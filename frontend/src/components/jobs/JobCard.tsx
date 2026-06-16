@@ -1,4 +1,6 @@
+import { useState } from 'react'
 import { useJobStream } from '../../hooks/useJobStream'
+import { ResultPanel } from '../results/ResultPanel'
 import type { JobListItem } from '../../api/types'
 import type { JobProgressStatus } from '../../lib/jobProgress'
 
@@ -10,20 +12,51 @@ const LABEL: Record<JobProgressStatus, string> = {
   cancelled: 'Cancelled',
 }
 
+/**
+ * Map a backend JobStatus (which may include `interrupted`) to a
+ * terminal-safe JobProgressStatus seed. `interrupted` becomes `failed`
+ * so the SSE hook does not enter a reconnect loop for a dead job.
+ */
+function seedOf(job: JobListItem): { status: JobProgressStatus; error: string | null } {
+  switch (job.status) {
+    case 'running':
+    case 'completed':
+    case 'failed':
+    case 'cancelled':
+      return { status: job.status, error: job.error }
+    case 'interrupted':
+      return {
+        status: 'failed',
+        error: job.error ?? 'Job was interrupted before it could finish.',
+      }
+    default:
+      return { status: 'queued', error: null }
+  }
+}
+
 /** Live per-file progress, driven by the job's SSE stream. */
 export function JobCard({ job }: { job: JobListItem }) {
-  const seed: JobProgressStatus =
-    job.status === 'running' || job.status === 'completed' || job.status === 'failed' || job.status === 'cancelled'
-      ? job.status
-      : 'queued'
-  const p = useJobStream(job.job_id, seed)
+  const seed = seedOf(job)
+  const p = useJobStream(job.job_id, seed.status, seed.error)
   const pct = Math.round(p.progress * 100)
+  const [showResults, setShowResults] = useState(false)
 
   return (
     <div className="rounded-lg border border-border p-4">
       <div className="flex items-center justify-between">
         <span className="text-foreground">{job.file_name}</span>
-        <span className="text-sm text-muted-foreground">{LABEL[p.status]}</span>
+        <div className="flex items-center gap-3">
+          {p.status === 'completed' && (
+            <button
+              type="button"
+              onClick={() => setShowResults((v) => !v)}
+              className="text-sm text-primary hover:underline"
+            >
+              {showResults ? 'Hide results' : 'Show results'}
+            </button>
+          )}
+          <span className="text-sm text-muted-foreground">{LABEL[p.status]}</span>
+        </div>
       </div>
       <div className="mt-2 h-2 w-full overflow-hidden rounded bg-muted">
         <div
@@ -42,6 +75,11 @@ export function JobCard({ job }: { job: JobListItem }) {
                 ? 'Done'
                 : 'Waiting…'}
       </p>
+      {p.status === 'completed' && showResults && (
+        <div className="mt-4">
+          <ResultPanel jobId={job.job_id} fileName={job.file_name} />
+        </div>
+      )}
     </div>
   )
 }
