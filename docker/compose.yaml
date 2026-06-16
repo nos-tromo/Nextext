@@ -78,7 +78,29 @@ services:
       BACKEND_PUBLIC_HOST: ${BACKEND_PUBLIC_HOST:-http://localhost:8000}
       STREAMLIT_BROWSER_GATHER_USAGE_STATS: "false"
       STREAMLIT_SERVER_FILE_WATCHER_TYPE: none
-      STREAMLIT_SERVER_MAX_UPLOAD_SIZE: 8192
+      # Streamlit's per-file cap (MB); tracks the backend's per-file hard cap.
+      STREAMLIT_SERVER_MAX_UPLOAD_SIZE: ${NEXTEXT_MAX_UPLOAD_MB:-8192}
+      # Combined batch the UI accepts at once — Streamlit holds it all in memory.
+      NEXTEXT_MAX_BATCH_MB: ${NEXTEXT_MAX_BATCH_MB:-2048}
+    env_file: *env-file
+    networks:
+      nextext-net:
+    depends_on:
+      - backend
+
+  ##########################################################
+  # React SPA (nginx). Same-origin proxy to the backend.
+  # Coexists with `frontend` (Streamlit) until teardown.
+  ##########################################################
+  web:
+    image: nextext-web:${NEXTEXT_VERSION:-latest}
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.frontend.react
+    logging: *default-logging
+    environment:
+      <<: *no-proxy-env
+      NEXTEXT_CLIENT_MAX_BODY_SIZE: ${NEXTEXT_CLIENT_MAX_BODY_SIZE:-8192m}
     env_file: *env-file
     networks:
       nextext-net:
