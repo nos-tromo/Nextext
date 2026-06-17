@@ -407,6 +407,49 @@ def test_external_transcriber_transcription_populates_src_lang(
     assert len(transcriber.transcription_result["segments"]) == 1
 
 
+def test_external_transcriber_populates_src_lang_from_empty_string(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An empty-string ``src_lang`` is treated as unspecified, capturing the detected language.
+
+    Regression: the API layer passes ``src_lang=""`` (not ``None``) when the
+    caller picks no language, but the detected language was only captured when
+    ``src_lang is None`` -- so ``resolved_src_lang`` came back empty and the
+    frontend showed no language.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): The pytest monkeypatch fixture.
+    """
+    seg = SimpleNamespace(start=0.0, end=1.0, text="Hola.", no_speech_prob=0.1)
+    fake_response = SimpleNamespace(segments=[seg], language="es")
+
+    fake_client = MagicMock()
+    fake_client.audio.transcriptions.create.return_value = fake_response
+
+    transcriber = ExternalWhisperTranscriber.__new__(ExternalWhisperTranscriber)
+    transcriber.file_path = transcription.Path(__file__)  # use an existing file
+    transcriber.src_lang = ""  # API sends "" for "auto-detect", not None
+    transcriber.task = "transcribe"
+    transcriber._model_id = "whisper-1"
+    transcriber._client = None
+    transcriber.transcription_result = None
+
+    # Bypass lazy client creation
+    monkeypatch.setattr(
+        type(transcriber),
+        "_get_client",
+        property(lambda self: fake_client),
+    )
+    # The external /vad guard would otherwise screen this test file; stub it
+    # to report speech so the test focuses on src_lang propagation only.
+    monkeypatch.setattr(transcription, "has_speech", lambda _path: True)
+    monkeypatch.setattr(transcription, "normalize_for_transcription", _passthrough_normalize)
+
+    transcriber.transcription()
+
+    assert transcriber.src_lang == "es"
+
+
 def test_external_transcriber_normalizes_full_language_name(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
