@@ -396,7 +396,9 @@ class ExternalWhisperTranscriber:
         ]
         segments = _filter_no_speech_segments(raw_segments)
         self.transcription_result = {"segments": segments}
-        if self.src_lang is None:
+        # Treat both None and "" as "no language pinned": the API layer passes an
+        # empty string for auto-detect, so capture the language Whisper detected.
+        if not self.src_lang:
             self.src_lang = _normalize_whisper_language(getattr(response, "language", None))
         logger.info(
             "External transcription complete: {} segments, language={}",
