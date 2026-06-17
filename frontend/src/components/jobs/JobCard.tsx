@@ -1,4 +1,5 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import { useJobStream } from '../../hooks/useJobStream'
 import { ResultPanel } from '../results/ResultPanel'
 import type { JobListItem } from '../../api/types'
@@ -40,6 +41,22 @@ export function JobCard({ job }: { job: JobListItem }) {
   const p = useJobStream(job.job_id, seed.status, seed.error)
   const pct = Math.round(p.progress * 100)
   const [showResults, setShowResults] = useState(false)
+
+  // The live SSE stream updates this card's status locally, but the shared
+  // ['jobs'] query (which aggregate views like the batch-download control read
+  // for their completed-job count) is otherwise only fetched on mount. When
+  // this job first reaches a terminal state, refresh that list so those views
+  // react to the completion without a manual page reload. Jobs already terminal
+  // at mount are skipped — the freshly fetched list already reflects them.
+  const queryClient = useQueryClient()
+  const wasTerminalOnMount = useRef(p.terminal)
+  const refreshedList = useRef(false)
+  useEffect(() => {
+    if (p.terminal && !wasTerminalOnMount.current && !refreshedList.current) {
+      refreshedList.current = true
+      void queryClient.invalidateQueries({ queryKey: ['jobs'] })
+    }
+  }, [p.terminal, queryClient])
 
   return (
     <div className="rounded-lg border border-border p-4">
