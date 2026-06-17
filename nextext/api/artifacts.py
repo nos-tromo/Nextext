@@ -148,6 +148,76 @@ def build_archive_for_job(state: JobState) -> bytes:
     return state.archive_cache
 
 
+def build_batch_docint_jsonl(states: list[JobState]) -> bytes:
+    """Concatenate the docint JSONL of every job into one combined payload.
+
+    Each per-job payload is already newline-terminated, so plain
+    concatenation yields a valid NDJSON stream. Jobs that produced no docint
+    records (empty/skipped transcripts) contribute nothing.
+
+    Args:
+        states: Jobs to combine, in the order they should appear.
+
+    Returns:
+        bytes: UTF-8 JSONL bytes spanning all jobs. ``b""`` when no job
+            produced any records.
+    """
+    parts = [build_docint_jsonl_for_job(state) for state in states]
+    return b"".join(part for part in parts if part)
+
+
+def _unique_archive_folder(stem: str, seen: dict[str, int]) -> str:
+    """Allocate a collision-free top-level folder name for a job's outputs.
+
+    Args:
+        stem: The job's file stem (may repeat across uploads).
+        seen: Running base-stem -> count map, mutated in place.
+
+    Returns:
+        str: ``stem`` for the first occurrence, then ``stem_2``, ``stem_3``, …
+    """
+    base = stem or "result"
+    count = seen.get(base, 0) + 1
+    seen[base] = count
+    return base if count == 1 else f"{base}_{count}"
+
+
+def build_batch_archive(states: list[JobState]) -> bytes:
+    """Bundle every job's outputs into one ZIP, nested per job.
+
+    Each job's per-job archive (``{stem}/{stem}_{output}.{ext}``) is copied
+    under a collision-free top-level folder so that uploads sharing a name do
+    not overwrite one another. Jobs that produced no files are skipped.
+
+    Args:
+        states: Jobs to bundle, in the order they should appear.
+
+    Returns:
+        bytes: ZIP bytes. ``b""`` when no job produced any output.
+    """
+    buffer = io.BytesIO()
+    seen: dict[str, int] = {}
+    wrote_any = False
+    with zipfile.ZipFile(buffer, mode="w", compression=zipfile.ZIP_DEFLATED) as outer:
+        for state in states:
+            inner_bytes = build_archive_for_job(state)
+            with zipfile.ZipFile(io.BytesIO(inner_bytes)) as inner:
+                members = [info for info in inner.infolist() if not info.is_dir()]
+                if not members:
+                    continue
+                folder = _unique_archive_folder(Path(state.file_name).stem, seen)
+                for info in members:
+                    # Rewrite the leading folder so identically named jobs stay
+                    # distinct; the rest of the inner path is preserved.
+                    _, separator, remainder = info.filename.partition("/")
+                    inner_name = remainder if separator else info.filename
+                    outer.writestr(f"{folder}/{inner_name}", inner.read(info.filename))
+                    wrote_any = True
+    if not wrote_any:
+        return b""
+    return buffer.getvalue()
+
+
 def _missing_dataframe(state: JobState, key: str) -> bool:
     """Return ``True`` when the result dict has no usable DataFrame for ``key``.
 
@@ -263,3 +333,31 @@ SUPPORTED_ARTIFACTS: frozenset[str] = frozenset(
         "archive.zip",
     }
 )
+
+
+def render_batch_artifact(states: list[JobState], name: str) -> tuple[bytes, str] | None:
+    """Render one cross-job batch artifact from the caller's completed jobs.
+
+    Args:
+        states: Completed jobs owned by the caller, in display order.
+        name: Batch artifact name (``docint.jsonl`` or ``archive.zip``).
+
+    Returns:
+        tuple[bytes, str] | None: ``(payload, content_type)`` on success.
+            ``None`` when the name is unsupported or no job produced output
+            (caller should respond with 404).
+    """
+    if name == "docint.jsonl":
+        payload = build_batch_docint_jsonl(states)
+        if not payload:
+            return None
+        return payload, _APP_NDJSON
+    if name == "archive.zip":
+        payload = build_batch_archive(states)
+        if not payload:
+            return None
+        return payload, _APP_ZIP
+    return None
+
+
+BATCH_ARTIFACTS: frozenset[str] = frozenset({"docint.jsonl", "archive.zip"})
