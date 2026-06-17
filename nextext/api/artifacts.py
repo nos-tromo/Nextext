@@ -68,11 +68,14 @@ def build_docint_jsonl_for_job(state: JobState) -> bytes:
         return b""
     transcript_language = state.result.get("transcript_language") or state.result.get("resolved_src_lang")
     language = normalize_language_code(str(transcript_language)) if transcript_language else None
+    detected_raw = state.result.get("resolved_src_lang")
+    detected_language = normalize_language_code(str(detected_raw)) if detected_raw else None
     task = state.result.get("task") or state.options.task
     return build_docint_jsonl(
         source_file=state.file_name,
         source_file_hash=state.source_file_hash or None,
         language=language,
+        detected_language=detected_language,
         task=task,
         segments=segments,
     )

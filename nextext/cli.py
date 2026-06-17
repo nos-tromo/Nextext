@@ -199,6 +199,7 @@ def _emit_docint_jsonl(
     output_path: Path,
     task: str,
     language: str | None,
+    detected_language: str | None,
     force_overwrite: bool = False,
 ) -> None:
     """Write a docint JSONL payload for a completed transcription run.
@@ -212,7 +213,11 @@ def _emit_docint_jsonl(
         source_path (Path): Original input audio path.
         output_path (Path): Target JSONL path or parent directory.
         task (str): Task to perform, ``"transcribe"`` or ``"translate"``.
-        language (str | None): Normalized ISO 639-1 language code.
+        language (str | None): Normalized ISO 639-1 code of the transcript
+            text (the target for ``translate``; the source for
+            ``transcribe``).
+        detected_language (str | None): Normalized ISO 639-1 code of the
+            auto-detected source audio language.
         force_overwrite (bool): When ``True``, overwrite an existing
             target file. When ``False`` (default), refuse and raise
             :class:`FileExistsError`.
@@ -235,6 +240,7 @@ def _emit_docint_jsonl(
         source_file=source_path.name,
         source_file_hash=file_hash,
         language=language,
+        detected_language=detected_language,
         task=task,
         segments=segments,
     )
@@ -354,6 +360,10 @@ def _run_main(args: argparse.Namespace) -> None:
             logger.error("Unable to normalize target language for downstream analysis.")
             raise ValueError("Target language could not be normalized for downstream analysis.")
     transcript_lang: str = normalized_lang
+    # The auto-detected (or pinned) source language, normalized. Equals
+    # ``transcript_lang`` for ``transcribe``; differs for ``translate`` where
+    # ``transcript_lang`` is the target.
+    detected_src_lang = normalize_language_code(args.src_lang) if args.src_lang else None
 
     # Calculate word statistics
     if args.words:
@@ -421,6 +431,7 @@ def _run_main(args: argparse.Namespace) -> None:
             output_path=args.emit_docint_jsonl,
             task=args.task,
             language=transcript_lang,
+            detected_language=detected_src_lang,
             force_overwrite=getattr(args, "force_docint_jsonl", False),
         )
 

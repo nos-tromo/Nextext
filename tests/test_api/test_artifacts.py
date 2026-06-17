@@ -64,6 +64,32 @@ def test_transcript_csv_artifact_round_trips(
     assert len(df) == 2
 
 
+def test_docint_jsonl_includes_detected_language(
+    stub_app_client: tuple[TestClient, JobManager],
+) -> None:
+    """Each docint JSONL record should carry the detected source language."""
+    client, _ = stub_app_client
+    job_id = _submit_and_wait(
+        client,
+        {
+            "task": "transcribe",
+            "trg_lang": "de",
+            "speakers": 1,
+            "words": False,
+            "summarization": False,
+            "hate_speech": False,
+        },
+    )
+    response = client.get(f"/api/v1/jobs/{job_id}/artifacts/docint.jsonl")
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("application/x-ndjson")
+    lines = [json.loads(line) for line in response.content.decode("utf-8").splitlines() if line]
+    assert lines
+    # The stub pipeline resolves the source language to "en".
+    for record in lines:
+        assert record["detected_language"] == "en"
+
+
 def test_summary_artifact_returns_404_when_not_requested(
     stub_app_client: tuple[TestClient, JobManager],
 ) -> None:
