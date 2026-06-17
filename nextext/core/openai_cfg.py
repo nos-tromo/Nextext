@@ -3,9 +3,9 @@
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
-import requests  # type: ignore[import-untyped]
+import requests
 from dotenv import load_dotenv
 from loguru import logger
 
@@ -114,7 +114,7 @@ class InferencePipeline:
                 headers={"Authorization": f"Bearer {self.api_key}"},
                 timeout=5,
             )
-            return cast(bool, response.status_code < 500)
+            return response.status_code < 500
         except requests.RequestException as exc:
             logger.error("Inference health check failed: {}", exc)
             return False
