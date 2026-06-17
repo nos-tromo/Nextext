@@ -30,7 +30,12 @@ from fastapi.responses import StreamingResponse
 from loguru import logger
 from pydantic import ValidationError
 
-from nextext.api.artifacts import SUPPORTED_ARTIFACTS, render_artifact
+from nextext.api.artifacts import (
+    BATCH_ARTIFACTS,
+    SUPPORTED_ARTIFACTS,
+    render_artifact,
+    render_batch_artifact,
+)
 from nextext.api.identity import resolve_principal
 from nextext.api.jobs import JobManager, JobState
 from nextext.api.schemas import (
@@ -251,6 +256,62 @@ async def list_jobs(
         for state in states
     ]
     return JobListResponse(jobs=items)
+
+
+_BATCH_DOWNLOAD_NAMES: dict[str, str] = {
+    "docint.jsonl": "nextext_docint.jsonl",
+    "archive.zip": "nextext_batch.zip",
+}
+
+
+# Declared before ``/{job_id}`` so the literal ``batch`` prefix is matched
+# ahead of any job-id pattern.
+@router.get("/batch/{name}")
+async def download_batch_artifact(
+    name: str,
+    manager: JobManager = Depends(get_job_manager),  # noqa: B008 — FastAPI dependency marker
+    owner_id: str = Depends(resolve_principal),
+) -> Response:
+    """Return one batch artifact spanning all of the caller's completed jobs.
+
+    Combines every completed job the caller owns into a single download:
+    ``docint.jsonl`` concatenates each job's docint records; ``archive.zip``
+    nests each job's outputs under its own folder. Owner-scoped — only the
+    caller's own jobs are ever included, so the batch never leaks across
+    owners.
+
+    Args:
+        name: Batch artifact name (``docint.jsonl`` or ``archive.zip``).
+        manager: Job manager dependency.
+        owner_id: Resolved principal (owner identifier).
+
+    Returns:
+        Response: Binary payload with the appropriate media type.
+    """
+    if name not in BATCH_ARTIFACTS:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Unsupported batch artifact '{name}'.",
+        )
+    states = await manager.list_for_owner(owner_id)
+    completed = [state for state in states if state.status == JobStatus.COMPLETED]
+    rendered = render_batch_artifact(completed, name)
+    if rendered is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No completed jobs produced '{name}'.",
+        )
+    payload, content_type = rendered
+    download_name = _BATCH_DOWNLOAD_NAMES[name]
+    quoted = urllib.parse.quote(download_name, safe="")
+    return Response(
+        content=payload,
+        media_type=content_type,
+        headers={
+            "Content-Disposition": (f"attachment; filename=\"{download_name}\"; filename*=UTF-8''{quoted}"),
+            "Cache-Control": "no-store",
+        },
+    )
 
 
 async def _require_job(

@@ -49,6 +49,7 @@ def test_build_docint_jsonl_golden() -> None:
         source_file="interview.mp3",
         source_file_hash="sha256:abc123",
         language="de",
+        detected_language="de",
         task="translate",
         segments=segments,
     )
@@ -66,6 +67,7 @@ def test_build_docint_jsonl_golden() -> None:
         "source_file": "interview.mp3",
         "source_file_hash": "sha256:abc123",
         "language": "de",
+        "detected_language": "de",
         "task": "translate",
         "sentence_index": 0,
         "start_seconds": 0.0,
@@ -83,12 +85,59 @@ def test_build_docint_jsonl_golden() -> None:
     assert third["sentence_index"] == 2
 
 
+def test_build_docint_jsonl_includes_detected_language() -> None:
+    """Test that detected_language is emitted on every record."""
+    payload = build_docint_jsonl(
+        source_file="x.wav",
+        source_file_hash=None,
+        language="de",
+        detected_language="de",
+        task="transcribe",
+        segments=[
+            {"start_seconds": 0.0, "end_seconds": 1.0, "text": "a"},
+            {"start_seconds": 1.0, "end_seconds": 2.0, "text": "b"},
+        ],
+    )
+    records = _decode_lines(payload)
+    assert [r["detected_language"] for r in records] == ["de", "de"]
+
+
+def test_build_docint_jsonl_detected_language_differs_for_translate() -> None:
+    """Test that translate jobs keep language=target and detected_language=source."""
+    payload = build_docint_jsonl(
+        source_file="rede.mp3",
+        source_file_hash=None,
+        language="en",
+        detected_language="de",
+        task="translate",
+        segments=[{"start_seconds": 0.0, "end_seconds": 1.0, "text": "Good day."}],
+    )
+    record = _decode_lines(payload)[0]
+    assert record["language"] == "en"
+    assert record["detected_language"] == "de"
+
+
+def test_build_docint_jsonl_null_detected_language_serializes_as_json_null() -> None:
+    """Test that ``detected_language=None`` is preserved as a JSON ``null`` field."""
+    payload = build_docint_jsonl(
+        source_file="x.wav",
+        source_file_hash=None,
+        language="en",
+        detected_language=None,
+        task="transcribe",
+        segments=[{"start_seconds": 0.0, "end_seconds": 1.0, "text": "."}],
+    )
+    record = _decode_lines(payload)[0]
+    assert "detected_language" in record and record["detected_language"] is None
+
+
 def test_build_docint_jsonl_omits_speaker_when_absent() -> None:
     """Test that the speaker key is absent rather than null."""
     payload = build_docint_jsonl(
         source_file="short.wav",
         source_file_hash=None,
         language="en",
+        detected_language="en",
         task="transcribe",
         segments=[
             {"start_seconds": 0.0, "end_seconds": 1.0, "text": "No speaker."},
@@ -117,6 +166,7 @@ def test_build_docint_jsonl_omits_file_hash_when_none() -> None:
         source_file="short.wav",
         source_file_hash=None,
         language="en",
+        detected_language="en",
         task="transcribe",
         segments=[
             {"start_seconds": 0.0, "end_seconds": 1.0, "text": "."},
@@ -138,6 +188,7 @@ def test_build_docint_jsonl_sentence_index_is_monotonic() -> None:
         source_file="ordered.wav",
         source_file_hash=None,
         language="en",
+        detected_language="en",
         task="transcribe",
         segments=segments,
     )
@@ -152,6 +203,7 @@ def test_build_docint_jsonl_formats_timestamps() -> None:
         source_file="long.wav",
         source_file_hash=None,
         language="en",
+        detected_language="en",
         task="transcribe",
         segments=[
             {
@@ -172,6 +224,7 @@ def test_build_docint_jsonl_truncates_fractional_seconds() -> None:
         source_file="trunc.wav",
         source_file_hash=None,
         language="en",
+        detected_language="en",
         task="transcribe",
         segments=[
             {"start_seconds": 0.9, "end_seconds": 1.9, "text": "round"},
@@ -188,6 +241,7 @@ def test_build_docint_jsonl_null_language_serializes_as_json_null() -> None:
         source_file="x.wav",
         source_file_hash=None,
         language=None,
+        detected_language=None,
         task="transcribe",
         segments=[{"start_seconds": 0.0, "end_seconds": 1.0, "text": "."}],
     )
@@ -201,6 +255,7 @@ def test_build_docint_jsonl_empty_segments_returns_empty_bytes() -> None:
         source_file="empty.wav",
         source_file_hash=None,
         language=None,
+        detected_language=None,
         task="transcribe",
         segments=[],
     )
@@ -213,6 +268,7 @@ def test_build_docint_jsonl_final_line_newline_terminated() -> None:
         source_file="one.wav",
         source_file_hash=None,
         language="en",
+        detected_language="en",
         task="transcribe",
         segments=[{"start_seconds": 0.0, "end_seconds": 1.0, "text": "."}],
     )
@@ -227,6 +283,7 @@ def test_build_docint_jsonl_missing_required_field_raises() -> None:
             source_file="bad.wav",
             source_file_hash=None,
             language="en",
+            detected_language="en",
             task="transcribe",
             segments=[{"end_seconds": 1.0, "text": "missing start"}],
         )

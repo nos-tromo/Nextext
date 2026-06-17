@@ -185,6 +185,7 @@ def _segment_to_record(
     source_file: str,
     source_file_hash: str | None,
     language: str | None,
+    detected_language: str | None,
     task: str,
 ) -> dict[str, Any]:
     """Build the per-line JSON record for a single segment.
@@ -204,6 +205,10 @@ def _segment_to_record(
             source audio, or ``None`` to omit the key.
         language (str | None): ISO 639-1 language code of the transcript
             text. May be ``None`` when unknown.
+        detected_language (str | None): ISO 639-1 auto-detected SOURCE
+            language of the audio. Equals ``language`` for ``transcribe``
+            tasks; for ``translate`` tasks ``language`` is the target and
+            this is the detected source. May be ``None`` when unknown.
         task (str): Task performed, ``"transcribe"`` or ``"translate"``.
 
     Returns:
@@ -230,6 +235,7 @@ def _segment_to_record(
     if source_file_hash is not None:
         record["source_file_hash"] = source_file_hash
     record["language"] = language
+    record["detected_language"] = detected_language
     record["task"] = task
     record["sentence_index"] = index
     record["start_seconds"] = start_seconds
@@ -252,6 +258,7 @@ def build_docint_jsonl(
     source_file: str,
     source_file_hash: str | None,
     language: str | None,
+    detected_language: str | None,
     task: str,
     segments: Sequence[Mapping[str, Any]],
 ) -> bytes:
@@ -268,7 +275,12 @@ def build_docint_jsonl(
     - ``source_file`` (str) — original upload file name.
     - ``source_file_hash`` (str, optional) — ``sha256:<hex>`` digest of the
       source audio. Omitted entirely when ``source_file_hash`` is ``None``.
-    - ``language`` (str | None) — ISO 639-1 language code or ``None``.
+    - ``language`` (str | None) — ISO 639-1 language code of the transcript
+      text, or ``None``.
+    - ``detected_language`` (str | None) — ISO 639-1 auto-detected SOURCE
+      language of the audio, or ``None``. Equals ``language`` for
+      ``transcribe`` tasks; for ``translate`` tasks ``language`` is the
+      target and this is the detected source.
     - ``task`` (str) — task performed, ``"transcribe"`` or ``"translate"``.
     - ``sentence_index`` (int) — 0-based line index.
     - ``start_seconds`` / ``end_seconds`` (float) — raw segment offsets.
@@ -282,9 +294,15 @@ def build_docint_jsonl(
             record.
         source_file_hash (str | None): ``sha256:<hex>`` digest of the
             source audio bytes, or ``None`` to omit the key.
-        language (str | None): ISO 639-1 language code attached to every
-            record. ``None`` is preserved as JSON ``null`` — callers should
-            pass ``None`` only when language truly could not be resolved.
+        language (str | None): ISO 639-1 language code of the transcript
+            text attached to every record. ``None`` is preserved as JSON
+            ``null`` — callers should pass ``None`` only when language truly
+            could not be resolved.
+        detected_language (str | None): ISO 639-1 auto-detected SOURCE
+            language attached to every record. Equals ``language`` for
+            ``transcribe`` tasks; differs for ``translate`` (where
+            ``language`` is the target). ``None`` is preserved as JSON
+            ``null``.
         task (str): ``"transcribe"`` or ``"translate"``.
         segments (Sequence[Mapping[str, Any]]): Sentence-level rows with at
             least ``start_seconds`` (float), ``end_seconds`` (float), and
@@ -306,6 +324,7 @@ def build_docint_jsonl(
             source_file=source_file,
             source_file_hash=source_file_hash,
             language=language,
+            detected_language=detected_language,
             task=task,
         )
         lines.append(json.dumps(record, ensure_ascii=False))

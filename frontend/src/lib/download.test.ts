@@ -1,6 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ApiError, API_BASE, OWNER_HEADER } from '../api/client'
-import { fetchArtifact, fetchArtifactObjectUrl, downloadArtifact } from './download'
+import {
+  fetchArtifact,
+  fetchArtifactObjectUrl,
+  downloadArtifact,
+  fetchBatchArtifact,
+  downloadBatchArtifact,
+} from './download'
 
 const mockBlob = new Blob(['hello'], { type: 'text/csv' })
 
@@ -86,5 +92,65 @@ describe('downloadArtifact', () => {
     expect(revokeObjectUrl).toHaveBeenCalledWith('blob:mock-url')
     expect(appendChildSpy).toHaveBeenCalled()
     expect(removeChildSpy).toHaveBeenCalled()
+  })
+})
+
+describe('fetchBatchArtifact', () => {
+  beforeEach(() => {
+    vi.stubGlobal('fetch', vi.fn())
+  })
+  afterEach(() => vi.restoreAllMocks())
+
+  it('calls the batch URL with the owner header', async () => {
+    const fetchMock = vi.mocked(fetch)
+    fetchMock.mockResolvedValueOnce(makeResponse(true))
+
+    const res = await fetchBatchArtifact('docint.jsonl')
+
+    expect(fetchMock).toHaveBeenCalledOnce()
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(url).toBe(`${API_BASE}/jobs/batch/docint.jsonl`)
+    expect((init.headers as Record<string, string>)[OWNER_HEADER]).toBeTruthy()
+    expect(res.ok).toBe(true)
+  })
+
+  it('throws ApiError on non-2xx', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(makeResponse(false, 404, JSON.stringify({ detail: 'no jobs' })))
+
+    await expect(fetchBatchArtifact('archive.zip')).rejects.toThrow(ApiError)
+  })
+})
+
+describe('downloadBatchArtifact', () => {
+  let revokeObjectUrl: ReturnType<typeof vi.spyOn>
+  beforeEach(() => {
+    vi.stubGlobal('fetch', vi.fn())
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:mock-url')
+    revokeObjectUrl = vi.spyOn(URL, 'revokeObjectURL').mockReturnValue(undefined)
+  })
+  afterEach(() => vi.restoreAllMocks())
+
+  it('creates and clicks a hidden anchor then revokes the object URL', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(makeResponse(true))
+
+    const anchor = {
+      href: '',
+      download: '',
+      style: { display: '' },
+      click: vi.fn(),
+    }
+    const createElementSpy = vi
+      .spyOn(document, 'createElement')
+      .mockReturnValueOnce(anchor as unknown as HTMLAnchorElement)
+    vi.spyOn(document.body, 'appendChild').mockImplementation((n) => n)
+    vi.spyOn(document.body, 'removeChild').mockImplementation((n) => n)
+
+    await downloadBatchArtifact('archive.zip', 'nextext_batch.zip')
+
+    expect(createElementSpy).toHaveBeenCalledWith('a')
+    expect(anchor.href).toBe('blob:mock-url')
+    expect(anchor.download).toBe('nextext_batch.zip')
+    expect(anchor.click).toHaveBeenCalledOnce()
+    expect(revokeObjectUrl).toHaveBeenCalledWith('blob:mock-url')
   })
 })
