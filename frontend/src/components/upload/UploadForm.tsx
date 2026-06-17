@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useLanguages } from '../../hooks/useLanguages'
 import { checkUploadAcceptable } from '../../lib/uploadGuard'
 import { Dropzone } from './Dropzone'
-import { ErrorBanner } from '../common/ErrorBanner'
+import { Banner } from '@infra/ui'
 import type { JobOptions, Task } from '../../api/types'
 
 export interface UploadFormProps {
@@ -58,7 +58,7 @@ export function UploadForm({ pending, onRun }: UploadFormProps) {
         </ul>
       )}
 
-      {sizeError && <ErrorBanner message={sizeError} />}
+      {sizeError && <Banner variant="danger">{sizeError}</Banner>}
 
       <div className="grid grid-cols-2 gap-4">
         <label className="space-y-1">

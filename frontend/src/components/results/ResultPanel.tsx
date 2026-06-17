@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useJobResult } from '../../hooks/useJobResult'
 import { Spinner } from '../common/Spinner'
-import { ErrorBanner } from '../common/ErrorBanner'
+import { Banner } from '@infra/ui'
 import { DownloadButtons } from './DownloadButtons'
 import { TranscriptTab } from './TranscriptTab'
 import { SummaryTab } from './SummaryTab'
@@ -52,7 +52,7 @@ export function ResultPanel({ jobId, fileName }: ResultPanelProps) {
 
   if (query.isError) {
     const msg = query.error instanceof Error ? query.error.message : String(query.error)
-    return <ErrorBanner message={`Failed to load results: ${msg}`} />
+    return <Banner variant="danger">{`Failed to load results: ${msg}`}</Banner>
   }
 
   const result = query.data

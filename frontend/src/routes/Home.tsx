@@ -1,7 +1,7 @@
 import { useSubmitBatch } from '../hooks/useJobs'
 import { UploadForm } from '../components/upload/UploadForm'
 import { BatchProgress } from '../components/jobs/BatchProgress'
-import { ErrorBanner } from '../components/common/ErrorBanner'
+import { Banner } from '@infra/ui'
 
 export function Home() {
   const submit = useSubmitBatch()
@@ -16,10 +16,10 @@ export function Home() {
   return (
     <div className="space-y-8">
       {submit.error && (
-        <ErrorBanner message={`Submission failed: ${submit.error.message}`} />
+        <Banner variant="danger">{`Submission failed: ${submit.error.message}`}</Banner>
       )}
       {fileErrors.length > 0 && (
-        <ErrorBanner message={fileErrors.join('\n')} />
+        <Banner variant="danger">{fileErrors.join('\n')}</Banner>
       )}
       <section>
         <h2 className="mb-3 text-base font-semibold">New job</h2>
