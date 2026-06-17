@@ -10,9 +10,13 @@ far smaller than WAV -- so every upload reaches the endpoint in a form it can
 always decode. (The 16 kHz mono downmix is itself a deliberate, lossy reduction;
 FLAC then stores that signal without further loss.)
 
-Unlike the fail-open VAD guard (:func:`nextext.core.vad.has_speech`),
-normalization is **fail-closed**: an undecodable input raises
-:class:`AudioDecodeError` rather than letting unusable bytes reach the endpoint.
+Decoding is **best-effort**: individual packets that fail to decode (e.g. a
+corrupt trailing frame in an MP3 carrying trailing tag/padding bytes) are
+skipped so the rest of the audio still reaches the endpoint, mirroring the
+``ffmpeg`` CLI. Unlike the fail-open VAD guard
+(:func:`nextext.core.vad.has_speech`), it stays fail-closed on a *wholly*
+unusable input -- no audio stream, or not one frame decodable -- raising
+:class:`AudioDecodeError` rather than sending nothing downstream.
 """
 
 import os
@@ -40,19 +44,27 @@ class AudioDecodeError(ValueError):
 def _transcode_to_flac(src: Path, dst: Path) -> None:
     """Decode ``src`` and write a 16 kHz mono FLAC to ``dst``.
 
+    Decoding is best-effort: individual packets that fail to decode -- e.g. a
+    malformed trailing frame in an MP3 carrying trailing tag/padding bytes -- are
+    skipped so the rest of the audio still reaches the endpoint, the way the
+    ``ffmpeg`` CLI tolerates a corrupt frame. The transcode is fail-closed only
+    when *nothing* usable decodes: no audio stream, or zero frames recovered.
+
     Args:
         src (Path): Source media in any container/codec PyAV can decode.
         dst (Path): Destination path for the 16 kHz mono FLAC output.
 
     Raises:
-        AudioDecodeError: If ``src`` has no audio stream or cannot be
-            decoded/encoded.
+        AudioDecodeError: If ``src`` has no audio stream, or not a single frame
+            could be decoded from it.
     """
     resampler = av.AudioResampler(
         format=TARGET_SAMPLE_FORMAT,
         layout=TARGET_LAYOUT,
         rate=TARGET_SAMPLE_RATE,
     )
+    frames_decoded = 0
+    packets_skipped = 0
     try:
         with av.open(str(src)) as in_container, av.open(str(dst), mode="w") as out_container:
             if not in_container.streams.audio:
@@ -63,15 +75,36 @@ def _transcode_to_flac(src: Path, dst: Path) -> None:
             out_stream.codec_context.format = TARGET_SAMPLE_FORMAT
             out_stream.codec_context.layout = TARGET_LAYOUT
 
-            for frame in in_container.decode(in_stream):
+            def emit(frame: "av.AudioFrame | None") -> None:
+                """Resample one frame (or flush on ``None``) into the FLAC output."""
                 for resampled in resampler.resample(frame):
                     resampled.pts = None
                     for packet in out_stream.encode(resampled):
                         out_container.mux(packet)
-            for resampled in resampler.resample(None):  # flush the resampler
-                resampled.pts = None
-                for packet in out_stream.encode(resampled):
-                    out_container.mux(packet)
+
+            packets = in_container.demux(in_stream)
+            while True:
+                try:
+                    packet = next(packets)
+                except StopIteration:
+                    break
+                except FFmpegError:
+                    # A demuxer-level error leaves the container unusable; keep
+                    # whatever already decoded rather than aborting outright.
+                    packets_skipped += 1
+                    break
+                try:
+                    frames = packet.decode()
+                except FFmpegError:
+                    # A single corrupt packet: skip it and keep going.
+                    packets_skipped += 1
+                    continue
+                for frame in frames:
+                    if not isinstance(frame, av.AudioFrame):
+                        continue
+                    frames_decoded += 1
+                    emit(frame)
+            emit(None)  # flush the resampler
             for packet in out_stream.encode(None):  # flush the encoder
                 out_container.mux(packet)
     except AudioDecodeError:
@@ -80,6 +113,17 @@ def _transcode_to_flac(src: Path, dst: Path) -> None:
         raise AudioDecodeError(
             f"Could not decode audio file '{src.name}'; it may be corrupt or in an unsupported format."
         ) from exc
+
+    if frames_decoded == 0:
+        raise AudioDecodeError(
+            f"Could not decode audio file '{src.name}'; it may be corrupt or in an unsupported format."
+        )
+    if packets_skipped:
+        logger.warning(
+            "Recovered '{}' after skipping {} undecodable packet(s); transcribing the audio that decoded.",
+            src.name,
+            packets_skipped,
+        )
 
 
 @contextmanager
