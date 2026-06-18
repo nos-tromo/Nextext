@@ -1,20 +1,7 @@
 @import 'tailwindcss';
+@import '@infra/ui/theme.css';
 @plugin '@tailwindcss/typography';
-
-@theme {
-  --color-background: hsl(240 6% 8%);
-  --color-foreground: hsl(0 0% 98%);
-  --color-muted: hsl(240 4% 16%);
-  --color-muted-foreground: hsl(240 5% 65%);
-  --color-border: hsl(240 4% 22%);
-  --color-accent: hsl(240 5% 26%);
-  --color-primary: hsl(217 91% 60%);
-  --color-primary-foreground: hsl(0 0% 100%);
-  --color-danger: hsl(0 72% 55%);
-
-  --font-sans: 'Inter', system-ui, sans-serif;
-  --font-mono: 'ui-monospace', 'SFMono-Regular', 'Menlo', monospace;
-}
+@source '../../node_modules/@infra/ui/dist';
 
 :root {
   color-scheme: dark;

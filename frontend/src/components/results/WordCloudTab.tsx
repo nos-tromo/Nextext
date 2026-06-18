@@ -1,6 +1,6 @@
 import { useArtifactImage } from '../../hooks/useArtifactImage'
 import { Spinner } from '../common/Spinner'
-import { ErrorBanner } from '../common/ErrorBanner'
+import { Banner } from '@infra/ui'
 import { DownloadButtons } from './DownloadButtons'
 
 interface WordCloudTabProps {
@@ -12,7 +12,7 @@ interface WordCloudTabProps {
  * Displays the word-cloud image artifact for a completed job.
  *
  * Fetches the image as a blob object URL via {@link useArtifactImage}, shows a
- * {@link Spinner} while loading, an {@link ErrorBanner} on failure, and the
+ * {@link Spinner} while loading, a {@link Banner} on failure, and the
  * `<img>` once the URL is available. Provides a stem-prefixed PNG download
  * button.
  *
@@ -25,7 +25,7 @@ export function WordCloudTab({ jobId, stem }: WordCloudTabProps) {
   return (
     <div className="space-y-4">
       {loading && <Spinner label="Loading word cloud…" />}
-      {error && <ErrorBanner message={error} />}
+      {error && <Banner variant="danger">{error}</Banner>}
       {url && (
         <img
           src={url}
