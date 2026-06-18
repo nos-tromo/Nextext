@@ -7,10 +7,12 @@ import pytest
 from nextext.utils.env_cfg import (
     DEFAULT_DIARIZE_TIMEOUT,
     DEFAULT_NER_TIMEOUT,
+    DEFAULT_SUMMARY_MAX_INPUT_TOKENS,
     DEFAULT_VAD_TIMEOUT,
     load_diarization_env,
     load_inference_env,
     load_ner_env,
+    load_summary_env,
     load_vad_env,
     load_whisper_env,
 )
@@ -667,3 +669,69 @@ def test_load_vad_env_invalid_timeout_warns_and_defaults(
 
     assert cfg.timeout == DEFAULT_VAD_TIMEOUT
     assert "VAD_TIMEOUT" in sink.getvalue()
+
+
+# ---------------------------------------------------------------------------
+# load_summary_env
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(("raw_value", "expected"), [("8000", 8000), ("3000", 3000), ("  4096  ", 4096)])
+def test_load_summary_env_parses_valid_budget(
+    monkeypatch: pytest.MonkeyPatch,
+    raw_value: str,
+    expected: int,
+) -> None:
+    """A valid SUMMARY_MAX_INPUT_TOKENS is parsed as a positive integer.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Fixture for patching environment variables.
+        raw_value (str): The raw environment value.
+        expected (int): The parsed token budget.
+    """
+    monkeypatch.setenv("SUMMARY_MAX_INPUT_TOKENS", raw_value)
+
+    cfg = load_summary_env()
+
+    assert cfg.max_input_tokens == expected
+
+
+def test_load_summary_env_unset_returns_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An unset SUMMARY_MAX_INPUT_TOKENS falls back to the default budget.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Fixture for patching environment variables.
+    """
+    monkeypatch.delenv("SUMMARY_MAX_INPUT_TOKENS", raising=False)
+
+    cfg = load_summary_env()
+
+    assert cfg.max_input_tokens == DEFAULT_SUMMARY_MAX_INPUT_TOKENS
+
+
+@pytest.mark.parametrize("raw_value", ["not-a-number", "0", "-5", "1.5"])
+def test_load_summary_env_invalid_budget_warns_and_defaults(
+    monkeypatch: pytest.MonkeyPatch,
+    raw_value: str,
+) -> None:
+    """Non-integer or non-positive SUMMARY_MAX_INPUT_TOKENS warns and falls back to the default.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Fixture for patching environment variables.
+        raw_value (str): An invalid budget token.
+    """
+    from loguru import logger
+
+    monkeypatch.setenv("SUMMARY_MAX_INPUT_TOKENS", raw_value)
+
+    sink = io.StringIO()
+    handler_id = logger.add(sink, level="WARNING")
+    try:
+        cfg = load_summary_env()
+    finally:
+        logger.remove(handler_id)
+
+    assert cfg.max_input_tokens == DEFAULT_SUMMARY_MAX_INPUT_TOKENS
+    assert "SUMMARY_MAX_INPUT_TOKENS" in sink.getvalue()

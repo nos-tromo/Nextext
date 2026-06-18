@@ -131,6 +131,24 @@ class NerConfig:
     timeout: float
 
 
+@dataclass(frozen=True)
+class SummaryConfig:
+    """Dataclass for the summarization stage's context budget.
+
+    Attributes:
+        max_input_tokens: Upper bound on how many tokens of transcript text are
+            sent to the chat model in a single summarize request. The
+            map-reduce summarizer in :mod:`nextext.pipeline` splits any
+            transcript whose estimated size exceeds this budget into chunks,
+            summarizes each, then summarizes the combined partial summaries, so
+            no single request can overflow the model's context window. Lower it
+            for token-dense scripts (e.g. CJK) or small ``max_model_len``
+            backends.
+    """
+
+    max_input_tokens: int
+
+
 EXTERNAL_WHISPER_DEFAULTS: dict[str, str] = {
     "openai": "whisper-1",
     "vllm": "openai/whisper-large-v3",
@@ -139,6 +157,7 @@ EXTERNAL_WHISPER_DEFAULTS: dict[str, str] = {
 DEFAULT_DIARIZE_TIMEOUT: float = 600.0
 DEFAULT_NER_TIMEOUT: float = 120.0
 DEFAULT_VAD_TIMEOUT: float = 60.0
+DEFAULT_SUMMARY_MAX_INPUT_TOKENS: int = 6000
 
 
 def _parse_tristate_bool(name: str) -> bool | None:
@@ -318,6 +337,37 @@ def load_ner_env() -> NerConfig:
             )
 
     return NerConfig(api_base=api_base, api_key=api_key, timeout=timeout)
+
+
+def load_summary_env() -> SummaryConfig:
+    """Loads the summarization context-budget configuration from the environment.
+
+    The map-reduce summarizer in :mod:`nextext.pipeline` uses this budget to
+    decide how much transcript text fits in one request before it must split
+    and summarize hierarchically.
+
+    Returns:
+        SummaryConfig: Dataclass containing the resolved settings.
+        - max_input_tokens (int): ``SUMMARY_MAX_INPUT_TOKENS`` parsed as a
+          positive integer. Defaults to :data:`DEFAULT_SUMMARY_MAX_INPUT_TOKENS`;
+          non-integer or non-positive values warn and fall back to the default.
+    """
+    max_input_tokens = DEFAULT_SUMMARY_MAX_INPUT_TOKENS
+    raw_budget = os.getenv("SUMMARY_MAX_INPUT_TOKENS", "").strip()
+    if raw_budget:
+        try:
+            parsed = int(raw_budget)
+            if parsed <= 0:
+                raise ValueError
+            max_input_tokens = parsed
+        except ValueError:
+            logger.warning(
+                "Invalid SUMMARY_MAX_INPUT_TOKENS '{}'. Falling back to {}.",
+                raw_budget,
+                DEFAULT_SUMMARY_MAX_INPUT_TOKENS,
+            )
+
+    return SummaryConfig(max_input_tokens=max_input_tokens)
 
 
 @dataclass(frozen=True)
