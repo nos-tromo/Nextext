@@ -165,4 +165,5 @@ export interface LanguageEntry {
 export interface LanguagesResponse {
   whisper: LanguageEntry[]
   target: LanguageEntry[]
+  default_target: string
 }

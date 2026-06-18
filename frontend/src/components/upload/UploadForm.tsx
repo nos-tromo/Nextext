@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useLanguages } from '../../hooks/useLanguages'
 import { checkUploadAcceptable } from '../../lib/uploadGuard'
+import { readStoredTargetLang, writeStoredTargetLang } from '../../lib/targetLang'
 import { Dropzone } from './Dropzone'
 import { Banner } from '@infra/ui'
 import type { JobOptions, Task } from '../../api/types'
@@ -16,7 +17,9 @@ export function UploadForm({ pending, onRun }: UploadFormProps) {
   const [files, setFiles] = useState<File[]>([])
   const [task, setTask] = useState<Task>('transcribe')
   const [srcLang, setSrcLang] = useState<string>('')
-  const [trgLang, setTrgLang] = useState<string>('de')
+  // `null` means "no active user choice yet" — fall back to the backend default
+  // below. A persisted preference (survives reloads) seeds it on mount.
+  const [trgLang, setTrgLang] = useState<string | null>(() => readStoredTargetLang())
   const [speakers, setSpeakers] = useState<number>(1)
   const [words, setWords] = useState(false)
   const [summarization, setSummarization] = useState(false)
@@ -29,7 +32,7 @@ export function UploadForm({ pending, onRun }: UploadFormProps) {
     if (!canRun) return
     onRun(files, {
       src_lang: srcLang || null,
-      trg_lang: trgLang,
+      trg_lang: effectiveTrgLang,
       task,
       speakers,
       words,
@@ -40,6 +43,18 @@ export function UploadForm({ pending, onRun }: UploadFormProps) {
 
   const whisper = languages.data?.whisper ?? []
   const target = languages.data?.target ?? []
+  const defaultTarget = languages.data?.default_target ?? ''
+
+  // Effective selection: the active/persisted choice while it is a supported
+  // code, otherwise the backend default. Derived (not stored) so a stale
+  // persisted code or the initial load resolves without an effect.
+  const trgValid = trgLang !== null && target.some((l) => l.code === trgLang)
+  const effectiveTrgLang = trgValid ? (trgLang as string) : defaultTarget
+
+  function selectTrgLang(code: string) {
+    setTrgLang(code)
+    writeStoredTargetLang(code)
+  }
 
   return (
     <div className="space-y-4">
@@ -83,7 +98,7 @@ export function UploadForm({ pending, onRun }: UploadFormProps) {
         </label>
         <label className="space-y-1">
           <span className="text-sm text-muted-foreground">Target language (translate)</span>
-          <select className="w-full rounded border border-border bg-muted px-2 py-1" value={trgLang} onChange={(e) => setTrgLang(e.target.value)}>
+          <select className="w-full rounded border border-border bg-muted px-2 py-1" value={effectiveTrgLang} onChange={(e) => selectTrgLang(e.target.value)}>
             {target.map((l) => (
               <option key={l.code} value={l.code}>{l.name}</option>
             ))}

@@ -26,9 +26,11 @@ describe('meta endpoints', () => {
     mockJson({
       whisper: [{ code: 'en', name: 'English' }],
       target: [{ code: 'de-DE', name: 'German (Germany)' }],
+      default_target: 'en',
     })
     const langs = await getLanguages()
     expect(langs.whisper[0].code).toBe('en')
     expect(langs.target[0].code).toBe('de-DE')
+    expect(langs.default_target).toBe('en')
   })
 })
