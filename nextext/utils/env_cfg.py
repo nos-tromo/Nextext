@@ -27,6 +27,24 @@ VALID_INFERENCE_PROVIDERS: frozenset[str] = frozenset({"ollama", "vllm", "openai
 _TRUE_TOKENS: frozenset[str] = frozenset({"1", "true", "yes", "on"})
 _FALSE_TOKENS: frozenset[str] = frozenset({"0", "false", "no", "off"})
 
+DEFAULT_TARGET_LANG: str = "en"
+
+
+def load_default_target_lang() -> str:
+    """Loads the configured default target translation language code.
+
+    The value seeds the frontend's "Target language" dropdown on a fresh
+    browser (one without a persisted preference). The ``GET /languages`` route
+    validates the result against the supported target mapping and falls back to
+    ``"en"`` (then the first supported code) when it is not a recognised code.
+
+    Returns:
+        str: The ``NEXTEXT_DEFAULT_TARGET_LANG`` value (stripped), or
+            :data:`DEFAULT_TARGET_LANG` (``"en"``) when unset or blank.
+    """
+    raw = os.getenv("NEXTEXT_DEFAULT_TARGET_LANG", "").strip()
+    return raw or DEFAULT_TARGET_LANG
+
 
 @dataclass(frozen=True)
 class InferenceConfig:
