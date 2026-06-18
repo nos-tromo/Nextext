@@ -104,7 +104,7 @@ def get_languages() -> LanguagesResponse:
             ``NEXTEXT_DEFAULT_TARGET_LANG``; defaults to English).
     """
     whisper = load_mappings("whisper_languages.json")
-    target = load_mappings("translategemma_languages.json")
+    target = load_mappings("target_languages.json")
     target_entries = _mapping_to_entries(target)
     return LanguagesResponse(
         whisper=_mapping_to_entries(whisper),

@@ -12,7 +12,7 @@ class Translator:
 
     def __init__(
         self,
-        translation_language_file: str = "translategemma_languages.json",
+        translation_language_file: str = "target_languages.json",
         inference_pipeline: InferencePipeline | None = None,
     ) -> None:
         """Initialize the Translator.
@@ -20,7 +20,7 @@ class Translator:
         Args:
             translation_language_file (str): Name of the JSON mapping file
                 that lists the supported translation target languages.
-                Defaults to ``"translategemma_languages.json"``.
+                Defaults to ``"target_languages.json"``.
             inference_pipeline (InferencePipeline | None): Shared inference
                 client. A new :class:`InferencePipeline` is created when
                 ``None``. Defaults to ``None``.
