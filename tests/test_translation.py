@@ -62,7 +62,7 @@ def test_translator_uses_templated_prompt_for_all_providers(
     """Every provider uses the templated prompt + translation system prompt on TEXT_MODEL."""
     translator, pipeline = _make_translator(monkeypatch, provider=provider)
 
-    result = translator.translate(trg_lang="de-DE", text="hello world", src_lang="en")
+    result = translator.translate(trg_lang="de", text="hello world", src_lang="en")
 
     assert len(pipeline.calls) == 1
     call = pipeline.calls[0]

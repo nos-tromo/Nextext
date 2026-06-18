@@ -8,8 +8,8 @@ import { UploadForm } from './UploadForm'
 const LANGUAGES: LanguagesResponse = {
   whisper: [{ code: 'en', name: 'English' }],
   target: [
-    { code: 'ar-EG', name: 'Arabic (Egypt)' },
-    { code: 'de-DE', name: 'German (Germany)' },
+    { code: 'ar', name: 'Arabic' },
+    { code: 'de', name: 'German' },
     { code: 'en', name: 'English' },
   ],
   default_target: 'en',
@@ -44,8 +44,8 @@ describe('UploadForm target language', () => {
   })
 
   it('restores the persisted selection across reloads', async () => {
-    localStorage.setItem(TARGET_LANG_STORAGE_KEY, 'de-DE')
+    localStorage.setItem(TARGET_LANG_STORAGE_KEY, 'de')
     mountForm()
-    await waitFor(() => expect(targetSelect().value).toBe('de-DE'))
+    await waitFor(() => expect(targetSelect().value).toBe('de'))
   })
 })

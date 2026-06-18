@@ -19,7 +19,7 @@ def test_languages_returns_sorted_whisper_and_target_lists(
     assert {"whisper", "target", "default_target"} == set(body.keys())
 
     whisper_mapping = load_mappings("whisper_languages.json")
-    target_mapping = load_mappings("translategemma_languages.json")
+    target_mapping = load_mappings("target_languages.json")
 
     assert len(body["whisper"]) == len(whisper_mapping)
     assert len(body["target"]) == len(target_mapping)
@@ -32,7 +32,7 @@ def test_languages_returns_sorted_whisper_and_target_lists(
     whisper_codes = {entry["code"] for entry in body["whisper"]}
     assert "en" in whisper_codes
     target_codes = {entry["code"] for entry in body["target"]}
-    assert "de-DE" in target_codes
+    assert "de" in target_codes
 
 
 def test_languages_default_target_is_english_by_default(
@@ -54,11 +54,11 @@ def test_languages_default_target_honours_env_override(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A valid ``NEXTEXT_DEFAULT_TARGET_LANG`` should drive the default."""
-    monkeypatch.setenv("NEXTEXT_DEFAULT_TARGET_LANG", "de-DE")
+    monkeypatch.setenv("NEXTEXT_DEFAULT_TARGET_LANG", "de")
 
     body = api_client.get("/api/v1/languages").json()
 
-    assert body["default_target"] == "de-DE"
+    assert body["default_target"] == "de"
 
 
 def test_languages_default_target_falls_back_on_unknown_override(
