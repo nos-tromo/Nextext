@@ -62,11 +62,11 @@ This document describes every agent, how they interact, and what they expect fro
 ## Summarization Agent
 
 - **Key files:** `summarization_pipeline()` (`nextext/pipeline.py`), prompt template `nextext/utils/prompts/summary.txt`.
-- **Responsibilities:** Format the entire transcript as a prompt, apply the system instruction defined in `InferencePipeline`, and return a concise summary limited to 15 sentences.
+- **Responsibilities:** Summarize the transcript with a context-safe map-reduce strategy — split it into chunks that fit the `SUMMARY_MAX_INPUT_TOKENS` budget, summarize each (map), then recursively summarize the joined partial summaries (reduce); short transcripts take a single-shot path. Every request applies the system instruction defined in `InferencePipeline`, caps generation at `SUMMARY_MAX_OUTPUT_TOKENS` (1024) output tokens, and the prompt limits the summary to 15 sentences.
 - **Inputs:** Concatenated transcript string, `InferencePipeline`.
 - **Outputs:** Summary string; orchestrators attach it to session state or export it via `FileProcessor`.
 - **Dependencies:** OpenAI-compatible chat completions via the backend selected by `INFERENCE_PROVIDER` (Ollama on `http://localhost:11434/v1` by default, a LiteLLM-fronted vLLM stack, or the hosted OpenAI API); prompt language controlled by `InferencePipeline.out_language`. Summarization always uses the templated prompt + system message regardless of provider.
-- **Operational notes:** The pipeline raises `ValueError` when text is empty; make sure optional agents check for data before calling.
+- **Operational notes:** The pipeline raises `ValueError` when text is empty; make sure optional agents check for data before calling. Transcripts larger than the budget are summarized hierarchically so no single request overflows the model's context window (a reduce-depth guard bounds the recursion); the token budget is converted to a character budget with a conservative ratio, so lower `SUMMARY_MAX_INPUT_TOKENS` for token-dense scripts (e.g. CJK) or small `max_model_len` backends.
 
 ## Hate Speech Detection Agent
 
