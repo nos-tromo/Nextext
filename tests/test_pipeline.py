@@ -845,3 +845,149 @@ def test_summarization_terminates_when_summaries_do_not_shrink(
     assert isinstance(result, str)
     assert result
     assert len(recorder.calls) < 500
+
+
+class _OverflowingPipeline(InferencePipeline):
+    """Inference double that raises on payloads above a character threshold.
+
+    Simulates a backend whose real context window is smaller than the character
+    budget assumed by the summarizer (e.g. token-dense scripts), so oversized
+    requests raise instead of returning a summary.
+
+    Attributes:
+        max_payload_chars: Requests whose ``{text}`` payload exceeds this raise.
+        overflow_count: Number of calls that raised the simulated error.
+        success_count: Number of calls that returned the canned reply.
+    """
+
+    def __init__(
+        self,
+        max_payload_chars: int,
+        reply: str = "S",
+        error_message: str = "This model's maximum context length is 4096 tokens",
+    ) -> None:
+        """Configure the overflow threshold and the simulated error.
+
+        Args:
+            max_payload_chars (int): Payloads longer than this raise the error.
+            reply (str): Canned reply returned for in-budget payloads.
+            error_message (str): Message of the raised ``RuntimeError``.
+        """
+        self.max_payload_chars = max_payload_chars
+        self._reply = reply
+        self._error_message = error_message
+        self.overflow_count = 0
+        self.success_count = 0
+
+    def load_prompt(self, keyword: str = "system") -> str:
+        """Return a minimal ``{text}`` summary template.
+
+        Args:
+            keyword (str): The prompt keyword; must be ``"summary"``.
+
+        Returns:
+            str: A ``{text}`` template prefixed with ``Summarize: ``.
+        """
+        assert keyword == "summary"
+        return "Summarize: {text}"
+
+    def call_model(
+        self,
+        prompt: str,
+        model: str | None = None,
+        temperature: float = 0.1,
+        seed: int = 42,
+        stop: list[str] | None = None,
+        num_predict: int | None = None,
+        top_p: float | None = None,
+        system_prompt: str | None = None,
+        include_system_prompt: bool = True,
+        think: bool | None = None,
+    ) -> str:
+        """Raise when the payload is too large, otherwise return the reply.
+
+        Args:
+            prompt (str): The prompt sent to the model.
+            model (str | None): Unused test double argument.
+            temperature (float): Unused test double argument.
+            seed (int): Unused test double argument.
+            stop (list[str] | None): Unused test double argument.
+            num_predict (int | None): Unused test double argument.
+            top_p (float | None): Unused test double argument.
+            system_prompt (str | None): Unused test double argument.
+            include_system_prompt (bool): Unused test double argument.
+            think (bool | None): Unused test double argument.
+
+        Returns:
+            str: The canned reply for in-budget payloads.
+
+        Raises:
+            RuntimeError: When the payload exceeds ``max_payload_chars``.
+        """
+        del model, temperature, seed, stop, num_predict, top_p, system_prompt, include_system_prompt, think
+        payload = prompt.removeprefix("Summarize: ")
+        if len(payload) > self.max_payload_chars:
+            self.overflow_count += 1
+            raise RuntimeError(self._error_message)
+        self.success_count += 1
+        return self._reply
+
+
+def test_is_context_length_error_detects_known_messages() -> None:
+    """The predicate recognises provider overflow messages and ignores others."""
+    assert pipeline._is_context_length_error(
+        RuntimeError("This model's maximum context length is 4096 tokens, however you requested 9000")
+    )
+    assert pipeline._is_context_length_error(ValueError("context_length_exceeded"))
+    assert not pipeline._is_context_length_error(RuntimeError("connection refused"))
+
+
+def test_summarization_retries_with_smaller_budget_on_overflow(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A context-length error shrinks the budget and retries instead of crashing.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Fixture for patching environment variables.
+    """
+    monkeypatch.setenv("SUMMARY_MAX_INPUT_TOKENS", "20")  # -> 60-char budget
+    overflower = _OverflowingPipeline(max_payload_chars=35)
+    text = " ".join(f"word{i:02d}" for i in range(30))
+
+    result = pipeline.summarization_pipeline(text, overflower)
+
+    assert result == "S"
+    assert overflower.overflow_count >= 1  # the first, oversized attempt failed
+    assert overflower.success_count >= 1  # the smaller-budget retry succeeded
+
+
+def test_summarization_reraises_non_context_errors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Errors that are not context-length overflows propagate unchanged.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Fixture for patching environment variables.
+    """
+    monkeypatch.delenv("SUMMARY_MAX_INPUT_TOKENS", raising=False)
+    overflower = _OverflowingPipeline(max_payload_chars=-1, error_message="connection refused")
+
+    with pytest.raises(RuntimeError, match="connection refused"):
+        pipeline.summarization_pipeline("anything", overflower)
+
+
+def test_summarization_degrades_to_empty_after_exhausting_retries(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Persistent overflow degrades to an empty summary rather than crashing.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Fixture for patching environment variables.
+    """
+    monkeypatch.setenv("SUMMARY_MAX_INPUT_TOKENS", "20")
+    overflower = _OverflowingPipeline(max_payload_chars=-1)  # every request overflows
+
+    result = pipeline.summarization_pipeline("some transcript text", overflower)
+
+    assert result == ""
+    assert overflower.overflow_count == pipeline._MAX_OVERFLOW_RETRIES + 1

@@ -150,6 +150,25 @@ _MAX_REDUCE_DEPTH: int = 5
 """Recursion ceiling for the reduce step; a backstop that effectively never fires
 because partial summaries shrink the text logarithmically."""
 
+_MAX_OVERFLOW_RETRIES: int = 4
+"""How many times to halve the budget and retry when a request still overflows the
+model's context window (the character heuristic under-counted, e.g. for CJK)."""
+
+_OVERFLOW_BUDGET_BACKOFF: float = 0.5
+"""Multiplier applied to the character budget on each context-overflow retry."""
+
+_CONTEXT_LENGTH_ERROR_MARKERS: tuple[str, ...] = (
+    "context length",
+    "context_length",
+    "context window",
+    "maximum context",
+    "too many tokens",
+    "reduce the length",
+    "exceeds the maximum",
+)
+"""Lower-cased substrings that identify a context-window-overflow error across
+providers (vLLM, OpenAI-compatible, Ollama)."""
+
 
 def _split_to_budget(text: str, char_budget: int) -> list[str]:
     """Split text into chunks no larger than ``char_budget`` characters.
@@ -243,6 +262,23 @@ def _summarize_within_budget(
     return _summarize_within_budget(combined, inference_pipeline, char_budget, depth + 1)
 
 
+def _is_context_length_error(exc: Exception) -> bool:
+    """Report whether an exception looks like a context-window overflow.
+
+    Detection is by message text so it works across providers (vLLM,
+    OpenAI-compatible, Ollama) without depending on a specific SDK exception
+    type.
+
+    Args:
+        exc (Exception): The exception raised by an inference call.
+
+    Returns:
+        bool: ``True`` when the message matches a known overflow marker.
+    """
+    message = str(exc).lower()
+    return any(marker in message for marker in _CONTEXT_LENGTH_ERROR_MARKERS)
+
+
 def summarization_pipeline(
     text: str,
     inference_pipeline: InferencePipeline,
@@ -257,12 +293,20 @@ def summarization_pipeline(
     can overflow the chat model's context window. Every request caps generation
     at :data:`SUMMARY_MAX_OUTPUT_TOKENS` output tokens.
 
+    If a request still overflows the context window (the character heuristic
+    under-counted, e.g. for token-dense scripts), the budget is halved and the
+    summary retried up to :data:`_MAX_OVERFLOW_RETRIES` times; if even the
+    smallest budget overflows, it degrades to an empty summary rather than
+    crashing the job (fail-soft, mirroring the NER/diarization clients).
+
     Args:
         text (str): The text to summarize.
         inference_pipeline (InferencePipeline): An inference pipeline for language model interactions.
 
     Returns:
-        str: The summarized text.
+        str: The summarized text, or an empty string if every retry still
+            overflowed the context window (a fail-soft degrade, logged as a
+            warning).
 
     Raises:
         ValueError: If the input text is empty.
@@ -270,7 +314,27 @@ def summarization_pipeline(
     if not text:
         raise ValueError("Text cannot be empty.")
     char_budget = int(load_summary_env().max_input_tokens * _CHARS_PER_TOKEN)
-    return _summarize_within_budget(text, inference_pipeline, char_budget, depth=0)
+    for attempt in range(_MAX_OVERFLOW_RETRIES + 1):
+        try:
+            return _summarize_within_budget(text, inference_pipeline, char_budget, depth=0)
+        except Exception as exc:  # context-length overflows are retried; other errors re-raise
+            if not _is_context_length_error(exc):
+                raise
+            if attempt == _MAX_OVERFLOW_RETRIES:
+                logger.warning(
+                    "Summarization still overflowed the context window after {} retries; "
+                    "returning an empty summary. Lower SUMMARY_MAX_INPUT_TOKENS for this input.",
+                    _MAX_OVERFLOW_RETRIES,
+                )
+                return ""
+            shrunk_budget = max(1, int(char_budget * _OVERFLOW_BUDGET_BACKOFF))
+            logger.warning(
+                "Summarization overflowed the context window; retrying with a smaller budget ({} -> {} chars).",
+                char_budget,
+                shrunk_budget,
+            )
+            char_budget = shrunk_budget
+    return ""
 
 
 def wordlevel_pipeline(
