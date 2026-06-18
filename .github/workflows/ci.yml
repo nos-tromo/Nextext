@@ -15,11 +15,10 @@ concurrency:
 
 jobs:
   ci:
-    # Pinned to v2.3 (strict-config alignment + nos-tromo style tuning:
-    # line-length=120, ANN401 ignored, local mypy hook; v2.3 fixes
-    # github.job_workflow_ref usage in the lint job). Canonical at
-    # nos-tromo/.github/configs/python-strict/.
-    uses: nos-tromo/.github/.github/workflows/python-app-ci.yml@v2.3
+    # Pinned to v2.5 (strict-config alignment + the make/common.mk drift-check;
+    # nos-tromo style tuning: line-length=120, ANN401 ignored, local mypy hook).
+    # Canonical configs at nos-tromo/.github/configs/{python-strict,make-common}/.
+    uses: nos-tromo/.github/.github/workflows/python-app-ci.yml@v2.5
     with:
       python-versions: '["3.12"]'
       uv-sync-args: '--frozen --group dev'
