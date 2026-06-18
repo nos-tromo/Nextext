@@ -142,6 +142,7 @@ class LanguagesResponse(BaseModel):
 
     whisper: list[LanguageEntry]
     target: list[LanguageEntry]
+    default_target: str
 
 
 class JobListItem(BaseModel):
