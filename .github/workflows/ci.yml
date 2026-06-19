@@ -15,10 +15,10 @@ concurrency:
 
 jobs:
   ci:
-    # Pinned to v2.5 (strict-config alignment + the make/common.mk drift-check;
+    # Pinned to v2.6 (strict-config alignment + the make/common.mk drift-check;
     # nos-tromo style tuning: line-length=120, ANN401 ignored, local mypy hook).
     # Canonical configs at nos-tromo/.github/configs/{python-strict,make-common}/.
-    uses: nos-tromo/.github/.github/workflows/python-app-ci.yml@v2.5
+    uses: nos-tromo/.github/.github/workflows/python-app-ci.yml@v2.6
     with:
       python-versions: '["3.12"]'
       uv-sync-args: '--frozen --group dev'
