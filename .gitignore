@@ -77,6 +77,7 @@
 !**/prompts/translation.txt
 !**/scripts/
 !**/scripts/bundle_images.sh
+!**/scripts/bundle-lib.sh
 !**/scripts/create_docker_volumes.sh
 !.dockerignore
 !.env.example
