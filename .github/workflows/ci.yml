@@ -15,11 +15,11 @@ concurrency:
 
 jobs:
   ci:
-    # Pinned to v2.8 (strict-config + make/common.mk + frontend eslint.config.js
+    # Pinned to the moving v2 alias (strict-config + make/common.mk + frontend eslint.config.js
     # drift-checks; nos-tromo style tuning: line-length=120, ANN401 ignored,
     # local mypy hook). Canonical configs at
     # nos-tromo/.github/configs/{python-strict,make-common,frontend-eslint}/.
-    uses: nos-tromo/.github/.github/workflows/python-app-ci.yml@v2.9
+    uses: nos-tromo/.github/.github/workflows/python-app-ci.yml@v2
     with:
       python-versions: '["3.12"]'
       uv-sync-args: '--frozen --group dev'
