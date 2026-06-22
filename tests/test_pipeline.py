@@ -7,6 +7,7 @@ import pandas as pd
 import pytest
 
 from nextext import pipeline
+from nextext.core.openai_cfg import InferencePipeline
 from nextext.utils.env_cfg import WhisperClientConfig
 
 
@@ -674,3 +675,319 @@ def test_wordlevel_pipeline_invokes_all_steps(monkeypatch: pytest.MonkeyPatch) -
     assert list(entities["entity"]) == ["Test"]
     assert captured["text"] == "alpha beta"
     assert wordcloud == "wordcloud"  # type: ignore[comparison-overlap]
+
+
+# ---------------------------------------------------------------------------
+# summarization map-reduce + output cap
+# ---------------------------------------------------------------------------
+
+
+class _RecordingPipeline(InferencePipeline):
+    """Inference double that records each ``call_model`` invocation.
+
+    Attributes:
+        calls: One dict per model call, capturing the ``prompt`` and the
+            ``num_predict`` output cap it was invoked with.
+    """
+
+    def __init__(self, reply: str = "S") -> None:
+        """Initialise the recorder with the canned reply returned per call.
+
+        Args:
+            reply (str): Fixed string returned from every ``call_model`` call.
+        """
+        self.calls: list[dict[str, Any]] = []
+        self._reply = reply
+
+    def load_prompt(self, keyword: str = "system") -> str:
+        """Return a minimal ``{text}`` summary template.
+
+        Args:
+            keyword (str): The prompt keyword; must be ``"summary"``.
+
+        Returns:
+            str: A ``{text}`` template prefixed with ``Summarize: ``.
+        """
+        assert keyword == "summary"
+        return "Summarize: {text}"
+
+    def call_model(
+        self,
+        prompt: str,
+        model: str | None = None,
+        temperature: float = 0.1,
+        seed: int = 42,
+        stop: list[str] | None = None,
+        num_predict: int | None = None,
+        top_p: float | None = None,
+        system_prompt: str | None = None,
+        include_system_prompt: bool = True,
+        think: bool | None = None,
+    ) -> str:
+        """Record the call and return the canned reply.
+
+        Args:
+            prompt (str): The prompt sent to the model.
+            model (str | None): Unused test double argument.
+            temperature (float): Unused test double argument.
+            seed (int): Unused test double argument.
+            stop (list[str] | None): Unused test double argument.
+            num_predict (int | None): Recorded output-token cap.
+            top_p (float | None): Unused test double argument.
+            system_prompt (str | None): Unused test double argument.
+            include_system_prompt (bool): Unused test double argument.
+            think (bool | None): Unused test double argument.
+
+        Returns:
+            str: The canned reply.
+
+        Raises:
+            RuntimeError: If invoked more than 1000 times, a sign the
+                map-reduce recursion failed to terminate.
+        """
+        del model, temperature, seed, stop, top_p, system_prompt, include_system_prompt, think
+        if len(self.calls) >= 1000:
+            raise RuntimeError("call_model invoked too many times; recursion likely unbounded")
+        self.calls.append({"prompt": prompt, "num_predict": num_predict})
+        return self._reply
+
+
+def test_split_to_budget_packs_words_within_budget() -> None:
+    """``_split_to_budget`` groups whole words into chunks no larger than the budget."""
+    text = "alpha beta gamma delta epsilon zeta eta theta"
+
+    chunks = pipeline._split_to_budget(text, 12)
+
+    assert chunks
+    assert all(len(chunk) <= 12 for chunk in chunks)
+    # Every original word is preserved across the chunks, in order.
+    assert " ".join(chunks).split() == text.split()
+
+
+def test_split_to_budget_returns_single_chunk_when_text_fits() -> None:
+    """Text within the budget yields exactly one chunk (single-shot path)."""
+    chunks = pipeline._split_to_budget("short text", 100)
+
+    assert chunks == ["short text"]
+
+
+def test_split_to_budget_hard_slices_oversized_token() -> None:
+    """A single token longer than the budget is sliced, never exceeding it."""
+    chunks = pipeline._split_to_budget("abcdefghij", 3)
+
+    assert all(len(chunk) <= 3 for chunk in chunks)
+    assert "".join(chunks) == "abcdefghij"
+
+
+def test_summarization_single_shot_applies_output_cap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Short transcripts take the single-shot path with the output cap applied.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Fixture for patching environment variables.
+    """
+    monkeypatch.delenv("SUMMARY_MAX_INPUT_TOKENS", raising=False)
+    recorder = _RecordingPipeline(reply="the summary")
+
+    result = pipeline.summarization_pipeline("a short transcript", recorder)
+
+    assert result == "the summary"
+    assert len(recorder.calls) == 1
+    assert recorder.calls[0]["num_predict"] == pipeline.SUMMARY_MAX_OUTPUT_TOKENS
+    assert recorder.calls[0]["prompt"] == "Summarize: a short transcript"
+
+
+def test_summarization_map_reduce_splits_long_transcript(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A transcript larger than the budget is summarized hierarchically.
+
+    Every request — the per-chunk map calls and the final reduce — stays within
+    the character budget derived from ``SUMMARY_MAX_INPUT_TOKENS``, and the
+    output cap is applied to all of them.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Fixture for patching environment variables.
+    """
+    monkeypatch.setenv("SUMMARY_MAX_INPUT_TOKENS", "10")
+    char_budget = int(10 * pipeline._CHARS_PER_TOKEN)
+    recorder = _RecordingPipeline(reply="S")
+    text = " ".join(f"word{i:02d}" for i in range(40))
+
+    result = pipeline.summarization_pipeline(text, recorder)
+
+    assert result == "S"
+    assert len(recorder.calls) > 1
+    payloads = [call["prompt"].removeprefix("Summarize: ") for call in recorder.calls]
+    assert all(len(payload) <= char_budget for payload in payloads)
+    assert all(call["num_predict"] == pipeline.SUMMARY_MAX_OUTPUT_TOKENS for call in recorder.calls)
+
+
+def test_summarization_terminates_when_summaries_do_not_shrink(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The reduce-depth guard prevents unbounded recursion.
+
+    When the model returns partial summaries larger than the budget (so the
+    combined text never shrinks), summarization still terminates and returns a
+    string rather than recursing forever.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Fixture for patching environment variables.
+    """
+    monkeypatch.setenv("SUMMARY_MAX_INPUT_TOKENS", "10")
+    recorder = _RecordingPipeline(reply="X" * 50)
+    text = " ".join(f"word{i:02d}" for i in range(40))
+
+    result = pipeline.summarization_pipeline(text, recorder)
+
+    assert isinstance(result, str)
+    assert result
+    assert len(recorder.calls) < 500
+
+
+class _OverflowingPipeline(InferencePipeline):
+    """Inference double that raises on payloads above a character threshold.
+
+    Simulates a backend whose real context window is smaller than the character
+    budget assumed by the summarizer (e.g. token-dense scripts), so oversized
+    requests raise instead of returning a summary.
+
+    Attributes:
+        max_payload_chars: Requests whose ``{text}`` payload exceeds this raise.
+        overflow_count: Number of calls that raised the simulated error.
+        success_count: Number of calls that returned the canned reply.
+    """
+
+    def __init__(
+        self,
+        max_payload_chars: int,
+        reply: str = "S",
+        error_message: str = "This model's maximum context length is 4096 tokens",
+    ) -> None:
+        """Configure the overflow threshold and the simulated error.
+
+        Args:
+            max_payload_chars (int): Payloads longer than this raise the error.
+            reply (str): Canned reply returned for in-budget payloads.
+            error_message (str): Message of the raised ``RuntimeError``.
+        """
+        self.max_payload_chars = max_payload_chars
+        self._reply = reply
+        self._error_message = error_message
+        self.overflow_count = 0
+        self.success_count = 0
+
+    def load_prompt(self, keyword: str = "system") -> str:
+        """Return a minimal ``{text}`` summary template.
+
+        Args:
+            keyword (str): The prompt keyword; must be ``"summary"``.
+
+        Returns:
+            str: A ``{text}`` template prefixed with ``Summarize: ``.
+        """
+        assert keyword == "summary"
+        return "Summarize: {text}"
+
+    def call_model(
+        self,
+        prompt: str,
+        model: str | None = None,
+        temperature: float = 0.1,
+        seed: int = 42,
+        stop: list[str] | None = None,
+        num_predict: int | None = None,
+        top_p: float | None = None,
+        system_prompt: str | None = None,
+        include_system_prompt: bool = True,
+        think: bool | None = None,
+    ) -> str:
+        """Raise when the payload is too large, otherwise return the reply.
+
+        Args:
+            prompt (str): The prompt sent to the model.
+            model (str | None): Unused test double argument.
+            temperature (float): Unused test double argument.
+            seed (int): Unused test double argument.
+            stop (list[str] | None): Unused test double argument.
+            num_predict (int | None): Unused test double argument.
+            top_p (float | None): Unused test double argument.
+            system_prompt (str | None): Unused test double argument.
+            include_system_prompt (bool): Unused test double argument.
+            think (bool | None): Unused test double argument.
+
+        Returns:
+            str: The canned reply for in-budget payloads.
+
+        Raises:
+            RuntimeError: When the payload exceeds ``max_payload_chars``.
+        """
+        del model, temperature, seed, stop, num_predict, top_p, system_prompt, include_system_prompt, think
+        payload = prompt.removeprefix("Summarize: ")
+        if len(payload) > self.max_payload_chars:
+            self.overflow_count += 1
+            raise RuntimeError(self._error_message)
+        self.success_count += 1
+        return self._reply
+
+
+def test_is_context_length_error_detects_known_messages() -> None:
+    """The predicate recognises provider overflow messages and ignores others."""
+    assert pipeline._is_context_length_error(
+        RuntimeError("This model's maximum context length is 4096 tokens, however you requested 9000")
+    )
+    assert pipeline._is_context_length_error(ValueError("context_length_exceeded"))
+    assert not pipeline._is_context_length_error(RuntimeError("connection refused"))
+
+
+def test_summarization_retries_with_smaller_budget_on_overflow(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A context-length error shrinks the budget and retries instead of crashing.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Fixture for patching environment variables.
+    """
+    monkeypatch.setenv("SUMMARY_MAX_INPUT_TOKENS", "20")  # -> 60-char budget
+    overflower = _OverflowingPipeline(max_payload_chars=35)
+    text = " ".join(f"word{i:02d}" for i in range(30))
+
+    result = pipeline.summarization_pipeline(text, overflower)
+
+    assert result == "S"
+    assert overflower.overflow_count >= 1  # the first, oversized attempt failed
+    assert overflower.success_count >= 1  # the smaller-budget retry succeeded
+
+
+def test_summarization_reraises_non_context_errors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Errors that are not context-length overflows propagate unchanged.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Fixture for patching environment variables.
+    """
+    monkeypatch.delenv("SUMMARY_MAX_INPUT_TOKENS", raising=False)
+    overflower = _OverflowingPipeline(max_payload_chars=-1, error_message="connection refused")
+
+    with pytest.raises(RuntimeError, match="connection refused"):
+        pipeline.summarization_pipeline("anything", overflower)
+
+
+def test_summarization_degrades_to_empty_after_exhausting_retries(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Persistent overflow degrades to an empty summary rather than crashing.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Fixture for patching environment variables.
+    """
+    monkeypatch.setenv("SUMMARY_MAX_INPUT_TOKENS", "20")
+    overflower = _OverflowingPipeline(max_payload_chars=-1)  # every request overflows
+
+    result = pipeline.summarization_pipeline("some transcript text", overflower)
+
+    assert result == ""
+    assert overflower.overflow_count == pipeline._MAX_OVERFLOW_RETRIES + 1

@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any
 
 import pandas as pd
+from loguru import logger
 from matplotlib.figure import Figure
 
 from nextext.core.diarization import assign_speakers_by_overlap, diarize_file
@@ -13,7 +14,7 @@ from nextext.core.openai_cfg import InferencePipeline
 from nextext.core.transcription import ExternalWhisperTranscriber
 from nextext.core.translation import Translator
 from nextext.core.words import WordCounter
-from nextext.utils.env_cfg import load_whisper_env
+from nextext.utils.env_cfg import load_summary_env, load_whisper_env
 
 
 def transcription_pipeline(
@@ -137,26 +138,203 @@ def translation_pipeline(
     return df
 
 
+SUMMARY_MAX_OUTPUT_TOKENS: int = 1024
+"""Hard cap on summary output tokens, so generation never crowds out the prompt."""
+
+_CHARS_PER_TOKEN: float = 3.0
+"""Conservative characters-per-token estimate used to turn the token budget into a
+character budget. Smaller is safer; token-dense scripts (CJK) may need a lower
+``SUMMARY_MAX_INPUT_TOKENS`` to compensate."""
+
+_MAX_REDUCE_DEPTH: int = 5
+"""Recursion ceiling for the reduce step; a backstop that effectively never fires
+because partial summaries shrink the text logarithmically."""
+
+_MAX_OVERFLOW_RETRIES: int = 4
+"""How many times to halve the budget and retry when a request still overflows the
+model's context window (the character heuristic under-counted, e.g. for CJK)."""
+
+_OVERFLOW_BUDGET_BACKOFF: float = 0.5
+"""Multiplier applied to the character budget on each context-overflow retry."""
+
+_CONTEXT_LENGTH_ERROR_MARKERS: tuple[str, ...] = (
+    "context length",
+    "context_length",
+    "context window",
+    "maximum context",
+    "too many tokens",
+    "reduce the length",
+    "exceeds the maximum",
+)
+"""Lower-cased substrings that identify a context-window-overflow error across
+providers (vLLM, OpenAI-compatible, Ollama)."""
+
+
+def _split_to_budget(text: str, char_budget: int) -> list[str]:
+    """Split text into chunks no larger than ``char_budget`` characters.
+
+    Words are kept whole and packed greedily; a single token longer than the
+    budget is hard-sliced so the function always makes progress and never
+    emits a chunk larger than the budget.
+
+    Args:
+        text (str): The text to split.
+        char_budget (int): Maximum characters per chunk (``>= 1``).
+
+    Returns:
+        list[str]: Chunks each no longer than ``char_budget``. Whitespace-only
+            input yields a single chunk holding the original text.
+    """
+    words = text.split()
+    if not words:
+        return [text]
+
+    chunks: list[str] = []
+    current = ""
+    for word in words:
+        # Hard-slice a token that cannot fit in a chunk on its own.
+        remainder = word
+        while len(remainder) > char_budget:
+            if current:
+                chunks.append(current)
+                current = ""
+            chunks.append(remainder[:char_budget])
+            remainder = remainder[char_budget:]
+        candidate = f"{current} {remainder}" if current else remainder
+        if len(candidate) > char_budget:
+            chunks.append(current)
+            current = remainder
+        else:
+            current = candidate
+    if current:
+        chunks.append(current)
+    return chunks
+
+
+def _summarize_chunk(text: str, inference_pipeline: InferencePipeline) -> str:
+    """Summarize a single within-budget chunk of text via the chat model.
+
+    Args:
+        text (str): A chunk of text already known to fit the context budget.
+        inference_pipeline (InferencePipeline): Shared inference client.
+
+    Returns:
+        str: The model's summary of the chunk, capped at
+            :data:`SUMMARY_MAX_OUTPUT_TOKENS` output tokens.
+    """
+    prompt = inference_pipeline.load_prompt("summary").format(text=text)
+    return inference_pipeline.call_model(prompt=prompt, num_predict=SUMMARY_MAX_OUTPUT_TOKENS)
+
+
+def _summarize_within_budget(
+    text: str,
+    inference_pipeline: InferencePipeline,
+    char_budget: int,
+    depth: int,
+) -> str:
+    """Summarize text hierarchically so no single request exceeds the budget.
+
+    A single in-budget chunk is summarized directly; multiple chunks are
+    summarized individually (map) and their summaries joined and recursively
+    summarized (reduce). A depth guard bounds the recursion for pathological
+    inputs whose summaries never shrink.
+
+    Args:
+        text (str): The text to summarize.
+        inference_pipeline (InferencePipeline): Shared inference client.
+        char_budget (int): Maximum characters of text per request.
+        depth (int): Current reduce depth, used to bound the recursion.
+
+    Returns:
+        str: The summary of the text.
+    """
+    chunks = _split_to_budget(text, char_budget)
+    if len(chunks) == 1:
+        return _summarize_chunk(chunks[0], inference_pipeline)
+    if depth >= _MAX_REDUCE_DEPTH:
+        logger.warning(
+            "Summarization exceeded the maximum reduce depth ({}); summarizing the leading chunk only.",
+            _MAX_REDUCE_DEPTH,
+        )
+        return _summarize_chunk(chunks[0], inference_pipeline)
+    partial_summaries = [_summarize_chunk(chunk, inference_pipeline) for chunk in chunks]
+    combined = "\n\n".join(partial_summaries)
+    return _summarize_within_budget(combined, inference_pipeline, char_budget, depth + 1)
+
+
+def _is_context_length_error(exc: Exception) -> bool:
+    """Report whether an exception looks like a context-window overflow.
+
+    Detection is by message text so it works across providers (vLLM,
+    OpenAI-compatible, Ollama) without depending on a specific SDK exception
+    type.
+
+    Args:
+        exc (Exception): The exception raised by an inference call.
+
+    Returns:
+        bool: ``True`` when the message matches a known overflow marker.
+    """
+    message = str(exc).lower()
+    return any(marker in message for marker in _CONTEXT_LENGTH_ERROR_MARKERS)
+
+
 def summarization_pipeline(
     text: str,
     inference_pipeline: InferencePipeline,
 ) -> str:
-    """Summarize the given text using a language model and translate the result.
+    """Summarize transcript text with a context-window-safe map-reduce strategy.
+
+    The transcript is split into chunks that fit the budget configured by
+    ``SUMMARY_MAX_INPUT_TOKENS`` (see
+    :func:`nextext.utils.env_cfg.load_summary_env`). Short transcripts are
+    summarized in a single request; longer ones are summarized chunk-by-chunk
+    and their partial summaries are recursively summarized, so no single request
+    can overflow the chat model's context window. Every request caps generation
+    at :data:`SUMMARY_MAX_OUTPUT_TOKENS` output tokens.
+
+    If a request still overflows the context window (the character heuristic
+    under-counted, e.g. for token-dense scripts), the budget is halved and the
+    summary retried up to :data:`_MAX_OVERFLOW_RETRIES` times; if even the
+    smallest budget overflows, it degrades to an empty summary rather than
+    crashing the job (fail-soft, mirroring the NER/diarization clients).
 
     Args:
         text (str): The text to summarize.
         inference_pipeline (InferencePipeline): An inference pipeline for language model interactions.
 
     Returns:
-        str: The summarized text or None if an error occurs.
+        str: The summarized text, or an empty string if every retry still
+            overflowed the context window (a fail-soft degrade, logged as a
+            warning).
 
     Raises:
         ValueError: If the input text is empty.
     """
     if not text:
         raise ValueError("Text cannot be empty.")
-    prompt = inference_pipeline.load_prompt("summary").format(text=text)
-    return inference_pipeline.call_model(prompt=prompt)
+    char_budget = int(load_summary_env().max_input_tokens * _CHARS_PER_TOKEN)
+    for attempt in range(_MAX_OVERFLOW_RETRIES + 1):
+        try:
+            return _summarize_within_budget(text, inference_pipeline, char_budget, depth=0)
+        except Exception as exc:  # context-length overflows are retried; other errors re-raise
+            if not _is_context_length_error(exc):
+                raise
+            if attempt == _MAX_OVERFLOW_RETRIES:
+                logger.warning(
+                    "Summarization still overflowed the context window after {} retries; "
+                    "returning an empty summary. Lower SUMMARY_MAX_INPUT_TOKENS for this input.",
+                    _MAX_OVERFLOW_RETRIES,
+                )
+                return ""
+            shrunk_budget = max(1, int(char_budget * _OVERFLOW_BUDGET_BACKOFF))
+            logger.warning(
+                "Summarization overflowed the context window; retrying with a smaller budget ({} -> {} chars).",
+                char_budget,
+                shrunk_budget,
+            )
+            char_budget = shrunk_budget
+    return ""
 
 
 def wordlevel_pipeline(
