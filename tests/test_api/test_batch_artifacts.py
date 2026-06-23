@@ -150,7 +150,7 @@ def test_batch_docint_is_owner_scoped(
 ) -> None:
     """Each owner's combined JSONL contains only their own jobs."""
     client, _ = stub_app_client
-    bob_headers = {OWNER_HEADER: BOB_OWNER_ID}
+    bob_headers: dict[str, str] = {OWNER_HEADER: BOB_OWNER_ID}
 
     alice_first = _submit(client, "alice1.wav")
     alice_second = _submit(client, "alice2.wav")

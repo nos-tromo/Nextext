@@ -1,7 +1,7 @@
 """Tests for the shared Nextext pipeline helpers."""
 
 from pathlib import Path
-from typing import Any
+from typing import Any, override
 
 import pandas as pd
 import pytest
@@ -180,7 +180,7 @@ def test_transcription_pipeline_falls_back_to_original_language(
 
         def __init__(self, *args: Any, **kwargs: Any) -> None:
             """Initialise the dummy transcriber; args/kwargs accepted to match the real signature."""
-            self.src_lang = None
+            self.src_lang: str | None = None
             self.transcription_result: dict[str, Any] | None = None
 
         def transcription(self) -> None:
@@ -448,6 +448,7 @@ def test_summarization_pipeline_formats_prompt(monkeypatch: pytest.MonkeyPatch) 
             """Initialise the pipeline and start the per-call prompt list."""
             self.prompts: list[str] = []
 
+        @override
         def load_prompt(self, keyword: str = "system") -> str:
             """Load the prompt template for the given keyword.
 
@@ -460,6 +461,7 @@ def test_summarization_pipeline_formats_prompt(monkeypatch: pytest.MonkeyPatch) 
             assert keyword == "summary"
             return "Summarize: {text}"
 
+        @override
         def call_model(
             self,
             prompt: str,
@@ -490,16 +492,7 @@ def test_summarization_pipeline_formats_prompt(monkeypatch: pytest.MonkeyPatch) 
             Returns:
                 str: The model's response.
             """
-            del (
-                model,
-                temperature,
-                seed,
-                stop,
-                num_predict,
-                top_p,
-                system_prompt,
-                include_system_prompt,
-            )
+            del model, temperature, seed, stop, num_predict, top_p, system_prompt, include_system_prompt
             self.prompts.append(prompt)
             return "summary result"
 
@@ -699,6 +692,7 @@ class _RecordingPipeline(InferencePipeline):
         self.calls: list[dict[str, Any]] = []
         self._reply = reply
 
+    @override
     def load_prompt(self, keyword: str = "system") -> str:
         """Return a minimal ``{text}`` summary template.
 
@@ -711,6 +705,7 @@ class _RecordingPipeline(InferencePipeline):
         assert keyword == "summary"
         return "Summarize: {text}"
 
+    @override
     def call_model(
         self,
         prompt: str,
@@ -879,6 +874,7 @@ class _OverflowingPipeline(InferencePipeline):
         self.overflow_count = 0
         self.success_count = 0
 
+    @override
     def load_prompt(self, keyword: str = "system") -> str:
         """Return a minimal ``{text}`` summary template.
 
@@ -891,6 +887,7 @@ class _OverflowingPipeline(InferencePipeline):
         assert keyword == "summary"
         return "Summarize: {text}"
 
+    @override
     def call_model(
         self,
         prompt: str,

@@ -20,7 +20,7 @@ import json
 import shutil
 import tempfile
 import uuid
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Hashable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -133,7 +133,7 @@ class JobState:
         )
 
 
-def _normalize_transcript_row(row: dict[str, Any]) -> TranscriptSegment:
+def _normalize_transcript_row(row: dict[Hashable, Any]) -> TranscriptSegment:
     """Convert a transcript DataFrame row to ``TranscriptSegment``.
 
     Args:
