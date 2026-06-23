@@ -81,8 +81,88 @@ def build_docint_jsonl_for_job(state: JobState) -> bytes:
     )
 
 
+def _render_archive_members(state: JobState) -> dict[str, bytes]:
+    """Render every produced output for a job as ``name -> bytes`` members.
+
+    This is the costly part of archive assembly — XLSX serialization,
+    word-cloud rasterization, docint JSONL — so the mapping is cached on the
+    job and reused by both the per-job and batch ZIP builders. Keys are archive
+    file names without any leading job folder, e.g. ``{stem}_transcript.csv``.
+
+    Args:
+        state: The completed job.
+
+    Returns:
+        dict[str, bytes]: Decompressed member payloads keyed by file name, in a
+            stable insertion order. Empty when the job produced no outputs.
+    """
+    if state.archive_members_cache is not None:
+        return state.archive_members_cache
+
+    stem = Path(state.file_name).stem or "result"
+    result = state.result
+    members: dict[str, bytes] = {}
+
+    transcript = result.get("transcript")
+    if isinstance(transcript, pd.DataFrame) and not transcript.empty:
+        members[f"{stem}_transcript.csv"] = transcript.to_csv(index=False).encode("utf-8")
+        members[f"{stem}_transcript.xlsx"] = _df_to_xlsx(transcript)
+
+    summary = result.get("summary")
+    if isinstance(summary, str) and summary.strip():
+        members[f"{stem}_summary.txt"] = summary.encode("utf-8")
+
+    word_counts = result.get("word_counts")
+    if isinstance(word_counts, pd.DataFrame) and not word_counts.empty:
+        members[f"{stem}_words.csv"] = word_counts.to_csv(index=False).encode("utf-8")
+        members[f"{stem}_words.xlsx"] = _df_to_xlsx(word_counts)
+
+    named_entities = result.get("named_entities")
+    if isinstance(named_entities, pd.DataFrame) and not named_entities.empty:
+        members[f"{stem}_entities.csv"] = named_entities.to_csv(index=False).encode("utf-8")
+        members[f"{stem}_entities.xlsx"] = _df_to_xlsx(named_entities)
+
+    wordcloud = result.get("wordcloud")
+    if isinstance(wordcloud, Figure):
+        members[f"{stem}_wordcloud.png"] = _figure_to_png(wordcloud)
+
+    findings = result.get("hate_speech_findings")
+    if findings:
+        findings_df = pd.DataFrame(findings)
+        members[f"{stem}_hate_speech.csv"] = findings_df.to_csv(index=False).encode("utf-8")
+        members[f"{stem}_hate_speech.xlsx"] = _df_to_xlsx(findings_df)
+
+    docint = build_docint_jsonl_for_job(state)
+    if docint:
+        members[f"{stem}_docint.jsonl"] = docint
+
+    state.archive_members_cache = members
+    return members
+
+
+def _zip_members(named_members: list[tuple[str, bytes]]) -> bytes:
+    """Compress ``(archive_path, payload)`` pairs into one ZIP.
+
+    Args:
+        named_members: Ordered ``(path, bytes)`` pairs. Paths must be unique
+            within the archive; their order is preserved in the output.
+
+    Returns:
+        bytes: ``ZIP_DEFLATED`` archive bytes.
+    """
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for path, payload in named_members:
+            zf.writestr(path, payload)
+    return buffer.getvalue()
+
+
 def build_archive_for_job(state: JobState) -> bytes:
     """Bundle every produced output for the job into a ZIP archive.
+
+    The expensive render is cached on the job (see
+    :func:`_render_archive_members`); only the cheap ZIP compression is repeated
+    if the per-job archive is downloaded more than once.
 
     Args:
         state: The completed job.
@@ -90,62 +170,9 @@ def build_archive_for_job(state: JobState) -> bytes:
     Returns:
         bytes: ZIP bytes laid out as ``{stem}/{stem}_{output}.{ext}``.
     """
-    if state.archive_cache is not None:
-        return state.archive_cache
-
     stem = Path(state.file_name).stem or "result"
-    base = f"{stem}/{stem}"
-    result = state.result
-
-    buffer = io.BytesIO()
-    with zipfile.ZipFile(buffer, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
-        transcript = result.get("transcript")
-        if isinstance(transcript, pd.DataFrame) and not transcript.empty:
-            zf.writestr(
-                f"{base}_transcript.csv",
-                transcript.to_csv(index=False).encode("utf-8"),
-            )
-            zf.writestr(f"{base}_transcript.xlsx", _df_to_xlsx(transcript))
-
-        summary = result.get("summary")
-        if isinstance(summary, str) and summary.strip():
-            zf.writestr(f"{base}_summary.txt", summary.encode("utf-8"))
-
-        word_counts = result.get("word_counts")
-        if isinstance(word_counts, pd.DataFrame) and not word_counts.empty:
-            zf.writestr(
-                f"{base}_words.csv",
-                word_counts.to_csv(index=False).encode("utf-8"),
-            )
-            zf.writestr(f"{base}_words.xlsx", _df_to_xlsx(word_counts))
-
-        named_entities = result.get("named_entities")
-        if isinstance(named_entities, pd.DataFrame) and not named_entities.empty:
-            zf.writestr(
-                f"{base}_entities.csv",
-                named_entities.to_csv(index=False).encode("utf-8"),
-            )
-            zf.writestr(f"{base}_entities.xlsx", _df_to_xlsx(named_entities))
-
-        wordcloud = result.get("wordcloud")
-        if isinstance(wordcloud, Figure):
-            zf.writestr(f"{base}_wordcloud.png", _figure_to_png(wordcloud))
-
-        findings = result.get("hate_speech_findings")
-        if findings:
-            findings_df = pd.DataFrame(findings)
-            zf.writestr(
-                f"{base}_hate_speech.csv",
-                findings_df.to_csv(index=False).encode("utf-8"),
-            )
-            zf.writestr(f"{base}_hate_speech.xlsx", _df_to_xlsx(findings_df))
-
-        docint = build_docint_jsonl_for_job(state)
-        if docint:
-            zf.writestr(f"{base}_docint.jsonl", docint)
-
-    state.archive_cache = buffer.getvalue()
-    return state.archive_cache
+    members = _render_archive_members(state)
+    return _zip_members([(f"{stem}/{name}", payload) for name, payload in members.items()])
 
 
 def build_batch_docint_jsonl(states: list[JobState]) -> bytes:
@@ -185,9 +212,12 @@ def _unique_archive_folder(stem: str, seen: dict[str, int]) -> str:
 def build_batch_archive(states: list[JobState]) -> bytes:
     """Bundle every job's outputs into one ZIP, nested per job.
 
-    Each job's per-job archive (``{stem}/{stem}_{output}.{ext}``) is copied
-    under a collision-free top-level folder so that uploads sharing a name do
-    not overwrite one another. Jobs that produced no files are skipped.
+    Each job's rendered members (``{stem}_{output}.{ext}``) are placed under a
+    collision-free top-level folder so that uploads sharing a name do not
+    overwrite one another. Members come straight from the per-job render cache
+    and are compressed exactly once here — unlike the old nested layout, no
+    per-job archive is decompressed and re-compressed. Jobs that produced no
+    files are skipped.
 
     Args:
         states: Jobs to bundle, in the order they should appear.
@@ -195,27 +225,17 @@ def build_batch_archive(states: list[JobState]) -> bytes:
     Returns:
         bytes: ZIP bytes. ``b""`` when no job produced any output.
     """
-    buffer = io.BytesIO()
     seen: dict[str, int] = {}
-    wrote_any = False
-    with zipfile.ZipFile(buffer, mode="w", compression=zipfile.ZIP_DEFLATED) as outer:
-        for state in states:
-            inner_bytes = build_archive_for_job(state)
-            with zipfile.ZipFile(io.BytesIO(inner_bytes)) as inner:
-                members = [info for info in inner.infolist() if not info.is_dir()]
-                if not members:
-                    continue
-                folder = _unique_archive_folder(Path(state.file_name).stem, seen)
-                for info in members:
-                    # Rewrite the leading folder so identically named jobs stay
-                    # distinct; the rest of the inner path is preserved.
-                    _, separator, remainder = info.filename.partition("/")
-                    inner_name = remainder if separator else info.filename
-                    outer.writestr(f"{folder}/{inner_name}", inner.read(info.filename))
-                    wrote_any = True
-    if not wrote_any:
+    named: list[tuple[str, bytes]] = []
+    for state in states:
+        members = _render_archive_members(state)
+        if not members:
+            continue
+        folder = _unique_archive_folder(Path(state.file_name).stem, seen)
+        named.extend((f"{folder}/{name}", payload) for name, payload in members.items())
+    if not named:
         return b""
-    return buffer.getvalue()
+    return _zip_members(named)
 
 
 def _missing_dataframe(state: JobState, key: str) -> bool:
