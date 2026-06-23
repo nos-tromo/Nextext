@@ -60,7 +60,9 @@ def transcription_pipeline(
     # Diarization runs against the /diarize HTTP service. Skip it for
     # single-speaker requests and for empty transcripts (silent audio
     # short-circuited by the speech guard) to avoid a needless request.
-    segments = transcriber.transcription_result["segments"] if transcriber.transcription_result else []
+    segments: list[dict[str, Any]] = (
+        transcriber.transcription_result["segments"] if transcriber.transcription_result else []
+    )
     if n_speakers > 1 and segments:
         diarize_segments = diarize_file(file_path, max_speakers=n_speakers)
         if diarize_segments:
