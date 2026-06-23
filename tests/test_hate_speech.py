@@ -58,6 +58,31 @@ def test_parse_malformed_json_returns_default() -> None:
     assert result["confidence"] == "low"
 
 
+@pytest.mark.parametrize(
+    ("raw_category", "expected"),
+    [
+        ("extremism", "extremism"),
+        ("Sexual_Orientation", "sexual_orientation"),
+        ("Nationality", "nationality"),
+    ],
+)
+def test_parse_preserves_docint_categories(raw_category: str, expected: str) -> None:
+    """The richer docint GMF categories pass through lower-cased and unchanged.
+
+    The parser has no allow-list, so the group-focused-enmity enum
+    (extremism, sexual_orientation, nationality, ...) survives normalisation.
+
+    Args:
+        raw_category (str): The category label as returned by the model.
+        expected (str): The lower-cased category the parser should preserve.
+    """
+    raw = f'{{"hate_speech": true, "category": "{raw_category}", "confidence": "high", "reason": "x"}}'
+
+    result = _parse_hate_speech_payload(raw)
+
+    assert result["category"] == expected
+
+
 def test_parse_garbage_input_returns_default() -> None:
     """Test that completely unparseable input returns the default safe detection result."""
     result = _parse_hate_speech_payload("I cannot answer this request.")

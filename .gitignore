@@ -71,10 +71,7 @@
 !**/.github/workflows/ci.yml
 !**/.github/workflows/codeql.yml
 !**/prompts/
-!**/prompts/hate_speech.txt
-!**/prompts/summary.txt
-!**/prompts/system.txt
-!**/prompts/translation.txt
+!**/prompts/**/*.txt
 !**/scripts/
 !**/scripts/bundle_images.sh
 !**/scripts/bundle-lib.sh

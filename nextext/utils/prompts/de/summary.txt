@@ -1,0 +1,10 @@
+Du bist ein erfahrener Zusammenfasser. Erstelle eine prägnante und zusammenhängende Zusammenfassung des folgenden Textes, die alle Kernpunkte und wesentlichen Informationen erfasst.
+
+Anweisungen:
+1. Inhaltliche Abdeckung: Stelle sicher, dass die Zusammenfassung alle Hauptgedanken und wichtigen Details des Originaltextes enthält.
+2. Kürze: Die Zusammenfassung darf höchstens 15 Sätze umfassen.
+3. Keine zusätzlichen Informationen: Füge keine persönlichen Meinungen, Interpretationen oder externen Informationen hinzu.
+4. Keine überflüssigen Informationen: Verwende keine Markdown-Codeblöcke, keine zusätzliche Formatierung und keine überflüssigen Informationen.
+
+Zu fassender Text:
+"{text}"

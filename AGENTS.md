@@ -47,7 +47,7 @@ This document describes every agent, how they interact, and what they expect fro
 - **Inputs:** Transcript `pd.DataFrame` (only the `text` column is used), target ISO 639-1 code, optional resolved source code from transcription, shared `InferencePipeline`.
 - **Outputs:** In-place replacement of the `text` column; `Translator.src_lang` is populated for logging and downstream toggles.
 - **Dependencies:** `langdetect`, `pycountry`, plus an OpenAI-compatible chat completions backend selected by `INFERENCE_PROVIDER` (`ollama` by default, `vllm`, or `openai`).
-- **Operational notes:** This is the only translation path — Whisper's audio-translate task is no longer used — so English targets are translated here too. Translation is skipped only when the resolved source language already equals the target (see `should_translate()` in `nextext/pipeline.py`). Translation runs on `TEXT_MODEL` — the same model used for summarization — over the templated prompt in `nextext/utils/prompts/translation.txt` plus a translation system prompt, identically for every `INFERENCE_PROVIDER`.
+- **Operational notes:** This is the only translation path — Whisper's audio-translate task is no longer used — so English targets are translated here too. Translation is skipped only when the resolved source language already equals the target (see `should_translate()` in `nextext/pipeline.py`). Translation runs on `TEXT_MODEL` — the same model used for summarization — over the templated prompt in `nextext/utils/prompts/en/translation.txt` (translation is not localized — its output follows the target-language placeholders) plus a translation system prompt, identically for every `INFERENCE_PROVIDER`.
 
 ## Word Intelligence Agent
 
@@ -61,29 +61,29 @@ This document describes every agent, how they interact, and what they expect fro
 
 ## Summarization Agent
 
-- **Key files:** `summarization_pipeline()` (`nextext/pipeline.py`), prompt template `nextext/utils/prompts/summary.txt`.
+- **Key files:** `summarization_pipeline()` (`nextext/pipeline.py`), localized prompt templates `nextext/utils/prompts/{en,de}/summary.txt`.
 - **Responsibilities:** Summarize the transcript with a context-safe map-reduce strategy — split it into chunks that fit the `SUMMARY_MAX_INPUT_TOKENS` budget, summarize each (map), then recursively summarize the joined partial summaries (reduce); short transcripts take a single-shot path. Every request applies the system instruction defined in `InferencePipeline`, caps generation at `SUMMARY_MAX_OUTPUT_TOKENS` (1024) output tokens, and the prompt limits the summary to 15 sentences.
 - **Inputs:** Concatenated transcript string, `InferencePipeline`.
 - **Outputs:** Summary string; orchestrators attach it to session state or export it via `FileProcessor`.
-- **Dependencies:** OpenAI-compatible chat completions via the backend selected by `INFERENCE_PROVIDER` (Ollama on `http://localhost:11434/v1` by default, a LiteLLM-fronted vLLM stack, or the hosted OpenAI API); prompt language controlled by `InferencePipeline.out_language`. Summarization always uses the templated prompt + system message regardless of provider.
+- **Dependencies:** OpenAI-compatible chat completions via the backend selected by `INFERENCE_PROVIDER` (Ollama on `http://localhost:11434/v1` by default, a LiteLLM-fronted vLLM stack, or the hosted OpenAI API); output language controlled by `NEXTEXT_RESPONSE_LANGUAGE` (localized `en`/`de` summary + system prompts). Summarization always uses the templated prompt + system message regardless of provider.
 - **Operational notes:** The pipeline raises `ValueError` when text is empty; make sure optional agents check for data before calling. Transcripts larger than the budget are summarized hierarchically so no single request overflows the model's context window (a reduce-depth guard bounds the recursion); the token budget is converted to a character budget with a conservative ratio, so lower `SUMMARY_MAX_INPUT_TOKENS` for token-dense scripts (e.g. CJK) or small `max_model_len` backends. If a request still overflows the window, the budget auto-halves and retries up to 4×, then degrades to an empty summary (fail-soft, like the NER/diarization clients) rather than crashing.
 
 ## Hate Speech Detection Agent
 
-- **Key files:** `nextext/core/hate_speech.py`, `hate_speech_pipeline()` (`nextext/pipeline.py`), prompt template `nextext/utils/prompts/hate_speech.txt`.
+- **Key files:** `nextext/core/hate_speech.py`, `hate_speech_pipeline()` (`nextext/pipeline.py`), localized prompt templates `nextext/utils/prompts/{en,de}/hate_speech.txt`.
 - **Responsibilities:** Iterate over each transcript segment, send it to an LLM with the hate speech prompt, and return a list of flagged entries with structured metadata.
 - **Inputs:** Transcript `pd.DataFrame` (only the `text` column is used), shared `InferencePipeline`, optional `max_chars` limit (default 2048).
 - **Outputs:** `list[dict]` — each entry contains `hate_speech=True`, `category`, `confidence` (`high`/`medium`/`low`), `reason`, and the original `text`. Only flagged segments are included; an empty list means no hate speech was found.
-- **Categories:** racism, sexism, homophobia, religious hatred, xenophobia, disability discrimination, none.
+- **Categories:** group-focused enmity (GMF) enum — race, ethnicity, religion, gender, sexual_orientation, disability, nationality, extremism, other, none (lower-cased pass-through; unrecognised labels are preserved). The prompt and the free-text `reason` follow `NEXTEXT_RESPONSE_LANGUAGE`.
 - **Dependencies:** OpenAI-compatible chat completions via `InferencePipeline`; same provider configuration as translation and summarization.
 - **Operational notes:** The LLM response is parsed as JSON with regex fallback for prose-wrapped output. Parsing failures produce a safe default (`hate_speech=False`). Text is truncated to `max_chars` before sending to the model. CLI results are exported as a CSV via `FileProcessor`; the React UI downloads the hate speech CSV via the backend artifacts endpoint.
 
 ## Inference Service Agent
 
-- **Key files:** `nextext/core/openai_cfg.py` and prompts directory `nextext/utils/prompts/`.
+- **Key files:** `nextext/core/openai_cfg.py` and the localized prompts directory `nextext/utils/prompts/` (`en/`, `de/` subdirectories).
 - **Responsibilities:** Construct prompts, resolve the configured `TEXT_MODEL`, create an OpenAI-compatible client, perform provider health checks, and expose `call_model()` to translation and summarization.
 - **Inputs:** Prompt keyword (`system`, `summary`, `translation`, `hate_speech`), runtime options (temperature, stop tokens, max tokens, `include_system_prompt`), provider configuration (`INFERENCE_PROVIDER`, `OPENAI_API_BASE`, `OPENAI_API_KEY`).
-- **Outputs:** Raw string response from the configured chat completion endpoint; `sys_prompt` ensures outputs are emitted in the configured language when the system role is included.
+- **Outputs:** Raw string response from the configured chat completion endpoint; the localized `sys_prompt` (selected by `NEXTEXT_RESPONSE_LANGUAGE` via `load_prompt`, English fallback) ensures outputs are emitted in that language when the system role is included.
 - **Operational notes:** Ollama remains the default provider and is reached through its `/v1/chat/completions` compatibility layer. `INFERENCE_PROVIDER=vllm` targets a LiteLLM-fronted `nos-tromo/vllm-service` stack (LiteLLM dispatches by `model` field, so `TEXT_MODEL` must be registered on the endpoint). `INFERENCE_PROVIDER=openai` targets the hosted OpenAI API. `call_model(include_system_prompt=False)` sends a single user message for models or endpoints that accept only `user`/`assistant` roles; all standard callers keep the default system prompt. `OPENAI_API_KEY` is required for every provider. `OLLAMA_THINK` (tri-state: `1`/`true`/`yes`/`on` to enable, `0`/`false`/`no`/`off` to disable, unset to omit) sets a process-wide default for the Ollama `think` request field; `call_model(think=...)` overrides it per call. Forwarded via `extra_body`, so it is a no-op on vLLM/OpenAI.
 
 ## File Export Agent

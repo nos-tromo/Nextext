@@ -12,9 +12,6 @@ from nextext.core.docint_transcript import (
     build_docint_jsonl,
 )
 from nextext.core.docint_transcript import (
-    language_name as _language_name,
-)
-from nextext.core.docint_transcript import (
     transcript_segments_from_df as _transcript_segments_from_df,
 )
 from nextext.core.openai_cfg import InferencePipeline
@@ -332,7 +329,7 @@ def _run_main(args: argparse.Namespace) -> None:
     # from the target (so an English target is translated too).
     inference_pipeline = None
     if should_translate(args.task, args.src_lang, args.trg_lang):
-        inference_pipeline = InferencePipeline(out_language=_language_name(args.trg_lang))
+        inference_pipeline = InferencePipeline()
         if not inference_pipeline.get_health():
             logger.error("The configured inference provider is not reachable.")
             raise ConnectionError(
@@ -382,7 +379,7 @@ def _run_main(args: argparse.Namespace) -> None:
 
     if args.summarize:
         if inference_pipeline is None:
-            inference_pipeline = InferencePipeline(out_language=_language_name(transcript_lang))
+            inference_pipeline = InferencePipeline()
         if not inference_pipeline.get_health():
             logger.error("The configured inference provider is not reachable.")
             raise ConnectionError(
@@ -401,7 +398,7 @@ def _run_main(args: argparse.Namespace) -> None:
     # Hate speech detection
     if args.hate_speech:
         if inference_pipeline is None:
-            inference_pipeline = InferencePipeline(out_language=_language_name(transcript_lang))
+            inference_pipeline = InferencePipeline()
         if not inference_pipeline.get_health():
             logger.error("The configured inference provider is not reachable.")
             raise ConnectionError(
