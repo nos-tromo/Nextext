@@ -9,7 +9,11 @@ import requests
 from dotenv import load_dotenv
 from loguru import logger
 
-from nextext.utils.env_cfg import load_inference_env
+from nextext.utils.env_cfg import (
+    DEFAULT_PROMPT_LANGUAGE,
+    load_inference_env,
+    load_language_env,
+)
 
 load_dotenv()
 
@@ -30,19 +34,18 @@ class InferencePipeline:
     """Inference pipeline for OpenAI-compatible chat completions.
 
     Attributes:
-        out_language (str): Human-readable language name used in the system
-            prompt. Defaults to ``"German"``.
-        prompt_dir (Path): Directory where prompt template files live.
+        prompt_dir (Path): Base directory holding the localized prompt
+            subdirectories (``en/``, ``de/``). The active language is resolved
+            per call by :meth:`load_prompt`.
     """
 
-    out_language: str = "German"
     _default_model: str | None = field(default=None, init=False)
     _client: Any | None = field(default=None, init=False)
     prompt_dir: Path = field(default=PROMPT_DIR, init=False)
 
     def __post_init__(self) -> None:
-        """Load the system prompt at initialisation time."""
-        self.sys_prompt = self.load_prompt().format(language=self.out_language)
+        """Load the localized system prompt at initialisation time."""
+        self.sys_prompt = self.load_prompt()
 
     @property
     def base_url(self) -> str:
@@ -149,20 +152,38 @@ class InferencePipeline:
         return load_inference_env().provider
 
     def load_prompt(self, keyword: str = "system") -> str:
-        """Load a prompt from the prompts directory based on the given keyword.
+        """Load a localized prompt template by keyword.
+
+        The active language is resolved from ``NEXTEXT_RESPONSE_LANGUAGE`` via
+        :func:`nextext.utils.env_cfg.load_language_env`; the prompt is read from
+        ``{prompt_dir}/{code}/{keyword}.txt``. When that locale lacks the file
+        (e.g. ``de/translation.txt``), it falls back to the English copy under
+        ``{prompt_dir}/en/`` so a partial language pack never breaks a call.
 
         Args:
             keyword (str): The keyword identifying the prompt file (without extension).
 
         Returns:
-            str: The content of the prompt file.
+            str: The content of the localized prompt file (English on fallback).
 
         Raises:
-            FileNotFoundError: If the prompt file for the given keyword does not exist.
+            FileNotFoundError: If neither the localized nor the English prompt
+                file for the given keyword exists.
         """
-        prompt_path = self.prompt_dir / f"{keyword}.txt"
+        code = load_language_env().code
+        prompt_path = self.prompt_dir / code / f"{keyword}.txt"
         if not prompt_path.is_file():
-            raise FileNotFoundError(f"Prompt file for keyword '{keyword}' not found.")
+            fallback_path = self.prompt_dir / DEFAULT_PROMPT_LANGUAGE / f"{keyword}.txt"
+            if not fallback_path.is_file():
+                raise FileNotFoundError(f"Prompt file for keyword '{keyword}' not found.")
+            if code != DEFAULT_PROMPT_LANGUAGE:
+                logger.warning(
+                    "Localized prompt '{}' missing for language '{}'; falling back to '{}'.",
+                    keyword,
+                    code,
+                    DEFAULT_PROMPT_LANGUAGE,
+                )
+            prompt_path = fallback_path
         with open(prompt_path, encoding="utf-8") as f:
             logger.info("Loaded prompt from '{}'", prompt_path)
             return f.read()

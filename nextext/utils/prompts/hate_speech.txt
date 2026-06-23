@@ -1,8 +1,0 @@
-Analyze the following text for hate speech, discriminatory language, or incitement to violence.
-Respond ONLY with a JSON object in this exact format:
-{"hate_speech": true/false, "category": "<category>", "confidence": "high/medium/low", "reason": "<brief explanation>"}
-
-Categories: racism, sexism, homophobia, religious hatred, xenophobia, disability discrimination, none
-
-Text to analyze:
-"{text}"

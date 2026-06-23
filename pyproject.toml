@@ -67,7 +67,8 @@ include-package-data = true
 nextext = [
     "utils/fonts/*.ttf",
     "utils/mappings/*.json",
-    "utils/prompts/*.txt",
+    "utils/prompts/en/*.txt",
+    "utils/prompts/de/*.txt",
 ]
 
 [tool.setuptools.packages.find]

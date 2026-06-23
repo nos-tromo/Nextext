@@ -2,6 +2,7 @@
 
 import os
 from dataclasses import dataclass
+from typing import Literal
 
 from dotenv import load_dotenv
 from loguru import logger
@@ -44,6 +45,59 @@ def load_default_target_lang() -> str:
     """
     raw = os.getenv("NEXTEXT_DEFAULT_TARGET_LANG", "").strip()
     return raw or DEFAULT_TARGET_LANG
+
+
+PROMPT_SUPPORTED_LANGUAGES: tuple[str, ...] = ("en", "de")
+DEFAULT_PROMPT_LANGUAGE: str = "en"
+
+
+@dataclass(frozen=True)
+class LanguageConfig:
+    """Dataclass for the LLM response-language configuration.
+
+    Attributes:
+        code: Two-letter language code selecting the localized prompt
+            subdirectory (``nextext/utils/prompts/<code>/``) used for the
+            system, summary, and hate-speech prompts. One of
+            :data:`PROMPT_SUPPORTED_LANGUAGES`.
+    """
+
+    code: Literal["en", "de"]
+
+
+def load_language_env(default: str = DEFAULT_PROMPT_LANGUAGE) -> LanguageConfig:
+    """Loads the LLM response-language setting from ``NEXTEXT_RESPONSE_LANGUAGE``.
+
+    The value selects which localized prompt subdirectory
+    (``nextext/utils/prompts/<code>/``) supplies the system, summary, and
+    hate-speech prompts, so it governs the language of generated summaries and
+    hate-speech rationales independently of the transcription source language or
+    the translation target. Translation output is unaffected — it is driven by
+    explicit source/target language codes. Unrecognised values warn and fall
+    back to ``default`` (then ``"en"``) so a typo cannot break bring-up.
+
+    Args:
+        default: Fallback language code used when ``NEXTEXT_RESPONSE_LANGUAGE``
+            is unset, blank, or invalid. Defaults to
+            :data:`DEFAULT_PROMPT_LANGUAGE` (``"en"``).
+
+    Returns:
+        LanguageConfig: Dataclass carrying the resolved two-letter ``code``.
+    """
+    raw = os.getenv("NEXTEXT_RESPONSE_LANGUAGE")
+    candidate = (raw if raw is not None else default).strip().lower()
+    if candidate not in PROMPT_SUPPORTED_LANGUAGES:
+        if raw is not None and raw.strip():
+            logger.warning(
+                "Unknown NEXTEXT_RESPONSE_LANGUAGE '{}'. Falling back to '{}'.",
+                raw,
+                default,
+            )
+        candidate = default.strip().lower()
+        if candidate not in PROMPT_SUPPORTED_LANGUAGES:
+            candidate = "en"
+    code: Literal["en", "de"] = "de" if candidate == "de" else "en"
+    return LanguageConfig(code=code)
 
 
 @dataclass(frozen=True)

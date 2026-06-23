@@ -278,7 +278,6 @@ def _run_pipeline_blocking(state: JobState, push_event: PushEvent) -> dict[str, 
         ConnectionError: If the configured inference provider is unreachable.
     """
     # Local imports keep test stubs and import-time module reloads predictable.
-    from nextext.core.docint_transcript import language_name
     from nextext.core.openai_cfg import InferencePipeline
     from nextext.pipeline import (
         hate_speech_pipeline,
@@ -382,7 +381,7 @@ def _run_pipeline_blocking(state: JobState, push_event: PushEvent) -> dict[str, 
     inference_pipeline: InferencePipeline | None = None
     needs_translation = should_translate(file_opts["task"], file_opts["src_lang"], file_opts["trg_lang"])
     if needs_translation:
-        inference_pipeline = InferencePipeline(out_language=language_name(file_opts["trg_lang"]))
+        inference_pipeline = InferencePipeline()
         if not inference_pipeline.get_health():
             raise ConnectionError(
                 "The configured inference provider is not reachable. Please ensure it is running and accessible."
@@ -436,7 +435,7 @@ def _run_pipeline_blocking(state: JobState, push_event: PushEvent) -> dict[str, 
     _notify(3)
     if file_opts["summarization"]:
         if inference_pipeline is None:
-            inference_pipeline = InferencePipeline(out_language=language_name(transcript_language))
+            inference_pipeline = InferencePipeline()
             if not inference_pipeline.get_health():
                 raise ConnectionError(
                     "The configured inference provider is not reachable. Please ensure it is running and accessible."
@@ -453,7 +452,7 @@ def _run_pipeline_blocking(state: JobState, push_event: PushEvent) -> dict[str, 
     _notify(4)
     if file_opts["hate_speech"]:
         if inference_pipeline is None:
-            inference_pipeline = InferencePipeline(out_language=language_name(transcript_language))
+            inference_pipeline = InferencePipeline()
             if not inference_pipeline.get_health():
                 raise ConnectionError(
                     "The configured inference provider is not reachable. Please ensure it is running and accessible."
