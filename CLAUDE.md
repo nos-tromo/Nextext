@@ -16,7 +16,7 @@ Nextext is a modular audio analysis toolkit that transcribes, translates, and an
 ```bash
 # Install dependencies
 uv sync                    # production deps
-uv sync --group dev        # include dev deps (pytest, ruff, mypy, pre-commit)
+uv sync --group dev        # include dev deps (pytest, ruff, pyrefly, pre-commit)
 
 # Run the app
 uv run nextext-api         # FastAPI backend on port 8000
@@ -37,21 +37,21 @@ uv run pytest -k "test_name"          # single test by name
 # Linting & formatting (also enforced by pre-commit hooks)
 ruff check --fix           # lint with auto-fix
 ruff format                # format code
-mypy --no-incremental --ignore-missing-imports --disable-error-code=import-untyped --disable-error-code=attr-defined --disable-error-code=assignment nextext/
+uv run pyrefly check
 ```
 
 ## Testing
 
 - Always run the full test suite (`pytest`) after making changes and report pass/fail counts.
 - When tests fail, fix the root cause rather than patching tests to match stale/removed code.
-- Verify with `pre-commit run --all-files` (mypy, lint, docstrings) before declaring work complete.
+- Verify with `pre-commit run --all-files` (pyrefly, lint, docstrings) before declaring work complete.
 
 Tests are in `tests/` using pytest with monkeypatch fixtures and `respx` for mocking the HTTP inference clients (Whisper, NER, diarization). Tests simulate Docker detection and environment configuration. No GPU, no network, and no model downloads required for tests.
 
 ## Docstrings & Style
 
 - All new/modified Python functions must have Google-style docstrings.
-- Python 3.12 is the target; prefer explicit types and distinct variable names across branches to satisfy mypy.
+- Python 3.12 is the target; prefer explicit types and distinct variable names across branches to satisfy pyrefly.
 
 ## Architecture
 
