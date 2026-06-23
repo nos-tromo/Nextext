@@ -29,6 +29,7 @@ from fastapi import (
 from fastapi.responses import StreamingResponse
 from loguru import logger
 from pydantic import ValidationError
+from starlette.concurrency import run_in_threadpool
 
 from nextext.api.artifacts import (
     BATCH_ARTIFACTS,
@@ -295,7 +296,10 @@ async def download_batch_artifact(
         )
     states = await manager.list_for_owner(owner_id)
     completed = [state for state in states if state.status == JobStatus.COMPLETED]
-    rendered = render_batch_artifact(completed, name)
+    # Assembling a multi-file batch ZIP is CPU-bound (openpyxl XLSX + nested
+    # zips); render it off the event loop so a large bundle does not stall SSE
+    # streams, health checks, or other downloads while it builds.
+    rendered = await run_in_threadpool(render_batch_artifact, completed, name)
     if rendered is None:
         raise HTTPException(
             status_code=404,
@@ -449,7 +453,9 @@ async def download_artifact(
             status_code=409,
             detail=f"Job '{job_id}' is in status '{state.status}'; artifacts unavailable.",
         )
-    rendered = render_artifact(state, name)
+    # Rendering (esp. archive.zip / XLSX) is CPU-bound; keep it off the event
+    # loop so a large artifact does not block concurrent requests.
+    rendered = await run_in_threadpool(render_artifact, state, name)
     if rendered is None:
         raise HTTPException(
             status_code=404,
