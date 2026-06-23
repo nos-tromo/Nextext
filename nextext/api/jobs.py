@@ -104,7 +104,11 @@ class JobState:
     result: dict[str, Any] = field(default_factory=dict)
     event_history: list[tuple[str, bytes]] = field(default_factory=list)
     subscribers: list[asyncio.Queue[bytes | None]] = field(default_factory=list)
-    archive_cache: bytes | None = None
+    # Rendered archive members (archive-relative name -> decompressed bytes),
+    # cached so the per-job and batch ZIP builders reuse the expensive render
+    # (XLSX, word cloud, docint) instead of recomputing it; only the cheap ZIP
+    # compression is redone per download.
+    archive_members_cache: dict[str, bytes] | None = None
 
     def snapshot(self) -> JobSnapshot:
         """Return a Pydantic snapshot suitable for JSON serialization.
