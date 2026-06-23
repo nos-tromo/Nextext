@@ -11,6 +11,7 @@ from nextext.utils.env_cfg import (
     DEFAULT_VAD_TIMEOUT,
     load_diarization_env,
     load_inference_env,
+    load_language_env,
     load_ner_env,
     load_summary_env,
     load_vad_env,
@@ -735,3 +736,95 @@ def test_load_summary_env_invalid_budget_warns_and_defaults(
 
     assert cfg.max_input_tokens == DEFAULT_SUMMARY_MAX_INPUT_TOKENS
     assert "SUMMARY_MAX_INPUT_TOKENS" in sink.getvalue()
+
+
+# ---------------------------------------------------------------------------
+# load_language_env
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("raw_value", "expected"),
+    [("de", "de"), ("en", "en"), ("  DE  ", "de"), ("EN", "en")],
+)
+def test_load_language_env_parses_supported(
+    monkeypatch: pytest.MonkeyPatch,
+    raw_value: str,
+    expected: str,
+) -> None:
+    """A supported NEXTEXT_RESPONSE_LANGUAGE is normalised to its language code.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Fixture for patching environment variables.
+        raw_value (str): The raw environment value.
+        expected (str): The resolved two-letter language code.
+    """
+    monkeypatch.setenv("NEXTEXT_RESPONSE_LANGUAGE", raw_value)
+
+    cfg = load_language_env()
+
+    assert cfg.code == expected
+
+
+def test_load_language_env_unset_returns_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An unset NEXTEXT_RESPONSE_LANGUAGE falls back to English.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Fixture for patching environment variables.
+    """
+    monkeypatch.delenv("NEXTEXT_RESPONSE_LANGUAGE", raising=False)
+
+    cfg = load_language_env()
+
+    assert cfg.code == "en"
+
+
+def test_load_language_env_blank_returns_default_without_warning(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A blank NEXTEXT_RESPONSE_LANGUAGE falls back to English without warning.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Fixture for patching environment variables.
+    """
+    from loguru import logger
+
+    monkeypatch.setenv("NEXTEXT_RESPONSE_LANGUAGE", "   ")
+
+    sink = io.StringIO()
+    handler_id = logger.add(sink, level="WARNING")
+    try:
+        cfg = load_language_env()
+    finally:
+        logger.remove(handler_id)
+
+    assert cfg.code == "en"
+    assert "NEXTEXT_RESPONSE_LANGUAGE" not in sink.getvalue()
+
+
+@pytest.mark.parametrize("raw_value", ["fr", "xx", "german"])
+def test_load_language_env_invalid_warns_and_defaults(
+    monkeypatch: pytest.MonkeyPatch,
+    raw_value: str,
+) -> None:
+    """An unsupported NEXTEXT_RESPONSE_LANGUAGE warns and falls back to English.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Fixture for patching environment variables.
+        raw_value (str): An unsupported language token.
+    """
+    from loguru import logger
+
+    monkeypatch.setenv("NEXTEXT_RESPONSE_LANGUAGE", raw_value)
+
+    sink = io.StringIO()
+    handler_id = logger.add(sink, level="WARNING")
+    try:
+        cfg = load_language_env()
+    finally:
+        logger.remove(handler_id)
+
+    assert cfg.code == "en"
+    assert "NEXTEXT_RESPONSE_LANGUAGE" in sink.getvalue()

@@ -1,5 +1,6 @@
 """Tests for the inference client configuration helpers."""
 
+import io
 from typing import Any, ClassVar
 
 import pytest
@@ -383,3 +384,90 @@ def test_call_model_preserves_existing_kwargs_when_think_set(
     assert recorded["top_p"] == 0.9
     assert recorded["stop"] == ["END"]
     assert recorded["extra_body"] == {"think": False}
+
+
+# ---------------------------------------------------------------------------
+# load_prompt locale resolution
+# ---------------------------------------------------------------------------
+
+
+def test_load_prompt_defaults_to_english(monkeypatch: pytest.MonkeyPatch) -> None:
+    """With no NEXTEXT_RESPONSE_LANGUAGE set, prompts come from the en/ locale.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): The pytest fixture for patching
+            environment variables.
+    """
+    monkeypatch.delenv("NEXTEXT_RESPONSE_LANGUAGE", raising=False)
+    pipeline = InferencePipeline()
+
+    assert "English" in pipeline.load_prompt("system")
+
+
+def test_load_prompt_selects_german_locale(monkeypatch: pytest.MonkeyPatch) -> None:
+    """NEXTEXT_RESPONSE_LANGUAGE=de selects the de/ system and summary prompts.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): The pytest fixture for patching
+            environment variables.
+    """
+    monkeypatch.setenv("NEXTEXT_RESPONSE_LANGUAGE", "de")
+    pipeline = InferencePipeline()
+
+    assert "deutscher Sprache" in pipeline.load_prompt("system")
+    assert "Zusammenfassung" in pipeline.load_prompt("summary")
+
+
+def test_post_init_loads_localized_system_prompt(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The cached sys_prompt reflects the active locale at construction time.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): The pytest fixture for patching
+            environment variables.
+    """
+    monkeypatch.setenv("NEXTEXT_RESPONSE_LANGUAGE", "de")
+    pipeline = InferencePipeline()
+
+    assert "deutscher Sprache" in pipeline.sys_prompt
+
+
+def test_load_prompt_falls_back_to_english_with_warning(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A keyword missing from the active locale falls back to en/ and warns.
+
+    German ships no ``translation.txt``, so requesting it under ``de`` must
+    return the English template and log a fallback warning.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): The pytest fixture for patching
+            environment variables.
+    """
+    from loguru import logger
+
+    monkeypatch.setenv("NEXTEXT_RESPONSE_LANGUAGE", "de")
+    pipeline = InferencePipeline()
+
+    sink = io.StringIO()
+    handler_id = logger.add(sink, level="WARNING")
+    try:
+        translation_prompt = pipeline.load_prompt("translation")
+    finally:
+        logger.remove(handler_id)
+
+    assert "{SOURCE_LANG}" in translation_prompt
+    log_output = sink.getvalue()
+    assert "translation" in log_output
+    assert "falling back" in log_output
+
+
+def test_load_prompt_unknown_keyword_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A keyword absent from both the active and fallback locales raises.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): The pytest fixture for patching
+            environment variables.
+    """
+    monkeypatch.delenv("NEXTEXT_RESPONSE_LANGUAGE", raising=False)
+    pipeline = InferencePipeline()
+
+    with pytest.raises(FileNotFoundError):
+        pipeline.load_prompt("does_not_exist")
