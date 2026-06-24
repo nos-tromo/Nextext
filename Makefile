@@ -31,5 +31,5 @@ help:
 	@echo "  make stop       stop the containers"
 	@echo "  make down       stop + remove the containers"
 	@echo "  make logs       tail combined logs"
-	@echo "  make pre-commit run pre-commit hooks (ruff + mypy)"
+	@echo "  make pre-commit run pre-commit hooks (ruff + pyrefly)"
 	@echo "  make test       run the test suite"

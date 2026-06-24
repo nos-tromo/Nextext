@@ -20,7 +20,6 @@
 **/__pycache__/
 **/.claude/
 **/.idea/
-**/.mypy_cache/
 **/.pre-commit-cache/
 **/.pytest_cache/
 **/.ruff_cache/
