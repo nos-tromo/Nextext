@@ -13,8 +13,6 @@
 REPO     := nextext
 NETWORKS := inference-net
 VOLUMES  := nltk-cache spacy-cache
-UP_ENV   := DOCKER_BUILDKIT=1
-UP_FLAGS := --no-build
 include make/common.mk
 
 .PHONY: help
@@ -26,8 +24,9 @@ help:
 	@echo "  make volumes    create the external Docker volumes"
 	@echo "  make build      build the backend + frontend images"
 	@echo "  make bundle     ship the built images as a versioned .tar.gz"
-	@echo "  make up         run the stack (no rebuild, no host ports)"
-	@echo "  make up-dev     like 'up', but publishes the frontend port on the host"
+	@echo "  make up         run the stack detached (no build, no host ports)"
+	@echo "  make up-dev     like 'up' (detached, no build); publishes the frontend port on the host"
+	@echo "  make dev        build, then up-dev"
 	@echo "  make stop       stop the containers"
 	@echo "  make down       stop + remove the containers"
 	@echo "  make logs       tail combined logs"

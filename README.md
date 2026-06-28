@@ -119,7 +119,9 @@ make up-dev             # starts backend + frontend (publishes the frontend port
 
 `make up-dev` layers `docker/compose.override.yaml` so host ports are
 published for local development; `make up` (or the base `docker/compose.yaml`
-alone) is the production shape and publishes no host ports.
+alone) is the production shape and publishes no host ports. Both run detached
+and never build (`--no-build`) — run `make build` first, or `make dev` to build
+then bring up with host ports.
 
 The stack brings up two containers:
 
@@ -146,8 +148,9 @@ file path:
 | `make network` | Create the external `inference-net` Docker network (one-time per host; idempotent). |
 | `make volumes` | Create the external Docker volumes (one-time per host; idempotent). |
 | `make build` | Build the backend and frontend images. |
-| `make up` | Run both services in the foreground (production shape — no host ports). |
-| `make up-dev` | Same as `make up` but layers `docker/compose.override.yaml` to publish host ports for local development. |
+| `make up` | Run both services detached, without building (`--no-build`; production shape — no host ports). |
+| `make up-dev` | Same as `make up` (detached, no build) but layers `docker/compose.override.yaml` to publish host ports for local development. |
+| `make dev` | Build the images, then `make up-dev` (publishes host ports). |
 | `make stop` | Stop the containers. |
 | `make logs` | Tail combined logs from backend and frontend. |
 | `make bundle` | Build the images and write versioned `.tar.gz` archives for offline transfer (see below). |
@@ -181,7 +184,7 @@ dev override — so no host ports are published:
 docker load < nextext-built-<version>.tar.gz
 docker load < nextext-pulled-<version>.tar.gz   # may be empty for the default compose
 export NEXTEXT_VERSION=<version>
-docker compose --env-file .env -f docker/compose.yaml up --no-build
+docker compose --env-file .env -f docker/compose.yaml up -d --no-build
 ```
 
 ### Model downloads 📥
