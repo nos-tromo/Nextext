@@ -24,3 +24,8 @@ jobs:
       python-versions: '["3.12"]'
       uv-sync-args: '--frozen --group dev'
       docker-build: true
+      frontend-build: true
+      frontend-dir: 'frontend'
+      frontend-lint: true
+      node-version: '20'
+      pnpm-version: '9.12.0'
