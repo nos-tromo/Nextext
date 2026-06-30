@@ -18,8 +18,12 @@ vi.mock('../api/sse', () => ({
 }))
 
 import { useJobStream } from './useJobStream'
+import { useJobProgressStore } from '../lib/jobProgressStore'
 
-afterEach(() => vi.restoreAllMocks())
+afterEach(() => {
+  vi.restoreAllMocks()
+  useJobProgressStore.getState().clear()
+})
 
 describe('useJobStream', () => {
   it('drives progress to a terminal completed state', async () => {
@@ -27,5 +31,20 @@ describe('useJobStream', () => {
     await waitFor(() => expect(result.current.terminal).toBe(true))
     expect(result.current.status).toBe('completed')
     expect(result.current.progress).toBe(1)
+  })
+
+  it('publishes its reduced progress into the shared store', async () => {
+    const { result } = renderHook(() => useJobStream('j1'))
+    await waitFor(() => expect(result.current.terminal).toBe(true))
+    const entry = useJobProgressStore.getState().byId.j1
+    expect(entry?.status).toBe('completed')
+    expect(entry?.terminal).toBe(true)
+  })
+
+  it('removes its store entry on unmount', async () => {
+    const { unmount } = renderHook(() => useJobStream('j1'))
+    await waitFor(() => expect(useJobProgressStore.getState().byId.j1).toBeDefined())
+    unmount()
+    expect(useJobProgressStore.getState().byId.j1).toBeUndefined()
   })
 })

@@ -3,6 +3,7 @@ import { streamSse } from '../api/sse'
 import { jobEventsPath } from '../api/jobs'
 import { toJobEvent } from '../lib/jobEvents'
 import { initialJobProgress, reduceJobEvent, type JobProgress, type JobProgressStatus } from '../lib/jobProgress'
+import { useJobProgressStore } from '../lib/jobProgressStore'
 
 const RECONNECT_DELAY_MS = 1500
 /** Maximum number of consecutive reconnect attempts before giving up on a non-terminal stream. */
@@ -31,6 +32,10 @@ export function useJobStream(
     let cancelled = false
     let state = initialJobProgress(initialStatus, initialError)
     let reconnects = 0
+    // Non-reactive access: this hook is a *producer*; it must publish to the
+    // store without re-rendering on its own writes. Actions are stable.
+    const { setJobProgress, removeJob } = useJobProgressStore.getState()
+    setJobProgress(jobId, state) // seed on mount (terminal seeds publish here too, never connecting)
 
     async function run(): Promise<void> {
       while (!cancelled && !state.terminal && reconnects <= MAX_RECONNECTS) {
@@ -41,6 +46,7 @@ export function useJobStream(
             reconnects = 0 // a real event resets the consecutive-failure budget
             state = reduceJobEvent(state, event)
             setProgress(state)
+            setJobProgress(jobId, state) // mirror live progress into the shared store
             if (state.terminal) return
           }
         } catch {
@@ -58,6 +64,7 @@ export function useJobStream(
     return () => {
       cancelled = true
       controller.abort()
+      removeJob(jobId)
     }
   }, [jobId, initialStatus, initialError])
 
