@@ -4,8 +4,10 @@ import io
 import wave
 from fractions import Fraction
 from pathlib import Path
+from typing import Any
 
 import av
+import pytest
 from PIL import Image, ImageStat
 
 from nextext.core.keyframes import extract_keyframes, subsample
@@ -131,3 +133,57 @@ def test_extract_keyframes_spans_full_duration(tmp_path: Path) -> None:
     # reaches frame ~25 (brightness ~200). A threshold between the two turns
     # this into a real regression guard for the rewrite.
     assert brightness[-1] > 180
+
+
+def test_extract_keyframes_returns_partial_on_mid_decode_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A decode error on a later keyframe still returns the frames gathered so far.
+
+    Builds a proxy container that delegates every call to a real, opened
+    container except ``decode()``, which it lets through once (for the first
+    selected keyframe) and then raises on (for the second). This exercises the
+    outer ``try/except`` in ``extract_keyframes``: the error is logged and
+    swallowed, and the function returns the partial ``frames`` list gathered
+    so far rather than raising or returning ``[]``.
+    """
+    video = tmp_path / "ramp.mkv"
+    _make_mjpeg_ramp(video, n_frames=30, fps=1)
+
+    class _FlakyContainer:
+        """Delegates to a real container but raises on the 2nd decode() call."""
+
+        def __init__(self, real: Any) -> None:
+            self._real = real
+            self._decode_calls = 0
+
+        def __enter__(self):  # noqa: ANN204 - proxy
+            self._real.__enter__()
+            return self
+
+        def __exit__(self, *exc: object) -> object:
+            return self._real.__exit__(*exc)
+
+        def decode(self, *args: Any, **kwargs: Any):  # noqa: ANN202 - proxy
+            self._decode_calls += 1
+            if self._decode_calls >= 2:
+                raise OSError("injected mid-decode failure")
+            return self._real.decode(*args, **kwargs)
+
+        def __getattr__(self, name: str) -> object:
+            return getattr(self._real, name)
+
+    real_open = av.open  # capture before patching
+
+    def _flaky_open(*args: Any, **kwargs: Any) -> _FlakyContainer:
+        return _FlakyContainer(real_open(*args, **kwargs))
+
+    # keyframes module calls `av.open(...)`; patch the name it resolves.
+    import nextext.core.keyframes as kf
+
+    monkeypatch.setattr(kf.av, "open", _flaky_open)
+
+    frames = extract_keyframes(video, per_minute=60, max_frames=6)
+
+    # Pass 1 (demux) uses .demux, not .decode, so it is unaffected; the 1st
+    # selected keyframe decodes for real, the 2nd raises -> caught -> partial.
+    assert len(frames) == 1  # exactly the frames gathered before the failure
+    assert frames[0].startswith(b"\xff\xd8")  # a real JPEG, decoded for real
