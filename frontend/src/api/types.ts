@@ -61,6 +61,7 @@ export interface JobResult {
   word_counts: WordCount[] | null
   named_entities: NamedEntity[] | null
   wordcloud_url: string | null
+  keyframes_url: string | null
   hate_speech_findings: HateSpeechFinding[] | null
   skipped: boolean
   skip_reason: string | null
