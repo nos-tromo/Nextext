@@ -40,6 +40,7 @@ from nextext.api.schemas import (
     TranscriptSegment,
     WordCount,
 )
+from nextext.core.keyframes import extract_keyframes
 
 _TERMINAL_EVENT_NAMES: frozenset[str] = frozenset({"job_completed", "job_failed", "job_cancelled"})
 
@@ -243,6 +244,10 @@ def _serialize_result(result: dict[str, Any]) -> JobResult:
     if isinstance(result.get("wordcloud"), Figure):
         wordcloud_url = result.get("_wordcloud_url")
 
+    keyframes_url: str | None = None
+    if result.get("keyframes"):
+        keyframes_url = result.get("_keyframes_url")
+
     return JobResult(
         transcript=transcript,
         transcript_language=result.get("transcript_language"),
@@ -251,6 +256,7 @@ def _serialize_result(result: dict[str, Any]) -> JobResult:
         word_counts=_normalize_word_counts(result.get("word_counts")),
         named_entities=_normalize_named_entities(result.get("named_entities")),
         wordcloud_url=wordcloud_url,
+        keyframes_url=keyframes_url,
         hate_speech_findings=_normalize_hate_speech(result.get("hate_speech_findings")),
         skipped=bool(result.get("skipped", False)),
         skip_reason=result.get("skip_reason"),
@@ -345,6 +351,16 @@ def _run_pipeline_blocking(state: JobState, push_event: PushEvent) -> dict[str, 
     )
     file_opts["src_lang"] = updated_src_lang
 
+    # Keyframes ---------------------------------------------------------------
+    keyframes = extract_keyframes(
+        state.file_path,
+        per_minute=opts.keyframes_per_minute,
+        max_frames=opts.keyframes_max,
+    )
+    # Pre-baked here (not in ``_serialize_result``) because ``state.job_id`` is
+    # in scope; mirrors the ``_wordcloud_url`` pattern below.
+    keyframes_url = f"/api/v1/jobs/{state.job_id}/artifacts/keyframes.zip"
+
     transcript_text = " ".join(df["text"].astype(str).tolist()).strip()
     if df.empty or not transcript_text:
         transcript_language = file_opts["trg_lang" if file_opts["task"] == "translate" else "src_lang"]
@@ -360,6 +376,8 @@ def _run_pipeline_blocking(state: JobState, push_event: PushEvent) -> dict[str, 
             "skipped": True,
             "skip_reason": "No speech detected in audio file.",
             "task": file_opts["task"],
+            "keyframes": keyframes,
+            "_keyframes_url": keyframes_url,
         }
         _complete(0, {"transcript_segments": 0, "skipped": True})
         return payload
@@ -407,6 +425,8 @@ def _run_pipeline_blocking(state: JobState, push_event: PushEvent) -> dict[str, 
         "resolved_src_lang": file_opts["src_lang"],
         "transcript_language": transcript_language,
         "task": file_opts["task"],
+        "keyframes": keyframes,
+        "_keyframes_url": keyframes_url,
     }
 
     # Word-level analysis -----------------------------------------------------
