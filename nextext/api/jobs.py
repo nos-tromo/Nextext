@@ -346,6 +346,7 @@ def _run_pipeline_blocking(state: JobState, push_event: PushEvent) -> dict[str, 
     )
     file_opts["src_lang"] = updated_src_lang
 
+    # Keyframes ---------------------------------------------------------------
     keyframes = extract_keyframes(
         state.file_path,
         per_minute=opts.keyframes_per_minute,
