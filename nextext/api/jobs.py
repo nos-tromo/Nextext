@@ -40,6 +40,7 @@ from nextext.api.schemas import (
     TranscriptSegment,
     WordCount,
 )
+from nextext.core.keyframes import extract_keyframes
 
 _TERMINAL_EVENT_NAMES: frozenset[str] = frozenset({"job_completed", "job_failed", "job_cancelled"})
 
@@ -345,6 +346,12 @@ def _run_pipeline_blocking(state: JobState, push_event: PushEvent) -> dict[str, 
     )
     file_opts["src_lang"] = updated_src_lang
 
+    keyframes = extract_keyframes(
+        state.file_path,
+        per_minute=opts.keyframes_per_minute,
+        max_frames=opts.keyframes_max,
+    )
+
     transcript_text = " ".join(df["text"].astype(str).tolist()).strip()
     if df.empty or not transcript_text:
         transcript_language = file_opts["trg_lang" if file_opts["task"] == "translate" else "src_lang"]
@@ -360,6 +367,7 @@ def _run_pipeline_blocking(state: JobState, push_event: PushEvent) -> dict[str, 
             "skipped": True,
             "skip_reason": "No speech detected in audio file.",
             "task": file_opts["task"],
+            "keyframes": keyframes,
         }
         _complete(0, {"transcript_segments": 0, "skipped": True})
         return payload
@@ -407,6 +415,7 @@ def _run_pipeline_blocking(state: JobState, push_event: PushEvent) -> dict[str, 
         "resolved_src_lang": file_opts["src_lang"],
         "transcript_language": transcript_language,
         "task": file_opts["task"],
+        "keyframes": keyframes,
     }
 
     # Word-level analysis -----------------------------------------------------
