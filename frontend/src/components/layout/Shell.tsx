@@ -1,14 +1,16 @@
 import type { ReactNode } from 'react'
+import { Shell as UIShell } from '@infra/ui'
 import { StatusBar } from './StatusBar'
 
+/**
+ * Nextext app shell: adapts the shared, sticky `@infra/ui` Shell by supplying
+ * the app title and the global job StatusBar as its right-aligned actions slot.
+ * The shared shell keeps the header pinned to the top while the page scrolls.
+ */
 export function Shell({ children }: { children: ReactNode }) {
   return (
-    <div className="min-h-full">
-      <header className="flex items-center justify-between gap-4 border-b border-border px-6 py-4">
-        <h1 className="text-lg font-semibold">Nextext</h1>
-        <StatusBar />
-      </header>
-      <main className="mx-auto max-w-5xl px-6 py-8">{children}</main>
-    </div>
+    <UIShell title="Nextext" actions={<StatusBar />}>
+      {children}
+    </UIShell>
   )
 }

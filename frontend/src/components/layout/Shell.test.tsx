@@ -52,4 +52,10 @@ describe('Shell', () => {
     mountShell()
     expect(await screen.findByText('1 finished')).toBeInTheDocument()
   })
+
+  it('pins the header to the top so it stays visible while scrolling', () => {
+    stubJobs([])
+    mountShell()
+    expect(screen.getByRole('banner')).toHaveClass('sticky', 'top-0')
+  })
 })
