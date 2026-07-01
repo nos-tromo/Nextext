@@ -8,6 +8,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from nextext.utils.env_cfg import load_keyframe_defaults
+
 
 class JobStatus(StrEnum):
     """Lifecycle states for a backend processing job."""
@@ -32,8 +34,8 @@ class JobOptions(BaseModel):
     words: bool = False
     summarization: bool = False
     hate_speech: bool = False
-    keyframes_per_minute: int = Field(default=4, ge=0)
-    keyframes_max: int = Field(default=20, ge=0, le=200)
+    keyframes_per_minute: int = Field(default_factory=lambda: load_keyframe_defaults().per_minute, ge=0)
+    keyframes_max: int = Field(default_factory=lambda: load_keyframe_defaults().max_frames, ge=0, le=200)
 
 
 class JobCreateResponse(BaseModel):

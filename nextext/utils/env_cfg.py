@@ -212,6 +212,9 @@ DEFAULT_DIARIZE_TIMEOUT: float = 600.0
 DEFAULT_NER_TIMEOUT: float = 120.0
 DEFAULT_VAD_TIMEOUT: float = 60.0
 DEFAULT_SUMMARY_MAX_INPUT_TOKENS: int = 6000
+DEFAULT_KEYFRAMES_PER_MINUTE: int = 4
+DEFAULT_KEYFRAMES_MAX: int = 20
+KEYFRAMES_MAX_CEILING: int = 200
 
 
 def _parse_tristate_bool(name: str) -> bool | None:
@@ -422,6 +425,88 @@ def load_summary_env() -> SummaryConfig:
             )
 
     return SummaryConfig(max_input_tokens=max_input_tokens)
+
+
+@dataclass(frozen=True)
+class KeyframeDefaults:
+    """Operator-set default keyframe sampling, applied when a job omits the fields.
+
+    Attributes:
+        per_minute: Default ``JobOptions.keyframes_per_minute`` used when a job
+            creation request omits the field.
+        max_frames: Default ``JobOptions.keyframes_max`` used when a job
+            creation request omits the field.
+    """
+
+    per_minute: int
+    max_frames: int
+
+
+def load_keyframe_defaults(
+    default_per_minute: int = DEFAULT_KEYFRAMES_PER_MINUTE,
+    default_max_frames: int = DEFAULT_KEYFRAMES_MAX,
+) -> KeyframeDefaults:
+    """Loads operator-configured default keyframe sampling from the environment.
+
+    Reads ``KEYFRAMES_PER_MINUTE`` / ``KEYFRAMES_MAX`` so an operator can set
+    the server's default keyframe "size" without a code change; both are
+    consulted only by ``JobOptions``' ``default_factory``, so an explicit
+    per-request value always overrides them.
+
+    Robust to bad input: unparseable values fall back to the given default
+    (with a warning); out-of-range values are clamped rather than raising
+    (also with a warning) — so a misconfigured environment can never turn into
+    a validation error on every job. ``per_minute`` is floored at 0;
+    ``max_frames`` is clamped to ``[0, 200]``, the ``JobOptions`` hard cap.
+
+    Args:
+        default_per_minute: Fallback used when ``KEYFRAMES_PER_MINUTE`` is
+            unset or unparseable. Defaults to
+            :data:`DEFAULT_KEYFRAMES_PER_MINUTE` (``4``).
+        default_max_frames: Fallback used when ``KEYFRAMES_MAX`` is unset or
+            unparseable. Defaults to :data:`DEFAULT_KEYFRAMES_MAX` (``20``).
+
+    Returns:
+        KeyframeDefaults: Dataclass containing the resolved, clamped defaults.
+    """
+    raw_per_minute = os.getenv("KEYFRAMES_PER_MINUTE", "").strip()
+    try:
+        parsed_per_minute = int(raw_per_minute) if raw_per_minute else default_per_minute
+    except ValueError:
+        logger.warning(
+            "Invalid KEYFRAMES_PER_MINUTE '{}'. Falling back to {}.",
+            raw_per_minute,
+            default_per_minute,
+        )
+        parsed_per_minute = default_per_minute
+    per_minute = max(0, parsed_per_minute)
+    if per_minute != parsed_per_minute:
+        logger.warning(
+            "KEYFRAMES_PER_MINUTE {} is negative. Clamping to {}.",
+            parsed_per_minute,
+            per_minute,
+        )
+
+    raw_max_frames = os.getenv("KEYFRAMES_MAX", "").strip()
+    try:
+        parsed_max_frames = int(raw_max_frames) if raw_max_frames else default_max_frames
+    except ValueError:
+        logger.warning(
+            "Invalid KEYFRAMES_MAX '{}'. Falling back to {}.",
+            raw_max_frames,
+            default_max_frames,
+        )
+        parsed_max_frames = default_max_frames
+    max_frames = min(KEYFRAMES_MAX_CEILING, max(0, parsed_max_frames))
+    if max_frames != parsed_max_frames:
+        logger.warning(
+            "KEYFRAMES_MAX {} outside [0, {}]. Clamping to {}.",
+            parsed_max_frames,
+            KEYFRAMES_MAX_CEILING,
+            max_frames,
+        )
+
+    return KeyframeDefaults(per_minute=per_minute, max_frames=max_frames)
 
 
 @dataclass(frozen=True)
