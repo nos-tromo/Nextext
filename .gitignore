@@ -81,7 +81,8 @@
 !.pre-commit-config.yaml
 !AGENTS.md
 !CLAUDE.md
-# Design specs from the brainstorming flow are tracked despite the *.md ignore.
+# Design specs and implementation plans from the brainstorming flow are tracked despite the *.md ignore.
 !docs/superpowers/specs/*.md
+!docs/superpowers/plans/*.md
 # Per-host job persistence (created by NEXTEXT_DATA_DIR default)
 .nextext-data/
