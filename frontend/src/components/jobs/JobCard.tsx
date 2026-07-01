@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { useJobStream } from '../../hooks/useJobStream'
+import { useDeleteJob } from '../../hooks/useJobs'
 import { ResultPanel } from '../results/ResultPanel'
 import type { JobListItem } from '../../api/types'
 import type { JobProgressStatus } from '../../lib/jobProgress'
@@ -41,6 +42,7 @@ export function JobCard({ job }: { job: JobListItem }) {
   const p = useJobStream(job.job_id, seed.status, seed.error)
   const pct = Math.round(p.progress * 100)
   const [showResults, setShowResults] = useState(false)
+  const del = useDeleteJob()
 
   // The live SSE stream updates this card's status locally, but the shared
   // ['jobs'] query (which aggregate views like the batch-download control read
@@ -73,6 +75,14 @@ export function JobCard({ job }: { job: JobListItem }) {
             </button>
           )}
           <span className="text-sm text-muted-foreground">{LABEL[p.status]}</span>
+          <button
+            type="button"
+            disabled={del.isPending}
+            onClick={() => del.mutate(job.job_id)}
+            className="text-sm text-muted-foreground transition-colors hover:text-danger disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {del.isPending ? 'Removing…' : 'Remove'}
+          </button>
         </div>
       </div>
       <div className="mt-2 h-2 w-full overflow-hidden rounded bg-muted">
@@ -92,6 +102,9 @@ export function JobCard({ job }: { job: JobListItem }) {
                 ? 'Done'
                 : 'Waiting…'}
       </p>
+      {del.isError && (
+        <p className="mt-1 text-sm text-danger">{`Could not remove job: ${del.error?.message ?? 'unknown error'}`}</p>
+      )}
       {p.status === 'completed' && showResults && (
         <div className="mt-4">
           <ResultPanel jobId={job.job_id} fileName={job.file_name} />
