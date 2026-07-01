@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { listJobs, submitJob } from '../api/jobs'
+import { deleteJob, listJobs, submitJob } from '../api/jobs'
+import { ApiError } from '../api/client'
 import type { JobListItem, JobOptions } from '../api/types'
 
 /** The caller's jobs, re-fetched on mount (reload re-discovery). */
@@ -50,4 +51,63 @@ export function useSubmitBatch() {
 /** Status helper reused by JobCard styling. */
 export function isActive(job: JobListItem): boolean {
   return job.status === 'queued' || job.status === 'running'
+}
+
+/**
+ * Delete a single job, then refresh the jobs list. A 404 is treated as
+ * already-gone (resolves quietly) so a double-click or a delete/refetch race
+ * never surfaces a spurious error.
+ */
+export function useDeleteJob() {
+  const qc = useQueryClient()
+  return useMutation<void, Error, string>({
+    mutationFn: async (jobId) => {
+      try {
+        await deleteJob(jobId)
+      } catch (err) {
+        if (err instanceof ApiError && err.status === 404) return // already gone
+        throw err
+      }
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['jobs'] })
+    },
+  })
+}
+
+/** Outcome of a bulk clear: how many deletions succeeded vs. failed. */
+export interface ClearJobsResult {
+  cleared: number
+  failed: number
+}
+
+/**
+ * Delete many jobs concurrently, tolerating individual failures, then refresh
+ * the jobs list once. A per-job 404 counts as cleared (already gone). The
+ * mutation always resolves (never rejects) so the list refetch runs regardless
+ * of partial failure; callers inspect {@link ClearJobsResult} to report it.
+ *
+ * @returns Counts of successfully cleared and failed deletions.
+ */
+export function useClearJobs() {
+  const qc = useQueryClient()
+  return useMutation<ClearJobsResult, Error, string[]>({
+    mutationFn: async (jobIds) => {
+      const settled = await Promise.allSettled(
+        jobIds.map(async (jobId) => {
+          try {
+            await deleteJob(jobId)
+          } catch (err) {
+            if (err instanceof ApiError && err.status === 404) return // already gone -> cleared
+            throw err
+          }
+        }),
+      )
+      const failed = settled.filter((r) => r.status === 'rejected').length
+      return { cleared: settled.length - failed, failed }
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['jobs'] })
+    },
+  })
 }
