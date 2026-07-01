@@ -32,6 +32,8 @@ class JobOptions(BaseModel):
     words: bool = False
     summarization: bool = False
     hate_speech: bool = False
+    keyframes_per_minute: int = Field(default=4, ge=0)
+    keyframes_max: int = Field(default=20, ge=0, le=200)
 
 
 class JobCreateResponse(BaseModel):
