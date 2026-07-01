@@ -334,6 +334,12 @@ def render_artifact(state: JobState, name: str) -> tuple[bytes, str] | None:
         return payload, _APP_NDJSON
     if name == "archive.zip":
         return build_archive_for_job(state), _APP_ZIP
+    if name == "keyframes.zip":
+        frames = result.get("keyframes")
+        if not frames:
+            return None
+        members = [(f"frame_{index:03d}.jpg", payload) for index, payload in enumerate(frames)]
+        return _zip_members(members), _APP_ZIP
     return None
 
 
@@ -351,6 +357,7 @@ SUPPORTED_ARTIFACTS: frozenset[str] = frozenset(
         "hate_speech.xlsx",
         "docint.jsonl",
         "archive.zip",
+        "keyframes.zip",
     }
 )
 
