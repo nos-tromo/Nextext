@@ -1,12 +1,17 @@
-"""Tests for keyframe wiring in ``_run_pipeline_blocking`` (nextext.api.jobs)."""
+"""Tests for keyframe wiring in ``_run_pipeline_blocking`` (nextext.api.jobs).
+
+Also covers surfacing the stashed URL as ``JobResult.keyframes_url`` via
+``_serialize_result``.
+"""
 
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 import pytest
 
 from nextext.api import jobs as jobs_module
-from nextext.api.jobs import JobState, _run_pipeline_blocking
+from nextext.api.jobs import JobState, _run_pipeline_blocking, _serialize_result
 from nextext.api.schemas import JobOptions, JobStatus
 
 
@@ -31,6 +36,7 @@ def test_pipeline_populates_keyframes(monkeypatch: pytest.MonkeyPatch, tmp_path:
     )
     result = _run_pipeline_blocking(state, lambda *a, **k: None)
     assert result["keyframes"] == [b"\xff\xd8\xff0", b"\xff\xd8\xff1"]
+    assert result["_keyframes_url"] == f"/api/v1/jobs/{state.job_id}/artifacts/keyframes.zip"
 
 
 def test_pipeline_empty_transcript_still_sets_keyframes(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -62,3 +68,41 @@ def test_pipeline_empty_transcript_still_sets_keyframes(monkeypatch: pytest.Monk
     result = _run_pipeline_blocking(state, lambda *a, **k: None)
     assert result["skipped"] is True
     assert result["keyframes"] == [b"\xff\xd8\xff0", b"\xff\xd8\xff1"]
+    assert result["_keyframes_url"] == f"/api/v1/jobs/{state.job_id}/artifacts/keyframes.zip"
+
+
+def test_serialize_result_surfaces_keyframes_url() -> None:
+    """A non-empty ``keyframes`` list surfaces the pre-baked artifact URL.
+
+    Mirrors how ``wordcloud_url`` is only forwarded when a real wordcloud
+    ``Figure`` is present: the URL is pre-baked by the pipeline (which has the
+    job id in scope) and ``_serialize_result`` merely forwards it when the
+    corresponding output actually exists.
+    """
+    result: dict[str, Any] = {
+        "keyframes": [b"\xff\xd8\xff0", b"\xff\xd8\xff1"],
+        "_keyframes_url": "/api/v1/jobs/j1/artifacts/keyframes.zip",
+    }
+    serialized = _serialize_result(result)
+    assert serialized.keyframes_url == "/api/v1/jobs/j1/artifacts/keyframes.zip"
+
+
+def test_serialize_result_omits_keyframes_url_when_keyframes_empty() -> None:
+    """An empty ``keyframes`` list keeps ``keyframes_url`` unset, even if stashed.
+
+    The guard checks the actual ``keyframes`` output, not merely whether
+    ``_keyframes_url`` happens to be present, so a job that produced no frames
+    never advertises a URL that would 404.
+    """
+    result: dict[str, Any] = {
+        "keyframes": [],
+        "_keyframes_url": "/api/v1/jobs/j3/artifacts/keyframes.zip",
+    }
+    serialized = _serialize_result(result)
+    assert serialized.keyframes_url is None
+
+
+def test_serialize_result_omits_keyframes_url_when_keyframes_absent() -> None:
+    """A result dict with no ``keyframes`` key at all yields ``keyframes_url is None``."""
+    serialized = _serialize_result({})
+    assert serialized.keyframes_url is None

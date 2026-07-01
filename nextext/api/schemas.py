@@ -89,6 +89,7 @@ class JobResult(BaseModel):
     word_counts: list[WordCount] | None = None
     named_entities: list[NamedEntity] | None = None
     wordcloud_url: str | None = None
+    keyframes_url: str | None = None
     hate_speech_findings: list[HateSpeechFinding] | None = None
     skipped: bool = False
     skip_reason: str | None = None

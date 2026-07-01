@@ -1,4 +1,8 @@
-"""Tests for the ``keyframes.zip`` artifact (nextext.api.artifacts)."""
+"""Tests for keyframes surfaced through artifacts (nextext.api.artifacts).
+
+Covers both the standalone ``keyframes.zip`` artifact and the ``keyframes/``
+subfolder that ``archive.zip`` nests frames under.
+"""
 
 import io
 import zipfile
@@ -51,3 +55,33 @@ def test_keyframes_zip_absent_returns_none() -> None:
 def test_keyframes_zip_is_supported() -> None:
     """The artifact name is advertised in the supported-artifacts set."""
     assert "keyframes.zip" in artifacts.SUPPORTED_ARTIFACTS
+
+
+def test_archive_zip_nests_keyframes_under_subfolder() -> None:
+    """``archive.zip`` nests keyframes under a dedicated ``keyframes/`` subfolder.
+
+    Unlike the standalone ``keyframes.zip`` artifact (flat ``frame_000.jpg``
+    names), the combined archive groups frames under ``keyframes/`` so they
+    never collide with the flat ``{stem}_transcript.csv``-style member names
+    produced by the other archive members.
+    """
+    frames = [b"\xff\xd8\xff0", b"\xff\xd8\xff1"]
+    rendered = artifacts.render_artifact(_job_with_keyframes(frames), "archive.zip")
+    assert rendered is not None
+    payload, content_type = rendered
+    assert content_type == "application/zip"
+    with zipfile.ZipFile(io.BytesIO(payload)) as zf:
+        names = set(zf.namelist())
+        assert "clip/keyframes/frame_000.jpg" in names
+        assert "clip/keyframes/frame_001.jpg" in names
+        # Round-trip one member back to its exact source bytes.
+        assert zf.read("clip/keyframes/frame_000.jpg") == frames[0]
+
+
+def test_archive_zip_without_keyframes_has_no_keyframes_folder() -> None:
+    """No keyframes in the result means no ``keyframes/`` entries in the archive."""
+    rendered = artifacts.render_artifact(_job_with_keyframes([]), "archive.zip")
+    assert rendered is not None
+    payload, _content_type = rendered
+    with zipfile.ZipFile(io.BytesIO(payload)) as zf:
+        assert not any("keyframes/" in name for name in zf.namelist())
