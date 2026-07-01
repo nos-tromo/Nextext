@@ -73,6 +73,7 @@ def _make_mjpeg_ramp(path: Path, *, n_frames: int, fps: int) -> None:
     """
     with av.open(str(path), mode="w") as container:
         stream = container.add_stream("mjpeg", rate=fps)
+        assert isinstance(stream, av.VideoStream)  # narrow the Stream union for the type checker
         stream.width = 64
         stream.height = 64
         stream.pix_fmt = "yuvj420p"
