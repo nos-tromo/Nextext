@@ -1,6 +1,7 @@
 import { useJobs } from '../../hooks/useJobs'
 import { JobCard } from './JobCard'
 import { BatchDownloadMenu } from './BatchDownloadMenu'
+import { ClearJobsMenu } from './ClearJobsMenu'
 import { Spinner } from '../common/Spinner'
 import { Banner } from '@infra/ui'
 
@@ -14,8 +15,9 @@ export function BatchProgress() {
   const completedCount = items.filter((job) => job.status === 'completed').length
   return (
     <div className="space-y-3">
-      <div className="flex items-center justify-end">
+      <div className="flex items-center justify-end gap-2">
         <BatchDownloadMenu completedCount={completedCount} />
+        <ClearJobsMenu jobs={items} />
       </div>
       {items.map((job) => (
         <JobCard key={job.job_id} job={job} />

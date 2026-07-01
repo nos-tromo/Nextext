@@ -29,6 +29,13 @@ function jobsResponse(status: string): Response {
   )
 }
 
+function emptyJobsResponse(): Response {
+  return new Response(JSON.stringify({ jobs: [] }), {
+    status: 200,
+    headers: { 'content-type': 'application/json' },
+  })
+}
+
 function mountBatchProgress() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
@@ -59,5 +66,20 @@ describe('BatchProgress batch-download enablement', () => {
     // The control must become enabled after the live completion — the bug was
     // that it stayed disabled until a manual page reload.
     await waitFor(() => expect(trigger()).toBeEnabled())
+  })
+})
+
+describe('BatchProgress clear control', () => {
+  it('renders the Clear control alongside the jobs when the list is non-empty', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => jobsResponse('completed')))
+    mountBatchProgress()
+    expect(await screen.findByRole('button', { name: /Clear ▾/ })).toBeInTheDocument()
+  })
+
+  it('shows the empty state and no Clear control when there are no jobs', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => emptyJobsResponse()))
+    mountBatchProgress()
+    expect(await screen.findByText('No jobs yet.')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Clear/ })).toBeNull()
   })
 })
