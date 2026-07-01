@@ -111,4 +111,26 @@ describe('ClearJobsMenu', () => {
     fireEvent.keyDown(document, { key: 'Escape' })
     expect(screen.queryByRole('menu')).toBeNull()
   })
+
+  it('closes on outside pointerdown', () => {
+    renderMenu(<ClearJobsMenu jobs={[mkJob('a', 'completed')]} />)
+    fireEvent.click(screen.getByRole('button', { name: /Clear ▾/ }))
+    expect(screen.getByRole('menu')).toBeInTheDocument()
+    fireEvent.pointerDown(document.body)
+    expect(screen.queryByRole('menu')).toBeNull()
+  })
+
+  it('invalidates the jobs query after a confirmed clear', async () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
+    const invalidateSpy = vi.spyOn(qc, 'invalidateQueries')
+    render(
+      <QueryClientProvider client={qc}>
+        <ClearJobsMenu jobs={[mkJob('a', 'completed')]} />
+      </QueryClientProvider>,
+    )
+    fireEvent.click(screen.getByRole('button', { name: /Clear ▾/ }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Clear all (1)' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Clear' }))
+    await waitFor(() => expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['jobs'] }))
+  })
 })

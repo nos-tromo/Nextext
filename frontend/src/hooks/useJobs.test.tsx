@@ -49,6 +49,17 @@ describe('useDeleteJob', () => {
     result.current.mutate('j1')
     await waitFor(() => expect(result.current.isError).toBe(true))
   })
+
+  it('invalidates the jobs query on success', async () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
+    const invalidateSpy = vi.spyOn(qc, 'invalidateQueries')
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={qc}>{children}</QueryClientProvider>
+    )
+    const { result } = renderHook(() => useDeleteJob(), { wrapper })
+    result.current.mutate('j1')
+    await waitFor(() => expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['jobs'] }))
+  })
 })
 
 describe('useClearJobs', () => {

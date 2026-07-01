@@ -127,7 +127,7 @@ export function ClearJobsMenu({ jobs }: ClearJobsMenuProps) {
                   type="button"
                   disabled={clear.isPending}
                   onClick={() => setConfirm(null)}
-                  className="rounded border border-border px-2 py-1 text-sm text-foreground hover:border-primary hover:text-primary disabled:cursor-not-allowed"
+                  className="rounded border border-border px-2 py-1 text-sm text-foreground hover:border-primary hover:text-primary disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   Cancel
                 </button>
