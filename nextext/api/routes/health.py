@@ -11,6 +11,7 @@ from nextext.api.schemas import (
     HealthResponse,
     LanguageEntry,
     LanguagesResponse,
+    VersionResponse,
 )
 from nextext.core.openai_cfg import InferencePipeline
 from nextext.utils.env_cfg import DEFAULT_TARGET_LANG, load_default_target_lang
@@ -45,6 +46,12 @@ def get_health() -> HealthResponse:
         logger.exception("Inference health check raised unexpectedly.")
         inference_ok = False
     return HealthResponse(inference=inference_ok, version=_package_version())
+
+
+@router.get("/version", response_model=VersionResponse)
+def get_version() -> VersionResponse:
+    """Return the running app version (unauthenticated)."""
+    return VersionResponse(version=_package_version())
 
 
 def _mapping_to_entries(mapping: dict[str, str]) -> list[LanguageEntry]:
