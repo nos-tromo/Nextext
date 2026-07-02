@@ -130,6 +130,12 @@ class HealthResponse(BaseModel):
     version: str
 
 
+class VersionResponse(BaseModel):
+    """App release version."""
+
+    version: str
+
+
 class LanguageEntry(BaseModel):
     """One language entry returned by ``GET /languages``."""
 
