@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from importlib.metadata import PackageNotFoundError, version
 
 from fastapi import FastAPI
 from loguru import logger
@@ -12,6 +13,11 @@ from loguru import logger
 from nextext.api.jobs import JobManager
 from nextext.api.routes import router as api_router
 from nextext.utils.log_cfg import setup_logging
+
+try:
+    _APP_VERSION = version("nextext")
+except PackageNotFoundError:  # running from source without an installed dist
+    _APP_VERSION = "0+unknown"
 
 
 @asynccontextmanager
@@ -49,7 +55,7 @@ def create_app() -> FastAPI:
             "analysis toolkit. The Streamlit frontend in this repository is "
             "one consumer; any HTTP client can use the documented endpoints."
         ),
-        version="0.8.0",
+        version=_APP_VERSION,
         lifespan=lifespan,
     )
     application.include_router(api_router)
