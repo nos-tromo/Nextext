@@ -6,11 +6,13 @@ import pytest
 
 from nextext.utils.env_cfg import (
     DEFAULT_DIARIZE_TIMEOUT,
+    DEFAULT_JOB_CONCURRENCY,
     DEFAULT_NER_TIMEOUT,
     DEFAULT_SUMMARY_MAX_INPUT_TOKENS,
     DEFAULT_VAD_TIMEOUT,
     load_diarization_env,
     load_inference_env,
+    load_job_concurrency,
     load_language_env,
     load_ner_env,
     load_summary_env,
@@ -828,3 +830,83 @@ def test_load_language_env_invalid_warns_and_defaults(
 
     assert cfg.code == "en"
     assert "NEXTEXT_RESPONSE_LANGUAGE" in sink.getvalue()
+
+
+# ---------------------------------------------------------------------------
+# load_job_concurrency
+# ---------------------------------------------------------------------------
+
+
+def test_load_job_concurrency_unset_returns_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An unset NEXTEXT_JOB_CONCURRENCY falls back to the serial default (1).
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Fixture for patching environment variables.
+    """
+    monkeypatch.delenv("NEXTEXT_JOB_CONCURRENCY", raising=False)
+
+    assert load_job_concurrency() == DEFAULT_JOB_CONCURRENCY == 1
+
+
+def test_load_job_concurrency_parses_valid_value(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """NEXTEXT_JOB_CONCURRENCY=3 resolves to 3, enabling parallel job workers.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Fixture for patching environment variables.
+    """
+    monkeypatch.setenv("NEXTEXT_JOB_CONCURRENCY", "3")
+
+    assert load_job_concurrency() == 3
+
+
+def test_load_job_concurrency_invalid_value_warns_and_defaults(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A non-integer NEXTEXT_JOB_CONCURRENCY warns and falls back to the default.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Fixture for patching environment variables.
+    """
+    from loguru import logger
+
+    monkeypatch.setenv("NEXTEXT_JOB_CONCURRENCY", "abc")
+
+    sink = io.StringIO()
+    handler_id = logger.add(sink, level="WARNING")
+    try:
+        result = load_job_concurrency()
+    finally:
+        logger.remove(handler_id)
+
+    assert result == DEFAULT_JOB_CONCURRENCY
+    assert "NEXTEXT_JOB_CONCURRENCY" in sink.getvalue()
+
+
+@pytest.mark.parametrize("raw_value", ["0", "-2"])
+def test_load_job_concurrency_clamps_values_below_one(
+    monkeypatch: pytest.MonkeyPatch,
+    raw_value: str,
+) -> None:
+    """Values below 1 clamp to 1 with a warning instead of yielding a zero/negative semaphore.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Fixture for patching environment variables.
+        raw_value (str): An out-of-range concurrency token.
+    """
+    from loguru import logger
+
+    monkeypatch.setenv("NEXTEXT_JOB_CONCURRENCY", raw_value)
+
+    sink = io.StringIO()
+    handler_id = logger.add(sink, level="WARNING")
+    try:
+        result = load_job_concurrency()
+    finally:
+        logger.remove(handler_id)
+
+    assert result == 1
+    assert "NEXTEXT_JOB_CONCURRENCY" in sink.getvalue()

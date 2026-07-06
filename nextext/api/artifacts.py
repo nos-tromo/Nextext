@@ -88,6 +88,10 @@ def _render_archive_members(state: JobState) -> dict[str, bytes]:
     word-cloud rasterization, docint JSONL — so the mapping is cached on the
     job and reused by both the per-job and batch ZIP builders. Keys are archive
     file names without any leading job folder, e.g. ``{stem}_transcript.csv``.
+    Keyframes are the one exception: they nest under a ``keyframes/``
+    subfolder (e.g. ``keyframes/frame_000.jpg``) so they never collide with
+    the flat ``{stem}_...``-style keys above. This intentionally differs from
+    the standalone ``keyframes.zip`` artifact, which uses flat names.
 
     Args:
         state: The completed job.
@@ -135,6 +139,11 @@ def _render_archive_members(state: JobState) -> dict[str, bytes]:
     docint = build_docint_jsonl_for_job(state)
     if docint:
         members[f"{stem}_docint.jsonl"] = docint
+
+    frames = result.get("keyframes")
+    if frames:
+        for index, payload in enumerate(frames):
+            members[f"keyframes/frame_{index:03d}.jpg"] = payload
 
     state.archive_members_cache = members
     return members
@@ -334,6 +343,12 @@ def render_artifact(state: JobState, name: str) -> tuple[bytes, str] | None:
         return payload, _APP_NDJSON
     if name == "archive.zip":
         return build_archive_for_job(state), _APP_ZIP
+    if name == "keyframes.zip":
+        frames = result.get("keyframes")
+        if not frames:
+            return None
+        members = [(f"frame_{index:03d}.jpg", payload) for index, payload in enumerate(frames)]
+        return _zip_members(members), _APP_ZIP
     return None
 
 
@@ -351,6 +366,7 @@ SUPPORTED_ARTIFACTS: frozenset[str] = frozenset(
         "hate_speech.xlsx",
         "docint.jsonl",
         "archive.zip",
+        "keyframes.zip",
     }
 )
 

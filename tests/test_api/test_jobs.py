@@ -151,3 +151,32 @@ def test_oversized_upload_is_rejected(
         data={"options": json.dumps(options)},
     )
     assert response.status_code == 413
+
+
+# ---------------------------------------------------------------------------
+# JobManager worker concurrency (NEXTEXT_JOB_CONCURRENCY)
+# ---------------------------------------------------------------------------
+
+
+def test_job_manager_default_concurrency_is_serial(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With NEXTEXT_JOB_CONCURRENCY unset, JobManager keeps today's serial behavior.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Fixture for patching environment variables.
+    """
+    monkeypatch.delenv("NEXTEXT_JOB_CONCURRENCY", raising=False)
+
+    manager = JobManager()
+
+    assert manager._concurrency == 1
+    assert manager._workers_semaphore._value == 1
+
+
+def test_job_manager_concurrency_override_sizes_semaphore() -> None:
+    """Passing concurrency=3 explicitly sizes the worker semaphore to 3."""
+    manager = JobManager(concurrency=3)
+
+    assert manager._concurrency == 3
+    assert manager._workers_semaphore._value == 3
