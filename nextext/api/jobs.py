@@ -1,11 +1,11 @@
 """Job state, manager, and worker for the Nextext FastAPI backend.
 
 The :class:`JobManager` owns an in-memory dictionary of :class:`JobState`
-instances. Jobs are processed by a single async worker constrained to
-serial execution via an ``asyncio.Semaphore(1)``: pipeline stages are
-CPU-bound (decoding, DataFrame shaping) around blocking calls to the
-shared inference tier, and one job in flight per backend container keeps
-memory bounded and the remote endpoints fairly shared.
+instances. Jobs are processed by async workers constrained by an
+``asyncio.Semaphore`` sized from ``NEXTEXT_JOB_CONCURRENCY`` (default ``1``,
+i.e. serial execution): pipeline stages are CPU-bound (decoding, DataFrame
+shaping) around blocking calls to the shared inference tier, so the worker
+count bounds memory use and how fairly the remote endpoints are shared.
 
 The blocking pipeline runs on a worker thread via
 ``anyio.to_thread.run_sync``. Stage transitions are published to a per-job
@@ -41,6 +41,7 @@ from nextext.api.schemas import (
     WordCount,
 )
 from nextext.core.keyframes import extract_keyframes
+from nextext.utils.env_cfg import load_job_concurrency
 
 _TERMINAL_EVENT_NAMES: frozenset[str] = frozenset({"job_completed", "job_failed", "job_cancelled"})
 
@@ -489,18 +490,20 @@ def _run_pipeline_blocking(state: JobState, push_event: PushEvent) -> dict[str, 
 class JobManager:
     """In-memory job store and worker dispatcher.
 
-    Jobs live only in memory. A single async worker
-    (``asyncio.Semaphore(1)``) processes them serially; SSE subscribers
-    attach to a per-job event history that is replayed on connect, so a
-    browser that reloads mid-run re-attaches and resumes the live view.
-    There is no durable storage and no TTL: a job is retained until its
-    owner deletes it or the process exits.
+    Jobs live only in memory. Async workers, bounded by an
+    ``asyncio.Semaphore`` sized from ``NEXTEXT_JOB_CONCURRENCY`` (default
+    ``1``, i.e. serial execution), process them; SSE subscribers attach to a
+    per-job event history that is replayed on connect, so a browser that
+    reloads mid-run re-attaches and resumes the live view. There is no
+    durable storage and no TTL: a job is retained until its owner deletes it
+    or the process exits.
     """
 
     def __init__(
         self,
         tmp_root: Path | None = None,
         pipeline_runner: Callable[[JobState, PushEvent], dict[str, Any]] | None = None,
+        concurrency: int | None = None,
     ) -> None:
         """Initialize the manager.
 
@@ -509,10 +512,15 @@ class JobManager:
                 Defaults to ``<system tmp>/nextext-jobs``.
             pipeline_runner: Optional override for the blocking pipeline call,
                 used by tests to substitute a deterministic stub.
+            concurrency: Optional override for the worker semaphore size.
+                Defaults to :func:`nextext.utils.env_cfg.load_job_concurrency`
+                (``NEXTEXT_JOB_CONCURRENCY``, itself defaulting to ``1``).
         """
+        resolved = concurrency if concurrency is not None else load_job_concurrency()
         self._jobs: dict[str, JobState] = {}
         self._lock = asyncio.Lock()
-        self._workers_semaphore = asyncio.Semaphore(1)
+        self._workers_semaphore = asyncio.Semaphore(resolved)
+        self._concurrency = resolved
         self._background_tasks: set[asyncio.Task[None]] = set()
         self.tmp_root = tmp_root or Path(tempfile.gettempdir()) / "nextext-jobs"
         self.tmp_root.mkdir(parents=True, exist_ok=True)

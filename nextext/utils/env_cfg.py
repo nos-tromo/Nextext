@@ -215,6 +215,7 @@ DEFAULT_SUMMARY_MAX_INPUT_TOKENS: int = 6000
 DEFAULT_KEYFRAMES_PER_MINUTE: int = 4
 DEFAULT_KEYFRAMES_MAX: int = 20
 KEYFRAMES_MAX_CEILING: int = 200
+DEFAULT_JOB_CONCURRENCY: int = 1
 
 
 def _parse_tristate_bool(name: str) -> bool | None:
@@ -507,6 +508,33 @@ def load_keyframe_defaults(
         )
 
     return KeyframeDefaults(per_minute=per_minute, max_frames=max_frames)
+
+
+def load_job_concurrency(default: int = DEFAULT_JOB_CONCURRENCY) -> int:
+    """Max jobs the ``JobManager`` runs concurrently (``NEXTEXT_JOB_CONCURRENCY``).
+
+    Defaults to 1 (serial). Unparseable values fall back to the default and
+    values below 1 clamp to 1 (both with a warning), so a misconfigured
+    environment can never produce a zero/negative semaphore.
+
+    Args:
+        default (int): Fallback when the env var is unset/unparseable.
+
+    Returns:
+        int: The configured concurrency, at least 1.
+    """
+    raw = os.getenv("NEXTEXT_JOB_CONCURRENCY", "").strip()
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        logger.warning("Invalid NEXTEXT_JOB_CONCURRENCY {!r}; using {}.", raw, default)
+        return default
+    if value < 1:
+        logger.warning("NEXTEXT_JOB_CONCURRENCY {} is < 1; clamping to 1.", value)
+        return 1
+    return value
 
 
 @dataclass(frozen=True)
