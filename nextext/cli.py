@@ -17,6 +17,7 @@ from nextext.core.docint_transcript import (
 from nextext.core.openai_cfg import InferencePipeline
 from nextext.core.processing import FileProcessor
 from nextext.pipeline import (
+    effective_text_column,
     hate_speech_pipeline,
     normalize_language_code,
     should_translate,
@@ -194,9 +195,7 @@ def _emit_docint_jsonl(
     transcript_df: "pd.DataFrame",
     source_path: Path,
     output_path: Path,
-    task: str,
     language: str | None,
-    detected_language: str | None,
     force_overwrite: bool = False,
 ) -> None:
     """Write a docint JSONL payload for a completed transcription run.
@@ -209,12 +208,10 @@ def _emit_docint_jsonl(
         transcript_df (pd.DataFrame): Sentence-merged transcript.
         source_path (Path): Original input audio path.
         output_path (Path): Target JSONL path or parent directory.
-        task (str): Task to perform, ``"transcribe"`` or ``"translate"``.
         language (str | None): Normalized ISO 639-1 code of the transcript
-            text (the target for ``translate``; the source for
-            ``transcribe``).
-        detected_language (str | None): Normalized ISO 639-1 code of the
-            auto-detected source audio language.
+            text. Since the JSONL always carries the original transcript
+            (never a Nextext translation), this is always the resolved
+            source language.
         force_overwrite (bool): When ``True``, overwrite an existing
             target file. When ``False`` (default), refuse and raise
             :class:`FileExistsError`.
@@ -237,8 +234,6 @@ def _emit_docint_jsonl(
         source_file=source_path.name,
         source_file_hash=file_hash,
         language=language,
-        detected_language=detected_language,
-        task=task,
         segments=segments,
     )
     target = _resolve_docint_output_path(output_path, source_path)
@@ -386,10 +381,11 @@ def _run_main(args: argparse.Namespace) -> None:
                 "The configured inference provider is not reachable. Please ensure it is running and accessible."
             )
 
-        # Summarize the transcribed text
+        # Summarize the transcribed text (translated text when available)
         if args.summarize:
+            summary_text_column = effective_text_column(transcript_df)
             transcript_summary = summarization_pipeline(
-                text=" ".join(transcript_df["text"].astype(str).tolist()),
+                text=" ".join(transcript_df[summary_text_column].astype(str).tolist()),
                 inference_pipeline=inference_pipeline,
             )
             if transcript_summary is not None:
@@ -420,15 +416,17 @@ def _run_main(args: argparse.Namespace) -> None:
     # Optional: emit a docint-compatible JSONL payload next to the transcript.
     # ``_transcript_segments_from_df`` returns integer-valued floats for
     # ``start_seconds`` / ``end_seconds`` — they parse the already-rounded
-    # ``HH:MM:SS`` strings produced by ``_seconds_to_time``.
+    # ``HH:MM:SS`` strings produced by ``_seconds_to_time``. docint always
+    # receives the original (untranslated) transcript text — see
+    # ``transcript_segments_from_df`` — so ``language`` is the resolved
+    # source language here, not ``transcript_lang`` (which is the target for
+    # a ``translate`` task and only describes the downstream-analysis text).
     if getattr(args, "emit_docint_jsonl", None) is not None:
         _emit_docint_jsonl(
             transcript_df=transcript_df,
             source_path=args.file_path,
             output_path=args.emit_docint_jsonl,
-            task=args.task,
-            language=transcript_lang,
-            detected_language=detected_src_lang,
+            language=detected_src_lang,
             force_overwrite=getattr(args, "force_docint_jsonl", False),
         )
 

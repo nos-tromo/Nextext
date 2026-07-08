@@ -64,10 +64,34 @@ def test_transcript_csv_artifact_round_trips(
     assert len(df) == 2
 
 
-def test_docint_jsonl_includes_detected_language(
+def test_transcript_csv_artifact_includes_translation_column_for_translate_task(
     stub_app_client: tuple[TestClient, JobManager],
 ) -> None:
-    """Each docint JSONL record should carry the detected source language."""
+    """A translate-task job's transcript CSV should carry both text and translation columns."""
+    client, _ = stub_app_client
+    job_id = _submit_and_wait(
+        client,
+        {
+            "task": "translate",
+            "trg_lang": "de",
+            "speakers": 1,
+            "words": False,
+            "summarization": False,
+            "hate_speech": False,
+        },
+    )
+    response = client.get(f"/api/v1/jobs/{job_id}/artifacts/transcript.csv")
+    assert response.status_code == 200
+    df = pd.read_csv(io.BytesIO(response.content))
+    assert list(df.columns) == ["start", "end", "speaker", "text", "translation"]
+    assert list(df["text"]) == ["Hello world.", "Second segment."]
+    assert list(df["translation"]) == ["Hallo Welt.", "Zweites Segment."]
+
+
+def test_docint_jsonl_includes_language(
+    stub_app_client: tuple[TestClient, JobManager],
+) -> None:
+    """Each docint JSONL record should carry the resolved source language."""
     client, _ = stub_app_client
     job_id = _submit_and_wait(
         client,
@@ -87,7 +111,39 @@ def test_docint_jsonl_includes_detected_language(
     assert lines
     # The stub pipeline resolves the source language to "en".
     for record in lines:
-        assert record["detected_language"] == "en"
+        assert record["language"] == "en"
+
+
+def test_docint_jsonl_uses_original_text_for_translate_task(
+    stub_app_client: tuple[TestClient, JobManager],
+) -> None:
+    """The docint JSONL's ``text`` field should carry the original transcript, not the translation.
+
+    docint has its own ad-hoc translation for operators unfamiliar with the
+    source language, so Nextext feeds it the highest-fidelity (untranslated)
+    transcript regardless of task. ``language`` is therefore always the
+    resolved source language, even though the job's ``transcript_language``
+    (used for downstream analysis) is the target language for a translate
+    task.
+    """
+    client, _ = stub_app_client
+    job_id = _submit_and_wait(
+        client,
+        {
+            "task": "translate",
+            "trg_lang": "de",
+            "speakers": 1,
+            "words": False,
+            "summarization": False,
+            "hate_speech": False,
+        },
+    )
+    response = client.get(f"/api/v1/jobs/{job_id}/artifacts/docint.jsonl")
+    assert response.status_code == 200
+    lines = [json.loads(line) for line in response.content.decode("utf-8").splitlines() if line]
+    assert [record["text"] for record in lines] == ["Hello world.", "Second segment."]
+    for record in lines:
+        assert record["language"] == "en"
 
 
 def test_summary_artifact_returns_404_when_not_requested(

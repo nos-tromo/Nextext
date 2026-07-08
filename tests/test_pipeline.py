@@ -429,7 +429,20 @@ def test_translation_pipeline_translates_each_row(
     result = pipeline.translation_pipeline(df.copy(), "es")
 
     assert translator.calls == [("es", "hello", "en"), ("es", "world", "en")]
-    assert list(result["text"]) == ["hello-es", "world-es"]
+    # The original transcript text is preserved untouched...
+    assert list(result["text"]) == ["hello", "world"]
+    # ...and the translation is written to its own column so both can be
+    # cross-referenced in the output table.
+    assert list(result["translation"]) == ["hello-es", "world-es"]
+
+
+def test_effective_text_column_prefers_translation() -> None:
+    """``effective_text_column`` should prefer ``translation`` when present, else ``text``."""
+    transcribed_only = pd.DataFrame({"text": ["hello"]})
+    assert pipeline.effective_text_column(transcribed_only) == "text"
+
+    translated = pd.DataFrame({"text": ["hello"], "translation": ["hola"]})
+    assert pipeline.effective_text_column(translated) == "translation"
 
 
 def test_summarization_pipeline_formats_prompt(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -567,6 +580,54 @@ def test_hate_speech_pipeline_returns_flagged_rows(
     assert results[0]["category"] == "racism"
     assert results[0]["text"] == "bad text"
     assert results[0]["start"] == "00:00:01"
+
+
+def test_hate_speech_pipeline_reads_translation_column_when_present(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Detection runs against ``translation`` when that column is present.
+
+    Guards the :func:`effective_text_column` wiring: before translation had
+    its own column it overwrote ``text`` in place, so downstream analysis saw
+    the translated content. That behavior must be preserved — detection reads
+    the translated column and the flagged entry surfaces the translated text,
+    not the original.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): The monkeypatch fixture.
+    """
+    from nextext.core.openai_cfg import InferencePipeline
+
+    seen: list[str] = []
+
+    class DummyDetector:
+        def __init__(self, inference_pipeline: Any, max_chars: int) -> None:
+            pass
+
+        def detect(self, text: str) -> dict[str, Any]:
+            seen.append(text)
+            return {
+                "hate_speech": True,
+                "category": "other",
+                "confidence": "low",
+                "reason": "",
+            }
+
+    monkeypatch.setattr(pipeline, "HateSpeechDetector", DummyDetector)
+
+    df = pd.DataFrame(
+        {
+            "start": ["00:00:01"],
+            "text": ["original source text"],
+            "translation": ["translated target text"],
+        }
+    )
+    dummy_ip = InferencePipeline.__new__(InferencePipeline)
+
+    results = pipeline.hate_speech_pipeline(df, dummy_ip)
+
+    assert seen == ["translated target text"]
+    assert results[0]["text"] == "translated target text"
 
 
 def test_wordlevel_pipeline_invokes_all_steps(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -31,6 +31,7 @@ export interface TranscriptSegment {
   end: string | null
   speaker: string | null
   text: string
+  translation: string | null
 }
 
 export interface WordCount {

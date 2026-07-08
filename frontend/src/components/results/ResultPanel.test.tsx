@@ -38,7 +38,7 @@ function makeSnapshot(overrides: Partial<JobSnapshot['result']> = {}): JobSnapsh
     finished_at: '2026-01-01T00:01:00Z',
     result: {
       transcript: [
-        { start: '0.00', end: '2.00', speaker: null, text: 'Hello world' },
+        { start: '0.00', end: '2.00', speaker: null, text: 'Hello world', translation: null },
       ],
       transcript_language: 'en',
       resolved_src_lang: 'en',

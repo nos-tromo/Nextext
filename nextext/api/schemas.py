@@ -53,6 +53,7 @@ class TranscriptSegment(BaseModel):
     end: str | None = None
     speaker: str | None = None
     text: str
+    translation: str | None = None
 
 
 class WordCount(BaseModel):

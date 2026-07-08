@@ -81,6 +81,10 @@ def _fake_transcript_df() -> pd.DataFrame:
 def stub_pipeline_runner(state: JobState, push: PushEvent) -> dict[str, Any]:
     """Deterministic stand-in for the real pipeline, used across API tests.
 
+    For a ``translate`` task, a ``translation`` column is added alongside the
+    original ``text`` column — mirroring ``translation_pipeline`` — so tests
+    can assert the transcript and translation are cross-referenceable.
+
     Args:
         state: The job being processed.
         push: Event sink for SSE delivery.
@@ -89,6 +93,8 @@ def stub_pipeline_runner(state: JobState, push: PushEvent) -> dict[str, Any]:
         dict[str, Any]: A result dict shaped like the real pipeline's output.
     """
     df = _fake_transcript_df()
+    if state.options.task == "translate":
+        df["translation"] = ["Hallo Welt.", "Zweites Segment."]
     total = len(PIPELINE_STAGE_LABELS)
     for index, label in enumerate(PIPELINE_STAGE_LABELS):
         push(
@@ -110,6 +116,10 @@ def stub_pipeline_runner(state: JobState, push: PushEvent) -> dict[str, Any]:
                 "result_delta": {"index": index},
             },
         )
+    # Mirrors the real pipeline: transcript_language is the target language
+    # for a translate task, the source language for transcribe — so tests can
+    # verify docint JSONL export uses the source language regardless of task.
+    transcript_language = state.options.trg_lang if state.options.task == "translate" else "en"
     return {
         "transcript": df,
         "summary": "A short summary." if state.options.summarization else None,
@@ -118,7 +128,7 @@ def stub_pipeline_runner(state: JobState, push: PushEvent) -> dict[str, Any]:
         "wordcloud": None,
         "hate_speech_findings": None,
         "resolved_src_lang": "en",
-        "transcript_language": "en",
+        "transcript_language": transcript_language,
         "task": state.options.task,
     }
 

@@ -138,6 +138,11 @@ class JobState:
 def _normalize_transcript_row(row: dict[Hashable, Any]) -> TranscriptSegment:
     """Convert a transcript DataFrame row to ``TranscriptSegment``.
 
+    ``translation`` is only present in the row when translation has run (see
+    :func:`nextext.pipeline.translation_pipeline`); it is ``None`` for
+    transcribe-only jobs so the transcript and translation can be
+    cross-referenced side by side in the UI table and CSV/XLSX exports.
+
     Args:
         row: One row from the transcript DataFrame.
 
@@ -149,6 +154,7 @@ def _normalize_transcript_row(row: dict[Hashable, Any]) -> TranscriptSegment:
         end=_optional_str(row.get("end")),
         speaker=_optional_str(row.get("speaker")),
         text=str(row.get("text", "")),
+        translation=_optional_str(row.get("translation")),
     )
 
 
@@ -287,6 +293,7 @@ def _run_pipeline_blocking(state: JobState, push_event: PushEvent) -> dict[str, 
     # Local imports keep test stubs and import-time module reloads predictable.
     from nextext.core.openai_cfg import InferencePipeline
     from nextext.pipeline import (
+        effective_text_column,
         hate_speech_pipeline,
         normalize_language_code,
         should_translate,
@@ -461,8 +468,9 @@ def _run_pipeline_blocking(state: JobState, push_event: PushEvent) -> dict[str, 
                 raise ConnectionError(
                     "The configured inference provider is not reachable. Please ensure it is running and accessible."
                 )
+        summary_text_column = effective_text_column(df)
         result["summary"] = summarization_pipeline(
-            " ".join(df["text"].astype(str).tolist()),
+            " ".join(df[summary_text_column].astype(str).tolist()),
             inference_pipeline=inference_pipeline,
         )
         _complete(3, {"summary": bool(result["summary"])})

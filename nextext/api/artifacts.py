@@ -54,6 +54,13 @@ def _figure_to_png(figure: Figure) -> bytes:
 def build_docint_jsonl_for_job(state: JobState) -> bytes:
     """Render the docint-flavoured JSONL payload for one job.
 
+    docint receives the original (untranslated) transcript text regardless of
+    task — see :func:`nextext.core.docint_transcript.transcript_segments_from_df`
+    — so ``language`` is always the resolved source language here, not
+    ``result["transcript_language"]`` (which is the target language for a
+    ``translate`` task and only describes the human-facing/downstream-analysis
+    text).
+
     Args:
         state: The job whose transcript should be serialized.
 
@@ -66,17 +73,12 @@ def build_docint_jsonl_for_job(state: JobState) -> bytes:
     segments = transcript_segments_from_df(transcript)
     if not segments:
         return b""
-    transcript_language = state.result.get("transcript_language") or state.result.get("resolved_src_lang")
-    language = normalize_language_code(str(transcript_language)) if transcript_language else None
-    detected_raw = state.result.get("resolved_src_lang")
-    detected_language = normalize_language_code(str(detected_raw)) if detected_raw else None
-    task = state.result.get("task") or state.options.task
+    resolved_src_lang = state.result.get("resolved_src_lang")
+    language = normalize_language_code(str(resolved_src_lang)) if resolved_src_lang else None
     return build_docint_jsonl(
         source_file=state.file_name,
         source_file_hash=state.source_file_hash or None,
         language=language,
-        detected_language=detected_language,
-        task=task,
         segments=segments,
     )
 
