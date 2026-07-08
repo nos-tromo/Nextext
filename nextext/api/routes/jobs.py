@@ -318,6 +318,41 @@ async def download_batch_artifact(
     )
 
 
+# Declared before ``/{job_id}`` so the literal ``events`` segment is matched
+# ahead of the job-id pattern (mirrors the ``/batch/{name}`` precedent above).
+@router.get("/events")
+async def stream_owner_events(
+    manager: JobManager = Depends(get_job_manager),  # noqa: B008 — FastAPI dependency marker
+    owner_id: str = Depends(resolve_principal),
+) -> StreamingResponse:
+    """Stream SSE events for every job the caller owns over one connection.
+
+    A single browser opens exactly one of these streams for its whole session
+    instead of one per job, so a large batch never approaches the browser's
+    per-host connection limit. Events for jobs created after the stream opens
+    are delivered live; each frame carries its ``job_id`` so the client routes
+    it to the right job. Owner-scoped — only the caller's own jobs appear.
+
+    Args:
+        manager: Job manager dependency.
+        owner_id: Resolved principal (owner identifier).
+
+    Returns:
+        StreamingResponse: ``text/event-stream`` that stays open until the
+            client disconnects.
+    """
+    headers = {
+        "Cache-Control": "no-cache",
+        "X-Accel-Buffering": "no",
+        "Connection": "keep-alive",
+    }
+    return StreamingResponse(
+        manager.subscribe_owner(owner_id),
+        media_type="text/event-stream",
+        headers=headers,
+    )
+
+
 async def _require_job(
     job_id: str,
     manager: JobManager,

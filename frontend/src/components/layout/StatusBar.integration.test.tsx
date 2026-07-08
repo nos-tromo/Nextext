@@ -2,13 +2,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 
-// Script a stream that advances Transcribing(0) -> Transcribing done(0.2) -> Translating(0.2),
-// then stays open (a real SSE connection does not close mid-run) so the job holds at Translating.
+// Script the OWNER-multiplexed stream: Transcribing(0) -> Transcribing done(0.2)
+// -> Translating(0.2), each frame tagged with its job_id, then stay open (a real
+// SSE connection does not close mid-run) so the job holds at Translating.
 const { frames } = vi.hoisted(() => ({
   frames: [
-    { event: 'stage_started', data: '{"stage":"Transcribing","stage_index":0,"progress":0,"timestamp":"t"}' },
-    { event: 'stage_completed', data: '{"stage":"Transcribing","stage_index":0,"progress":0.2,"timestamp":"t","result_delta":null}' },
-    { event: 'stage_started', data: '{"stage":"Translating","stage_index":1,"progress":0.2,"timestamp":"t"}' },
+    { event: 'stage_started', data: '{"job_id":"j1","stage":"Transcribing","stage_index":0,"progress":0,"timestamp":"t"}' },
+    { event: 'stage_completed', data: '{"job_id":"j1","stage":"Transcribing","stage_index":0,"progress":0.2,"timestamp":"t","result_delta":null}' },
+    { event: 'stage_started', data: '{"job_id":"j1","stage":"Translating","stage_index":1,"progress":0.2,"timestamp":"t"}' },
   ],
 }))
 vi.mock('../../api/sse', () => ({
@@ -22,6 +23,7 @@ vi.mock('../../api/sse', () => ({
 
 import { JobCard } from '../jobs/JobCard'
 import { StatusBar } from './StatusBar'
+import { useOwnerJobStream } from '../../hooks/useOwnerJobStream'
 import { useJobProgressStore } from '../../lib/jobProgressStore'
 import type { JobListItem } from '../../api/types'
 
@@ -38,7 +40,13 @@ const job: JobListItem = {
   task: 'transcribe',
 }
 
-function mountBoth() {
+/** Mounts the single owner stream (as the Shell does) without any UI. */
+function StreamMount() {
+  useOwnerJobStream()
+  return null
+}
+
+function mountAll() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   vi.stubGlobal(
     'fetch',
@@ -46,6 +54,7 @@ function mountBoth() {
   )
   return render(
     <QueryClientProvider client={qc}>
+      <StreamMount />
       <StatusBar />
       <JobCard job={job} />
     </QueryClientProvider>,
@@ -55,13 +64,16 @@ function mountBoth() {
 beforeEach(() => useJobProgressStore.getState().clear())
 afterEach(() => vi.restoreAllMocks())
 
-describe('StatusBar + JobCard integration', () => {
-  it('advances the header step in real time as the job stream progresses', async () => {
-    mountBoth()
-    // The JobCard's useJobStream reduces the stream and publishes into the shared
-    // store; the StatusBar (a header sibling) reads that store and re-renders.
-    await waitFor(() => expect(screen.getByText('Translating')).toBeInTheDocument())
-    expect(screen.getByText('20%')).toBeInTheDocument()
+describe('owner stream + StatusBar + JobCard integration', () => {
+  it('drives the job card step in real time while the header shows batch progress', async () => {
+    mountAll()
+    // The single owner stream reduces the frames and publishes into the shared
+    // store; the JobCard reads its own job's live step from that store.
+    await waitFor(() => expect(screen.getByText(/Translating/)).toBeInTheDocument())
+    expect(screen.getByText(/20%/)).toBeInTheDocument()
+    // The header StatusBar (a sibling) reads the same store: the job is
+    // processing and 0 of 1 files are done yet.
     expect(screen.getByText('1 processing')).toBeInTheDocument()
+    expect(screen.getByText('0/1')).toBeInTheDocument()
   })
 })

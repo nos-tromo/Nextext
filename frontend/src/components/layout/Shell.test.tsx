@@ -5,6 +5,11 @@ import { Shell } from './Shell'
 import { useJobProgressStore } from '../../lib/jobProgressStore'
 import type { JobListItem } from '../../api/types'
 
+// The Shell mounts the single owner-multiplexed SSE stream; mock it so the
+// stream stays open (never yields) and never touches the network in Shell tests.
+const { streamSseMock } = vi.hoisted(() => ({ streamSseMock: vi.fn() }))
+vi.mock('../../api/sse', () => ({ streamSse: streamSseMock }))
+
 function stubJobs(jobs: JobListItem[]): void {
   vi.stubGlobal(
     'fetch',
@@ -23,7 +28,17 @@ function mountShell() {
   )
 }
 
-beforeEach(() => useJobProgressStore.getState().clear())
+beforeEach(() => {
+  useJobProgressStore.getState().clear()
+  streamSseMock.mockReset()
+  // Default: an owner stream that opens and stays open. It yields one inert
+  // (non-job) frame the hook ignores, then blocks — modelling a live SSE
+  // connection without emitting real progress into these layout tests.
+  streamSseMock.mockImplementation(async function* () {
+    yield { event: 'ping', data: '' }
+    await new Promise(() => {})
+  })
+})
 afterEach(() => vi.restoreAllMocks())
 
 describe('Shell', () => {
@@ -32,6 +47,13 @@ describe('Shell', () => {
     mountShell()
     expect(screen.getByText('Nextext')).toBeInTheDocument()
     expect(screen.getByText('page-body')).toBeInTheDocument()
+  })
+
+  it('opens exactly one owner-multiplexed job stream', () => {
+    stubJobs([])
+    mountShell()
+    expect(streamSseMock).toHaveBeenCalledTimes(1)
+    expect(streamSseMock.mock.calls[0][0]).toBe('/jobs/events')
   })
 
   it('surfaces the job status bar in the header', async () => {

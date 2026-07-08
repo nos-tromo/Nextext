@@ -6,6 +6,15 @@ export function jobEventsPath(jobId: string): string {
   return `/jobs/${jobId}/events`
 }
 
+/**
+ * SSE path for the owner-multiplexed stream (relative to API_BASE). One
+ * connection carries events for every job the caller owns, so a batch never
+ * approaches the browser's per-host connection limit.
+ */
+export function ownerEventsPath(): string {
+  return '/jobs/events'
+}
+
 /** Queue a new job: multipart `file` + JSON `options`. */
 export function submitJob(
   fileName: string,
