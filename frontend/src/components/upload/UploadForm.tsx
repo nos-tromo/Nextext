@@ -3,7 +3,7 @@ import { useLanguages } from '../../hooks/useLanguages'
 import { checkUploadAcceptable } from '../../lib/uploadGuard'
 import { readStoredTargetLang, writeStoredTargetLang } from '../../lib/targetLang'
 import { Dropzone } from './Dropzone'
-import { Banner } from '@infra/ui'
+import { Banner, FileList, mergeFiles } from '@infra/ui'
 import type { JobOptions, Task } from '../../api/types'
 
 export interface UploadFormProps {
@@ -58,20 +58,13 @@ export function UploadForm({ pending, onRun }: UploadFormProps) {
 
   return (
     <div className="space-y-4">
-      <Dropzone onFiles={(f) => setFiles((prev) => [...prev, ...f])} disabled={pending} />
+      <Dropzone onFiles={(f) => setFiles((prev) => mergeFiles(prev, f))} disabled={pending} />
 
-      {files.length > 0 && (
-        <ul className="text-sm text-muted-foreground">
-          {files.map((f, i) => (
-            <li key={`${f.name}-${i}`} className="flex justify-between">
-              <span>{f.name}</span>
-              <button className="text-primary" onClick={() => setFiles(files.filter((_, j) => j !== i))} disabled={pending}>
-                remove
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
+      <FileList
+        files={files}
+        onRemove={pending ? undefined : (i) => setFiles(files.filter((_, j) => j !== i))}
+        onClear={pending ? undefined : () => setFiles([])}
+      />
 
       {sizeError && <Banner variant="danger">{sizeError}</Banner>}
 
