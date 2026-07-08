@@ -1,5 +1,5 @@
 import { DownloadButtons } from './DownloadButtons'
-import { transcriptHasSpeaker } from '../../lib/transcriptTable'
+import { transcriptHasSpeaker, transcriptHasTranslation } from '../../lib/transcriptTable'
 import type { TranscriptSegment } from '../../api/types'
 
 interface TranscriptTabProps {
@@ -10,8 +10,11 @@ interface TranscriptTabProps {
 
 /**
  * Displays the transcript as a time-stamped table with an optional Speaker
- * column (shown only when at least one segment carries a speaker label).
- * Provides CSV, XLSX, and JSONL download buttons with stem-prefixed filenames.
+ * column (shown only when at least one segment carries a speaker label) and
+ * an optional Translation column (shown only when at least one segment
+ * carries a translation), so the original transcript and its translation can
+ * be cross-referenced side by side. Provides CSV, XLSX, and JSONL download
+ * buttons with stem-prefixed filenames.
  *
  * @param jobId - The job identifier, forwarded to {@link DownloadButtons}.
  * @param segments - Transcript segments from the completed job result.
@@ -19,6 +22,7 @@ interface TranscriptTabProps {
  */
 export function TranscriptTab({ jobId, segments, stem }: TranscriptTabProps) {
   const hasSpeaker = transcriptHasSpeaker(segments)
+  const hasTranslation = transcriptHasTranslation(segments)
 
   return (
     <div className="space-y-4">
@@ -29,7 +33,8 @@ export function TranscriptTab({ jobId, segments, stem }: TranscriptTabProps) {
               <th className="px-4 py-2 text-left font-medium">Start</th>
               <th className="px-4 py-2 text-left font-medium">End</th>
               {hasSpeaker && <th className="px-4 py-2 text-left font-medium">Speaker</th>}
-              <th className="px-4 py-2 text-left font-medium">Text</th>
+              <th className="px-4 py-2 text-left font-medium">{hasTranslation ? 'Transcript' : 'Text'}</th>
+              {hasTranslation && <th className="px-4 py-2 text-left font-medium">Translation</th>}
             </tr>
           </thead>
           <tbody>
@@ -41,6 +46,9 @@ export function TranscriptTab({ jobId, segments, stem }: TranscriptTabProps) {
                   <td className="px-4 py-2 text-muted-foreground">{seg.speaker ?? '—'}</td>
                 )}
                 <td className="px-4 py-2 text-foreground">{seg.text}</td>
+                {hasTranslation && (
+                  <td className="px-4 py-2 text-foreground">{seg.translation || '—'}</td>
+                )}
               </tr>
             ))}
           </tbody>

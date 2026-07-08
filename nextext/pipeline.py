@@ -118,7 +118,10 @@ def translation_pipeline(
     """Translate the transcribed text using a machine translation model.
 
     Translation is performed only if the target language is different from
-    the detected source language.
+    the detected source language. The original transcribed text is preserved
+    in the ``text`` column; the translated text is written to a separate
+    ``translation`` column so both can be cross-referenced in the output
+    table (CSV/XLSX exports and the UI transcript table).
 
     Args:
         df (pd.DataFrame): DataFrame containing the transcribed text.
@@ -127,7 +130,9 @@ def translation_pipeline(
         inference_pipeline (InferencePipeline | None): Shared inference client.
 
     Returns:
-        pd.DataFrame: DataFrame with the translated text.
+        pd.DataFrame: DataFrame with an added ``translation`` column holding
+            the translated text, or unchanged when the source and target
+            languages already match.
     """
     translator = Translator(inference_pipeline=inference_pipeline)
     resolved_src_lang = src_lang
@@ -136,8 +141,27 @@ def translation_pipeline(
         resolved_src_lang = detected_lang.get("code")
     if normalize_language_code(resolved_src_lang) == normalize_language_code(trg_lang):
         return df
-    df["text"] = df["text"].apply(lambda text: translator.translate(trg_lang, text, src_lang=resolved_src_lang))
+    df["translation"] = df["text"].apply(lambda text: translator.translate(trg_lang, text, src_lang=resolved_src_lang))
     return df
+
+
+def effective_text_column(df: pd.DataFrame) -> str:
+    """Return the column holding the text downstream agents should analyze.
+
+    The transcript DataFrame always keeps the original transcribed text in
+    ``text``. When :func:`translation_pipeline` has run, the translated text
+    lives in a separate ``translation`` column, and downstream agents
+    (word-level analysis, summarization, hate-speech detection) should
+    analyze that translated text rather than the original — matching the
+    pre-existing behavior from before translation had its own column.
+
+    Args:
+        df (pd.DataFrame): Transcript DataFrame, optionally translated.
+
+    Returns:
+        str: ``"translation"`` when present, otherwise ``"text"``.
+    """
+    return "translation" if "translation" in df.columns else "text"
 
 
 SUMMARY_MAX_OUTPUT_TOKENS: int = 1024
@@ -345,6 +369,10 @@ def wordlevel_pipeline(
 ) -> tuple[pd.DataFrame, pd.DataFrame, Figure | None]:
     """Calculate word statistics, named entities, and create a word cloud.
 
+    Analyzes the translated text (``translation`` column) when translation
+    has run, otherwise the original transcribed text (``text`` column) — see
+    :func:`effective_text_column`.
+
     Args:
         data (pd.DataFrame): DataFrame containing the text data to analyze.
         language (str): Language code of the text data.
@@ -355,8 +383,9 @@ def wordlevel_pipeline(
             word-cloud figure (or ``None`` when there are no word counts to
             plot).
     """
+    text_column = effective_text_column(data)
     word_analysis = WordCounter(
-        text=" ".join(data["text"].astype(str).tolist()),
+        text=" ".join(data[text_column].astype(str).tolist()),
         language=language,
     )
 
@@ -378,7 +407,10 @@ def hate_speech_pipeline(
 
     Only segments flagged as hate speech are included in the returned list.
     Each entry in the list is a :class:`HateSpeechDetection` dict extended with
-    the original ``text`` field for display purposes.
+    the analyzed text for display purposes. Detection runs against the
+    translated text (``translation`` column) when translation has run,
+    otherwise the original transcribed text (``text`` column) — see
+    :func:`effective_text_column`.
 
     Args:
         df (pd.DataFrame): Transcript DataFrame with a ``text`` column.
@@ -391,12 +423,13 @@ def hate_speech_pipeline(
     """
     detector = HateSpeechDetector(inference_pipeline, max_chars)
     has_start = "start" in df.columns
+    text_column = effective_text_column(df)
     results: list[dict[str, Any]] = []
     for _, row in df.iterrows():
-        detection = detector.detect(str(row["text"]))
+        detection = detector.detect(str(row[text_column]))
         if detection["hate_speech"]:
             entry = dict(detection)
-            entry["text"] = str(row["text"])
+            entry["text"] = str(row[text_column])
             entry["start"] = str(row["start"]) if has_start else ""
             results.append(entry)
     return results

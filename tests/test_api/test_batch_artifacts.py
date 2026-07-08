@@ -93,7 +93,7 @@ def test_batch_docint_concatenates_completed_jobs(
     assert len(records) == 4
     assert {r["source_file"] for r in records} == {"a.wav", "b.wav"}
     for record in records:
-        assert record["detected_language"] == "en"
+        assert record["language"] == "en"
 
 
 def test_batch_archive_nests_jobs_in_distinct_folders(

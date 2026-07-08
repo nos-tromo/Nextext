@@ -76,6 +76,33 @@ def test_post_jobs_creates_and_runs_a_stub_pipeline(
     assert transcript[0]["text"] == "Hello world."
 
 
+def test_post_jobs_surfaces_translation_alongside_text_for_translate_task(
+    stub_app_client: tuple[TestClient, JobManager],
+) -> None:
+    """A translate-task job's transcript segments should carry both text and translation."""
+    client, _ = stub_app_client
+    options = {
+        "task": "translate",
+        "trg_lang": "de",
+        "speakers": 1,
+        "words": False,
+        "summarization": False,
+        "hate_speech": False,
+    }
+    files = {"file": ("clip.wav", io.BytesIO(b"audio-bytes"), "audio/wav")}
+    data = {"options": json.dumps(options)}
+
+    create_response = client.post("/api/v1/jobs", files=files, data=data)
+    job_id = create_response.json()["job_id"]
+
+    snapshot = _wait_for_status(client, job_id, "completed")
+    transcript = snapshot["result"]["transcript"]
+    assert transcript[0]["text"] == "Hello world."
+    assert transcript[0]["translation"] == "Hallo Welt."
+    assert transcript[1]["text"] == "Second segment."
+    assert transcript[1]["translation"] == "Zweites Segment."
+
+
 def test_post_jobs_rejects_invalid_options_json(
     stub_app_client: tuple[TestClient, JobManager],
 ) -> None:
