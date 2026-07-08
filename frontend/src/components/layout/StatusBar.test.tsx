@@ -67,20 +67,24 @@ describe('StatusBar', () => {
     expect(await screen.findByText('1 failed')).toBeInTheDocument()
   })
 
-  it('shows the running job step label and percent from the live store', async () => {
-    stubJobs([mkJob({ job_id: 'a', status: 'running', file_name: 'a.wav' })])
-    useJobProgressStore.getState().setJobProgress('a', mkProgress({ status: 'running', stageLabel: 'Transcribing', progress: 0.2 }))
+  it('shows batch progress as finished-and-failed over total files', async () => {
+    stubJobs([
+      mkJob({ job_id: 'c1', status: 'completed' }),
+      mkJob({ job_id: 'f1', status: 'failed' }),
+      mkJob({ job_id: 'r1', status: 'running' }),
+      mkJob({ job_id: 'q1', status: 'queued' }),
+    ])
     mountStatusBar()
-    expect(await screen.findByText('Transcribing')).toBeInTheDocument()
-    expect(await screen.findByText('20%')).toBeInTheDocument()
+    // 2 of 4 terminal (1 completed + 1 failed) -> "2/4"
+    expect(await screen.findByText('2/4')).toBeInTheDocument()
   })
 
-  it('reflects a live running status that overrides a stale queued snapshot', async () => {
-    stubJobs([mkJob({ job_id: 'a', status: 'queued', file_name: 'a.wav' })])
-    useJobProgressStore.getState().setJobProgress('a', mkProgress({ status: 'running', stageLabel: 'Translating', progress: 0.4 }))
+  it('counts a live-completed job toward batch progress before the list refetches', async () => {
+    stubJobs([mkJob({ job_id: 'a', status: 'running', file_name: 'a.wav' })])
+    useJobProgressStore.getState().setJobProgress('a', mkProgress({ status: 'completed', progress: 1, terminal: true }))
     mountStatusBar()
-    expect(await screen.findByText('1 processing')).toBeInTheDocument()
-    expect(await screen.findByText('Translating')).toBeInTheDocument()
+    expect(await screen.findByText('1/1')).toBeInTheDocument()
+    expect(await screen.findByText('1 finished')).toBeInTheDocument()
   })
 
   it('renders nothing when there are no jobs', async () => {
@@ -93,10 +97,10 @@ describe('StatusBar', () => {
     expect(screen.queryByText(/processing|queued|finished|failed/)).toBeNull()
   })
 
-  it('shows counts but no progress text when no job is running', async () => {
+  it('shows the batch progress fraction whenever there are jobs, even with none running', async () => {
     stubJobs([mkJob({ job_id: 'c', status: 'completed' }), mkJob({ job_id: 'q', status: 'queued' })])
     mountStatusBar()
     await screen.findByText('1 finished')
-    expect(screen.queryByText(/%/)).toBeNull()
+    expect(await screen.findByText('1/2')).toBeInTheDocument()
   })
 })

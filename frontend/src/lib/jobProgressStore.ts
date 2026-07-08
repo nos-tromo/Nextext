@@ -3,12 +3,12 @@ import type { JobProgress } from './jobProgress'
 
 /**
  * Shared, module-singleton store holding each job's latest reduced
- * {@link JobProgress}, keyed by `job_id`. Every mounted `useJobStream` publishes
- * into it, so an ancestor component (the header status bar) can read live
- * per-job progress it could not otherwise reach by props.
+ * {@link JobProgress}, keyed by `job_id`. The single owner-multiplexed stream
+ * (`useOwnerJobStream`) publishes every job's progress into it, so both the
+ * header status bar and each job card read live progress from one place.
  */
 export interface JobProgressState {
-  /** Live reduced progress, keyed by `job_id`. Mirrors each mounted useJobStream. */
+  /** Live reduced progress, keyed by `job_id`. Fed by `useOwnerJobStream`. */
   byId: Record<string, JobProgress>
   /** Insert or replace a job's latest reduced progress. */
   setJobProgress: (jobId: string, progress: JobProgress) => void

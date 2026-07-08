@@ -4,17 +4,6 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import type { ReactElement } from 'react'
 import type { JobListItem, JobStatus } from '../../api/types'
 
-vi.mock('../../hooks/useJobStream', () => ({
-  useJobStream: () => ({
-    status: 'completed',
-    stageIndex: 0,
-    stageLabel: null,
-    progress: 1,
-    error: null,
-    skipped: false,
-    terminal: true,
-  }),
-}))
 vi.mock('../results/ResultPanel', () => ({ ResultPanel: () => null }))
 vi.mock('../../api/jobs', () => ({
   deleteJob: vi.fn(),
@@ -24,6 +13,7 @@ vi.mock('../../api/jobs', () => ({
 
 import { deleteJob } from '../../api/jobs'
 import { JobCard } from './JobCard'
+import { useJobProgressStore } from '../../lib/jobProgressStore'
 
 const mockedDelete = vi.mocked(deleteJob)
 
@@ -50,8 +40,31 @@ function renderCard(ui: ReactElement) {
 beforeEach(() => {
   mockedDelete.mockReset()
   mockedDelete.mockResolvedValue(undefined)
+  useJobProgressStore.getState().clear()
 })
 afterEach(() => vi.restoreAllMocks())
+
+describe('JobCard progress', () => {
+  it('renders live per-job progress read from the shared store', () => {
+    useJobProgressStore.getState().setJobProgress('j1', {
+      status: 'running',
+      stageIndex: 1,
+      stageLabel: 'Translating',
+      progress: 0.4,
+      error: null,
+      skipped: false,
+      terminal: false,
+    })
+    renderCard(<JobCard job={mkJob('j1', 'running')} />)
+    expect(screen.getByText(/Translating/)).toBeInTheDocument()
+    expect(screen.getByText(/40%/)).toBeInTheDocument()
+  })
+
+  it('falls back to the list snapshot status when the stream has no entry yet', () => {
+    renderCard(<JobCard job={mkJob('j2', 'completed')} />)
+    expect(screen.getByText('Complete')).toBeInTheDocument()
+  })
+})
 
 describe('JobCard Remove', () => {
   it('deletes the job when Remove is clicked', async () => {

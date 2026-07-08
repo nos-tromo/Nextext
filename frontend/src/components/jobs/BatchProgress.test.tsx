@@ -1,15 +1,30 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 
-// The job's SSE stream drives it straight to completion.
+// The owner-multiplexed SSE stream drives j1 straight to completion, then stays
+// open (a real connection does not close mid-session).
 vi.mock('../../api/sse', () => ({
   async *streamSse() {
+    // Let the initial jobs-list load settle first (as in production, a job
+    // completes well after the list first loads), so the completion's list
+    // invalidation triggers a real refetch rather than deduping into the
+    // in-flight initial fetch.
+    await new Promise((resolve) => setTimeout(resolve, 20))
     yield { event: 'job_completed', data: '{"job_id":"j1","skipped":false,"timestamp":"t"}' }
+    await new Promise(() => {})
   },
 }))
 
 import { BatchProgress } from './BatchProgress'
+import { useOwnerJobStream } from '../../hooks/useOwnerJobStream'
+import { useJobProgressStore } from '../../lib/jobProgressStore'
+
+/** Mounts the single owner stream (as the Shell does) without any UI. */
+function StreamMount() {
+  useOwnerJobStream()
+  return null
+}
 
 function jobsResponse(status: string): Response {
   return new Response(
@@ -40,11 +55,13 @@ function mountBatchProgress() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
     <QueryClientProvider client={qc}>
+      <StreamMount />
       <BatchProgress />
     </QueryClientProvider>,
   )
 }
 
+beforeEach(() => useJobProgressStore.getState().clear())
 afterEach(() => vi.restoreAllMocks())
 
 describe('BatchProgress batch-download enablement', () => {

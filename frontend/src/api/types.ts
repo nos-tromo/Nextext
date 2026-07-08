@@ -112,6 +112,7 @@ export interface StageEventData {
 }
 
 export interface StageStartedEvent {
+  job_id: string
   stage: string
   stage_index: number
   progress: number
@@ -119,6 +120,7 @@ export interface StageStartedEvent {
 }
 
 export interface StageCompletedEvent {
+  job_id: string
   stage: string
   stage_index: number
   progress: number

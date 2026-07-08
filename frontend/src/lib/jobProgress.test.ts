@@ -4,11 +4,11 @@ import type { JobEvent } from '../api/types'
 
 const started = (i: number, p: number): JobEvent => ({
   name: 'stage_started',
-  data: { stage: `S${i}`, stage_index: i, progress: p, timestamp: 't' },
+  data: { job_id: 'j', stage: `S${i}`, stage_index: i, progress: p, timestamp: 't' },
 })
 const completed = (i: number, p: number): JobEvent => ({
   name: 'stage_completed',
-  data: { stage: `S${i}`, stage_index: i, progress: p, timestamp: 't', result_delta: null },
+  data: { job_id: 'j', stage: `S${i}`, stage_index: i, progress: p, timestamp: 't', result_delta: null },
 })
 
 describe('jobProgress reducer', () => {
