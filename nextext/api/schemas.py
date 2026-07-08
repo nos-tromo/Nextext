@@ -119,6 +119,7 @@ class JobSnapshot(BaseModel):
 class StageEvent(BaseModel):
     """SSE event payload describing a pipeline stage transition."""
 
+    job_id: str
     stage: str
     stage_index: int
     progress: float

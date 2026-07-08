@@ -518,6 +518,11 @@ class JobManager:
         """
         resolved = concurrency if concurrency is not None else load_job_concurrency()
         self._jobs: dict[str, JobState] = {}
+        # Owner-level SSE subscribers, keyed by owner_id. A single browser
+        # opens one multiplexed stream (``subscribe_owner``) that receives
+        # events for every job it owns, so a large batch uses one connection
+        # instead of one per job.
+        self._owner_subscribers: dict[str, list[asyncio.Queue[bytes | None]]] = {}
         self._lock = asyncio.Lock()
         self._workers_semaphore = asyncio.Semaphore(resolved)
         self._concurrency = resolved
@@ -531,9 +536,14 @@ class JobManager:
         return None
 
     async def stop(self) -> None:
-        """Clean up per-job tempdirs on shutdown."""
+        """Clean up per-job tempdirs and close owner streams on shutdown."""
         for state in list(self._jobs.values()):
             await self._delete_state(state)
+        async with self._lock:
+            for queues in self._owner_subscribers.values():
+                for queue in queues:
+                    queue.put_nowait(None)
+            self._owner_subscribers.clear()
 
     async def create_job(
         self,
@@ -681,6 +691,54 @@ class JobManager:
                 if queue in state.subscribers:
                     state.subscribers.remove(queue)
 
+    async def subscribe_owner(self, owner_id: str) -> AsyncIterator[bytes]:
+        """Yield SSE events for *all* of an owner's jobs over one connection.
+
+        Replays every owned job's history on connect (oldest job first) so a
+        reloading client rebuilds each job's progression, then live-tails every
+        subsequent event dispatched for the owner — including jobs created
+        after the stream opened. Unlike :meth:`subscribe`, a single job
+        reaching a terminal state does not close the stream; it stays open for
+        the owner's other (and future) jobs until the client disconnects.
+
+        Args:
+            owner_id: Principal resolved by
+                :func:`nextext.api.identity.resolve_principal`.
+
+        Yields:
+            bytes: SSE-formatted event frames, each tagged with its ``job_id``.
+        """
+        queue: asyncio.Queue[bytes | None] = asyncio.Queue()
+        async with self._lock:
+            # Snapshot + register atomically: put_nowait never awaits, so no
+            # concurrently dispatched frame can slip between replay and
+            # registration (dispatch runs on this same loop thread).
+            owned = sorted(
+                (state for state in self._jobs.values() if state.owner_id == owner_id),
+                key=lambda state: state.created_at,
+            )
+            for state in owned:
+                for _, frame in state.event_history:
+                    queue.put_nowait(frame)
+            self._owner_subscribers.setdefault(owner_id, []).append(queue)
+        try:
+            while True:
+                try:
+                    raw: bytes | None = await asyncio.wait_for(queue.get(), timeout=15.0)
+                except TimeoutError:
+                    yield b": ping\n\n"
+                    continue
+                if raw is None:
+                    return
+                yield raw
+        finally:
+            async with self._lock:
+                queues = self._owner_subscribers.get(owner_id)
+                if queues is not None and queue in queues:
+                    queues.remove(queue)
+                if queues is not None and not queues:
+                    del self._owner_subscribers[owner_id]
+
     async def _worker(self, state: JobState) -> None:
         """Run the pipeline for ``state`` once a worker slot is available.
 
@@ -695,12 +753,19 @@ class JobManager:
             def _push(event_name: str, payload: dict[str, Any]) -> None:
                 """Publish an event to history + subscribers (thread-safe).
 
+                Tags every frame with ``job_id`` at this single choke point so
+                each event is self-identifying — the multiplexed owner stream
+                (:meth:`subscribe_owner`) carries events for many jobs over one
+                connection and routes them by ``job_id``. Terminal events
+                already carry it; re-adding is idempotent.
+
                 Args:
                     event_name: SSE event name.
                     payload: JSON-serializable payload.
                 """
-                frame = _format_sse(event_name, payload)
-                loop.call_soon_threadsafe(self._dispatch_event, state, event_name, payload, frame)
+                tagged = {"job_id": state.job_id, **payload}
+                frame = _format_sse(event_name, tagged)
+                loop.call_soon_threadsafe(self._dispatch_event, state, event_name, tagged, frame)
 
             try:
                 result = await asyncio.to_thread(self._pipeline_runner, state, _push)
@@ -759,6 +824,11 @@ class JobManager:
         if isinstance(progress, (int, float)):
             state.progress = float(progress)
         for queue in state.subscribers:
+            queue.put_nowait(frame)
+        # Owner-multiplexed subscribers receive the same frame (terminal frames
+        # included) but never the ``None`` sentinel: one job finishing must not
+        # close a stream that also serves the owner's other and future jobs.
+        for queue in self._owner_subscribers.get(state.owner_id, ()):
             queue.put_nowait(frame)
         if event_name in _TERMINAL_EVENT_NAMES:
             for queue in list(state.subscribers):
