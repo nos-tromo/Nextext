@@ -212,10 +212,10 @@ def test_unknown_artifact_returns_404(
     assert response.status_code == 404
 
 
-def test_transcript_txt_artifact_is_tab_delimited(
+def test_transcript_txt_artifact_is_readable_block_format(
     stub_app_client: tuple[TestClient, JobManager],
 ) -> None:
-    """The transcript TXT artifact is a tab-delimited table with a header row."""
+    """The transcript TXT artifact is the readable timestamped block layout."""
     client, _ = stub_app_client
     job_id = _submit_and_wait(
         client,
@@ -231,10 +231,9 @@ def test_transcript_txt_artifact_is_tab_delimited(
     response = client.get(f"/api/v1/jobs/{job_id}/artifacts/transcript.txt")
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/plain")
-    assert response.content.decode("utf-8").splitlines()[0] == "start\tend\tspeaker\ttext"
-    df = pd.read_csv(io.BytesIO(response.content), sep="\t")
-    assert list(df.columns) == ["start", "end", "speaker", "text"]
-    assert len(df) == 2
+    assert response.content.decode("utf-8") == (
+        "00:00:00 - 00:00:02 (S1)\nHello world.\n\n00:00:02 - 00:00:04 (S2)\nSecond segment.\n\n"
+    )
 
 
 def test_translation_txt_artifact_404_for_transcribe_task(
@@ -275,15 +274,15 @@ def test_translate_task_splits_transcript_and_translation_txt(
     )
     transcript = client.get(f"/api/v1/jobs/{job_id}/artifacts/transcript.txt")
     assert transcript.status_code == 200
-    transcript_df = pd.read_csv(io.BytesIO(transcript.content), sep="\t")
-    assert list(transcript_df.columns) == ["start", "end", "speaker", "text"]
-    assert list(transcript_df["text"]) == ["Hello world.", "Second segment."]
+    assert transcript.content.decode("utf-8") == (
+        "00:00:00 - 00:00:02 (S1)\nHello world.\n\n00:00:02 - 00:00:04 (S2)\nSecond segment.\n\n"
+    )
 
     translation = client.get(f"/api/v1/jobs/{job_id}/artifacts/translation.txt")
     assert translation.status_code == 200
-    translation_df = pd.read_csv(io.BytesIO(translation.content), sep="\t")
-    assert list(translation_df.columns) == ["start", "end", "speaker", "translation"]
-    assert list(translation_df["translation"]) == ["Hallo Welt.", "Zweites Segment."]
+    assert translation.content.decode("utf-8") == (
+        "00:00:00 - 00:00:02 (S1)\nHallo Welt.\n\n00:00:02 - 00:00:04 (S2)\nZweites Segment.\n\n"
+    )
 
 
 def test_archive_zip_contains_txt_exports(

@@ -26,7 +26,7 @@ def test_write_transcript_output_transcribe_writes_single_txt(tmp_path: Path) ->
     assert (out / "clip_transcript.xlsx").exists()
     txt = out / "clip_transcript.txt"
     assert txt.exists()
-    assert txt.read_text(encoding="utf-8").splitlines()[0] == "start\tend\tspeaker\ttext"
+    assert txt.read_text(encoding="utf-8") == "00:00:00 - 00:00:02 (S1)\nHello world.\n\n"
     assert not (out / "clip_translation.txt").exists()
 
 
@@ -46,9 +46,9 @@ def test_write_transcript_output_translate_writes_two_txt(tmp_path: Path) -> Non
     out = tmp_path / "clip"
     transcript_txt = (out / "clip_transcript.txt").read_text(encoding="utf-8")
     translation_txt = (out / "clip_translation.txt").read_text(encoding="utf-8")
-    assert transcript_txt.splitlines()[0] == "start\tend\tspeaker\ttext"
+    assert transcript_txt == "00:00:00 - 00:00:02 (S1)\nHello world.\n\n"
     assert "Hallo Welt." not in transcript_txt
-    assert translation_txt.splitlines()[0] == "start\tend\tspeaker\ttranslation"
+    assert translation_txt == "00:00:00 - 00:00:02 (S1)\nHallo Welt.\n\n"
     assert "Hallo Welt." in translation_txt
     # The combined CSV still carries both columns side by side.
     combined = pd.read_csv(out / "clip_transcript.csv")
@@ -84,13 +84,13 @@ def test_write_transcript_output_dotted_stem_no_collision(tmp_path: Path) -> Non
     assert "Hallo Welt." in translation_txt.read_text(encoding="utf-8")
 
 
-def test_write_transcript_output_empty_transcript_writes_header_only_txt(tmp_path: Path) -> None:
-    """A no-speech (empty) transcript still writes a header-only transcript.txt and no translation.txt."""
+def test_write_transcript_output_empty_transcript_writes_empty_txt(tmp_path: Path) -> None:
+    """A no-speech (empty) transcript writes an empty transcript.txt (no segments) and no translation.txt."""
     processor = FileProcessor(file_path=Path("clip.wav"), output_dir=tmp_path)
     df = pd.DataFrame({"start": [], "end": [], "text": []})
     processor.write_transcript_output(df)
     out = tmp_path / "clip"
     txt = out / "clip_transcript.txt"
     assert txt.exists()
-    assert txt.read_text(encoding="utf-8").splitlines() == ["start\tend\ttext"]
+    assert txt.read_text(encoding="utf-8") == ""
     assert not (out / "clip_translation.txt").exists()
