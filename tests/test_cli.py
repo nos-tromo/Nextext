@@ -51,9 +51,7 @@ def _args(file_path: Path, **overrides: Any) -> argparse.Namespace:
     return argparse.Namespace(**base)
 
 
-def test_run_main_saves_transcript_via_write_transcript_output(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_run_main_saves_transcript_via_write_transcript_output(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """The normal transcribe path saves the transcript through write_transcript_output."""
     created: list[_SpyProcessor] = []
 
@@ -74,9 +72,7 @@ def test_run_main_saves_transcript_via_write_transcript_output(
     assert "transcript" not in processor.file_output_labels
 
 
-def test_run_main_no_speech_saves_via_write_transcript_output(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_run_main_no_speech_saves_via_write_transcript_output(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """The no-speech guard also saves the (empty) transcript through write_transcript_output."""
     created: list[_SpyProcessor] = []
 
