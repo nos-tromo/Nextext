@@ -1,7 +1,30 @@
 # Tab-delimited `.txt` transcript export
 
 **Date:** 2026-07-09
-**Status:** Approved (design)
+**Status:** Implemented — see Revision below
+
+## Revision (2026-07-09): human-readable block layout supersedes TSV
+
+After delivery, the customer-facing `.txt` format was changed from a
+tab-delimited table (TSV, described in the sections below) to a readable
+per-segment block layout. Only the `.txt` output changed; CSV/XLSX stay
+tabular, the two-file transcript/translation split is unchanged, and the
+backend/CLI/ZIP/frontend surfaces are the same. Each segment renders as:
+
+```
+{start} - {end} (SPEAKER_00)
+<segment text>
+
+```
+
+- The `(SPEAKER_00)` tag is appended **only when the row carries a speaker
+  label** (a diarized job); real pyannote labels pass through verbatim. An
+  undiarized transcript (no `speaker` column) has **no** `(...)` tag at all.
+- Segments are separated by a blank line; an empty transcript renders to an
+  empty file. Rendering lives in `nextext.pipeline._render_transcript_block`,
+  consumed by the same `transcript_txt_exports` seam.
+
+The TSV details in the sections below are retained as the original design record.
 
 ## Goal
 
