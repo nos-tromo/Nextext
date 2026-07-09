@@ -8,6 +8,7 @@ import pytest
 
 from nextext import pipeline
 from nextext.core.openai_cfg import InferencePipeline
+from nextext.pipeline import transcript_txt_exports
 from nextext.utils.env_cfg import WhisperClientConfig
 
 
@@ -1049,3 +1050,49 @@ def test_summarization_degrades_to_empty_after_exhausting_retries(
 
     assert result == ""
     assert overflower.overflow_count == pipeline._MAX_OVERFLOW_RETRIES + 1
+
+
+def test_transcript_txt_exports_transcribe_returns_single_file() -> None:
+    """A transcribe-only transcript yields one tab-delimited 'transcript' export."""
+    df = pd.DataFrame(
+        {
+            "start": ["00:00:00"],
+            "end": ["00:00:02"],
+            "speaker": ["S1"],
+            "text": ["Hello world."],
+        }
+    )
+    exports = transcript_txt_exports(df)
+    assert [label for label, _ in exports] == ["transcript"]
+    _, tsv = exports[0]
+    lines = tsv.splitlines()
+    assert lines[0] == "start\tend\tspeaker\ttext"
+    assert lines[1] == "00:00:00\t00:00:02\tS1\tHello world."
+
+
+def test_transcript_txt_exports_translate_splits_into_two_files() -> None:
+    """A translated transcript yields separate 'transcript' and 'translation' exports."""
+    df = pd.DataFrame(
+        {
+            "start": ["00:00:00"],
+            "end": ["00:00:02"],
+            "speaker": ["S1"],
+            "text": ["Hello world."],
+            "translation": ["Hallo Welt."],
+        }
+    )
+    exports = dict(transcript_txt_exports(df))
+    assert set(exports) == {"transcript", "translation"}
+    assert exports["transcript"].splitlines()[0] == "start\tend\tspeaker\ttext"
+    assert "Hello world." in exports["transcript"]
+    assert "Hallo Welt." not in exports["transcript"]
+    assert exports["translation"].splitlines()[0] == "start\tend\tspeaker\ttranslation"
+    assert "Hallo Welt." in exports["translation"]
+    assert "Hello world." not in exports["translation"]
+
+
+def test_transcript_txt_exports_omits_speaker_when_absent() -> None:
+    """The speaker column is dropped from the header when no speaker data exists."""
+    df = pd.DataFrame({"start": ["00:00:00"], "end": ["00:00:02"], "text": ["Hi."]})
+    ((_, tsv),) = transcript_txt_exports(df)
+    assert tsv.splitlines()[0] == "start\tend\ttext"

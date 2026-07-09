@@ -164,6 +164,38 @@ def effective_text_column(df: pd.DataFrame) -> str:
     return "translation" if "translation" in df.columns else "text"
 
 
+def transcript_txt_exports(df: pd.DataFrame) -> list[tuple[str, str]]:
+    """Split a transcript DataFrame into tab-delimited TXT exports.
+
+    The transcript keeps the original text in ``text`` and, after
+    :func:`translation_pipeline`, the translated text in a separate
+    ``translation`` column. A single wide table pairing both is hard to read,
+    so this returns one export per text column, each carrying the timing (and
+    speaker, when present) columns plus exactly one text column:
+
+    - Transcribe-only frame (no ``translation`` column): a single
+      ``("transcript", <tsv>)`` pair.
+    - Translated frame: two pairs — ``("transcript", <tsv>)`` and
+      ``("translation", <tsv>)``.
+
+    Each ``tsv`` value is tab-delimited with a header row.
+
+    Args:
+        df (pd.DataFrame): Transcript DataFrame with ``start``/``end``/``text``
+            columns, an optional ``speaker`` column, and an optional
+            ``translation`` column.
+
+    Returns:
+        list[tuple[str, str]]: ``(label, tsv_text)`` pairs, ``"transcript"``
+            first and ``"translation"`` second when present.
+    """
+    base_columns = [column for column in ("start", "end", "speaker") if column in df.columns]
+    exports: list[tuple[str, str]] = [("transcript", df[[*base_columns, "text"]].to_csv(sep="\t", index=False))]
+    if "translation" in df.columns:
+        exports.append(("translation", df[[*base_columns, "translation"]].to_csv(sep="\t", index=False)))
+    return exports
+
+
 SUMMARY_MAX_OUTPUT_TOKENS: int = 1024
 """Hard cap on summary output tokens, so generation never crowds out the prompt."""
 
