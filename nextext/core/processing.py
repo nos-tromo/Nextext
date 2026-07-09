@@ -7,6 +7,8 @@ import pandas as pd
 from loguru import logger
 from matplotlib.figure import Figure
 
+from nextext.pipeline import transcript_txt_exports
+
 
 class FileProcessor:
     """FileProcessor is the central class for file processing within Nextext.
@@ -125,3 +127,21 @@ class FileProcessor:
             )
 
         return data
+
+    def write_transcript_output(self, data: pd.DataFrame) -> None:
+        """Write the transcript as combined CSV/XLSX plus split tab-delimited TXT.
+
+        The combined CSV/XLSX keep the original and translated text side by side
+        (unchanged behavior). The TXT export is split per text column via
+        :func:`nextext.pipeline.transcript_txt_exports` so a reader gets a clean
+        ``{filename}_transcript.txt`` and, for a translate task, a separate
+        ``{filename}_translation.txt`` instead of one wide table.
+
+        Args:
+            data (pd.DataFrame): The transcript DataFrame, optionally translated.
+        """
+        self.write_file_output(data, "transcript")
+        for label, tsv in transcript_txt_exports(data):
+            txt_path = (self.output_path / f"{self.filename}_{label}").with_suffix(".txt")
+            txt_path.write_text(tsv, encoding="utf-8")
+            logger.info("Saved output: {}", txt_path)
