@@ -142,6 +142,6 @@ class FileProcessor:
         """
         self.write_file_output(data, "transcript")
         for label, tsv in transcript_txt_exports(data):
-            txt_path = (self.output_path / f"{self.filename}_{label}").with_suffix(".txt")
+            txt_path = self.output_path / f"{self.filename}_{label}.txt"
             txt_path.write_text(tsv, encoding="utf-8")
             logger.info("Saved output: {}", txt_path)
