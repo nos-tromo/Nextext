@@ -6,12 +6,15 @@ import io
 import json
 import time
 import zipfile
+from pathlib import Path
 from typing import Any, cast
 
 import pandas as pd
 from fastapi.testclient import TestClient
 
-from nextext.api.jobs import JobManager
+from nextext.api.artifacts import render_artifact
+from nextext.api.jobs import JobManager, JobState
+from nextext.api.schemas import JobOptions, JobStatus
 
 
 def _submit_and_wait(client: TestClient, options: dict[str, Any]) -> str:
@@ -210,3 +213,115 @@ def test_unknown_artifact_returns_404(
     )
     response = client.get(f"/api/v1/jobs/{job_id}/artifacts/secrets.tar")
     assert response.status_code == 404
+
+
+def test_transcript_txt_artifact_is_readable_block_format(
+    stub_app_client: tuple[TestClient, JobManager],
+) -> None:
+    """The transcript TXT artifact is the readable timestamped block layout."""
+    client, _ = stub_app_client
+    job_id = _submit_and_wait(
+        client,
+        {
+            "task": "transcribe",
+            "trg_lang": "de",
+            "speakers": 1,
+            "words": False,
+            "summarization": False,
+            "hate_speech": False,
+        },
+    )
+    response = client.get(f"/api/v1/jobs/{job_id}/artifacts/transcript.txt")
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/plain")
+    assert response.content.decode("utf-8") == (
+        "00:00:00 - 00:00:02 (S1)\nHello world.\n\n00:00:02 - 00:00:04 (S2)\nSecond segment.\n\n"
+    )
+
+
+def test_translation_txt_artifact_404_for_transcribe_task(
+    stub_app_client: tuple[TestClient, JobManager],
+) -> None:
+    """translation.txt is absent (404) when the job did not translate."""
+    client, _ = stub_app_client
+    job_id = _submit_and_wait(
+        client,
+        {
+            "task": "transcribe",
+            "trg_lang": "de",
+            "speakers": 1,
+            "words": False,
+            "summarization": False,
+            "hate_speech": False,
+        },
+    )
+    response = client.get(f"/api/v1/jobs/{job_id}/artifacts/translation.txt")
+    assert response.status_code == 404
+
+
+def test_txt_artifacts_absent_for_empty_transcript() -> None:
+    """An empty (no-speech) transcript yields no transcript.txt / translation.txt (→ 404)."""
+    state = JobState(
+        job_id="j1",
+        owner_id="o",
+        file_name="clip.wav",
+        file_path=Path("clip.wav"),
+        source_file_hash="sha256:x",
+        options=JobOptions.model_validate({}),
+        status=JobStatus.COMPLETED,
+        result={"transcript": pd.DataFrame(columns=pd.Index(["start", "end", "text"]))},
+    )
+    assert render_artifact(state, "transcript.txt") is None
+    assert render_artifact(state, "translation.txt") is None
+
+
+def test_translate_task_splits_transcript_and_translation_txt(
+    stub_app_client: tuple[TestClient, JobManager],
+) -> None:
+    """A translate job exposes transcript.txt (source) and translation.txt (target) separately."""
+    client, _ = stub_app_client
+    job_id = _submit_and_wait(
+        client,
+        {
+            "task": "translate",
+            "trg_lang": "de",
+            "speakers": 1,
+            "words": False,
+            "summarization": False,
+            "hate_speech": False,
+        },
+    )
+    transcript = client.get(f"/api/v1/jobs/{job_id}/artifacts/transcript.txt")
+    assert transcript.status_code == 200
+    assert transcript.content.decode("utf-8") == (
+        "00:00:00 - 00:00:02 (S1)\nHello world.\n\n00:00:02 - 00:00:04 (S2)\nSecond segment.\n\n"
+    )
+
+    translation = client.get(f"/api/v1/jobs/{job_id}/artifacts/translation.txt")
+    assert translation.status_code == 200
+    assert translation.content.decode("utf-8") == (
+        "00:00:00 - 00:00:02 (S1)\nHallo Welt.\n\n00:00:02 - 00:00:04 (S2)\nZweites Segment.\n\n"
+    )
+
+
+def test_archive_zip_contains_txt_exports(
+    stub_app_client: tuple[TestClient, JobManager],
+) -> None:
+    """The per-job ZIP bundles both split TXT files for a translate task."""
+    client, _ = stub_app_client
+    job_id = _submit_and_wait(
+        client,
+        {
+            "task": "translate",
+            "trg_lang": "de",
+            "speakers": 1,
+            "words": False,
+            "summarization": False,
+            "hate_speech": False,
+        },
+    )
+    response = client.get(f"/api/v1/jobs/{job_id}/artifacts/archive.zip")
+    assert response.status_code == 200
+    names = set(zipfile.ZipFile(io.BytesIO(response.content)).namelist())
+    assert any(name.endswith("_transcript.txt") for name in names)
+    assert any(name.endswith("_translation.txt") for name in names)

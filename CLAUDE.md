@@ -79,7 +79,7 @@ Tests are in `tests/` using pytest with monkeypatch fixtures and `respx` for moc
 - `GET /jobs` — list the caller's in-memory jobs, newest first. The frontend calls this on load to re-discover and resume its jobs after a browser reload.
 - `GET /jobs/{id}` — point-in-time snapshot (owner-scoped).
 - `GET /jobs/{id}/events` — SSE stream of stage transitions (owner-scoped); replays event history on connect so a reattached client resumes mid-run.
-- `GET /jobs/{id}/artifacts/{name}` — binary download (transcript.csv/xlsx, summary.txt, wordcounts.csv/xlsx, entities.csv/xlsx, wordcloud.png, hate_speech.csv/xlsx, docint.jsonl, archive.zip). Owner-scoped.
+- `GET /jobs/{id}/artifacts/{name}` — binary download (transcript.csv/xlsx/txt, translation.txt, summary.txt, wordcounts.csv/xlsx, entities.csv/xlsx, wordcloud.png, hate_speech.csv/xlsx, docint.jsonl, archive.zip). Owner-scoped.
 - `DELETE /jobs/{id}` — cleanup (owner-scoped).
 - `GET /health`, `GET /languages` — meta endpoints.
 

@@ -312,7 +312,7 @@ def _run_main(args: argparse.Namespace) -> None:
                 "No speech detected in '{}'. Writing empty transcript and skipping analysis.",
                 args.file_path,
             )
-            file_processor.write_file_output(transcript_df, "transcript")
+            file_processor.write_transcript_output(transcript_df)
             return
     else:
         logger.error("Invalid task specified: {}", args.task)
@@ -411,7 +411,7 @@ def _run_main(args: argparse.Namespace) -> None:
             logger.info("No hate speech detected.")
 
     # Save final transcript
-    file_processor.write_file_output(transcript_df, "transcript")
+    file_processor.write_transcript_output(transcript_df)
 
     # Optional: emit a docint-compatible JSONL payload next to the transcript.
     # ``_transcript_segments_from_df`` returns integer-valued floats for

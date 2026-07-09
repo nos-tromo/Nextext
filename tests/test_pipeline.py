@@ -8,6 +8,7 @@ import pytest
 
 from nextext import pipeline
 from nextext.core.openai_cfg import InferencePipeline
+from nextext.pipeline import transcript_txt_exports
 from nextext.utils.env_cfg import WhisperClientConfig
 
 
@@ -1049,3 +1050,65 @@ def test_summarization_degrades_to_empty_after_exhausting_retries(
 
     assert result == ""
     assert overflower.overflow_count == pipeline._MAX_OVERFLOW_RETRIES + 1
+
+
+def test_transcript_txt_exports_transcribe_returns_single_block_file() -> None:
+    """A transcribe-only transcript yields one readable 'transcript' block export."""
+    df = pd.DataFrame(
+        {
+            "start": ["00:00:00"],
+            "end": ["00:00:02"],
+            "speaker": ["SPEAKER_00"],
+            "text": ["Hello world."],
+        }
+    )
+    exports = transcript_txt_exports(df)
+    assert [label for label, _ in exports] == ["transcript"]
+    _, block = exports[0]
+    assert block == "00:00:00 - 00:00:02 (SPEAKER_00)\nHello world.\n\n"
+
+
+def test_transcript_txt_exports_translate_splits_into_two_files() -> None:
+    """A translated transcript yields separate 'transcript' and 'translation' block exports."""
+    df = pd.DataFrame(
+        {
+            "start": ["00:00:00"],
+            "end": ["00:00:02"],
+            "speaker": ["SPEAKER_00"],
+            "text": ["Hello world."],
+            "translation": ["Hallo Welt."],
+        }
+    )
+    assert [label for label, _ in transcript_txt_exports(df)] == ["transcript", "translation"]
+    exports = dict(transcript_txt_exports(df))
+    assert set(exports) == {"transcript", "translation"}
+    assert exports["transcript"] == "00:00:00 - 00:00:02 (SPEAKER_00)\nHello world.\n\n"
+    assert exports["translation"] == "00:00:00 - 00:00:02 (SPEAKER_00)\nHallo Welt.\n\n"
+    # Each file carries only its own text column, never the other.
+    assert "Hallo Welt." not in exports["transcript"]
+    assert "Hello world." not in exports["translation"]
+
+
+def test_transcript_txt_exports_omits_speaker_tag_when_no_diarization() -> None:
+    """With no ``speaker`` column, the header carries no ``(...)`` tag at all."""
+    df = pd.DataFrame({"start": ["0:00:00"], "end": ["0:05:01"], "text": ["Praise be."]})
+    ((_, block),) = transcript_txt_exports(df)
+    assert block == "0:00:00 - 0:05:01\nPraise be.\n\n"
+    assert "(" not in block
+
+
+def test_transcript_txt_exports_preserves_order_and_blank_line_separator() -> None:
+    """Segments render in order, diarized labels pass through, blank line between blocks."""
+    df = pd.DataFrame(
+        {
+            "start": ["0:00:00", "0:00:05"],
+            "end": ["0:00:05", "0:00:09"],
+            "speaker": ["SPEAKER_00", "SPEAKER_01"],
+            "text": ["Hello there.", "General Kenobi."],
+        }
+    )
+    assert [label for label, _ in transcript_txt_exports(df)] == ["transcript"]
+    ((_, block),) = transcript_txt_exports(df)
+    assert block == (
+        "0:00:00 - 0:00:05 (SPEAKER_00)\nHello there.\n\n0:00:05 - 0:00:09 (SPEAKER_01)\nGeneral Kenobi.\n\n"
+    )

@@ -13,8 +13,9 @@ interface TranscriptTabProps {
  * column (shown only when at least one segment carries a speaker label) and
  * an optional Translation column (shown only when at least one segment
  * carries a translation), so the original transcript and its translation can
- * be cross-referenced side by side. Provides CSV, XLSX, and JSONL download
- * buttons with stem-prefixed filenames.
+ * be cross-referenced side by side. Provides CSV, XLSX, TXT (or Transcript
+ * TXT + Translation TXT if translation exists), and JSONL download buttons
+ * with stem-prefixed filenames.
  *
  * @param jobId - The job identifier, forwarded to {@link DownloadButtons}.
  * @param segments - Transcript segments from the completed job result.
@@ -23,6 +24,13 @@ interface TranscriptTabProps {
 export function TranscriptTab({ jobId, segments, stem }: TranscriptTabProps) {
   const hasSpeaker = transcriptHasSpeaker(segments)
   const hasTranslation = transcriptHasTranslation(segments)
+
+  const txtItems = hasTranslation
+    ? [
+        { name: 'transcript.txt', label: 'Transcript TXT', fileName: `${stem}_transcript.txt` },
+        { name: 'translation.txt', label: 'Translation TXT', fileName: `${stem}_translation.txt` },
+      ]
+    : [{ name: 'transcript.txt', label: 'TXT', fileName: `${stem}_transcript.txt` }]
 
   return (
     <div className="space-y-4">
@@ -59,6 +67,7 @@ export function TranscriptTab({ jobId, segments, stem }: TranscriptTabProps) {
         items={[
           { name: 'transcript.csv', label: 'CSV', fileName: `${stem}_transcript.csv` },
           { name: 'transcript.xlsx', label: 'XLSX', fileName: `${stem}_transcript.xlsx` },
+          ...txtItems,
           { name: 'docint.jsonl', label: 'JSONL', fileName: `${stem}_docint.jsonl` },
         ]}
       />

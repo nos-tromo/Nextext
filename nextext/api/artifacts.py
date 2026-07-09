@@ -19,7 +19,7 @@ from nextext.core.docint_transcript import (
     build_docint_jsonl,
     transcript_segments_from_df,
 )
-from nextext.pipeline import normalize_language_code
+from nextext.pipeline import normalize_language_code, transcript_txt_exports
 
 
 def _df_to_xlsx(df: pd.DataFrame) -> bytes:
@@ -113,6 +113,8 @@ def _render_archive_members(state: JobState) -> dict[str, bytes]:
     if isinstance(transcript, pd.DataFrame) and not transcript.empty:
         members[f"{stem}_transcript.csv"] = transcript.to_csv(index=False).encode("utf-8")
         members[f"{stem}_transcript.xlsx"] = _df_to_xlsx(transcript)
+        for label, tsv in transcript_txt_exports(transcript):
+            members[f"{stem}_{label}.txt"] = tsv.encode("utf-8")
 
     summary = result.get("summary")
     if isinstance(summary, str) and summary.strip():
@@ -295,6 +297,19 @@ def render_artifact(state: JobState, name: str) -> tuple[bytes, str] | None:
         if _missing_dataframe(state, "transcript"):
             return None
         return _df_to_xlsx(result["transcript"]), _APP_XLSX
+    if name == "transcript.txt":
+        if _missing_dataframe(state, "transcript"):
+            return None
+        exports = dict(transcript_txt_exports(result["transcript"]))
+        return exports["transcript"].encode("utf-8"), _TEXT_PLAIN
+    if name == "translation.txt":
+        if _missing_dataframe(state, "transcript"):
+            return None
+        exports = dict(transcript_txt_exports(result["transcript"]))
+        translation_tsv = exports.get("translation")
+        if translation_tsv is None:
+            return None
+        return translation_tsv.encode("utf-8"), _TEXT_PLAIN
     if name == "summary.txt":
         summary = result.get("summary")
         if not (isinstance(summary, str) and summary.strip()):
@@ -358,6 +373,8 @@ SUPPORTED_ARTIFACTS: frozenset[str] = frozenset(
     {
         "transcript.csv",
         "transcript.xlsx",
+        "transcript.txt",
+        "translation.txt",
         "summary.txt",
         "wordcounts.csv",
         "wordcounts.xlsx",

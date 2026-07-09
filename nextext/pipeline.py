@@ -164,6 +164,69 @@ def effective_text_column(df: pd.DataFrame) -> str:
     return "translation" if "translation" in df.columns else "text"
 
 
+def _render_transcript_block(df: pd.DataFrame, text_column: str) -> str:
+    """Render one transcript text column as readable timestamped blocks.
+
+    Each segment becomes a header line ``{start} - {end}`` — with `` ({speaker})``
+    appended only when the row carries a speaker label (i.e. the job was
+    diarized) — followed by the segment's text on the next line and a blank
+    line separating it from the next segment. An undiarized transcript (no
+    ``speaker`` column) therefore carries no ``(...)`` speaker tag at all.
+
+    Args:
+        df (pd.DataFrame): Transcript DataFrame with ``start``/``end`` columns,
+            ``text_column``, and an optional ``speaker`` column.
+        text_column (str): Column whose text is rendered — ``"text"`` for the
+            transcript, ``"translation"`` for the translation.
+
+    Returns:
+        str: The rendered blocks (trailing blank line included); ``""`` when
+            the frame has no rows.
+    """
+    has_speaker = "speaker" in df.columns
+    blocks: list[str] = []
+    for row in df.to_dict("records"):
+        header = f"{row.get('start', '')} - {row.get('end', '')}"
+        if has_speaker:
+            speaker = row.get("speaker")
+            if not pd.isna(speaker) and str(speaker).strip():
+                header = f"{header} ({speaker})"
+        raw_text = row.get(text_column, "")
+        text = "" if pd.isna(raw_text) else str(raw_text)
+        blocks.append(f"{header}\n{text}")
+    return "\n\n".join(blocks) + "\n\n" if blocks else ""
+
+
+def transcript_txt_exports(df: pd.DataFrame) -> list[tuple[str, str]]:
+    """Split a transcript DataFrame into readable per-segment TXT exports.
+
+    The transcript keeps the original text in ``text`` and, after
+    :func:`translation_pipeline`, the translated text in a separate
+    ``translation`` column. A single wide table pairing both is hard for a
+    customer to read, so this returns one human-readable block export per text
+    column (see :func:`_render_transcript_block` for the layout):
+
+    - Transcribe-only frame (no ``translation`` column): a single
+      ``("transcript", <blocks>)`` pair.
+    - Translated frame: two pairs — ``("transcript", <blocks>)`` and
+      ``("translation", <blocks>)`` — so the source and the translation each
+      read as their own clean, timestamped document.
+
+    Args:
+        df (pd.DataFrame): Transcript DataFrame with ``start``/``end``/``text``
+            columns, an optional ``speaker`` column, and an optional
+            ``translation`` column.
+
+    Returns:
+        list[tuple[str, str]]: ``(label, rendered_blocks)`` pairs, ``"transcript"``
+            first and ``"translation"`` second when present.
+    """
+    exports: list[tuple[str, str]] = [("transcript", _render_transcript_block(df, "text"))]
+    if "translation" in df.columns:
+        exports.append(("translation", _render_transcript_block(df, "translation")))
+    return exports
+
+
 SUMMARY_MAX_OUTPUT_TOKENS: int = 1024
 """Hard cap on summary output tokens, so generation never crowds out the prompt."""
 
