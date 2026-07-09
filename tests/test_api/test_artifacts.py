@@ -6,12 +6,15 @@ import io
 import json
 import time
 import zipfile
+from pathlib import Path
 from typing import Any, cast
 
 import pandas as pd
 from fastapi.testclient import TestClient
 
-from nextext.api.jobs import JobManager
+from nextext.api.artifacts import render_artifact
+from nextext.api.jobs import JobManager, JobState
+from nextext.api.schemas import JobOptions, JobStatus
 
 
 def _submit_and_wait(client: TestClient, options: dict[str, Any]) -> str:
@@ -254,6 +257,22 @@ def test_translation_txt_artifact_404_for_transcribe_task(
     )
     response = client.get(f"/api/v1/jobs/{job_id}/artifacts/translation.txt")
     assert response.status_code == 404
+
+
+def test_txt_artifacts_absent_for_empty_transcript() -> None:
+    """An empty (no-speech) transcript yields no transcript.txt / translation.txt (→ 404)."""
+    state = JobState(
+        job_id="j1",
+        owner_id="o",
+        file_name="clip.wav",
+        file_path=Path("clip.wav"),
+        source_file_hash="sha256:x",
+        options=JobOptions.model_validate({}),
+        status=JobStatus.COMPLETED,
+        result={"transcript": pd.DataFrame(columns=pd.Index(["start", "end", "text"]))},
+    )
+    assert render_artifact(state, "transcript.txt") is None
+    assert render_artifact(state, "translation.txt") is None
 
 
 def test_translate_task_splits_transcript_and_translation_txt(

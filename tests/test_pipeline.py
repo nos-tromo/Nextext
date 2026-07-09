@@ -1079,6 +1079,7 @@ def test_transcript_txt_exports_translate_splits_into_two_files() -> None:
             "translation": ["Hallo Welt."],
         }
     )
+    assert [label for label, _ in transcript_txt_exports(df)] == ["transcript", "translation"]
     exports = dict(transcript_txt_exports(df))
     assert set(exports) == {"transcript", "translation"}
     assert exports["transcript"] == "00:00:00 - 00:00:02 (SPEAKER_00)\nHello world.\n\n"

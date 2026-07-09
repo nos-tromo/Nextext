@@ -15,6 +15,7 @@ describe('TranscriptTab download buttons', () => {
   it('shows a single TXT button for a transcribe-only transcript', () => {
     render(<TranscriptTab jobId="j1" segments={transcribeSegments} stem="clip" />)
     expect(screen.getByRole('button', { name: 'TXT' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Transcript TXT' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Translation TXT' })).not.toBeInTheDocument()
   })
 
