@@ -86,11 +86,15 @@ class FileProcessor:
         if isinstance(data, (str, list, tuple, pd.DataFrame, Figure)):
             # Creating paths for file output
             language_suffix = f"_{target_language}" if target_language else ""
-            output_file_path = self.output_path / f"{self.filename}_{label}{language_suffix}"
-            output_file_path_csv = output_file_path.with_suffix(".csv")
-            output_file_path_txt = output_file_path.with_suffix(".txt")
-            output_file_path_excel = output_file_path.with_suffix(".xlsx")
-            output_file_path_png = output_file_path.with_suffix(".png")
+            # Build each path by direct concatenation rather than ``with_suffix``:
+            # ``with_suffix`` replaces everything after the first dot in the name,
+            # so a dotted stem (e.g. ``episode.2024``) would be truncated to
+            # ``episode.csv``. This mirrors ``write_transcript_output``.
+            base_name = f"{self.filename}_{label}{language_suffix}"
+            output_file_path_csv = self.output_path / f"{base_name}.csv"
+            output_file_path_txt = self.output_path / f"{base_name}.txt"
+            output_file_path_excel = self.output_path / f"{base_name}.xlsx"
+            output_file_path_png = self.output_path / f"{base_name}.png"
 
             # String file operations
             if isinstance(data, str):

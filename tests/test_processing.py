@@ -84,6 +84,27 @@ def test_write_transcript_output_dotted_stem_no_collision(tmp_path: Path) -> Non
     assert "Hallo Welt." in translation_txt.read_text(encoding="utf-8")
 
 
+def test_write_file_output_dotted_stem_keeps_full_name(tmp_path: Path) -> None:
+    """A dotted input stem must not be truncated by ``with_suffix`` for any output.
+
+    ``Path.with_suffix`` treats everything after the first dot as the suffix, so a
+    stem like ``episode.2024`` would collapse ``episode.2024_words`` to
+    ``episode.csv``. f-string concatenation preserves the full stem + label across
+    the csv/xlsx (DataFrame) and txt (string) outputs alike.
+    """
+    processor = FileProcessor(file_path=Path("episode.2024.wav"), output_dir=tmp_path)
+    out = tmp_path / "episode.2024"
+
+    processor.write_file_output(pd.DataFrame({"word": ["hi"], "count": [1]}), "words")
+    assert (out / "episode.2024_words.csv").exists()
+    assert (out / "episode.2024_words.xlsx").exists()
+    assert not (out / "episode.csv").exists()
+
+    processor.write_file_output("A short summary.", "summary")
+    assert (out / "episode.2024_summary.txt").exists()
+    assert not (out / "episode.txt").exists()
+
+
 def test_write_transcript_output_empty_transcript_writes_empty_txt(tmp_path: Path) -> None:
     """A no-speech (empty) transcript writes an empty transcript.txt (no segments) and no translation.txt."""
     processor = FileProcessor(file_path=Path("clip.wav"), output_dir=tmp_path)
