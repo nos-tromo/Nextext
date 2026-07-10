@@ -234,8 +234,10 @@ def test_transcript_txt_artifact_is_readable_block_format(
     response = client.get(f"/api/v1/jobs/{job_id}/artifacts/transcript.txt")
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/plain")
+    rule = "=" * 40
     assert response.content.decode("utf-8") == (
-        "00:00:00 - 00:00:02 (S1)\nHello world.\n\n00:00:02 - 00:00:04 (S2)\nSecond segment.\n\n"
+        f"{rule}\n[00:00:00 - 00:00:02]  S1\n{rule}\nHello world.\n\n"
+        f"{rule}\n[00:00:02 - 00:00:04]  S2\n{rule}\nSecond segment.\n"
     )
 
 
@@ -293,14 +295,17 @@ def test_translate_task_splits_transcript_and_translation_txt(
     )
     transcript = client.get(f"/api/v1/jobs/{job_id}/artifacts/transcript.txt")
     assert transcript.status_code == 200
+    rule = "=" * 40
     assert transcript.content.decode("utf-8") == (
-        "00:00:00 - 00:00:02 (S1)\nHello world.\n\n00:00:02 - 00:00:04 (S2)\nSecond segment.\n\n"
+        f"{rule}\n[00:00:00 - 00:00:02]  S1\n{rule}\nHello world.\n\n"
+        f"{rule}\n[00:00:02 - 00:00:04]  S2\n{rule}\nSecond segment.\n"
     )
 
     translation = client.get(f"/api/v1/jobs/{job_id}/artifacts/translation.txt")
     assert translation.status_code == 200
     assert translation.content.decode("utf-8") == (
-        "00:00:00 - 00:00:02 (S1)\nHallo Welt.\n\n00:00:02 - 00:00:04 (S2)\nZweites Segment.\n\n"
+        f"{rule}\n[00:00:00 - 00:00:02]  S1\n{rule}\nHallo Welt.\n\n"
+        f"{rule}\n[00:00:02 - 00:00:04]  S2\n{rule}\nZweites Segment.\n"
     )
 
 
