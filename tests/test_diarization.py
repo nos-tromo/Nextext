@@ -7,7 +7,7 @@ import httpx
 import pytest
 
 from nextext.core import diarization
-from nextext.core.diarization import assign_speakers_by_overlap, diarize_file
+from nextext.core.diarization import assign_speakers_by_overlap, canonicalize_speaker_labels, diarize_file
 
 # ---------------------------------------------------------------------------
 # assign_speakers_by_overlap
@@ -206,3 +206,29 @@ def test_diarize_file_handles_non_dict_payload(
     audio.write_bytes(b"x")
 
     assert diarize_file(audio, max_speakers=2) == []
+
+
+# ---------------------------------------------------------------------------
+# canonicalize_speaker_labels
+# ---------------------------------------------------------------------------
+
+
+def test_canonicalize_numbers_by_first_appearance() -> None:
+    """Raw pyannote labels renumber to contiguous Speaker N by earliest start."""
+    turns = [
+        {"start": 5.0, "end": 6.0, "speaker": "SPEAKER_02"},
+        {"start": 0.0, "end": 1.0, "speaker": "SPEAKER_00"},
+        {"start": 1.0, "end": 2.0, "speaker": "SPEAKER_02"},
+    ]
+
+    result = canonicalize_speaker_labels(turns)
+
+    # First voice heard (start=0.0, SPEAKER_00) -> Speaker 1; next new voice -> Speaker 2.
+    assert [t["speaker"] for t in result] == ["Speaker 2", "Speaker 1", "Speaker 2"]
+    # Original order and timings are preserved; only the label string changes.
+    assert [t["start"] for t in result] == [5.0, 0.0, 1.0]
+
+
+def test_canonicalize_empty_is_empty() -> None:
+    """No turns canonicalizes to no turns."""
+    assert canonicalize_speaker_labels([]) == []

@@ -21,7 +21,38 @@ from loguru import logger
 
 from nextext.utils.env_cfg import load_diarization_env
 
-__all__ = ["assign_speakers_by_overlap", "diarize_file"]
+__all__ = [
+    "SPEAKER_LABEL_PREFIX",
+    "assign_speakers_by_overlap",
+    "canonicalize_speaker_labels",
+    "diarize_file",
+]
+
+SPEAKER_LABEL_PREFIX = "Speaker"
+
+
+def canonicalize_speaker_labels(turns: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Renumber raw diarization labels to contiguous ``Speaker N`` by first appearance.
+
+    pyannote's ``SPEAKER_00``/``SPEAKER_02`` labels are arbitrary and gap-y.
+    This maps them to ``Speaker 1``, ``Speaker 2``, … in the order each label
+    is first heard (earliest turn ``start``), so the first voice is always
+    ``Speaker 1``. The input order is preserved in the output; only the
+    ``speaker`` string changes.
+
+    Args:
+        turns (list[dict[str, Any]]): Speaker turns with ``start`` / ``end`` /
+            ``speaker`` keys, as returned by :func:`diarize_file`.
+
+    Returns:
+        list[dict[str, Any]]: New turn dicts (same order) with canonical labels.
+    """
+    mapping: dict[str, str] = {}
+    for turn in sorted(turns, key=lambda t: float(t["start"])):
+        raw = str(turn["speaker"])
+        if raw not in mapping:
+            mapping[raw] = f"{SPEAKER_LABEL_PREFIX} {len(mapping) + 1}"
+    return [{**turn, "speaker": mapping[str(turn["speaker"])]} for turn in turns]
 
 
 def diarize_file(
