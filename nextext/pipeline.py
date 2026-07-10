@@ -164,14 +164,27 @@ def effective_text_column(df: pd.DataFrame) -> str:
     return "translation" if "translation" in df.columns else "text"
 
 
+_TXT_BANNER_RULE = "=" * 40
+
+
 def _render_transcript_block(df: pd.DataFrame, text_column: str) -> str:
     """Render one transcript text column as readable timestamped blocks.
 
-    Each segment becomes a header line ``{start} - {end}`` — with `` ({speaker})``
-    appended only when the row carries a speaker label (i.e. the job was
-    diarized) — followed by the segment's text on the next line and a blank
-    line separating it from the next segment. An undiarized transcript (no
-    ``speaker`` column) therefore carries no ``(...)`` speaker tag at all.
+    Each segment's timestamp/speaker header is fenced above and below by a rule
+    line so it stands out from the text body — otherwise a blank line *inside* a
+    segment (a paragraph break in the transcribed text) reads just like the
+    blank line separating segments. The header is ``[{start} - {end}]``, with
+    ``  {speaker}`` appended only when the row carries a speaker label (i.e. the
+    job was diarized); an undiarized transcript (no ``speaker`` column) carries
+    no speaker suffix. One segment renders as::
+
+        ========================================
+        [{start} - {end}]  {speaker}
+        ========================================
+        {text, which may span multiple paragraphs}
+
+    Segments are separated by a blank line; the whole block ends with a single
+    trailing newline.
 
     Args:
         df (pd.DataFrame): Transcript DataFrame with ``start``/``end`` columns,
@@ -180,21 +193,21 @@ def _render_transcript_block(df: pd.DataFrame, text_column: str) -> str:
             transcript, ``"translation"`` for the translation.
 
     Returns:
-        str: The rendered blocks (trailing blank line included); ``""`` when
+        str: The rendered blocks (single trailing newline included); ``""`` when
             the frame has no rows.
     """
     has_speaker = "speaker" in df.columns
     blocks: list[str] = []
     for row in df.to_dict("records"):
-        header = f"{row.get('start', '')} - {row.get('end', '')}"
+        header = f"[{row.get('start', '')} - {row.get('end', '')}]"
         if has_speaker:
             speaker = row.get("speaker")
             if not pd.isna(speaker) and str(speaker).strip():
-                header = f"{header} ({speaker})"
+                header = f"{header}  {speaker}"
         raw_text = row.get(text_column, "")
         text = "" if pd.isna(raw_text) else str(raw_text)
-        blocks.append(f"{header}\n{text}")
-    return "\n\n".join(blocks) + "\n\n" if blocks else ""
+        blocks.append(f"{_TXT_BANNER_RULE}\n{header}\n{_TXT_BANNER_RULE}\n{text}")
+    return "\n\n".join(blocks) + "\n" if blocks else ""
 
 
 def transcript_txt_exports(df: pd.DataFrame) -> list[tuple[str, str]]:

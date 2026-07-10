@@ -222,6 +222,38 @@ def _unique_archive_folder(stem: str, seen: dict[str, int]) -> str:
     return base if count == 1 else f"{base}_{count}"
 
 
+_BATCH_SUMMARIES_NAME = "batch_summaries.txt"
+_SUMMARY_BANNER_RULE = "=" * 40
+
+
+def _build_batch_summaries_txt(states: list[JobState]) -> bytes:
+    """Aggregate every job's summary into one banner-delimited text file.
+
+    Each job whose ``result["summary"]`` is a non-empty string contributes one
+    block: a banner header carrying the upload's file name (with extension), a
+    blank line, then the summary text. Jobs without a summary are skipped, so
+    the file lists exactly the summarized files in ``states`` order. This is a
+    convenience index for the batch ZIP; the per-job ``{stem}_summary.txt``
+    members are still emitted separately by :func:`_render_archive_members`.
+
+    Args:
+        states: Jobs to combine, in the order they should appear.
+
+    Returns:
+        bytes: UTF-8 text bytes, or ``b""`` when no job produced a summary.
+    """
+    blocks: list[str] = []
+    for state in states:
+        summary = state.result.get("summary")
+        if not (isinstance(summary, str) and summary.strip()):
+            continue
+        header = f"{_SUMMARY_BANNER_RULE}\n{state.file_name}\n{_SUMMARY_BANNER_RULE}"
+        blocks.append(f"{header}\n\n{summary.strip()}\n")
+    if not blocks:
+        return b""
+    return "\n".join(blocks).encode("utf-8")
+
+
 def build_batch_archive(states: list[JobState]) -> bytes:
     """Bundle every job's outputs into one ZIP, nested per job.
 
@@ -232,6 +264,11 @@ def build_batch_archive(states: list[JobState]) -> bytes:
     per-job archive is decompressed and re-compressed. Jobs that produced no
     files are skipped.
 
+    When at least one job carries a summary, a single top-level
+    ``batch_summaries.txt`` manifest (see :func:`_build_batch_summaries_txt`) is
+    added at the archive root, listing every summarized file's name and summary
+    text; it is omitted entirely when no job has a summary.
+
     Args:
         states: Jobs to bundle, in the order they should appear.
 
@@ -240,6 +277,9 @@ def build_batch_archive(states: list[JobState]) -> bytes:
     """
     seen: dict[str, int] = {}
     named: list[tuple[str, bytes]] = []
+    summaries = _build_batch_summaries_txt(states)
+    if summaries:
+        named.append((_BATCH_SUMMARIES_NAME, summaries))
     for state in states:
         members = _render_archive_members(state)
         if not members:

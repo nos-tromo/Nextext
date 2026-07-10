@@ -1065,7 +1065,8 @@ def test_transcript_txt_exports_transcribe_returns_single_block_file() -> None:
     exports = transcript_txt_exports(df)
     assert [label for label, _ in exports] == ["transcript"]
     _, block = exports[0]
-    assert block == "00:00:00 - 00:00:02 (SPEAKER_00)\nHello world.\n\n"
+    rule = "=" * 40
+    assert block == f"{rule}\n[00:00:00 - 00:00:02]  SPEAKER_00\n{rule}\nHello world.\n"
 
 
 def test_transcript_txt_exports_translate_splits_into_two_files() -> None:
@@ -1082,8 +1083,9 @@ def test_transcript_txt_exports_translate_splits_into_two_files() -> None:
     assert [label for label, _ in transcript_txt_exports(df)] == ["transcript", "translation"]
     exports = dict(transcript_txt_exports(df))
     assert set(exports) == {"transcript", "translation"}
-    assert exports["transcript"] == "00:00:00 - 00:00:02 (SPEAKER_00)\nHello world.\n\n"
-    assert exports["translation"] == "00:00:00 - 00:00:02 (SPEAKER_00)\nHallo Welt.\n\n"
+    rule = "=" * 40
+    assert exports["transcript"] == f"{rule}\n[00:00:00 - 00:00:02]  SPEAKER_00\n{rule}\nHello world.\n"
+    assert exports["translation"] == f"{rule}\n[00:00:00 - 00:00:02]  SPEAKER_00\n{rule}\nHallo Welt.\n"
     # Each file carries only its own text column, never the other.
     assert "Hallo Welt." not in exports["transcript"]
     assert "Hello world." not in exports["translation"]
@@ -1093,8 +1095,10 @@ def test_transcript_txt_exports_omits_speaker_tag_when_no_diarization() -> None:
     """With no ``speaker`` column, the header carries no ``(...)`` tag at all."""
     df = pd.DataFrame({"start": ["0:00:00"], "end": ["0:05:01"], "text": ["Praise be."]})
     ((_, block),) = transcript_txt_exports(df)
-    assert block == "0:00:00 - 0:05:01\nPraise be.\n\n"
-    assert "(" not in block
+    rule = "=" * 40
+    assert block == f"{rule}\n[0:00:00 - 0:05:01]\n{rule}\nPraise be.\n"
+    # No ``]  speaker`` suffix on the header when the job was not diarized.
+    assert "]  " not in block
 
 
 def test_transcript_txt_exports_preserves_order_and_blank_line_separator() -> None:
@@ -1109,6 +1113,31 @@ def test_transcript_txt_exports_preserves_order_and_blank_line_separator() -> No
     )
     assert [label for label, _ in transcript_txt_exports(df)] == ["transcript"]
     ((_, block),) = transcript_txt_exports(df)
+    rule = "=" * 40
     assert block == (
-        "0:00:00 - 0:00:05 (SPEAKER_00)\nHello there.\n\n0:00:05 - 0:00:09 (SPEAKER_01)\nGeneral Kenobi.\n\n"
+        f"{rule}\n[0:00:00 - 0:00:05]  SPEAKER_00\n{rule}\nHello there.\n\n"
+        f"{rule}\n[0:00:05 - 0:00:09]  SPEAKER_01\n{rule}\nGeneral Kenobi.\n"
     )
+
+
+def test_transcript_txt_exports_banner_fences_header_around_paragraph_body() -> None:
+    """A body with its own paragraph break stays unambiguous: rule lines fence the header.
+
+    This is the motivating case — a blank line *inside* a segment's text must not
+    read as a segment boundary, because the header is bannered above and below.
+    """
+    df = pd.DataFrame(
+        {
+            "start": ["00:00:00"],
+            "end": ["00:00:04"],
+            "speaker": ["SPEAKER_00"],
+            "text": ["First paragraph.\n\nSecond paragraph."],
+        }
+    )
+    ((_, block),) = transcript_txt_exports(df)
+    rule = "=" * 40
+    assert block == (f"{rule}\n[00:00:00 - 00:00:04]  SPEAKER_00\n{rule}\nFirst paragraph.\n\nSecond paragraph.\n")
+    # The header is fenced above and below by rule lines, so the blank line
+    # inside the body cannot be mistaken for a segment boundary.
+    assert f"{rule}\n[00:00:00 - 00:00:04]  SPEAKER_00\n{rule}" in block
+    assert "First paragraph.\n\nSecond paragraph." in block

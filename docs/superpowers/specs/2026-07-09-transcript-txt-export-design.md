@@ -26,6 +26,31 @@ backend/CLI/ZIP/frontend surfaces are the same. Each segment renders as:
 
 The TSV details in the sections below are retained as the original design record.
 
+## Revision (2026-07-10): banner-fenced segment headers
+
+The timestamp/speaker header is now fenced above and below by a 40-char `=`
+rule and bracketed, so it stays distinguishable from the text body. Without
+this, a blank line *inside* a segment (a paragraph break in the transcribed
+text) reads like the blank line that separates segments. One segment renders
+as:
+
+```
+========================================
+[{start} - {end}]  {speaker}
+========================================
+{text, which may span multiple paragraphs}
+```
+
+- `  {speaker}` (two spaces, no parentheses) is appended only when the row
+  carries a speaker label; an undiarized transcript has no speaker suffix (the
+  header is just `[{start} - {end}]`).
+- Segments are still separated by a single blank line; the block now ends with
+  one trailing newline (the prior block layout ended with a blank line).
+- Rendering still lives in `nextext.pipeline._render_transcript_block`, the sole
+  seam behind `transcript_txt_exports`, so the backend artifacts
+  (`transcript.txt`/`translation.txt`, per-job and batch ZIP) and the CLI
+  on-disk output all change together. CSV/XLSX/JSONL are unaffected.
+
 ## Goal
 
 Expand the file output for transcription and translation tasks with a
