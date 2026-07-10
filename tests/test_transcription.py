@@ -467,7 +467,7 @@ def test_external_transcriber_skips_when_vad_reports_no_speech(
 
     transcriber.transcription()
 
-    assert transcriber.transcription_result == {"segments": []}
+    assert transcriber.transcription_result == {"segments": [], "words": []}
 
 
 def test_external_transcriber_applies_no_speech_prob_filter(
@@ -626,6 +626,38 @@ def test_transcription_requests_word_granularity_and_captures_words(
     assert kwargs["timestamp_granularities"] == ["segment", "word"]
     assert transcriber.transcription_result is not None
     assert transcriber.transcription_result["words"] == [{"word": "hi", "start": 0.0, "end": 0.4}]
+
+
+def test_transcription_defaults_words_to_empty_when_response_omits_them(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A response object without a `words` attribute yields an empty words list.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Patches the client, VAD guard, and
+            the normalization seam.
+    """
+    seg = SimpleNamespace(start=0.0, end=1.0, text="hi", no_speech_prob=0.0)
+    fake_response = SimpleNamespace(segments=[seg], language="en")  # no `words` attribute
+    fake_client = MagicMock()
+    fake_client.audio.transcriptions.create.return_value = fake_response
+
+    transcriber = ExternalWhisperTranscriber.__new__(ExternalWhisperTranscriber)
+    transcriber.file_path = transcription.Path(__file__)
+    transcriber.src_lang = "en"
+    transcriber.task = "transcribe"
+    transcriber._model_id = "whisper-1"
+    transcriber._client = None
+    transcriber.transcription_result = None
+
+    monkeypatch.setattr(type(transcriber), "_get_client", property(lambda self: fake_client))
+    monkeypatch.setattr(transcription, "has_speech", lambda _path: True)
+    monkeypatch.setattr(transcription, "normalize_for_transcription", _passthrough_normalize)
+
+    transcriber.transcription()
+
+    assert transcriber.transcription_result["words"] == []
+    assert transcriber.transcription_result["segments"][0]["text"] == "hi"
 
 
 def test_transcription_raises_on_undecodable_audio(

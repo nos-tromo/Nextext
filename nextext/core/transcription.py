@@ -301,7 +301,7 @@ class ExternalWhisperTranscriber:
                 "VAD service reported no speech in {}; skipping external transcription request.",
                 self.file_path.name,
             )
-            self.transcription_result = {"segments": []}
+            self.transcription_result = {"segments": [], "words": []}
             return
 
         provider = load_inference_env().provider
