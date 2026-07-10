@@ -11,6 +11,7 @@ from __future__ import annotations
 import io
 import zipfile
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 import pytest
@@ -20,11 +21,13 @@ from nextext.api.jobs import JobState
 from nextext.api.schemas import JobOptions, JobStatus
 
 
-def _completed_job(name: str) -> JobState:
+def _completed_job(name: str, *, summary: str | None = None) -> JobState:
     """Build a completed in-memory job carrying a small transcript result.
 
     Args:
         name: Upload file name; drives the archive folder and member stem.
+        summary: Optional summary text; when given, populates ``result["summary"]``
+            so the job contributes to the combined ``batch_summaries.txt``.
 
     Returns:
         JobState: A COMPLETED job whose result holds a two-row transcript.
@@ -47,6 +50,9 @@ def _completed_job(name: str) -> JobState:
             "text": ["hello", "world"],
         }
     )
+    result: dict[str, Any] = {"transcript": transcript, "resolved_src_lang": "en"}
+    if summary is not None:
+        result["summary"] = summary
     return JobState(
         job_id=f"job-{name}",
         owner_id="owner",
@@ -55,7 +61,7 @@ def _completed_job(name: str) -> JobState:
         source_file_hash="sha256:deadbeef",
         options=options,
         status=JobStatus.COMPLETED,
-        result={"transcript": transcript, "resolved_src_lang": "en"},
+        result=result,
     )
 
 
@@ -104,3 +110,47 @@ def test_batch_member_bytes_match_per_job() -> None:
     batch = zipfile.ZipFile(io.BytesIO(artifacts.build_batch_archive([job])))
 
     assert _by_basename(per_job) == _by_basename(batch)
+
+
+def test_batch_archive_lists_every_summary_in_one_root_file() -> None:
+    """A batch of summarized jobs gains a root ``batch_summaries.txt`` manifest.
+
+    The combined file carries every file's name (with extension) and its full
+    summary text, in the order the jobs are passed.
+    """
+    first = _completed_job("interview_2024.mp4", summary="Quarterly results and outlook.")
+    second = _completed_job("keynote.mp3", summary="Product roadmap and milestones.")
+
+    batch = zipfile.ZipFile(io.BytesIO(artifacts.build_batch_archive([first, second])))
+
+    assert "batch_summaries.txt" in batch.namelist(), "combined summaries file missing"
+    combined = batch.read("batch_summaries.txt").decode("utf-8")
+    assert "interview_2024.mp4" in combined
+    assert "Quarterly results and outlook." in combined
+    assert "keynote.mp3" in combined
+    assert "Product roadmap and milestones." in combined
+    # Manifest order follows the job order.
+    assert combined.index("interview_2024.mp4") < combined.index("keynote.mp3")
+
+
+def test_batch_archive_omits_summaries_file_when_no_job_has_a_summary() -> None:
+    """With no summaries in the batch, no ``batch_summaries.txt`` is added."""
+    batch = zipfile.ZipFile(
+        io.BytesIO(artifacts.build_batch_archive([_completed_job("a.wav"), _completed_job("b.wav")]))
+    )
+
+    assert "batch_summaries.txt" not in batch.namelist()
+
+
+def test_batch_summaries_file_covers_only_summarized_jobs() -> None:
+    """Only summary-bearing jobs appear in the combined file; others keep their folder."""
+    summarized = _completed_job("with_summary.wav", summary="A real summary.")
+    plain = _completed_job("no_summary.wav")
+
+    batch = zipfile.ZipFile(io.BytesIO(artifacts.build_batch_archive([summarized, plain])))
+    combined = batch.read("batch_summaries.txt").decode("utf-8")
+
+    assert "with_summary.wav" in combined
+    assert "no_summary.wav" not in combined
+    # The summary-less job still contributes its own output folder.
+    assert any(name.startswith("no_summary/") for name in batch.namelist())
