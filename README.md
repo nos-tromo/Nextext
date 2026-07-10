@@ -13,7 +13,7 @@
 
 - An OpenAI-compatible inference endpoint reachable via `OPENAI_API_BASE` (e.g. [nos-tromo/vllm-service](https://github.com/nos-tromo/vllm-service) or [Ollama](https://ollama.com/) for the text tasks)
 - An endpoint serving Whisper transcription (`/v1/audio/transcriptions`). Most OpenAI-compatible servers provide one; Ollama does not — set `WHISPER_API_BASE` + `WHISPER_MODEL` separately in that case
-- _(optional)_ NER (`/gliner`), speaker diarization (`/diarize`), and the VAD speech pre-filter (`/vad`). These default to the central endpoint (one trailing `/v1` stripped) and otherwise take a dedicated `NER_API_BASE` / `DIARIZE_API_BASE` / `VAD_API_BASE`. NER and diarization run only when a job requests entities / multiple speakers; the VAD guard runs on every transcription and is switched off with `VAD_API_BASE=off`. Uploads are sent as-is and decoded server-side, so no local `ffmpeg` is required.
+- _(optional)_ NER (`/gliner`), speaker diarization (`/diarize`), and the VAD speech pre-filter (`/vad`). These default to the central endpoint (one trailing `/v1` stripped) and otherwise take a dedicated `NER_API_BASE` / `DIARIZE_API_BASE` / `VAD_API_BASE`. NER runs only when a job requests entities; diarization runs by default (auto-detecting the speaker count) unless a job sets `diarize=false`; the VAD guard runs on every transcription and is switched off with `VAD_API_BASE=off`. Uploads are sent as-is and decoded server-side, so no local `ffmpeg` is required.
 
 Without Docker usage:
 
@@ -66,7 +66,7 @@ Every model class can also be re-pointed at a **dedicated endpoint**, falling ba
 
 The NER, diarization, and VAD services speak a plain service root rather than the OpenAI `/v1` shape, so the central fallback strips one trailing `/v1` from `OPENAI_API_BASE` before appending the service path (`http://vllm-router:4000/v1` → `http://vllm-router:4000/gliner`). Whisper, which speaks `/v1`, uses `OPENAI_API_BASE` verbatim. The three non-OpenAI services reuse `OPENAI_API_KEY` as their bearer token; none takes a dedicated key.
 
-NER and diarization issue a request only when a job asks for entities or more than one speaker, so they need no off switch. The VAD guard runs ahead of every transcription (fail-open: an unreachable service transcribes anyway); switch it off with `VAD_API_BASE=off` (also `false` / `no` / `0`).
+NER issues a request only when a job asks for entities, so it needs no off switch. Diarization runs by default for every job, auto-detecting the speaker count (no bounds sent), and is bypassed per job with `diarize=false` (CLI `--no-diarize`). The VAD guard runs ahead of every transcription (fail-open: an unreachable service transcribes anyway); switch it off with `VAD_API_BASE=off` (also `false` / `no` / `0`).
 
 > **Diarization** and **VAD** reach plain `POST /diarize` and `POST /vad` services (multipart `file` + form fields → JSON). Point `DIARIZE_API_BASE` / `VAD_API_BASE` — or the central endpoint — at a service implementing them; the full request/response contracts live in `nextext/core/diarization.py` and `nextext/core/vad.py`.
 
@@ -278,7 +278,7 @@ Running `uv run nextext-cli [ARGS]` from the command line supports the following
 -sl, --src-lang       Specify the language code (ISO 639-1) of the source audio (default: None).
 -tl, --trg-lang       Specify the language code (ISO 639-1) of the target language (default: 'de').
 -t, --task            Specify the task to perform: 'transcribe' (default), or 'translate'.
--s, --speakers        Specify the maximum number of speakers for diarization (default: 1).
+--diarize, --no-diarize   Detect and label speakers (default: on). Use --no-diarize to skip.
 -w, --words           Show most frequently used words (default: False).
 -sum, --summarize     Additional transcript summarization (default: False).
 -o, --output          Specify the output directory (default: output).
