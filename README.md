@@ -278,7 +278,7 @@ Running `uv run nextext-cli [ARGS]` from the command line supports the following
 -sl, --src-lang       Specify the language code (ISO 639-1) of the source audio (default: None).
 -tl, --trg-lang       Specify the language code (ISO 639-1) of the target language (default: 'de').
 -t, --task            Specify the task to perform: 'transcribe' (default), or 'translate'.
---diarize, --no-diarize   Detect and label speakers (default: on). Use --no-diarize to skip.
+--[no-]diarize        Detect and label speakers (default: on).
 -w, --words           Show most frequently used words (default: False).
 -sum, --summarize     Additional transcript summarization (default: False).
 -o, --output          Specify the output directory (default: output).

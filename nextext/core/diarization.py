@@ -73,8 +73,9 @@ def diarize_file(
     empty list.
 
     ``num_speakers`` (exact count) is mutually exclusive with
-    ``min_speakers``/``max_speakers`` on the server side; the frontend's
-    "max speakers" control maps to ``max_speakers``.
+    ``min_speakers``/``max_speakers`` on the server side. The Nextext pipeline
+    calls this with no bounds so pyannote auto-detects the speaker count; the
+    bound parameters are retained for API completeness.
 
     Args:
         file_path (Path): Path to the audio/video file to diarize. Sent as-is;
