@@ -303,3 +303,24 @@ def test_build_unlabeled_word_inherits_neighbouring_run() -> None:
 
     # Single distinct speaker (Speaker 1) -> verbatim segment, exact text.
     assert result == [{"start": 0.0, "end": 3.0, "text": "a b c", "speaker": "Speaker 1"}]
+
+
+def test_build_none_word_between_two_speakers_folds_into_run() -> None:
+    """A no-overlap word between two different speakers folds into a run, not a split."""
+    segments = [{"start": 0.0, "end": 3.0, "text": "a b c"}]
+    words = [
+        {"word": "a", "start": 0.2, "end": 0.4},   # Speaker 1
+        {"word": "b", "start": 1.4, "end": 1.6},   # in the turn gap -> None
+        {"word": "c", "start": 2.4, "end": 2.6},   # Speaker 2
+    ]
+    turns = [
+        {"start": 0.0, "end": 1.0, "speaker": "Speaker 1"},
+        {"start": 2.0, "end": 3.0, "speaker": "Speaker 2"},
+    ]
+
+    result = build_speaker_segments(segments, words, turns)
+
+    assert result == [
+        {"start": 0.2, "end": 1.6, "text": "a b", "speaker": "Speaker 1"},
+        {"start": 2.4, "end": 2.6, "text": "c", "speaker": "Speaker 2"},
+    ]
