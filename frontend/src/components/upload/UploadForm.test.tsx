@@ -84,3 +84,26 @@ describe('UploadForm file list', () => {
     expect(screen.queryByRole('listitem')).toBeNull()
   })
 })
+
+describe('UploadForm diarize toggle', () => {
+  it('submits diarize=true by default and false when unchecked', () => {
+    const onRun = vi.fn()
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const { container } = render(
+      <QueryClientProvider client={qc}>
+        <UploadForm pending={false} onRun={onRun} />
+      </QueryClientProvider>,
+    )
+    addFiles(container, [audio('a.mp3')])
+
+    const toggle = screen.getByLabelText('Detect speakers') as HTMLInputElement
+    expect(toggle.checked).toBe(true)
+
+    fireEvent.click(screen.getByRole('button', { name: /Run/ }))
+    expect(onRun.mock.calls[0][1]).toMatchObject({ diarize: true })
+
+    fireEvent.click(toggle)
+    fireEvent.click(screen.getByRole('button', { name: /Run/ }))
+    expect(onRun.mock.calls[1][1]).toMatchObject({ diarize: false })
+  })
+})

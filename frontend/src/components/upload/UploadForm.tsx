@@ -20,7 +20,7 @@ export function UploadForm({ pending, onRun }: UploadFormProps) {
   // `null` means "no active user choice yet" — fall back to the backend default
   // below. A persisted preference (survives reloads) seeds it on mount.
   const [trgLang, setTrgLang] = useState<string | null>(() => readStoredTargetLang())
-  const [speakers, setSpeakers] = useState<number>(1)
+  const [diarize, setDiarize] = useState<boolean>(true)
   const [words, setWords] = useState(false)
   const [summarization, setSummarization] = useState(false)
   const [hateSpeech, setHateSpeech] = useState(false)
@@ -34,7 +34,7 @@ export function UploadForm({ pending, onRun }: UploadFormProps) {
       src_lang: srcLang || null,
       trg_lang: effectiveTrgLang,
       task,
-      speakers,
+      diarize,
       words,
       summarization,
       hate_speech: hateSpeech,
@@ -77,10 +77,6 @@ export function UploadForm({ pending, onRun }: UploadFormProps) {
           </select>
         </label>
         <label className="space-y-1">
-          <span className="text-sm text-muted-foreground">Max speakers</span>
-          <input type="number" min={1} max={10} className="w-full rounded border border-border bg-muted px-2 py-1" value={speakers} onChange={(e) => setSpeakers(Number(e.target.value))} />
-        </label>
-        <label className="space-y-1">
           <span className="text-sm text-muted-foreground">Source language</span>
           <select className="w-full rounded border border-border bg-muted px-2 py-1" value={srcLang} onChange={(e) => setSrcLang(e.target.value)}>
             <option value="">Detect language</option>
@@ -100,6 +96,7 @@ export function UploadForm({ pending, onRun }: UploadFormProps) {
       </div>
 
       <div className="flex gap-4 text-sm">
+        <label className="flex items-center gap-2"><input type="checkbox" checked={diarize} onChange={(e) => setDiarize(e.target.checked)} /> Detect speakers</label>
         <label className="flex items-center gap-2"><input type="checkbox" checked={words} onChange={(e) => setWords(e.target.checked)} /> Word analysis</label>
         <label className="flex items-center gap-2"><input type="checkbox" checked={summarization} onChange={(e) => setSummarization(e.target.checked)} /> Summary</label>
         <label className="flex items-center gap-2"><input type="checkbox" checked={hateSpeech} onChange={(e) => setHateSpeech(e.target.checked)} /> Hate speech</label>

@@ -14,7 +14,7 @@ export interface JobOptions {
   src_lang: string | null
   trg_lang: string
   task: Task
-  speakers: number
+  diarize: boolean
   words: boolean
   summarization: boolean
   hate_speech: boolean
