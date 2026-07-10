@@ -7,7 +7,12 @@ import httpx
 import pytest
 
 from nextext.core import diarization
-from nextext.core.diarization import assign_speakers_by_overlap, canonicalize_speaker_labels, diarize_file
+from nextext.core.diarization import (
+    assign_speakers_by_overlap,
+    build_speaker_segments,
+    canonicalize_speaker_labels,
+    diarize_file,
+)
 
 # ---------------------------------------------------------------------------
 # assign_speakers_by_overlap
@@ -232,3 +237,69 @@ def test_canonicalize_numbers_by_first_appearance() -> None:
 def test_canonicalize_empty_is_empty() -> None:
     """No turns canonicalizes to no turns."""
     assert canonicalize_speaker_labels([]) == []
+
+
+# ---------------------------------------------------------------------------
+# build_speaker_segments
+# ---------------------------------------------------------------------------
+
+_TURNS = [
+    {"start": 0.0, "end": 1.0, "speaker": "Speaker 1"},
+    {"start": 1.0, "end": 2.0, "speaker": "Speaker 2"},
+]
+
+
+def test_build_keeps_single_speaker_segment_verbatim() -> None:
+    """A segment whose words share one speaker is emitted with exact text preserved."""
+    segments = [{"start": 0.0, "end": 0.9, "text": "hello world"}]
+    words = [
+        {"word": "hello", "start": 0.0, "end": 0.4},
+        {"word": "world", "start": 0.4, "end": 0.8},
+    ]
+
+    result = build_speaker_segments(segments, words, _TURNS)
+
+    assert result == [{"start": 0.0, "end": 0.9, "text": "hello world", "speaker": "Speaker 1"}]
+
+
+def test_build_splits_mixed_speaker_segment_at_word() -> None:
+    """A segment spanning a speaker change splits at the exact word."""
+    segments = [{"start": 0.0, "end": 2.0, "text": "hi there"}]
+    words = [
+        {"word": "hi", "start": 0.0, "end": 0.4},  # midpoint 0.2 -> Speaker 1
+        {"word": "there", "start": 1.2, "end": 1.8},  # midpoint 1.5 -> Speaker 2
+    ]
+
+    result = build_speaker_segments(segments, words, _TURNS)
+
+    assert result == [
+        {"start": 0.0, "end": 0.4, "text": "hi", "speaker": "Speaker 1"},
+        {"start": 1.2, "end": 1.8, "text": "there", "speaker": "Speaker 2"},
+    ]
+
+
+def test_build_falls_back_to_segment_level_without_words() -> None:
+    """With no word timestamps, assignment is segment-level max overlap."""
+    segments = [{"start": 0.0, "end": 0.9, "text": "hello"}]
+
+    result = build_speaker_segments(segments, [], _TURNS)
+
+    assert result == [{"start": 0.0, "end": 0.9, "text": "hello", "speaker": "Speaker 1"}]
+    # Input is not mutated (a copy is returned).
+    assert "speaker" not in segments[0]
+
+
+def test_build_unlabeled_word_inherits_neighbouring_run() -> None:
+    """A word overlapping no turn does not force a split; it joins the current run."""
+    segments = [{"start": 0.0, "end": 3.0, "text": "a b c"}]
+    words = [
+        {"word": "a", "start": 0.0, "end": 0.4},  # Speaker 1
+        {"word": "b", "start": 2.2, "end": 2.4},  # overlaps no turn -> None
+        {"word": "c", "start": 2.5, "end": 2.8},  # overlaps no turn -> None
+    ]
+    turns = [{"start": 0.0, "end": 1.0, "speaker": "Speaker 1"}]
+
+    result = build_speaker_segments(segments, words, turns)
+
+    # Single distinct speaker (Speaker 1) -> verbatim segment, exact text.
+    assert result == [{"start": 0.0, "end": 3.0, "text": "a b c", "speaker": "Speaker 1"}]
