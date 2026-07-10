@@ -202,8 +202,6 @@ class ExternalWhisperTranscriber:
         file_path (Path): Path to the audio file.
         src_lang (str | None): Source language code; populated from API response if not provided.
         task (str): Task type, "transcribe" or "translate".
-        n_speakers (int): Maximum number of speakers for diarization; retained
-            for interface compatibility but no longer consulted by this class.
 
     Methods:
         transcription(): Call the external API and store segment + word results.
@@ -217,7 +215,6 @@ class ExternalWhisperTranscriber:
         src_lang: str | None = None,
         model_id: str = "whisper-1",
         task: str = "transcribe",
-        n_speakers: int = 1,
         start_column: str = "start",
         end_column: str = "end",
         speaker_column: str = "speaker",
@@ -231,8 +228,6 @@ class ExternalWhisperTranscriber:
             src_lang (str | None): Source language code. Defaults to None (API auto-detects).
             model_id (str): Model name to pass to the external API. Defaults to "whisper-1".
             task (str): "transcribe" or "translate". Defaults to "transcribe".
-            n_speakers (int): Maximum number of speakers for diarization. Defaults to 1
-                (diarization disabled).
             start_column (str): DataFrame column for segment start times.
             end_column (str): DataFrame column for segment end times.
             speaker_column (str): DataFrame column for speaker labels.
@@ -242,7 +237,6 @@ class ExternalWhisperTranscriber:
         self.src_lang = src_lang
         self.task = task
         self._model_id = model_id
-        self.n_speakers = n_speakers
         self.start_column = start_column
         self.end_column = end_column
         self.speaker_column = speaker_column

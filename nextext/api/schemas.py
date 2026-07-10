@@ -30,7 +30,7 @@ class JobOptions(BaseModel):
     src_lang: str | None = None
     trg_lang: str = "de"
     task: Literal["transcribe", "translate"] = "transcribe"
-    speakers: int = Field(default=1, ge=1, le=10)
+    diarize: bool = True
     words: bool = False
     summarization: bool = False
     hate_speech: bool = False

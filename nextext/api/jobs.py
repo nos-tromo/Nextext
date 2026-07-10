@@ -308,7 +308,7 @@ def _run_pipeline_blocking(state: JobState, push_event: PushEvent) -> dict[str, 
         "src_lang": opts.src_lang,
         "trg_lang": opts.trg_lang,
         "task": opts.task,
-        "speakers": opts.speakers,
+        "diarize": opts.diarize,
         "words": opts.words,
         "summarization": opts.summarization,
         "hate_speech": opts.hate_speech,
@@ -355,7 +355,7 @@ def _run_pipeline_blocking(state: JobState, push_event: PushEvent) -> dict[str, 
     df, updated_src_lang = transcription_pipeline(
         file_path=state.file_path,
         src_lang=file_opts["src_lang"] or "",
-        n_speakers=file_opts["speakers"],
+        diarize=file_opts["diarize"],
     )
     file_opts["src_lang"] = updated_src_lang
 

@@ -88,12 +88,11 @@ def parse_arguments(args_list: list[str] | None = None) -> argparse.Namespace:
         help="Specify the task to perform: 'transcribe' (default), or 'translate'.",
     )
     parser.add_argument(
-        "-s",
-        "--speakers",
-        dest="speakers",
-        type=int,
-        default=1,
-        help="Specify the maximum number of speakers for diarization (default: 1).",
+        "--diarize",
+        dest="diarize",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Detect and label speakers (default: on). Use --no-diarize to skip.",
     )
     parser.add_argument(
         "-w",
@@ -301,7 +300,7 @@ def _run_main(args: argparse.Namespace) -> None:
         transcript_df, updated_src_lang = transcription_pipeline(
             file_path=args.file_path,
             src_lang=args.src_lang,
-            n_speakers=args.speakers,
+            diarize=args.diarize,
         )
         args.src_lang = updated_src_lang  # Update source language if detected
 

@@ -7,7 +7,7 @@ import pandas as pd
 from loguru import logger
 from matplotlib.figure import Figure
 
-from nextext.core.diarization import assign_speakers_by_overlap, diarize_file
+from nextext.core.diarization import build_speaker_segments, canonicalize_speaker_labels, diarize_file
 from nextext.core.hate_speech import HateSpeechDetector
 from nextext.core.ner import extract_entities
 from nextext.core.openai_cfg import InferencePipeline
@@ -20,9 +20,9 @@ from nextext.utils.env_cfg import load_summary_env, load_whisper_env
 def transcription_pipeline(
     file_path: Path,
     src_lang: str,
-    n_speakers: int,
+    diarize: bool,
 ) -> tuple[pd.DataFrame, str]:
-    """Transcribe the audio file via the external Whisper API.
+    """Transcribe the audio file via the external Whisper API, optionally diarized.
 
     The audio always goes to an OpenAI-compatible ``/v1/audio/transcriptions``
     endpoint resolved by :func:`nextext.utils.env_cfg.load_whisper_env`;
@@ -30,19 +30,20 @@ def transcription_pipeline(
     language — translation to a target language is handled separately by
     :func:`translation_pipeline`.
 
-    Diarization runs out-of-process: when ``n_speakers > 1`` and the transcript
-    is non-empty the audio is sent to the ``/diarize`` service (see
-    :func:`nextext.core.diarization.diarize_file`) and the returned speaker
-    turns are aligned onto the transcript by maximum overlap. It is skipped for
-    single-speaker requests and for empty transcripts, and degrades to an
-    unlabelled transcript when ``DIARIZE_API_BASE`` is unset or the service is
-    unreachable.
+    When ``diarize`` is true and the transcript is non-empty, the audio is sent
+    to the ``/diarize`` service with **no** speaker bounds (pyannote estimates
+    the count). The returned turns are relabeled to contiguous ``Speaker N`` by
+    first appearance and aligned onto the transcript at the word level, so a
+    Whisper segment spanning a speaker change is split at the exact word. It
+    degrades to segment-level alignment when the endpoint returns no words, and
+    to an unlabelled transcript when ``DIARIZE_API_BASE`` is unset or the
+    service is unreachable. Diarization is skipped for ``diarize=False`` and for
+    empty transcripts.
 
     Args:
         file_path (Path): Path to the audio file.
         src_lang (str): Source language code.
-        n_speakers (int): Maximum speaker count for diarization. Values greater
-            than 1 trigger a ``/diarize`` request; 1 disables diarization.
+        diarize (bool): Whether to run speaker diarization.
 
     Returns:
         tuple[pd.DataFrame, str]: The transcript DataFrame and the
@@ -53,20 +54,16 @@ def transcription_pipeline(
         file_path=file_path,
         src_lang=src_lang,
         model_id=config.model,
-        n_speakers=n_speakers,
     )
     transcriber.transcription()
 
-    # Diarization runs against the /diarize HTTP service. Skip it for
-    # single-speaker requests and for empty transcripts (silent audio
-    # short-circuited by the speech guard) to avoid a needless request.
-    segments: list[dict[str, Any]] = (
-        transcriber.transcription_result["segments"] if transcriber.transcription_result else []
-    )
-    if n_speakers > 1 and segments:
-        diarize_segments = diarize_file(file_path, max_speakers=n_speakers)
-        if diarize_segments:
-            assign_speakers_by_overlap(segments, diarize_segments)
+    result = transcriber.transcription_result or {}
+    segments: list[dict[str, Any]] = result.get("segments", [])
+    words: list[dict[str, Any]] = result.get("words", [])
+    if diarize and segments and transcriber.transcription_result is not None:
+        turns = canonicalize_speaker_labels(diarize_file(file_path))
+        if turns:
+            transcriber.transcription_result["segments"] = build_speaker_segments(segments, words, turns)
 
     df = transcriber.transcript_output()
     updated_src_lang = transcriber.src_lang or src_lang

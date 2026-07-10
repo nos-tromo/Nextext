@@ -40,7 +40,7 @@ def _args(file_path: Path, **overrides: Any) -> argparse.Namespace:
         "src_lang": "en",
         "trg_lang": "en",
         "task": "transcribe",
-        "speakers": 1,
+        "diarize": True,
         "words": False,
         "summarize": False,
         "hate_speech": False,
@@ -90,3 +90,11 @@ def test_run_main_no_speech_saves_via_write_transcript_output(monkeypatch: pytes
     (processor,) = created
     assert len(processor.transcript_writes) == 1
     assert "transcript" not in processor.file_output_labels
+
+
+def test_cli_diarize_defaults_on_and_can_be_disabled() -> None:
+    """--diarize defaults True; --no-diarize turns it off."""
+    from nextext.cli import parse_arguments
+
+    assert parse_arguments(["-f", "x.wav"]).diarize is True
+    assert parse_arguments(["-f", "x.wav", "--no-diarize"]).diarize is False

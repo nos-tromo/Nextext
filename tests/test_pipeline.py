@@ -57,7 +57,7 @@ def enable_docker_env(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_transcription_pipeline_invokes_transcriber_and_diarizes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The pipeline builds the external transcriber and runs diarization for multi-speaker jobs.
+    """The pipeline diarizes with no speaker bounds and assigns speakers at the word level.
 
     Args:
         monkeypatch (pytest.MonkeyPatch): The monkeypatch fixture for modifying behavior.
@@ -77,36 +77,24 @@ def test_transcription_pipeline_invokes_transcriber_and_diarizes(
 
         instance: "DummyTranscriber"
 
-        def __init__(
-            self,
-            file_path: Path,
-            src_lang: str,
-            model_id: str,
-            n_speakers: int,
-        ) -> None:
-            """Initialize the dummy transcriber with the given parameters.
+        def __init__(self, **params: Any) -> None:
+            """Initialize the dummy transcriber, recording the keyword params it was built with.
 
             Args:
-                file_path (Path): Path to the audio file.
-                src_lang (str): Source language code.
-                model_id (str): Whisper model name resolved from the env config.
-                n_speakers (int): Maximum speaker count for diarization.
+                **params (Any): Keyword arguments forwarded by the pipeline.
             """
-            self.params = {
-                "file_path": file_path,
-                "src_lang": src_lang,
-                "model_id": model_id,
-                "n_speakers": n_speakers,
-            }
-            self.transcription_called = False
-            self.transcription_result: dict[str, Any] | None = None
-            self.src_lang = "fr"
             DummyTranscriber.instance = self
+            self.params = params
+            self.transcription_called = False
+            self.src_lang = "fr"
+            self.transcription_result: dict[str, Any] = {
+                "segments": [{"start": 0.0, "end": 1.0, "text": "bonjour"}],
+                "words": [{"word": "bonjour", "start": 0.0, "end": 1.0}],
+            }
 
         def transcription(self) -> None:
-            """Simulate transcription by flagging the call and populating one segment."""
+            """Simulate transcription by flagging the call."""
             self.transcription_called = True
-            self.transcription_result = {"segments": [{"start": 0.0, "end": 1.0, "text": "bonjour"}]}
 
         def transcript_output(self) -> pd.DataFrame:
             """Return a dummy transcript DataFrame.
@@ -119,45 +107,58 @@ def test_transcription_pipeline_invokes_transcriber_and_diarizes(
     diarize_calls: dict[str, Any] = {}
 
     def fake_diarize_file(file_path: Path, **kwargs: Any) -> list[dict[str, Any]]:
-        """Record the requested speaker bound and return one speaker turn.
+        """Record that diarization ran (and any bound kwargs, expected to be none).
 
         Args:
             file_path (Path): Path forwarded by the pipeline.
-            **kwargs (Any): Speaker-count keyword arguments.
+            **kwargs (Any): Speaker-bound keyword arguments; expected to be empty
+                since diarization now always auto-detects.
 
         Returns:
             list[dict[str, Any]]: A single fake speaker turn.
         """
         diarize_calls.update(kwargs)
+        diarize_calls["called"] = True
         return [{"start": 0.0, "end": 1.0, "speaker": "SPEAKER_00"}]
 
-    assign_calls: list[Any] = []
+    build_calls: list[Any] = []
 
-    def fake_assign(transcription_segments: list[dict[str, Any]], diarize_segments: list[dict[str, Any]]) -> None:
-        """Record that speaker alignment was invoked.
+    def fake_build(
+        segments: list[dict[str, Any]],
+        words: list[dict[str, Any]],
+        turns: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Record the call and return the input segments unchanged.
 
         Args:
-            transcription_segments (list[dict[str, Any]]): Segments to label.
-            diarize_segments (list[dict[str, Any]]): Speaker turns.
+            segments (list[dict[str, Any]]): Whisper segments forwarded by the pipeline.
+            words (list[dict[str, Any]]): Whisper words forwarded by the pipeline.
+            turns (list[dict[str, Any]]): Canonicalized speaker turns forwarded by the pipeline.
+
+        Returns:
+            list[dict[str, Any]]: The input segments, unchanged.
         """
-        assign_calls.append((transcription_segments, diarize_segments))
+        build_calls.append((segments, words, turns))
+        return segments
 
     monkeypatch.setattr(pipeline, "ExternalWhisperTranscriber", DummyTranscriber)
     monkeypatch.setattr(pipeline, "diarize_file", fake_diarize_file)
-    monkeypatch.setattr(pipeline, "assign_speakers_by_overlap", fake_assign)
+    monkeypatch.setattr(pipeline, "canonicalize_speaker_labels", lambda turns: turns)
+    monkeypatch.setattr(pipeline, "build_speaker_segments", fake_build)
 
     df, detected_lang = pipeline.transcription_pipeline(
         file_path=Path("/tmp/audio.wav"),
         src_lang="auto",
-        n_speakers=2,
+        diarize=True,
     )
 
     instance = DummyTranscriber.instance
-    assert instance.params["n_speakers"] == 2
+    assert "n_speakers" not in instance.params  # no speaker-count is threaded any more
     assert instance.params["model_id"] == "test-model"
     assert instance.transcription_called is True
-    assert diarize_calls["max_speakers"] == 2
-    assert len(assign_calls) == 1
+    assert diarize_calls.get("called") is True
+    assert "max_speakers" not in diarize_calls and "num_speakers" not in diarize_calls  # auto-detect
+    assert len(build_calls) == 1
     assert list(df["text"]) == ["bonjour"]
     assert detected_lang == "fr"
 
@@ -165,7 +166,7 @@ def test_transcription_pipeline_invokes_transcriber_and_diarizes(
 def test_transcription_pipeline_falls_back_to_original_language(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Single-speaker requests fall back to the source language and never diarize.
+    """A ``diarize=False`` request falls back to the source language and never diarizes.
 
     Args:
         monkeypatch (pytest.MonkeyPatch): The monkeypatch fixture for modifying behavior.
@@ -197,7 +198,7 @@ def test_transcription_pipeline_falls_back_to_original_language(
             return pd.DataFrame({"text": ["hola"]})
 
     def fail_diarize(*args: Any, **kwargs: Any) -> list[dict[str, Any]]:
-        """Fail if diarization is attempted for a single-speaker request.
+        """Fail if diarization is attempted when diarize=False.
 
         Args:
             *args (Any): Unused positional arguments.
@@ -206,7 +207,7 @@ def test_transcription_pipeline_falls_back_to_original_language(
         Returns:
             list[dict[str, Any]]: Never returns; always fails the test.
         """
-        pytest.fail("diarize_file should not be called when n_speakers <= 1")
+        pytest.fail("diarize_file should not be called when diarize=False")
 
     monkeypatch.setattr(pipeline, "ExternalWhisperTranscriber", DummyTranscriber)
     monkeypatch.setattr(pipeline, "diarize_file", fail_diarize)
@@ -214,7 +215,7 @@ def test_transcription_pipeline_falls_back_to_original_language(
     df, detected_lang = pipeline.transcription_pipeline(
         file_path=Path("/tmp/audio.wav"),
         src_lang="es",
-        n_speakers=1,
+        diarize=False,
     )
 
     assert list(df["text"]) == ["hola"]
@@ -224,7 +225,7 @@ def test_transcription_pipeline_falls_back_to_original_language(
 def test_transcription_pipeline_skips_diarization_for_empty_transcript(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """An empty transcript skips diarization even when many speakers are requested.
+    """An empty transcript skips diarization even when diarize=True is requested.
 
     Args:
         monkeypatch (pytest.MonkeyPatch): The monkeypatch fixture for modifying behavior.
@@ -273,7 +274,7 @@ def test_transcription_pipeline_skips_diarization_for_empty_transcript(
     df, detected_lang = pipeline.transcription_pipeline(
         file_path=Path("/tmp/audio.wav"),
         src_lang="en",
-        n_speakers=3,
+        diarize=True,
     )
 
     assert list(df["text"]) == []

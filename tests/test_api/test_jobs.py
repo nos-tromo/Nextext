@@ -53,7 +53,7 @@ def test_post_jobs_creates_and_runs_a_stub_pipeline(
     options = {
         "task": "transcribe",
         "trg_lang": "de",
-        "speakers": 1,
+        "diarize": True,
         "words": False,
         "summarization": True,
         "hate_speech": False,
@@ -84,7 +84,7 @@ def test_post_jobs_surfaces_translation_alongside_text_for_translate_task(
     options = {
         "task": "translate",
         "trg_lang": "de",
-        "speakers": 1,
+        "diarize": True,
         "words": False,
         "summarization": False,
         "hate_speech": False,
@@ -134,7 +134,7 @@ def test_delete_jobs_removes_state(
     options = {
         "task": "transcribe",
         "trg_lang": "de",
-        "speakers": 1,
+        "diarize": True,
         "words": False,
         "summarization": False,
         "hate_speech": False,
@@ -167,7 +167,7 @@ def test_oversized_upload_is_rejected(
     options = {
         "task": "transcribe",
         "trg_lang": "de",
-        "speakers": 1,
+        "diarize": True,
         "words": False,
         "summarization": False,
         "hate_speech": False,

@@ -23,7 +23,7 @@ def _submit(client: TestClient) -> str:
     options = {
         "task": "transcribe",
         "trg_lang": "de",
-        "speakers": 1,
+        "diarize": True,
         "words": False,
         "summarization": False,
         "hate_speech": False,

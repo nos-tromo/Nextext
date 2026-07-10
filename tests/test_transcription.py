@@ -175,7 +175,6 @@ def test_external_transcriber_transcript_output(
     transcriber.src_lang = "en"
     transcriber.task = "transcribe"
     transcriber._model_id = "whisper-1"
-    transcriber.n_speakers = 1
     transcriber.start_column = "start"
     transcriber.end_column = "end"
     transcriber.speaker_column = "speaker"
@@ -198,7 +197,6 @@ def test_external_transcriber_transcript_output(
 def test_external_transcriber_transcript_output_includes_speakers() -> None:
     """Diarized segments surface a speaker column in the output DataFrame."""
     transcriber = _make_external_transcriber()
-    transcriber.n_speakers = 2
     transcriber.transcription_result = {
         "segments": [
             {"start": 0.0, "end": 1.5, "text": "Hello there.", "speaker": "SPEAKER_00"},
@@ -215,15 +213,12 @@ def test_external_transcriber_transcript_output_includes_speakers() -> None:
 def test_external_transcriber_transcript_output_hides_single_distinct_speaker() -> None:
     """A single distinct speaker label yields a clean, speaker-free transcript.
 
-    Regression guard for the ``n_speakers``-based drop rule this replaces:
-    previously a single labeled speaker with ``n_speakers >= 2`` still
-    surfaced a (redundant) single-value speaker column. The rule is now
-    based purely on the count of *distinct* speaker labels, independent of
-    ``n_speakers``, so this must hide the column even though ``n_speakers``
-    is 2 here.
+    The speaker column is shown purely based on the count of *distinct*
+    speaker labels actually present on the segments — so a transcript
+    where every segment happens to share one label stays clean even though
+    diarization ran and labeled it.
     """
     transcriber = _make_external_transcriber()
-    transcriber.n_speakers = 2
     transcriber.transcription_result = {
         "segments": [
             {"start": 0.0, "end": 1.5, "text": "Hello there.", "speaker": "SPEAKER_00"},
@@ -378,7 +373,6 @@ def _make_external_transcriber() -> ExternalWhisperTranscriber:
     transcriber.src_lang = None
     transcriber.task = "transcribe"
     transcriber._model_id = "whisper-1"
-    transcriber.n_speakers = 1
     transcriber._client = None
     transcriber.start_column = "start"
     transcriber.end_column = "end"
@@ -656,6 +650,7 @@ def test_transcription_defaults_words_to_empty_when_response_omits_them(
 
     transcriber.transcription()
 
+    assert transcriber.transcription_result is not None
     assert transcriber.transcription_result["words"] == []
     assert transcriber.transcription_result["segments"][0]["text"] == "hi"
 
