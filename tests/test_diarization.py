@@ -309,9 +309,9 @@ def test_build_none_word_between_two_speakers_folds_into_run() -> None:
     """A no-overlap word between two different speakers folds into a run, not a split."""
     segments = [{"start": 0.0, "end": 3.0, "text": "a b c"}]
     words = [
-        {"word": "a", "start": 0.2, "end": 0.4},   # Speaker 1
-        {"word": "b", "start": 1.4, "end": 1.6},   # in the turn gap -> None
-        {"word": "c", "start": 2.4, "end": 2.6},   # Speaker 2
+        {"word": "a", "start": 0.2, "end": 0.4},  # Speaker 1
+        {"word": "b", "start": 1.4, "end": 1.6},  # in the turn gap -> None
+        {"word": "c", "start": 2.4, "end": 2.6},  # Speaker 2
     ]
     turns = [
         {"start": 0.0, "end": 1.0, "speaker": "Speaker 1"},
