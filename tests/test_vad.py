@@ -337,3 +337,72 @@ def test_speech_segments_none_on_malformed_payload(
     audio.write_bytes(b"x")
 
     assert speech_segments(audio, threshold=0.4, pad_ms=100) is None
+
+
+def test_speech_segments_none_on_off_token(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """VAD_API_BASE=off yields None (no request) even when a central endpoint is set.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Fixture for patching env vars and httpx.
+        tmp_path (Path): Temporary directory fixture for the audio file.
+    """
+    monkeypatch.setenv("OPENAI_API_BASE", "http://vllm-router:4000/v1")
+    monkeypatch.setenv("VAD_API_BASE", "off")
+
+    def fail_post(url: str, **kwargs: Any) -> httpx.Response:
+        raise AssertionError("httpx.post must not be called when VAD is switched off")
+
+    monkeypatch.setattr(vad.httpx, "post", fail_post)
+    audio = tmp_path / "c.wav"
+    audio.write_bytes(b"x")
+
+    assert speech_segments(audio, threshold=0.4, pad_ms=100) is None
+
+
+def test_speech_segments_none_on_non_dict_payload(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A JSON payload that is not an object yields None (no gating).
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Fixture for patching env vars and httpx.
+        tmp_path (Path): Temporary directory fixture for the audio file.
+    """
+    monkeypatch.setenv("VAD_API_BASE", "http://router:7000")
+
+    def fake_post(url: str, **kwargs: Any) -> httpx.Response:
+        return httpx.Response(200, json=["not", "a", "dict"], request=httpx.Request("POST", url))
+
+    monkeypatch.setattr(vad.httpx, "post", fake_post)
+    audio = tmp_path / "c.wav"
+    audio.write_bytes(b"x")
+
+    assert speech_segments(audio, threshold=0.4, pad_ms=100) is None
+
+
+def test_speech_segments_none_on_malformed_segment_entry(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A segment entry missing/with a non-numeric bound yields None (no gating).
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Fixture for patching env vars and httpx.
+        tmp_path (Path): Temporary directory fixture for the audio file.
+    """
+    monkeypatch.setenv("VAD_API_BASE", "http://router:7000")
+
+    def fake_post(url: str, **kwargs: Any) -> httpx.Response:
+        return httpx.Response(
+            200, json={"segments": [{"start": 0.0, "end": "oops"}]}, request=httpx.Request("POST", url)
+        )
+
+    monkeypatch.setattr(vad.httpx, "post", fake_post)
+    audio = tmp_path / "c.wav"
+    audio.write_bytes(b"x")
+
+    assert speech_segments(audio, threshold=0.4, pad_ms=100) is None

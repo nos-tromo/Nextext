@@ -952,3 +952,23 @@ def test_vad_gate_pad_ms_parsed_and_validated(monkeypatch: pytest.MonkeyPatch) -
     assert load_diarize_vad_gate_env().pad_ms == 100
     monkeypatch.setenv("VAD_GATE_PAD_MS", "x")
     assert load_diarize_vad_gate_env().pad_ms == 100
+
+
+def test_vad_gate_unrecognized_toggle_defaults_on(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An unrecognized NEXTEXT_DIARIZE_VAD_GATE value falls back to enabled (default on)."""
+    monkeypatch.setenv("NEXTEXT_DIARIZE_VAD_GATE", "banana")
+    assert load_diarize_vad_gate_env().enabled is True
+
+
+def test_vad_gate_threshold_boundaries(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Threshold 0 is rejected (out of (0, 1]) and falls back; 1 is accepted."""
+    monkeypatch.setenv("VAD_GATE_THRESHOLD", "0")
+    assert load_diarize_vad_gate_env().threshold == 0.4
+    monkeypatch.setenv("VAD_GATE_THRESHOLD", "1")
+    assert load_diarize_vad_gate_env().threshold == 1.0
+
+
+def test_vad_gate_pad_ms_zero_accepted(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A pad_ms of 0 is valid (>= 0) and honored."""
+    monkeypatch.setenv("VAD_GATE_PAD_MS", "0")
+    assert load_diarize_vad_gate_env().pad_ms == 0

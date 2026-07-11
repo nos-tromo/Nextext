@@ -358,3 +358,14 @@ def test_gate_turns_empty_intervals_is_failsafe_passthrough() -> None:
     """Empty VAD intervals never blank the turns — they pass through unchanged."""
     turns = [{"start": 0.0, "end": 2.0, "speaker": "SPEAKER_00"}]
     assert gate_turns_by_vad(turns, []) == turns
+
+
+def test_gate_turns_splits_turn_across_multiple_gaps() -> None:
+    """A turn spanning several non-speech gaps yields one fragment per speech interval."""
+    turns = [{"start": 0.0, "end": 20.0, "speaker": "SPEAKER_00"}]
+    vad = [(0.0, 3.0), (6.0, 9.0), (15.0, 18.0)]
+    assert gate_turns_by_vad(turns, vad) == [
+        {"start": 0.0, "end": 3.0, "speaker": "SPEAKER_00"},
+        {"start": 6.0, "end": 9.0, "speaker": "SPEAKER_00"},
+        {"start": 15.0, "end": 18.0, "speaker": "SPEAKER_00"},
+    ]
