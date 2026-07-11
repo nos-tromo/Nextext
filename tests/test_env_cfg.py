@@ -11,6 +11,7 @@ from nextext.utils.env_cfg import (
     DEFAULT_SUMMARY_MAX_INPUT_TOKENS,
     DEFAULT_VAD_TIMEOUT,
     load_diarization_env,
+    load_diarize_vad_gate_env,
     load_inference_env,
     load_job_concurrency,
     load_language_env,
@@ -910,3 +911,44 @@ def test_load_job_concurrency_clamps_values_below_one(
 
     assert result == 1
     assert "NEXTEXT_JOB_CONCURRENCY" in sink.getvalue()
+
+
+# ---------------------------------------------------------------------------
+# load_diarize_vad_gate_env
+# ---------------------------------------------------------------------------
+
+
+def test_vad_gate_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Unset → gating on with the tuned Silero defaults (threshold 0.4, pad 100ms)."""
+    for name in ("NEXTEXT_DIARIZE_VAD_GATE", "VAD_GATE_THRESHOLD", "VAD_GATE_PAD_MS"):
+        monkeypatch.delenv(name, raising=False)
+    cfg = load_diarize_vad_gate_env()
+    assert cfg.enabled is True
+    assert cfg.threshold == 0.4
+    assert cfg.pad_ms == 100
+
+
+def test_vad_gate_can_be_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    """NEXTEXT_DIARIZE_VAD_GATE=off disables gating."""
+    monkeypatch.setenv("NEXTEXT_DIARIZE_VAD_GATE", "off")
+    assert load_diarize_vad_gate_env().enabled is False
+
+
+def test_vad_gate_threshold_parsed_and_validated(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Threshold in (0, 1] is honored; out-of-range or invalid falls back to the default."""
+    monkeypatch.setenv("VAD_GATE_THRESHOLD", "0.3")
+    assert load_diarize_vad_gate_env().threshold == 0.3
+    monkeypatch.setenv("VAD_GATE_THRESHOLD", "5")
+    assert load_diarize_vad_gate_env().threshold == 0.4
+    monkeypatch.setenv("VAD_GATE_THRESHOLD", "abc")
+    assert load_diarize_vad_gate_env().threshold == 0.4
+
+
+def test_vad_gate_pad_ms_parsed_and_validated(monkeypatch: pytest.MonkeyPatch) -> None:
+    """pad_ms >= 0 is honored; negative or invalid falls back to the default."""
+    monkeypatch.setenv("VAD_GATE_PAD_MS", "200")
+    assert load_diarize_vad_gate_env().pad_ms == 200
+    monkeypatch.setenv("VAD_GATE_PAD_MS", "-5")
+    assert load_diarize_vad_gate_env().pad_ms == 100
+    monkeypatch.setenv("VAD_GATE_PAD_MS", "x")
+    assert load_diarize_vad_gate_env().pad_ms == 100
