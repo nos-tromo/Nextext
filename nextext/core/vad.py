@@ -33,7 +33,7 @@ from loguru import logger
 
 from nextext.utils.env_cfg import load_vad_env
 
-__all__ = ["has_speech"]
+__all__ = ["has_speech", "speech_segments"]
 
 
 def has_speech(file_path: Path) -> bool:
@@ -96,3 +96,71 @@ def has_speech(file_path: Path) -> bool:
     if not speech:
         logger.info("VAD service reported no speech in '{}'.", file_path.name)
     return speech
+
+
+def speech_segments(file_path: Path, *, threshold: float, pad_ms: int) -> list[tuple[float, float]] | None:
+    """Fetch the VAD speech intervals for gating diarization turns.
+
+    Calls ``{base}/vad`` with the given Silero ``threshold`` and ``speech_pad_ms``
+    and returns the reported speech ``(start, end)`` intervals in seconds. Unlike
+    :func:`has_speech` (which fails open to ``True``), this fails open to
+    ``None`` — no resolved endpoint, any transport/HTTP error, or a malformed
+    payload — so the caller (VAD-gating) leaves diarization untouched rather than
+    dropping speaker turns on a VAD outage.
+
+    Args:
+        file_path (Path): Audio/video file to analyze. Sent as-is; the server
+            decodes and resamples it.
+        threshold (float): Silero speech-probability threshold, forwarded to the
+            service as the ``threshold`` field.
+        pad_ms (int): Silero padding around detected speech, forwarded as the
+            ``speech_pad_ms`` field.
+
+    Returns:
+        list[tuple[float, float]] | None: Chronological speech intervals in
+            seconds, or ``None`` when the VAD result is unavailable or unusable.
+    """
+    config = load_vad_env()
+    if not config.api_base:
+        return None
+
+    headers: dict[str, str] = {}
+    if config.api_key:
+        headers["Authorization"] = f"Bearer {config.api_key}"
+
+    url = f"{config.api_base}/vad"
+    try:
+        with open(file_path, "rb") as audio:
+            response = httpx.post(
+                url,
+                files={"file": (file_path.name, audio, "application/octet-stream")},
+                data={"threshold": threshold, "speech_pad_ms": pad_ms},
+                headers=headers,
+                timeout=config.timeout,
+            )
+        response.raise_for_status()
+        payload = response.json()
+    except httpx.HTTPStatusError as exc:
+        logger.warning(
+            "VAD segments request to {} failed ({}): {}; skipping gating.",
+            url,
+            exc.response.status_code,
+            exc.response.text[:500],
+        )
+        return None
+    except (httpx.HTTPError, ValueError, OSError) as exc:
+        logger.warning("VAD segments request to {} failed: {}; skipping gating.", url, exc)
+        return None
+
+    if not isinstance(payload, dict):
+        logger.warning("VAD response from {} was not a JSON object; skipping gating.", url)
+        return None
+    segments = payload.get("segments")
+    if not isinstance(segments, list):
+        logger.warning("VAD response from {} lacked a 'segments' list; skipping gating.", url)
+        return None
+    try:
+        return [(float(seg["start"]), float(seg["end"])) for seg in segments]
+    except (KeyError, TypeError, ValueError):
+        logger.warning("VAD response from {} had malformed segments; skipping gating.", url)
+        return None
