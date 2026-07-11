@@ -27,6 +27,7 @@ __all__ = [
     "build_speaker_segments",
     "canonicalize_speaker_labels",
     "diarize_file",
+    "gate_turns_by_vad",
 ]
 
 SPEAKER_LABEL_PREFIX = "Speaker"
@@ -54,6 +55,46 @@ def canonicalize_speaker_labels(turns: list[dict[str, Any]]) -> list[dict[str, A
         if raw not in mapping:
             mapping[raw] = f"{SPEAKER_LABEL_PREFIX} {len(mapping) + 1}"
     return [{**turn, "speaker": mapping[str(turn["speaker"])]} for turn in turns]
+
+
+def gate_turns_by_vad(
+    turns: list[dict[str, Any]],
+    vad_intervals: list[tuple[float, float]],
+) -> list[dict[str, Any]]:
+    """Crop diarization turns to the VAD speech timeline.
+
+    Intersects each turn's ``[start, end]`` with every speech interval, emitting
+    one turn per overlapping piece: a turn spanning a non-speech gap (e.g. music
+    between utterances) splits into its speech-only fragments, and a turn
+    overlapping no speech is dropped. Speaker labels (and any other keys) are
+    preserved. This suppresses the false alarm from pyannote over-detecting
+    music/noise as speech (the "music scored as a speaker" defect).
+
+    Empty ``vad_intervals`` returns ``turns`` unchanged — a fail-safe so an empty
+    VAD result never blanks an otherwise-speech transcript.
+
+    Args:
+        turns (list[dict[str, Any]]): Diarization turns with float ``start`` /
+            ``end`` and a ``speaker`` key, as returned by :func:`diarize_file`.
+        vad_intervals (list[tuple[float, float]]): Chronological speech
+            ``(start, end)`` intervals from the ``/vad`` service (see
+            :func:`nextext.core.vad.speech_segments`).
+
+    Returns:
+        list[dict[str, Any]]: New turn dicts cropped to the speech intervals.
+    """
+    if not vad_intervals:
+        return turns
+    gated: list[dict[str, Any]] = []
+    for turn in turns:
+        start = float(turn["start"])
+        end = float(turn["end"])
+        for speech_start, speech_end in vad_intervals:
+            overlap_start = max(start, speech_start)
+            overlap_end = min(end, speech_end)
+            if overlap_end > overlap_start:
+                gated.append({**turn, "start": overlap_start, "end": overlap_end})
+    return gated
 
 
 def diarize_file(

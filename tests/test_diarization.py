@@ -12,6 +12,7 @@ from nextext.core.diarization import (
     build_speaker_segments,
     canonicalize_speaker_labels,
     diarize_file,
+    gate_turns_by_vad,
 )
 
 # ---------------------------------------------------------------------------
@@ -324,3 +325,36 @@ def test_build_none_word_between_two_speakers_folds_into_run() -> None:
         {"start": 0.2, "end": 1.6, "text": "a b", "speaker": "Speaker 1"},
         {"start": 2.4, "end": 2.6, "text": "c", "speaker": "Speaker 2"},
     ]
+
+
+# ---------------------------------------------------------------------------
+# gate_turns_by_vad
+# ---------------------------------------------------------------------------
+
+
+def test_gate_turns_splits_turn_straddling_a_gap() -> None:
+    """A turn spanning a non-speech gap is cropped to its speech-only pieces."""
+    turns = [{"start": 0.0, "end": 10.0, "speaker": "SPEAKER_00"}]
+    vad = [(0.0, 3.0), (6.0, 10.0)]  # 3-6 is music / non-speech
+    assert gate_turns_by_vad(turns, vad) == [
+        {"start": 0.0, "end": 3.0, "speaker": "SPEAKER_00"},
+        {"start": 6.0, "end": 10.0, "speaker": "SPEAKER_00"},
+    ]
+
+
+def test_gate_turns_drops_turn_entirely_in_non_speech() -> None:
+    """A turn overlapping no speech interval is dropped."""
+    turns = [{"start": 4.0, "end": 5.0, "speaker": "SPEAKER_01"}]
+    assert gate_turns_by_vad(turns, [(0.0, 3.0), (6.0, 10.0)]) == []
+
+
+def test_gate_turns_keeps_turn_fully_in_speech_unchanged() -> None:
+    """A turn wholly within a speech interval is returned unchanged, speaker preserved."""
+    turns = [{"start": 1.0, "end": 2.0, "speaker": "SPEAKER_00"}]
+    assert gate_turns_by_vad(turns, [(0.0, 3.0)]) == [{"start": 1.0, "end": 2.0, "speaker": "SPEAKER_00"}]
+
+
+def test_gate_turns_empty_intervals_is_failsafe_passthrough() -> None:
+    """Empty VAD intervals never blank the turns — they pass through unchanged."""
+    turns = [{"start": 0.0, "end": 2.0, "speaker": "SPEAKER_00"}]
+    assert gate_turns_by_vad(turns, []) == turns
