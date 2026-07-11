@@ -85,7 +85,7 @@ export function UploadForm({ pending, onRun }: UploadFormProps) {
             ))}
           </select>
         </label>
-        <label className="space-y-1">
+        <label className="space-y-1 col-span-2">
           <span className="text-sm text-muted-foreground">Target language (translate)</span>
           <select className="w-full rounded border border-border bg-muted px-2 py-1" value={effectiveTrgLang} onChange={(e) => selectTrgLang(e.target.value)}>
             {target.map((l) => (
