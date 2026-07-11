@@ -68,7 +68,7 @@ export function UploadForm({ pending, onRun }: UploadFormProps) {
 
       {sizeError && <Banner variant="danger">{sizeError}</Banner>}
 
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         <label className="space-y-1">
           <span className="text-sm text-muted-foreground">Task</span>
           <select className="w-full rounded border border-border bg-muted px-2 py-1" value={task} onChange={(e) => setTask(e.target.value as Task)}>
@@ -85,7 +85,7 @@ export function UploadForm({ pending, onRun }: UploadFormProps) {
             ))}
           </select>
         </label>
-        <label className="space-y-1 col-span-2">
+        <label className="space-y-1">
           <span className="text-sm text-muted-foreground">Target language (translate)</span>
           <select className="w-full rounded border border-border bg-muted px-2 py-1" value={effectiveTrgLang} onChange={(e) => selectTrgLang(e.target.value)}>
             {target.map((l) => (
