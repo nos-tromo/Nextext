@@ -12,6 +12,7 @@ from nextext.core.diarization import (
     canonicalize_speaker_labels,
     diarize_file,
     gate_turns_by_vad,
+    renumber_speakers_by_appearance,
 )
 from nextext.core.hate_speech import HateSpeechDetector
 from nextext.core.ner import extract_entities
@@ -110,6 +111,16 @@ def transcription_pipeline(
             transcriber.transcription_result["segments"] = restored
         elif diarize and turns:
             transcriber.transcription_result["segments"] = build_speaker_segments(segments, words, turns)
+
+        # Authoritative display numbering: canonicalize_speaker_labels numbered the
+        # turns by turn order, but word-level alignment, VAD-gating, and sentence
+        # restoration can make a speaker first surface in the assembled transcript
+        # in a different order. Renumber by first appearance in the finished
+        # transcript so the labels read Speaker 1, 2, 3, … top to bottom.
+        if diarize and turns:
+            transcriber.transcription_result["segments"] = renumber_speakers_by_appearance(
+                transcriber.transcription_result["segments"]
+            )
 
     df = transcriber.transcript_output()
     updated_src_lang = transcriber.src_lang or src_lang
