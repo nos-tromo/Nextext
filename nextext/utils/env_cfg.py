@@ -164,6 +164,29 @@ class DiarizationConfig:
 
 
 @dataclass(frozen=True)
+class DiarizeVadGateConfig:
+    """Dataclass for VAD-gating of diarization turns.
+
+    When enabled, diarization turns are cropped to the ``/vad`` speech timeline
+    before labeling, suppressing the false alarm from pyannote over-detecting
+    music/noise as speech (the "music scored as a speaker" defect). Uses the
+    eval-tuned Silero parameters.
+
+    Attributes:
+        enabled: Whether to gate diarization by VAD
+            (``NEXTEXT_DIARIZE_VAD_GATE``, default ``True``).
+        threshold: Silero speech-probability threshold forwarded to ``/vad``
+            (``VAD_GATE_THRESHOLD``, default 0.4).
+        pad_ms: Silero ``speech_pad_ms`` forwarded to ``/vad``
+            (``VAD_GATE_PAD_MS``, default 100).
+    """
+
+    enabled: bool
+    threshold: float
+    pad_ms: int
+
+
+@dataclass(frozen=True)
 class NerConfig:
     """Dataclass for the named-entity-recognition service configuration.
 
@@ -211,6 +234,8 @@ EXTERNAL_WHISPER_DEFAULTS: dict[str, str] = {
 DEFAULT_DIARIZE_TIMEOUT: float = 600.0
 DEFAULT_NER_TIMEOUT: float = 120.0
 DEFAULT_VAD_TIMEOUT: float = 60.0
+DEFAULT_VAD_GATE_THRESHOLD: float = 0.4
+DEFAULT_VAD_GATE_PAD_MS: int = 100
 DEFAULT_SUMMARY_MAX_INPUT_TOKENS: int = 6000
 DEFAULT_KEYFRAMES_PER_MINUTE: int = 4
 DEFAULT_KEYFRAMES_MAX: int = 20
@@ -358,6 +383,55 @@ def load_diarization_env() -> DiarizationConfig:
             )
 
     return DiarizationConfig(api_base=api_base, api_key=api_key, timeout=timeout)
+
+
+def load_diarize_vad_gate_env() -> DiarizeVadGateConfig:
+    """Loads VAD-gating configuration for diarization from environment variables.
+
+    Returns:
+        DiarizeVadGateConfig: the resolved settings.
+        - enabled (bool): ``NEXTEXT_DIARIZE_VAD_GATE`` (default ``True``; only an
+          explicit falsy token — ``0``/``false``/``no``/``off`` — disables
+          gating; unrecognised values warn and keep the default).
+        - threshold (float): ``VAD_GATE_THRESHOLD``; values outside ``(0, 1]`` or
+          non-numeric warn and fall back to :data:`DEFAULT_VAD_GATE_THRESHOLD`.
+        - pad_ms (int): ``VAD_GATE_PAD_MS``; negative or non-integer values warn
+          and fall back to :data:`DEFAULT_VAD_GATE_PAD_MS`.
+    """
+    parsed = _parse_tristate_bool("NEXTEXT_DIARIZE_VAD_GATE")
+    enabled = True if parsed is None else parsed
+
+    threshold = DEFAULT_VAD_GATE_THRESHOLD
+    raw_threshold = os.getenv("VAD_GATE_THRESHOLD", "").strip()
+    if raw_threshold:
+        try:
+            value = float(raw_threshold)
+            if not 0.0 < value <= 1.0:
+                raise ValueError
+            threshold = value
+        except ValueError:
+            logger.warning(
+                "Invalid VAD_GATE_THRESHOLD '{}'. Falling back to {}.",
+                raw_threshold,
+                DEFAULT_VAD_GATE_THRESHOLD,
+            )
+
+    pad_ms = DEFAULT_VAD_GATE_PAD_MS
+    raw_pad = os.getenv("VAD_GATE_PAD_MS", "").strip()
+    if raw_pad:
+        try:
+            parsed_pad = int(raw_pad)
+            if parsed_pad < 0:
+                raise ValueError
+            pad_ms = parsed_pad
+        except ValueError:
+            logger.warning(
+                "Invalid VAD_GATE_PAD_MS '{}'. Falling back to {}.",
+                raw_pad,
+                DEFAULT_VAD_GATE_PAD_MS,
+            )
+
+    return DiarizeVadGateConfig(enabled=enabled, threshold=threshold, pad_ms=pad_ms)
 
 
 def load_ner_env() -> NerConfig:

@@ -109,3 +109,10 @@ def test_job_options_rejects_max_above_ceiling() -> None:
     """A ``keyframes_max`` above the ``le=200`` ceiling is rejected."""
     with pytest.raises(ValidationError):
         JobOptions.model_validate({"keyframes_max": 201})
+
+
+def test_job_options_diarize_defaults_on_and_rejects_removed_speakers() -> None:
+    """Diarize defaults to True; the removed speakers field is rejected."""
+    assert JobOptions().diarize is True
+    with pytest.raises(ValidationError):
+        JobOptions(speakers=2)  # type: ignore[unexpected-keyword]

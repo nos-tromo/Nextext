@@ -53,7 +53,7 @@ def test_transcript_csv_artifact_round_trips(
         {
             "task": "transcribe",
             "trg_lang": "de",
-            "speakers": 1,
+            "diarize": True,
             "words": False,
             "summarization": False,
             "hate_speech": False,
@@ -77,7 +77,7 @@ def test_transcript_csv_artifact_includes_translation_column_for_translate_task(
         {
             "task": "translate",
             "trg_lang": "de",
-            "speakers": 1,
+            "diarize": True,
             "words": False,
             "summarization": False,
             "hate_speech": False,
@@ -101,7 +101,7 @@ def test_docint_jsonl_includes_language(
         {
             "task": "transcribe",
             "trg_lang": "de",
-            "speakers": 1,
+            "diarize": True,
             "words": False,
             "summarization": False,
             "hate_speech": False,
@@ -135,7 +135,7 @@ def test_docint_jsonl_uses_original_text_for_translate_task(
         {
             "task": "translate",
             "trg_lang": "de",
-            "speakers": 1,
+            "diarize": True,
             "words": False,
             "summarization": False,
             "hate_speech": False,
@@ -159,7 +159,7 @@ def test_summary_artifact_returns_404_when_not_requested(
         {
             "task": "transcribe",
             "trg_lang": "de",
-            "speakers": 1,
+            "diarize": True,
             "words": False,
             "summarization": False,
             "hate_speech": False,
@@ -179,7 +179,7 @@ def test_archive_zip_contains_transcript_and_summary(
         {
             "task": "transcribe",
             "trg_lang": "de",
-            "speakers": 1,
+            "diarize": True,
             "words": False,
             "summarization": True,
             "hate_speech": False,
@@ -205,7 +205,7 @@ def test_unknown_artifact_returns_404(
         {
             "task": "transcribe",
             "trg_lang": "de",
-            "speakers": 1,
+            "diarize": True,
             "words": False,
             "summarization": False,
             "hate_speech": False,
@@ -225,7 +225,7 @@ def test_transcript_txt_artifact_is_readable_block_format(
         {
             "task": "transcribe",
             "trg_lang": "de",
-            "speakers": 1,
+            "diarize": True,
             "words": False,
             "summarization": False,
             "hate_speech": False,
@@ -251,7 +251,7 @@ def test_translation_txt_artifact_404_for_transcribe_task(
         {
             "task": "transcribe",
             "trg_lang": "de",
-            "speakers": 1,
+            "diarize": True,
             "words": False,
             "summarization": False,
             "hate_speech": False,
@@ -287,7 +287,7 @@ def test_translate_task_splits_transcript_and_translation_txt(
         {
             "task": "translate",
             "trg_lang": "de",
-            "speakers": 1,
+            "diarize": True,
             "words": False,
             "summarization": False,
             "hate_speech": False,
@@ -319,7 +319,7 @@ def test_archive_zip_contains_txt_exports(
         {
             "task": "translate",
             "trg_lang": "de",
-            "speakers": 1,
+            "diarize": True,
             "words": False,
             "summarization": False,
             "hate_speech": False,

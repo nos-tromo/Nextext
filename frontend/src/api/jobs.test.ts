@@ -7,7 +7,7 @@ const OPTS: JobOptions = {
   src_lang: null,
   trg_lang: 'de',
   task: 'transcribe',
-  speakers: 1,
+  diarize: true,
   words: false,
   summarization: false,
   hate_speech: false,

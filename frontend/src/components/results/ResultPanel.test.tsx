@@ -24,7 +24,7 @@ function makeSnapshot(overrides: Partial<JobSnapshot['result']> = {}): JobSnapsh
       src_lang: null,
       trg_lang: 'en',
       task: 'transcribe',
-      speakers: 1,
+      diarize: true,
       words: false,
       summarization: false,
       hate_speech: false,

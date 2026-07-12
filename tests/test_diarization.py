@@ -7,7 +7,13 @@ import httpx
 import pytest
 
 from nextext.core import diarization
-from nextext.core.diarization import assign_speakers_by_overlap, diarize_file
+from nextext.core.diarization import (
+    assign_speakers_by_overlap,
+    build_speaker_segments,
+    canonicalize_speaker_labels,
+    diarize_file,
+    gate_turns_by_vad,
+)
 
 # ---------------------------------------------------------------------------
 # assign_speakers_by_overlap
@@ -206,3 +212,160 @@ def test_diarize_file_handles_non_dict_payload(
     audio.write_bytes(b"x")
 
     assert diarize_file(audio, max_speakers=2) == []
+
+
+# ---------------------------------------------------------------------------
+# canonicalize_speaker_labels
+# ---------------------------------------------------------------------------
+
+
+def test_canonicalize_numbers_by_first_appearance() -> None:
+    """Raw pyannote labels renumber to contiguous Speaker N by earliest start."""
+    turns = [
+        {"start": 5.0, "end": 6.0, "speaker": "SPEAKER_02"},
+        {"start": 0.0, "end": 1.0, "speaker": "SPEAKER_00"},
+        {"start": 1.0, "end": 2.0, "speaker": "SPEAKER_02"},
+    ]
+
+    result = canonicalize_speaker_labels(turns)
+
+    # First voice heard (start=0.0, SPEAKER_00) -> Speaker 1; next new voice -> Speaker 2.
+    assert [t["speaker"] for t in result] == ["Speaker 2", "Speaker 1", "Speaker 2"]
+    # Original order and timings are preserved; only the label string changes.
+    assert [t["start"] for t in result] == [5.0, 0.0, 1.0]
+
+
+def test_canonicalize_empty_is_empty() -> None:
+    """No turns canonicalizes to no turns."""
+    assert canonicalize_speaker_labels([]) == []
+
+
+# ---------------------------------------------------------------------------
+# build_speaker_segments
+# ---------------------------------------------------------------------------
+
+_TURNS = [
+    {"start": 0.0, "end": 1.0, "speaker": "Speaker 1"},
+    {"start": 1.0, "end": 2.0, "speaker": "Speaker 2"},
+]
+
+
+def test_build_keeps_single_speaker_segment_verbatim() -> None:
+    """A segment whose words share one speaker is emitted with exact text preserved."""
+    segments = [{"start": 0.0, "end": 0.9, "text": "hello world"}]
+    words = [
+        {"word": "hello", "start": 0.0, "end": 0.4},
+        {"word": "world", "start": 0.4, "end": 0.8},
+    ]
+
+    result = build_speaker_segments(segments, words, _TURNS)
+
+    assert result == [{"start": 0.0, "end": 0.9, "text": "hello world", "speaker": "Speaker 1"}]
+
+
+def test_build_splits_mixed_speaker_segment_at_word() -> None:
+    """A segment spanning a speaker change splits at the exact word."""
+    segments = [{"start": 0.0, "end": 2.0, "text": "hi there"}]
+    words = [
+        {"word": "hi", "start": 0.0, "end": 0.4},  # midpoint 0.2 -> Speaker 1
+        {"word": "there", "start": 1.2, "end": 1.8},  # midpoint 1.5 -> Speaker 2
+    ]
+
+    result = build_speaker_segments(segments, words, _TURNS)
+
+    assert result == [
+        {"start": 0.0, "end": 0.4, "text": "hi", "speaker": "Speaker 1"},
+        {"start": 1.2, "end": 1.8, "text": "there", "speaker": "Speaker 2"},
+    ]
+
+
+def test_build_falls_back_to_segment_level_without_words() -> None:
+    """With no word timestamps, assignment is segment-level max overlap."""
+    segments = [{"start": 0.0, "end": 0.9, "text": "hello"}]
+
+    result = build_speaker_segments(segments, [], _TURNS)
+
+    assert result == [{"start": 0.0, "end": 0.9, "text": "hello", "speaker": "Speaker 1"}]
+    # Input is not mutated (a copy is returned).
+    assert "speaker" not in segments[0]
+
+
+def test_build_unlabeled_word_inherits_neighbouring_run() -> None:
+    """A word overlapping no turn does not force a split; it joins the current run."""
+    segments = [{"start": 0.0, "end": 3.0, "text": "a b c"}]
+    words = [
+        {"word": "a", "start": 0.0, "end": 0.4},  # Speaker 1
+        {"word": "b", "start": 2.2, "end": 2.4},  # overlaps no turn -> None
+        {"word": "c", "start": 2.5, "end": 2.8},  # overlaps no turn -> None
+    ]
+    turns = [{"start": 0.0, "end": 1.0, "speaker": "Speaker 1"}]
+
+    result = build_speaker_segments(segments, words, turns)
+
+    # Single distinct speaker (Speaker 1) -> verbatim segment, exact text.
+    assert result == [{"start": 0.0, "end": 3.0, "text": "a b c", "speaker": "Speaker 1"}]
+
+
+def test_build_none_word_between_two_speakers_folds_into_run() -> None:
+    """A no-overlap word between two different speakers folds into a run, not a split."""
+    segments = [{"start": 0.0, "end": 3.0, "text": "a b c"}]
+    words = [
+        {"word": "a", "start": 0.2, "end": 0.4},  # Speaker 1
+        {"word": "b", "start": 1.4, "end": 1.6},  # in the turn gap -> None
+        {"word": "c", "start": 2.4, "end": 2.6},  # Speaker 2
+    ]
+    turns = [
+        {"start": 0.0, "end": 1.0, "speaker": "Speaker 1"},
+        {"start": 2.0, "end": 3.0, "speaker": "Speaker 2"},
+    ]
+
+    result = build_speaker_segments(segments, words, turns)
+
+    assert result == [
+        {"start": 0.2, "end": 1.6, "text": "a b", "speaker": "Speaker 1"},
+        {"start": 2.4, "end": 2.6, "text": "c", "speaker": "Speaker 2"},
+    ]
+
+
+# ---------------------------------------------------------------------------
+# gate_turns_by_vad
+# ---------------------------------------------------------------------------
+
+
+def test_gate_turns_splits_turn_straddling_a_gap() -> None:
+    """A turn spanning a non-speech gap is cropped to its speech-only pieces."""
+    turns = [{"start": 0.0, "end": 10.0, "speaker": "SPEAKER_00"}]
+    vad = [(0.0, 3.0), (6.0, 10.0)]  # 3-6 is music / non-speech
+    assert gate_turns_by_vad(turns, vad) == [
+        {"start": 0.0, "end": 3.0, "speaker": "SPEAKER_00"},
+        {"start": 6.0, "end": 10.0, "speaker": "SPEAKER_00"},
+    ]
+
+
+def test_gate_turns_drops_turn_entirely_in_non_speech() -> None:
+    """A turn overlapping no speech interval is dropped."""
+    turns = [{"start": 4.0, "end": 5.0, "speaker": "SPEAKER_01"}]
+    assert gate_turns_by_vad(turns, [(0.0, 3.0), (6.0, 10.0)]) == []
+
+
+def test_gate_turns_keeps_turn_fully_in_speech_unchanged() -> None:
+    """A turn wholly within a speech interval is returned unchanged, speaker preserved."""
+    turns = [{"start": 1.0, "end": 2.0, "speaker": "SPEAKER_00"}]
+    assert gate_turns_by_vad(turns, [(0.0, 3.0)]) == [{"start": 1.0, "end": 2.0, "speaker": "SPEAKER_00"}]
+
+
+def test_gate_turns_empty_intervals_is_failsafe_passthrough() -> None:
+    """Empty VAD intervals never blank the turns — they pass through unchanged."""
+    turns = [{"start": 0.0, "end": 2.0, "speaker": "SPEAKER_00"}]
+    assert gate_turns_by_vad(turns, []) == turns
+
+
+def test_gate_turns_splits_turn_across_multiple_gaps() -> None:
+    """A turn spanning several non-speech gaps yields one fragment per speech interval."""
+    turns = [{"start": 0.0, "end": 20.0, "speaker": "SPEAKER_00"}]
+    vad = [(0.0, 3.0), (6.0, 9.0), (15.0, 18.0)]
+    assert gate_turns_by_vad(turns, vad) == [
+        {"start": 0.0, "end": 3.0, "speaker": "SPEAKER_00"},
+        {"start": 6.0, "end": 9.0, "speaker": "SPEAKER_00"},
+        {"start": 15.0, "end": 18.0, "speaker": "SPEAKER_00"},
+    ]

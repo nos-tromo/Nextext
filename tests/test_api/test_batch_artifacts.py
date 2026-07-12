@@ -17,7 +17,7 @@ from .conftest import BOB_OWNER_ID, OWNER_HEADER
 _OPTIONS: dict[str, Any] = {
     "task": "transcribe",
     "trg_lang": "de",
-    "speakers": 1,
+    "diarize": True,
     "words": False,
     "summarization": False,
     "hate_speech": False,

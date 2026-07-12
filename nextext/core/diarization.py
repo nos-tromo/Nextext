@@ -21,7 +21,80 @@ from loguru import logger
 
 from nextext.utils.env_cfg import load_diarization_env
 
-__all__ = ["assign_speakers_by_overlap", "diarize_file"]
+__all__ = [
+    "SPEAKER_LABEL_PREFIX",
+    "assign_speakers_by_overlap",
+    "build_speaker_segments",
+    "canonicalize_speaker_labels",
+    "diarize_file",
+    "gate_turns_by_vad",
+]
+
+SPEAKER_LABEL_PREFIX = "Speaker"
+
+
+def canonicalize_speaker_labels(turns: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Renumber raw diarization labels to contiguous ``Speaker N`` by first appearance.
+
+    pyannote's ``SPEAKER_00``/``SPEAKER_02`` labels are arbitrary and gap-y.
+    This maps them to ``Speaker 1``, ``Speaker 2``, … in the order each label
+    is first heard (earliest turn ``start``), so the first voice is always
+    ``Speaker 1``. The input order is preserved in the output; only the
+    ``speaker`` string changes.
+
+    Args:
+        turns (list[dict[str, Any]]): Speaker turns with ``start`` / ``end`` /
+            ``speaker`` keys, as returned by :func:`diarize_file`.
+
+    Returns:
+        list[dict[str, Any]]: New turn dicts (same order) with canonical labels.
+    """
+    mapping: dict[str, str] = {}
+    for turn in sorted(turns, key=lambda t: float(t["start"])):
+        raw = str(turn["speaker"])
+        if raw not in mapping:
+            mapping[raw] = f"{SPEAKER_LABEL_PREFIX} {len(mapping) + 1}"
+    return [{**turn, "speaker": mapping[str(turn["speaker"])]} for turn in turns]
+
+
+def gate_turns_by_vad(
+    turns: list[dict[str, Any]],
+    vad_intervals: list[tuple[float, float]],
+) -> list[dict[str, Any]]:
+    """Crop diarization turns to the VAD speech timeline.
+
+    Intersects each turn's ``[start, end]`` with every speech interval, emitting
+    one turn per overlapping piece: a turn spanning a non-speech gap (e.g. music
+    between utterances) splits into its speech-only fragments, and a turn
+    overlapping no speech is dropped. Speaker labels (and any other keys) are
+    preserved. This suppresses the false alarm from pyannote over-detecting
+    music/noise as speech (the "music scored as a speaker" defect).
+
+    Empty ``vad_intervals`` returns ``turns`` unchanged — a fail-safe so an empty
+    VAD result never blanks an otherwise-speech transcript.
+
+    Args:
+        turns (list[dict[str, Any]]): Diarization turns with float ``start`` /
+            ``end`` and a ``speaker`` key, as returned by :func:`diarize_file`.
+        vad_intervals (list[tuple[float, float]]): Chronological speech
+            ``(start, end)`` intervals from the ``/vad`` service (see
+            :func:`nextext.core.vad.speech_segments`).
+
+    Returns:
+        list[dict[str, Any]]: New turn dicts cropped to the speech intervals.
+    """
+    if not vad_intervals:
+        return turns
+    gated: list[dict[str, Any]] = []
+    for turn in turns:
+        start = float(turn["start"])
+        end = float(turn["end"])
+        for speech_start, speech_end in vad_intervals:
+            overlap_start = max(start, speech_start)
+            overlap_end = min(end, speech_end)
+            if overlap_end > overlap_start:
+                gated.append({**turn, "start": overlap_start, "end": overlap_end})
+    return gated
 
 
 def diarize_file(
@@ -41,8 +114,9 @@ def diarize_file(
     empty list.
 
     ``num_speakers`` (exact count) is mutually exclusive with
-    ``min_speakers``/``max_speakers`` on the server side; the frontend's
-    "max speakers" control maps to ``max_speakers``.
+    ``min_speakers``/``max_speakers`` on the server side. The Nextext pipeline
+    calls this with no bounds so pyannote auto-detects the speaker count; the
+    bound parameters are retained for API completeness.
 
     Args:
         file_path (Path): Path to the audio/video file to diarize. Sent as-is;
@@ -110,6 +184,35 @@ def diarize_file(
     return segments
 
 
+def _speaker_by_overlap(
+    start: float,
+    end: float,
+    turns: list[dict[str, Any]],
+) -> str | None:
+    """Return the speaker with the greatest cumulative overlap of ``[start, end]``.
+
+    Args:
+        start (float): Window start in seconds.
+        end (float): Window end in seconds.
+        turns (list[dict[str, Any]]): Speaker turns with ``start`` / ``end`` /
+            ``speaker`` keys.
+
+    Returns:
+        str | None: The maximally-overlapping speaker label, or ``None`` when
+            the window overlaps no turn.
+    """
+    durations: dict[str, float] = {}
+    for turn in turns:
+        overlap_start = max(start, float(turn["start"]))
+        overlap_end = min(end, float(turn["end"]))
+        if overlap_end > overlap_start:
+            speaker = str(turn["speaker"])
+            durations[speaker] = durations.get(speaker, 0.0) + (overlap_end - overlap_start)
+    if not durations:
+        return None
+    return max(durations, key=lambda s: durations[s])
+
+
 def assign_speakers_by_overlap(
     transcription_segments: list[dict[str, Any]],
     diarize_segments: list[dict[str, Any]],
@@ -120,9 +223,8 @@ def assign_speakers_by_overlap(
     diarization turn is accumulated per speaker, and the speaker with the
     greatest overlap wins. Segments that overlap no turn are left untouched
     (they gain no ``speaker`` key). ``transcription_segments`` is mutated in
-    place. This mirrors the previous in-process pyannote alignment, but reads
-    the speaker turns from the ``/diarize`` response rather than a pyannote
-    ``Annotation``.
+    place. This is the segment-level fallback used when word timestamps are
+    unavailable.
 
     Args:
         transcription_segments (list[dict[str, Any]]): Whisper segments with
@@ -132,14 +234,98 @@ def assign_speakers_by_overlap(
             :func:`diarize_file`, each with ``start`` / ``end`` / ``speaker``.
     """
     for segment in transcription_segments:
+        speaker = _speaker_by_overlap(float(segment["start"]), float(segment["end"]), diarize_segments)
+        if speaker is not None:
+            segment["speaker"] = speaker
+
+
+def build_speaker_segments(
+    segments: list[dict[str, Any]],
+    words: list[dict[str, Any]],
+    turns: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Assign speakers to transcript segments, splitting mixed-speaker segments by word.
+
+    When ``words`` is available, each word is assigned the maximally-overlapping
+    speaker and every Whisper segment is inspected: if all of its words share a
+    single speaker the segment is emitted unchanged (with a ``speaker`` key and
+    its **exact** text preserved); if its words carry two or more speakers the
+    segment is split at each speaker change, one output segment per run of
+    same-speaker words. Words overlapping no turn do not force a split — they
+    join the surrounding run.
+
+    When ``words`` is empty (an endpoint that returns no word timestamps), it
+    falls back to segment-level :func:`assign_speakers_by_overlap` on copies of
+    the input.
+
+    Args:
+        segments (list[dict[str, Any]]): Whisper segments with float ``start`` /
+            ``end`` and ``text`` keys.
+        words (list[dict[str, Any]]): Whisper words with float ``start`` /
+            ``end`` and ``word`` keys; may be empty.
+        turns (list[dict[str, Any]]): Canonicalized speaker turns.
+
+    Returns:
+        list[dict[str, Any]]: New segment dicts, speaker-labeled and — where a
+            segment spanned a speaker change — split at the word boundary.
+    """
+    if not words:
+        labeled = [dict(segment) for segment in segments]
+        assign_speakers_by_overlap(labeled, turns)
+        return labeled
+
+    result: list[dict[str, Any]] = []
+    for segment in segments:
         seg_start = float(segment["start"])
         seg_end = float(segment["end"])
-        speaker_durations: dict[str, float] = {}
-        for turn in diarize_segments:
-            overlap_start = max(seg_start, float(turn["start"]))
-            overlap_end = min(seg_end, float(turn["end"]))
-            if overlap_end > overlap_start:
-                speaker = str(turn["speaker"])
-                speaker_durations[speaker] = speaker_durations.get(speaker, 0.0) + (overlap_end - overlap_start)
-        if speaker_durations:
-            segment["speaker"] = max(speaker_durations, key=lambda s: speaker_durations[s])
+        seg_words = [w for w in words if seg_start <= (float(w["start"]) + float(w["end"])) / 2 < seg_end]
+        labeled_words = [(w, _speaker_by_overlap(float(w["start"]), float(w["end"]), turns)) for w in seg_words]
+        distinct = {speaker for _, speaker in labeled_words if speaker is not None}
+
+        if len(distinct) <= 1:
+            new_segment = dict(segment)
+            speaker = next(iter(distinct), None)
+            if speaker is None:
+                speaker = _speaker_by_overlap(seg_start, seg_end, turns)
+            if speaker is not None:
+                new_segment["speaker"] = speaker
+            result.append(new_segment)
+            continue
+
+        run_words: list[dict[str, Any]] = []
+        run_speaker: str | None = None
+        for word, speaker in labeled_words:
+            if run_words and speaker is not None and run_speaker is not None and speaker != run_speaker:
+                result.append(_word_run_segment(run_words, run_speaker))
+                run_words = []
+                run_speaker = None
+            run_words.append(word)
+            if speaker is not None:
+                run_speaker = speaker
+        if run_words:
+            result.append(_word_run_segment(run_words, run_speaker))
+    return result
+
+
+def _word_run_segment(run_words: list[dict[str, Any]], speaker: str | None) -> dict[str, Any]:
+    """Build one output segment from a run of same-speaker words.
+
+    Args:
+        run_words (list[dict[str, Any]]): Consecutive Whisper words with
+            ``word`` / ``start`` / ``end`` keys.
+        speaker (str | None): The run's speaker label, if any.
+
+    Returns:
+        dict[str, Any]: A segment with ``start`` / ``end`` / ``text`` and an
+            optional ``speaker`` key. Text joins the words with single spaces
+            (imperfect for space-less scripts — a documented limitation, and
+            only hit for genuinely mixed-speaker segments).
+    """
+    segment: dict[str, Any] = {
+        "start": float(run_words[0]["start"]),
+        "end": float(run_words[-1]["end"]),
+        "text": " ".join(str(w["word"]).strip() for w in run_words).strip(),
+    }
+    if speaker is not None:
+        segment["speaker"] = speaker
+    return segment

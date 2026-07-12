@@ -36,7 +36,7 @@ def _completed_job(name: str, *, summary: str | None = None) -> JobState:
         {
             "task": "transcribe",
             "trg_lang": "de",
-            "speakers": 1,
+            "diarize": True,
             "words": False,
             "summarization": False,
             "hate_speech": False,

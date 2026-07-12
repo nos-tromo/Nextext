@@ -2,8 +2,8 @@
 
 An external ``/vad`` speech guard (see :func:`nextext.core.vad.has_speech`)
 keeps silent and noise-only audio away from the remote endpoint; speaker
-diarization is delegated to the external service behind
-:func:`nextext.core.diarization.diarize_file`.
+diarization is handled separately by the pipeline (see
+:mod:`nextext.core.diarization`), not by this module.
 """
 
 from datetime import timedelta
@@ -15,7 +15,6 @@ from loguru import logger
 from openai import APIStatusError, OpenAI
 
 from nextext.core.audio import normalize_for_transcription
-from nextext.core.diarization import diarize_file
 from nextext.core.vad import has_speech
 from nextext.utils.env_cfg import load_inference_env, load_whisper_env
 from nextext.utils.mappings_loader import load_mappings
@@ -192,51 +191,20 @@ def _merge_transcriptions_by_sentence(
     return merged_df
 
 
-def _assign_speakers(
-    segments: list[dict[str, Any]],
-    speaker_turns: list[dict[str, Any]],
-) -> None:
-    """Assign speaker labels to transcription segments by maximum overlap.
-
-    Args:
-        segments (list[dict[str, Any]]): Whisper segment dicts carrying
-            ``start``/``end`` seconds; mutated in place — the winning
-            ``speaker`` label is written into each overlapping segment.
-        speaker_turns (list[dict[str, Any]]): Diarization speaker turns as
-            ``{"start", "end", "speaker"}`` dicts, as returned by
-            :func:`nextext.core.diarization.diarize_file`.
-    """
-    for segment in segments:
-        seg_start = float(segment["start"])
-        seg_end = float(segment["end"])
-        speaker_durations: dict[str, float] = {}
-        for turn in speaker_turns:
-            overlap_start = max(seg_start, float(turn["start"]))
-            overlap_end = min(seg_end, float(turn["end"]))
-            if overlap_end > overlap_start:
-                speaker = str(turn["speaker"])
-                speaker_durations[speaker] = speaker_durations.get(speaker, 0.0) + (overlap_end - overlap_start)
-        if speaker_durations:
-            segment["speaker"] = max(speaker_durations, key=lambda s: speaker_durations[s])
-
-
 class ExternalWhisperTranscriber:
     """Transcribe audio via an external OpenAI-compatible Whisper API.
 
-    Speaker diarization is delegated to the external diarization service
-    (see :func:`nextext.core.diarization.diarize_file`) and merged into the
-    transcribed segments by maximum overlap.
+    Speaker diarization is not performed by this class — the pipeline
+    diarizes separately (see :mod:`nextext.core.diarization`) and merges
+    speaker labels into the transcribed segments itself.
 
     Attributes:
         file_path (Path): Path to the audio file.
         src_lang (str | None): Source language code; populated from API response if not provided.
         task (str): Task type, "transcribe" or "translate".
-        n_speakers (int): Maximum number of speakers for diarization;
-            values above 1 trigger the external diarization call.
 
     Methods:
-        transcription(): Call the external API and store segment results.
-        diarization(): Label segments with speakers via the external service.
+        transcription(): Call the external API and store segment + word results.
         transcript_output(): Return the transcription result as a DataFrame.
     """
 
@@ -247,7 +215,6 @@ class ExternalWhisperTranscriber:
         src_lang: str | None = None,
         model_id: str = "whisper-1",
         task: str = "transcribe",
-        n_speakers: int = 1,
         start_column: str = "start",
         end_column: str = "end",
         speaker_column: str = "speaker",
@@ -261,8 +228,6 @@ class ExternalWhisperTranscriber:
             src_lang (str | None): Source language code. Defaults to None (API auto-detects).
             model_id (str): Model name to pass to the external API. Defaults to "whisper-1".
             task (str): "transcribe" or "translate". Defaults to "transcribe".
-            n_speakers (int): Maximum number of speakers for diarization. Defaults to 1
-                (diarization disabled).
             start_column (str): DataFrame column for segment start times.
             end_column (str): DataFrame column for segment end times.
             speaker_column (str): DataFrame column for speaker labels.
@@ -272,7 +237,6 @@ class ExternalWhisperTranscriber:
         self.src_lang = src_lang
         self.task = task
         self._model_id = model_id
-        self.n_speakers = n_speakers
         self.start_column = start_column
         self.end_column = end_column
         self.speaker_column = speaker_column
@@ -331,7 +295,7 @@ class ExternalWhisperTranscriber:
                 "VAD service reported no speech in {}; skipping external transcription request.",
                 self.file_path.name,
             )
-            self.transcription_result = {"segments": []}
+            self.transcription_result = {"segments": [], "words": []}
             return
 
         provider = load_inference_env().provider
@@ -371,7 +335,7 @@ class ExternalWhisperTranscriber:
                             "model": self._model_id,
                             "file": f,
                             "response_format": "verbose_json",
-                            "timestamp_granularities": ["segment"],
+                            "timestamp_granularities": ["segment", "word"],
                         }
                         if self.src_lang:
                             kwargs["language"] = self.src_lang
@@ -395,7 +359,15 @@ class ExternalWhisperTranscriber:
             for seg in response.segments
         ]
         segments = _filter_no_speech_segments(raw_segments)
-        self.transcription_result = {"segments": segments}
+        words = [
+            {
+                "word": str(getattr(w, "word", "")),
+                "start": float(getattr(w, "start", 0.0)),
+                "end": float(getattr(w, "end", 0.0)),
+            }
+            for w in (getattr(response, "words", None) or [])
+        ]
+        self.transcription_result = {"segments": segments, "words": words}
         # Treat both None and "" as "no language pinned": the API layer passes an
         # empty string for auto-detect, so capture the language Whisper detected.
         if not self.src_lang:
@@ -406,40 +378,16 @@ class ExternalWhisperTranscriber:
             self.src_lang,
         )
 
-    def diarization(self) -> None:
-        """Label the transcribed segments with speakers via the external service.
-
-        Uploads the audio file to the diarization endpoint (see
-        :func:`nextext.core.diarization.diarize_file`) and assigns each
-        transcribed segment the speaker with the maximum temporal overlap.
-        Skipped when ``n_speakers <= 1`` or no segments survived
-        transcription (nothing to label — the upload would be wasted).
-
-        The diarization client is fail-soft: when ``DIARIZE_API_BASE`` is
-        unset or the service is unreachable it returns no speaker turns and
-        the segments are left unlabelled (see :mod:`nextext.core.diarization`).
-
-        Raises:
-            ValueError: If transcription has not been run yet.
-        """
-        if self.n_speakers <= 1:
-            logger.info("Skipping diarization as only one speaker is specified.")
-            return
-        if self.transcription_result is None or "segments" not in self.transcription_result:
-            raise ValueError("Transcription result is not available. Run transcription first.")
-        segments = self.transcription_result["segments"]
-        if not segments:
-            logger.info("No transcribed segments to diarize; skipping diarization request.")
-            return
-        speaker_turns = diarize_file(self.file_path, max_speakers=self.n_speakers)
-        _assign_speakers(segments, speaker_turns)
-
     def transcript_output(self) -> pd.DataFrame:
         """Get the external transcription result as a DataFrame.
 
+        A ``speaker`` column is included only when the segments carry two or
+        more distinct speaker labels; a single detected speaker (or none)
+        yields a clean, speaker-free transcript.
+
         Returns:
             pd.DataFrame: A DataFrame containing the transcription results,
-            including a speaker column when diarization labeled segments.
+            including a speaker column when ≥2 distinct speakers were labeled.
 
         Raises:
             ValueError: If transcription has not been run yet.
@@ -447,9 +395,12 @@ class ExternalWhisperTranscriber:
         if self.transcription_result is None or "segments" not in self.transcription_result:
             raise ValueError("Transcription result is not available. Run transcription first.")
 
+        segments = self.transcription_result["segments"]
+        speakers_present = {str(item["speaker"]) for item in segments if item.get("speaker")}
+        has_speaker = len(speakers_present) >= 2
+
         rows = []
-        has_speaker = any("speaker" in item for item in self.transcription_result["segments"])
-        for item in self.transcription_result["segments"]:
+        for item in segments:
             row = [
                 _seconds_to_time(item["start"]),
                 _seconds_to_time(item["end"]),
@@ -465,8 +416,6 @@ class ExternalWhisperTranscriber:
         columns.append(self.text_column)
 
         df = pd.DataFrame(rows, columns=pd.Index(columns))
-        if self.n_speakers <= 1 and has_speaker:
-            df.drop(self.speaker_column, axis=1, inplace=True)
         return _merge_transcriptions_by_sentence(
             df,
             self.start_column,
