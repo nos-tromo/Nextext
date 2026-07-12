@@ -66,7 +66,7 @@ Tests are in `tests/` using pytest with monkeypatch fixtures and `respx` for moc
 
 **Pipeline flow (server-side):**
 
-1. **Transcription** (always-on) → every upload is re-encoded to 16 kHz mono FLAC (`nextext/core/audio.py`, PyAV) so libsndfile-only Whisper servers can decode it → external Whisper API (`/v1/audio/transcriptions`, always in the source language) behind an external `/vad` speech guard (defaults to the central endpoint; `VAD_API_BASE=off` skips it), + speaker diarization via the out-of-process `/diarize` HTTP service — on by default and auto-detecting the speaker count (no speaker bounds sent), bypassable per job (`diarize=false` / CLI `--no-diarize`); turns are gated by the `/vad` speech timeline (cropped to speech, dropping music/noise the diarizer over-detects as speech — `NEXTEXT_DIARIZE_VAD_GATE`, default on; fail-open leaves turns ungated), then relabelled to contiguous `Speaker N` by first appearance and aligned onto the transcript at the word level, falling back to segment-level overlap when the endpoint returns no word timestamps; the speaker column is omitted entirely when ≤1 distinct speaker is detected → `pd.DataFrame`
+1. **Transcription** (always-on) → every upload is re-encoded to 16 kHz mono FLAC (`nextext/core/audio.py`, PyAV) so libsndfile-only Whisper servers can decode it → external Whisper API (`/v1/audio/transcriptions`, always in the source language) behind an external `/vad` speech guard (defaults to the central endpoint; `VAD_API_BASE=off` skips it), + speaker diarization via the out-of-process `/diarize` HTTP service — on by default and auto-detecting the speaker count (no speaker bounds sent), bypassable per job (`diarize=false` / CLI `--no-diarize`); turns are gated by the `/vad` speech timeline (cropped to speech, dropping music/noise the diarizer over-detects as speech — `NEXTEXT_DIARIZE_VAD_GATE`, default on; fail-open leaves turns ungated), then relabelled to contiguous `Speaker N` by first appearance and aligned onto the transcript at the word level, falling back to segment-level overlap when the endpoint returns no word timestamps; the speaker column is omitted entirely when ≤1 distinct speaker is detected; low-punctuation transcripts (e.g. Arabic) are re-segmented into one sentence per row via `TEXT_MODEL` before merge/translate (`NEXTEXT_SENTENCE_RESTORE`, default on) → `pd.DataFrame`
 2. **Translation** (optional) → LLM-based segment translation, directly source → target for any target language, via `InferencePipeline`. Whisper's audio-translate task is not used.
 3. **Word-level analysis** (optional) → word counts, named entities via the out-of-process `/gliner` HTTP service, word clouds
 4. **Summarization** (optional) → LLM summary via `InferencePipeline`
@@ -99,6 +99,11 @@ Identity is resolved per request by `resolve_principal`: the trusted header (`NE
 - `nextext/core/audio.py` — audio-normalization agent: re-encodes any upload to 16 kHz mono FLAC via PyAV (bundled ffmpeg) before the Whisper call; fail-closed (`AudioDecodeError`) on undecodable input.
 - `nextext/core/vad.py` — voice-activity-detection agent: fail-open HTTP client for the out-of-process `/vad` service — `has_speech` (pre-Whisper guard) and `speech_segments` (speech timeline used to gate diarization turns); an unset/unreachable endpoint transcribes everything and leaves diarization turns ungated.
 - `nextext/core/diarization.py` — speaker-diarization agent: HTTP client for the out-of-process `/diarize` service; canonicalizes raw labels to contiguous `Speaker N` by first appearance (`canonicalize_speaker_labels`) and aligns turns onto the transcript at the word level (`build_speaker_segments`), falling back to segment-level overlap (`assign_speakers_by_overlap`) when word timestamps are unavailable.
+- `nextext/core/sentence_segmentation.py` — sentence-restoration agent: for
+  low-punctuation transcripts (e.g. Arabic), re-segments the word stream into
+  one segment per sentence via `TEXT_MODEL` (`restore_sentence_segments`), which
+  returns `index:code` boundaries (never text) and appends the classified
+  terminal mark (`.`/`؟`/`!`). Gated on `terminal_punctuation_ratio`; fail-soft.
 - `nextext/core/ner.py` — named-entity-recognition agent: HTTP client for the out-of-process `/gliner` service (`extract_entities`).
 - `nextext/core/translation.py` — LLM translation with prompt templates.
 - `nextext/core/words.py` — NLP word-level analysis (spaCy word counts + word clouds).
@@ -107,8 +112,6 @@ Identity is resolved per request by `resolve_principal`: the trusted header (`NE
 - `nextext/core/processing.py` — File I/O and export formatting (CLI).
 - `nextext/utils/mappings/` — JSON config files for Whisper/spaCy model names, language codes.
 - `nextext/utils/prompts/` — LLM prompt templates (system, translation, summary, hate_speech), localized per language under `en/` and `de/` (selected by `NEXTEXT_RESPONSE_LANGUAGE`, English fallback).
-
-See `AGENTS.md` for detailed agent documentation including I/O contracts and how to add new agents.
 
 ## Environment
 
@@ -125,6 +128,16 @@ Key env vars (see `.env.example`):
 - `OLLAMA_THINK` — tri-state default for the Ollama `think` request field forwarded by `InferencePipeline.call_model` via `extra_body`. Accepts `1`/`true`/`yes`/`on` (enable), `0`/`false`/`no`/`off` (disable), or unset (omit field, model default). Honoured by Ollama-hosted reasoning models such as Qwen3; a no-op for `vllm`/`openai` providers. Per-call `think=` overrides the env default.
 - `VAD_API_BASE` — root URL of the out-of-process `/vad` speech-guard service (e.g. `http://vllm-router:7000`); the client appends `/vad`. Defaults to the central `OPENAI_API_BASE` (one trailing `/v1` stripped), so the guard runs ahead of every transcription; set `VAD_API_BASE=off` (or `false`/`no`/`0`) to switch it off, or a URL to override. The bearer token is reused from `OPENAI_API_KEY`. Fail-open: an unreachable service degrades to transcribing anyway. `VAD_TIMEOUT` — per-request timeout in seconds (default `60`). See `nextext/core/vad.py` for the `/vad` request/response contract.
 - `NEXTEXT_DIARIZE_VAD_GATE` / `VAD_GATE_THRESHOLD` / `VAD_GATE_PAD_MS` — VAD-gating of diarization. When on (default), each `/diarize` turn is cropped to the `/vad` speech timeline (`vad.speech_segments`) before labelling, dropping music/noise the diarizer over-detects as speech (the "music scored as a speaker" false alarm; measured −35% false-alarm / −12.5% DER on clean content). `VAD_GATE_THRESHOLD` (default `0.4`) and `VAD_GATE_PAD_MS` (default `100`) are the Silero params forwarded to `/vad` — Silero's own `0.5` over-cuts real speech, so a lower threshold + padding is the tuned sweet spot. Fail-open: an unavailable `/vad` leaves turns ungated. Resolved by `load_diarize_vad_gate_env`. Set `NEXTEXT_DIARIZE_VAD_GATE=off` to disable.
+- `NEXTEXT_SENTENCE_RESTORE` / `SENTENCE_RESTORE_MIN_PUNCT_RATIO` (backend + CLI) —
+  Sentence restoration for punctuation-poor transcripts. When on (default) and a
+  transcript's terminal-punctuation density (marks ÷ words) is below
+  `SENTENCE_RESTORE_MIN_PUNCT_RATIO` (default `0.01`), each contiguous speaker
+  run is re-segmented into whole sentences by `TEXT_MODEL`, so rows are one
+  sentence each (granular and a coherent translation unit) instead of a
+  whole-speaker-turn blob. The model returns `index:code` boundaries — never
+  text — so words/timestamps stay untouched; questions get `؟`, exclamations
+  `!`, else `.`. Fail-soft: a model outage degrades to today's behavior. Resolved
+  by `load_sentence_restore_env`. Set `NEXTEXT_SENTENCE_RESTORE=off` to disable.
 - `NEXTEXT_OFFLINE=1` (default) — gates the spaCy/NLTK downloads (`is_offline()`); the only local downloads left. Offline + uncached spaCy model raises an actionable error.
 - `NEXTEXT_HOST_PORT` (frontend, dev/override only) — host port published by `make up-dev` for the nginx frontend container. Defaults to `8501`; maps to nginx port 80.
 - `NEXTEXT_CLIENT_MAX_BODY_SIZE` (frontend) — nginx `client_max_body_size` for the `/api/v1` upload proxy. Defaults to `8192m`.

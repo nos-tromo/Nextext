@@ -187,6 +187,27 @@ class DiarizeVadGateConfig:
 
 
 @dataclass(frozen=True)
+class SentenceRestoreConfig:
+    """Dataclass for LLM sentence restoration on low-punctuation transcripts.
+
+    When enabled and a transcript's terminal-punctuation density is below
+    ``min_punct_ratio``, each contiguous speaker run is re-segmented into
+    sentences by ``TEXT_MODEL`` so downstream rows are whole sentences rather
+    than whole-speaker-turn blobs.
+
+    Attributes:
+        enabled: Whether restoration may run (``NEXTEXT_SENTENCE_RESTORE``,
+            default ``True``).
+        min_punct_ratio: Terminal-punctuation-per-word threshold below which a
+            transcript is treated as low-punctuation
+            (``SENTENCE_RESTORE_MIN_PUNCT_RATIO``, default 0.01).
+    """
+
+    enabled: bool
+    min_punct_ratio: float
+
+
+@dataclass(frozen=True)
 class NerConfig:
     """Dataclass for the named-entity-recognition service configuration.
 
@@ -236,6 +257,7 @@ DEFAULT_NER_TIMEOUT: float = 120.0
 DEFAULT_VAD_TIMEOUT: float = 60.0
 DEFAULT_VAD_GATE_THRESHOLD: float = 0.4
 DEFAULT_VAD_GATE_PAD_MS: int = 100
+DEFAULT_SENTENCE_RESTORE_MIN_PUNCT_RATIO: float = 0.01
 DEFAULT_SUMMARY_MAX_INPUT_TOKENS: int = 6000
 DEFAULT_KEYFRAMES_PER_MINUTE: int = 4
 DEFAULT_KEYFRAMES_MAX: int = 20
@@ -432,6 +454,39 @@ def load_diarize_vad_gate_env() -> DiarizeVadGateConfig:
             )
 
     return DiarizeVadGateConfig(enabled=enabled, threshold=threshold, pad_ms=pad_ms)
+
+
+def load_sentence_restore_env() -> SentenceRestoreConfig:
+    """Loads the sentence-restoration configuration from environment variables.
+
+    Returns:
+        SentenceRestoreConfig: the resolved settings.
+        - enabled (bool): ``NEXTEXT_SENTENCE_RESTORE`` (default ``True``; only an
+          explicit falsy token — ``0``/``false``/``no``/``off`` — disables it;
+          unrecognised values warn and keep the default).
+        - min_punct_ratio (float): ``SENTENCE_RESTORE_MIN_PUNCT_RATIO``; values
+          outside ``(0, 1)`` or non-numeric warn and fall back to
+          :data:`DEFAULT_SENTENCE_RESTORE_MIN_PUNCT_RATIO`.
+    """
+    parsed = _parse_tristate_bool("NEXTEXT_SENTENCE_RESTORE")
+    enabled = True if parsed is None else parsed
+
+    min_punct_ratio = DEFAULT_SENTENCE_RESTORE_MIN_PUNCT_RATIO
+    raw_ratio = os.getenv("SENTENCE_RESTORE_MIN_PUNCT_RATIO", "").strip()
+    if raw_ratio:
+        try:
+            value = float(raw_ratio)
+            if not 0.0 < value < 1.0:
+                raise ValueError
+            min_punct_ratio = value
+        except ValueError:
+            logger.warning(
+                "Invalid SENTENCE_RESTORE_MIN_PUNCT_RATIO '{}'. Falling back to {}.",
+                raw_ratio,
+                DEFAULT_SENTENCE_RESTORE_MIN_PUNCT_RATIO,
+            )
+
+    return SentenceRestoreConfig(enabled=enabled, min_punct_ratio=min_punct_ratio)
 
 
 def load_ner_env() -> NerConfig:

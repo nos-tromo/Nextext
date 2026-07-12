@@ -16,6 +16,7 @@ from nextext.utils.env_cfg import (
     load_job_concurrency,
     load_language_env,
     load_ner_env,
+    load_sentence_restore_env,
     load_summary_env,
     load_vad_env,
     load_whisper_env,
@@ -972,3 +973,59 @@ def test_vad_gate_pad_ms_zero_accepted(monkeypatch: pytest.MonkeyPatch) -> None:
     """A pad_ms of 0 is valid (>= 0) and honored."""
     monkeypatch.setenv("VAD_GATE_PAD_MS", "0")
     assert load_diarize_vad_gate_env().pad_ms == 0
+
+
+# ---------------------------------------------------------------------------
+# load_sentence_restore_env
+# ---------------------------------------------------------------------------
+
+
+def test_load_sentence_restore_env_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Unset vars → enabled with the 0.01 default ratio.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): The pytest fixture for patching
+            environment variables.
+    """
+    monkeypatch.delenv("NEXTEXT_SENTENCE_RESTORE", raising=False)
+    monkeypatch.delenv("SENTENCE_RESTORE_MIN_PUNCT_RATIO", raising=False)
+    cfg = load_sentence_restore_env()
+    assert cfg.enabled is True
+    assert cfg.min_punct_ratio == 0.01
+
+
+def test_load_sentence_restore_env_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An explicit falsy token disables restoration.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): The pytest fixture for patching
+            environment variables.
+    """
+    monkeypatch.setenv("NEXTEXT_SENTENCE_RESTORE", "off")
+    assert load_sentence_restore_env().enabled is False
+
+
+def test_load_sentence_restore_env_custom_ratio(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A valid in-range ratio is honoured.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): The pytest fixture for patching
+            environment variables.
+    """
+    monkeypatch.delenv("NEXTEXT_SENTENCE_RESTORE", raising=False)
+    monkeypatch.setenv("SENTENCE_RESTORE_MIN_PUNCT_RATIO", "0.03")
+    assert load_sentence_restore_env().min_punct_ratio == 0.03
+
+
+def test_load_sentence_restore_env_invalid_ratio_falls_back(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Out-of-range / non-numeric ratios warn and fall back to the default.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): The pytest fixture for patching
+            environment variables.
+    """
+    monkeypatch.delenv("NEXTEXT_SENTENCE_RESTORE", raising=False)
+    monkeypatch.setenv("SENTENCE_RESTORE_MIN_PUNCT_RATIO", "5")
+    assert load_sentence_restore_env().min_punct_ratio == 0.01
+    monkeypatch.setenv("SENTENCE_RESTORE_MIN_PUNCT_RATIO", "abc")
+    assert load_sentence_restore_env().min_punct_ratio == 0.01
