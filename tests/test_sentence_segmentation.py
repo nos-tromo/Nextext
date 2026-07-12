@@ -6,7 +6,7 @@ import pytest
 
 from nextext.core import sentence_segmentation
 from nextext.core.openai_cfg import InferencePipeline
-from nextext.core.sentence_segmentation import _segment_run, terminal_punctuation_ratio
+from nextext.core.sentence_segmentation import _segment_run, restore_sentence_segments, terminal_punctuation_ratio
 
 
 def test_terminal_punctuation_ratio_high_for_punctuated_english() -> None:
@@ -163,3 +163,45 @@ def test_segment_run_chunks_and_offsets_indices(monkeypatch: pytest.MonkeyPatch)
     # window0 reply "1:S" -> (1,'.') + forced end (2,'.'); window1 "1:Q" -> (4,'؟') + forced (5,'.')
     result = _segment_run(run, _FakePipeline(["1:S", "1:Q"]))
     assert result == [(1, "."), (2, "."), (4, "؟"), (5, ".")]
+
+
+def test_restore_splits_run_into_sentences_with_marks() -> None:
+    """Undiarized run → sentences with word-derived times and restored marks."""
+    words = _words("abcdef")
+    segments = restore_sentence_segments(words, None, _FakePipeline(["2:S, 5:Q"]))
+    assert len(segments) == 2
+    assert segments[0]["text"] == "a b c."
+    assert segments[0]["start"] == 0.0 and segments[0]["end"] == 2.5
+    assert segments[1]["text"] == "d e f؟"
+    assert "speaker" not in segments[0]
+
+
+def test_restore_returns_empty_without_words() -> None:
+    """No word timestamps → empty result (caller keeps existing segments)."""
+    assert restore_sentence_segments([], None, _FakePipeline([])) == []
+
+
+def test_restore_does_not_double_punctuate() -> None:
+    """A sentence already ending in punctuation gets no extra mark."""
+    words = [{"word": "hi.", "start": 0.0, "end": 0.5}]
+    segments = restore_sentence_segments(words, None, _FakePipeline(["0:S"]))
+    assert segments[0]["text"] == "hi."
+
+
+def test_restore_inherits_speaker_and_splits_on_change() -> None:
+    """Words are partitioned into contiguous speaker runs before segmenting."""
+    words = [
+        {"word": "a", "start": 0.0, "end": 1.0},
+        {"word": "b", "start": 1.0, "end": 2.0},
+        {"word": "c", "start": 6.0, "end": 7.0},
+        {"word": "d", "start": 7.0, "end": 8.0},
+    ]
+    turns = [
+        {"start": 0.0, "end": 5.0, "speaker": "Speaker 1"},
+        {"start": 5.0, "end": 10.0, "speaker": "Speaker 2"},
+    ]
+    # Two runs, each segmented with one canned reply ("1:S" → local end index 1).
+    segments = restore_sentence_segments(words, turns, _FakePipeline(["1:S", "1:S"]))
+    assert [seg["speaker"] for seg in segments] == ["Speaker 1", "Speaker 2"]
+    assert segments[0]["text"] == "a b."
+    assert segments[1]["text"] == "c d."
