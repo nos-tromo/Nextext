@@ -17,7 +17,7 @@
 - Env config lives only in `nextext/utils/env_cfg.py` dataclasses; follow the `load_diarize_vad_gate_env` pattern (`_parse_tristate_bool` for on/off, validated-numeric-with-warn-and-fallback).
 - **DRY:** reuse `_speaker_by_overlap` (`diarization.py`), `_ends_with_punctuation` (`transcription.py`), and the existing `_merge_transcriptions_by_sentence` — do not reimplement.
 - Verify before done: `uv run pytest` (full suite) and `uv run pre-commit run --all-files` (ruff + pyrefly). `make verify` is the pre-push gate.
-- **Arabic characters in source** (e.g. `؟`, `۔` in code or test assertions) trip ruff `RUF001` (ambiguous unicode). Append `# noqa: RUF001` on each such line, exactly as `nextext/core/transcription.py:112` already does. Run `uv run ruff check` after adding Arabic literals to catch any missed line.
+- **Some non-ASCII characters trip ruff's ambiguous-unicode rules** — `RUF001` (string literals), `RUF002` (docstrings), `RUF003` (comments). Empirically, `۔` (U+06D4) and `…` trip them; **`؟` (U+061F) and ordinary Arabic letters do NOT.** Add a `# noqa` **only where `uv run ruff check` actually flags a line** — an unnecessary `# noqa` is itself a `RUF100` error. Determine placement by running `ruff check`, never by guessing (`nextext/core/transcription.py:112` shows the code-line `# noqa: RUF001` form). A `# noqa` cannot suppress a rule inside a docstring — reword docstrings to avoid raw ambiguous glyphs.
 - Commits: small, topical, conventional prefixes (`feat:`/`test:`/`docs:`).
 
 ## File Structure
@@ -1038,12 +1038,12 @@ def test_merge_splits_restored_sentences_into_rows() -> None:
         {
             "start": ["0:00:00", "0:00:03"],
             "end": ["0:00:03", "0:00:06"],
-            "text": ["جملة أولى.", "جملة ثانية؟"],  # noqa: RUF001 - Arabic question mark
+            "text": ["جملة أولى.", "جملة ثانية؟"],
         }
     )
     merged = _merge_transcriptions_by_sentence(data)
     assert len(merged) == 2
-    assert list(merged["text"]) == ["جملة أولى.", "جملة ثانية؟"]  # noqa: RUF001
+    assert list(merged["text"]) == ["جملة أولى.", "جملة ثانية؟"]
 ```
 
 - [ ] **Step 8: Run it**
@@ -1068,11 +1068,17 @@ git commit -m "feat(pipeline): restore sentence boundaries for low-punctuation t
 ### Task 6: Documentation + final verification
 
 **Files:**
-- Modify: `CLAUDE.md`, `AGENTS.md`
+- Modify: `CLAUDE.md`
+
+> Note: this repo has **no `AGENTS.md`** (the `CLAUDE.md:111` reference to one is stale/pre-existing). Do **not** create an AGENTS.md — a from-scratch agent catalog is out of scope for this feature. Document the new agent in `CLAUDE.md` only.
 
 - [ ] **Step 1: Update `CLAUDE.md`**
 
-Add to the pipeline flow (step 1, "Transcription") a clause noting sentence restoration, add a module bullet, and add the Environment entries. Module bullet, under "Key modules":
+Make three edits to `CLAUDE.md`, matching the surrounding wording/format:
+
+(a) In the pipeline-flow "Transcription" step (step 1 of the "Pipeline flow (server-side)" list), add a short clause noting that low-punctuation transcripts are re-segmented into sentences before merge/translate.
+
+(b) Under "Key modules", add this bullet (place it near the other `nextext/core/*` agent bullets, e.g. after the diarization/vad entries):
 
 ```markdown
 - `nextext/core/sentence_segmentation.py` — sentence-restoration agent: for
@@ -1082,7 +1088,7 @@ Add to the pipeline flow (step 1, "Transcription") a clause noting sentence rest
   terminal mark (`.`/`؟`/`!`). Gated on `terminal_punctuation_ratio`; fail-soft.
 ```
 
-Environment entries (next to the VAD-gate vars):
+(c) In the "Environment" section, add this entry next to the `NEXTEXT_DIARIZE_VAD_GATE` bullet:
 
 ```markdown
 - `NEXTEXT_SENTENCE_RESTORE` / `SENTENCE_RESTORE_MIN_PUNCT_RATIO` (backend + CLI) —
@@ -1097,25 +1103,7 @@ Environment entries (next to the VAD-gate vars):
   by `load_sentence_restore_env`. Set `NEXTEXT_SENTENCE_RESTORE=off` to disable.
 ```
 
-- [ ] **Step 2: Update `AGENTS.md`**
-
-Add a section for the new agent following the existing agent-documentation format, with its I/O contract:
-
-```markdown
-### Sentence-segmentation agent (`nextext/core/sentence_segmentation.py`)
-
-- **Input:** Whisper words (`{word, start, end}`), canonicalized speaker turns
-  (or `None`), and an `InferencePipeline`.
-- **Output:** sentence-level segments `{start, end, text, [speaker]}` — one per
-  sentence, with a restored terminal mark (`.`/`؟`/`!`).
-- **Contract:** the LLM returns `index:code` pairs (`S`/`Q`/`E`) over a numbered
-  token list — never text — so words and timestamps are model-untouched. Runs
-  only when `terminal_punctuation_ratio(text) < SENTENCE_RESTORE_MIN_PUNCT_RATIO`
-  and `NEXTEXT_SENTENCE_RESTORE` is on. Fail-soft: no words → `[]`; any model
-  failure → the run is emitted as a single segment.
-```
-
-- [ ] **Step 3: Full verification**
+- [ ] **Step 2: Full verification**
 
 Run: `uv run pytest`
 Expected: PASS (entire suite).
@@ -1123,10 +1111,10 @@ Expected: PASS (entire suite).
 Run: `uv run pre-commit run --all-files`
 Expected: PASS (ruff check + ruff format + pyrefly). Fix any lint/type findings before committing.
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 3: Commit**
 
 ```bash
-git add CLAUDE.md AGENTS.md
+git add CLAUDE.md
 git commit -m "docs: document sentence restoration agent + env vars"
 ```
 
