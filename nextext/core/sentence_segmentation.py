@@ -191,8 +191,6 @@ def restore_sentence_segments(
     words: list[dict[str, Any]],
     turns: list[dict[str, Any]] | None,
     inference_pipeline: InferencePipeline,
-    *,
-    default_mark: str = ".",
 ) -> list[dict[str, Any]]:
     """Re-segment a transcript into one segment per sentence.
 
@@ -208,7 +206,6 @@ def restore_sentence_segments(
         turns (list[dict[str, Any]] | None): Canonicalized speaker turns, or None
             when undiarized.
         inference_pipeline (InferencePipeline): Shared inference client.
-        default_mark (str): Fallback terminal mark for an unclassified boundary.
 
     Returns:
         list[dict[str, Any]]: Sentence-level segments with ``start``/``end``/
@@ -224,6 +221,6 @@ def restore_sentence_segments(
         for end_index, mark in _segment_run(run_words, inference_pipeline):
             sentence_words = run_words[previous : end_index + 1]
             if sentence_words:
-                result.append(_build_sentence(sentence_words, speaker, mark or default_mark))
+                result.append(_build_sentence(sentence_words, speaker, mark))
             previous = end_index + 1
     return result
