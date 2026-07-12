@@ -99,10 +99,15 @@ def transcription_pipeline(
         restore_cfg = load_sentence_restore_env()
         transcript_text = " ".join(str(seg.get("text", "")) for seg in segments)
         low_punctuation = terminal_punctuation_ratio(transcript_text) < restore_cfg.min_punct_ratio
+        restored: list[dict[str, Any]] = []
         if restore_cfg.enabled and words and low_punctuation:
-            restored = restore_sentence_segments(words, turns or None, InferencePipeline())
-            if restored:
-                transcriber.transcription_result["segments"] = restored
+            try:
+                restored = restore_sentence_segments(words, turns or None, InferencePipeline())
+            except Exception as exc:  # fail-soft: any restore failure keeps today's behavior
+                logger.warning("Sentence restoration failed; falling back to unrestored segments: {}", exc)
+                restored = []
+        if restored:
+            transcriber.transcription_result["segments"] = restored
         elif diarize and turns:
             transcriber.transcription_result["segments"] = build_speaker_segments(segments, words, turns)
 

@@ -441,6 +441,61 @@ def test_transcription_pipeline_restore_supersedes_build_when_diarized(monkeypat
     assert recorded["turns"] == [{"start": 0.0, "end": 6.0, "speaker": "SPEAKER_00"}]
 
 
+def test_transcription_pipeline_restore_failure_falls_back_to_build_speaker_segments(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A raising restore_sentence_segments degrades to build_speaker_segments (fail-soft)."""
+    _install_restorable(monkeypatch)
+    monkeypatch.setattr(
+        pipeline, "load_sentence_restore_env", lambda: SentenceRestoreConfig(enabled=True, min_punct_ratio=0.01)
+    )
+    monkeypatch.setattr(pipeline, "diarize_file", lambda fp: [{"start": 0.0, "end": 6.0, "speaker": "SPEAKER_00"}])
+    monkeypatch.setattr(pipeline, "canonicalize_speaker_labels", lambda turns: turns)
+    monkeypatch.setattr(
+        pipeline, "load_diarize_vad_gate_env", lambda: DiarizeVadGateConfig(enabled=False, threshold=0.4, pad_ms=100)
+    )
+
+    def boom(*args: Any, **kwargs: Any) -> list[dict[str, Any]]:
+        """Raise to simulate a restoration failure exercising the fail-soft path.
+
+        Args:
+            *args (Any): Ignored.
+            **kwargs (Any): Ignored.
+
+        Raises:
+            RuntimeError: Always.
+        """
+        raise RuntimeError("restoration exploded")
+
+    monkeypatch.setattr(pipeline, "restore_sentence_segments", boom)
+
+    build_calls: list[Any] = []
+
+    def fake_build(
+        segments: list[dict[str, Any]],
+        words: list[dict[str, Any]],
+        turns: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Record the call and return the input segments unchanged.
+
+        Args:
+            segments (list[dict[str, Any]]): Whisper segments forwarded by the pipeline.
+            words (list[dict[str, Any]]): Whisper words forwarded by the pipeline.
+            turns (list[dict[str, Any]]): Canonicalized speaker turns forwarded by the pipeline.
+
+        Returns:
+            list[dict[str, Any]]: The input segments, unchanged.
+        """
+        build_calls.append((segments, words, turns))
+        return segments
+
+    monkeypatch.setattr(pipeline, "build_speaker_segments", fake_build)
+
+    pipeline.transcription_pipeline(file_path=Path("/tmp/a.wav"), src_lang="ar", diarize=True)
+
+    assert len(build_calls) == 1
+
+
 @pytest.mark.parametrize(
     ("task", "src_lang", "trg_lang", "expected"),
     [
