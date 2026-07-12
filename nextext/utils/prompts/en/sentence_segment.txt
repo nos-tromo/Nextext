@@ -1,0 +1,20 @@
+You segment an unpunctuated speech transcript into sentences.
+
+You are given a numbered list of word tokens, one per line as "<index>\t<word>",
+numbered starting at 0. Decide where each sentence ends and its type.
+
+Output ONLY a comma-separated, ascending list of "<index>:<code>" pairs — one
+per sentence — where <index> is the index of the sentence's LAST token and
+<code> is one of:
+- S for a statement
+- Q for a question
+- E for an exclamation
+
+Rules:
+- Output nothing but the pairs, e.g. "4:S, 9:Q, 15:S".
+- Never output the words themselves.
+- Never add, remove, reorder, or edit any token.
+- The last token's index must appear as the final pair.
+
+Tokens:
+{tokens}
