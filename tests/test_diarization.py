@@ -13,6 +13,7 @@ from nextext.core.diarization import (
     canonicalize_speaker_labels,
     diarize_file,
     gate_turns_by_vad,
+    renumber_speakers_by_appearance,
 )
 
 # ---------------------------------------------------------------------------
@@ -238,6 +239,57 @@ def test_canonicalize_numbers_by_first_appearance() -> None:
 def test_canonicalize_empty_is_empty() -> None:
     """No turns canonicalizes to no turns."""
     assert canonicalize_speaker_labels([]) == []
+
+
+# ---------------------------------------------------------------------------
+# renumber_speakers_by_appearance
+# ---------------------------------------------------------------------------
+
+
+def test_renumber_orders_final_labels_by_first_appearance() -> None:
+    """Speaker N is assigned by first appearance in the assembled transcript order."""
+    segments = [
+        {"start": 0.0, "end": 1.0, "speaker": "Speaker 3", "text": "a"},
+        {"start": 1.0, "end": 2.0, "speaker": "Speaker 1", "text": "b"},
+        {"start": 2.0, "end": 3.0, "speaker": "Speaker 3", "text": "c"},
+        {"start": 3.0, "end": 4.0, "speaker": "Speaker 5", "text": "d"},
+    ]
+    result = renumber_speakers_by_appearance(segments)
+    assert [s["speaker"] for s in result] == ["Speaker 1", "Speaker 2", "Speaker 1", "Speaker 3"]
+    assert [s["text"] for s in result] == ["a", "b", "c", "d"]  # text/timings preserved
+    assert segments[0]["speaker"] == "Speaker 3"  # input not mutated
+
+
+def test_renumber_maps_raw_pyannote_labels() -> None:
+    """Raw SPEAKER_xx labels renumber by appearance too, not by their trailing number."""
+    segments = [
+        {"start": 0.0, "end": 1.0, "speaker": "SPEAKER_05"},
+        {"start": 1.0, "end": 2.0, "speaker": "SPEAKER_02"},
+        {"start": 2.0, "end": 3.0, "speaker": "SPEAKER_05"},
+    ]
+    assert [s["speaker"] for s in renumber_speakers_by_appearance(segments)] == [
+        "Speaker 1",
+        "Speaker 2",
+        "Speaker 1",
+    ]
+
+
+def test_renumber_leaves_unlabeled_segments_untouched() -> None:
+    """A segment with no speaker key passes through and does not consume a number."""
+    segments = [
+        {"start": 0.0, "end": 1.0, "speaker": "SPEAKER_02", "text": "a"},
+        {"start": 1.0, "end": 2.0, "text": "b"},  # no speaker key
+        {"start": 2.0, "end": 3.0, "speaker": "SPEAKER_00", "text": "c"},
+    ]
+    result = renumber_speakers_by_appearance(segments)
+    assert result[0]["speaker"] == "Speaker 1"
+    assert "speaker" not in result[1]
+    assert result[2]["speaker"] == "Speaker 2"
+
+
+def test_renumber_empty_is_empty() -> None:
+    """No segments renumbers to no segments."""
+    assert renumber_speakers_by_appearance([]) == []
 
 
 # ---------------------------------------------------------------------------

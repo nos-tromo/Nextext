@@ -28,6 +28,7 @@ __all__ = [
     "canonicalize_speaker_labels",
     "diarize_file",
     "gate_turns_by_vad",
+    "renumber_speakers_by_appearance",
 ]
 
 SPEAKER_LABEL_PREFIX = "Speaker"
@@ -55,6 +56,42 @@ def canonicalize_speaker_labels(turns: list[dict[str, Any]]) -> list[dict[str, A
         if raw not in mapping:
             mapping[raw] = f"{SPEAKER_LABEL_PREFIX} {len(mapping) + 1}"
     return [{**turn, "speaker": mapping[str(turn["speaker"])]} for turn in turns]
+
+
+def renumber_speakers_by_appearance(segments: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Renumber speaker labels to ``Speaker N`` by first appearance in the transcript.
+
+    :func:`canonicalize_speaker_labels` numbers speakers by their earliest *turn*,
+    but word-level alignment, VAD-gating, and sentence restoration can make a
+    speaker first surface in the *assembled transcript* in a different order — so a
+    reader sees e.g. ``Speaker 4`` before ``Speaker 1``. This final pass fixes the
+    display order: walking the segments top to bottom, the first labelled speaker
+    becomes ``Speaker 1``, the next new one ``Speaker 2``, and so on. It is the
+    authoritative numbering the transcript renders.
+
+    Segments without a ``speaker`` key (or an empty one) pass through untouched and
+    do not consume a number. Labels are treated as opaque strings, so raw
+    ``SPEAKER_xx`` and already-canonical ``Speaker N`` input are both accepted.
+
+    Args:
+        segments (list[dict[str, Any]]): The assembled transcript segments, in
+            reading order, each optionally carrying a ``speaker`` key.
+
+    Returns:
+        list[dict[str, Any]]: New segment dicts (same order, other keys
+            preserved) with speaker labels renumbered by first appearance.
+    """
+    mapping: dict[str, str] = {}
+    renumbered: list[dict[str, Any]] = []
+    for segment in segments:
+        speaker = segment.get("speaker")
+        if not speaker:
+            renumbered.append(dict(segment))
+            continue
+        if speaker not in mapping:
+            mapping[speaker] = f"{SPEAKER_LABEL_PREFIX} {len(mapping) + 1}"
+        renumbered.append({**segment, "speaker": mapping[speaker]})
+    return renumbered
 
 
 def gate_turns_by_vad(
