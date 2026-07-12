@@ -10,6 +10,7 @@ a restored terminal mark. It is fail-soft: any failure degrades to emitting the
 run as a single segment.
 """
 
+import re
 from typing import Any
 
 from loguru import logger
@@ -45,7 +46,8 @@ def terminal_punctuation_ratio(text: str) -> float:
 _TYPE_TO_MARK: dict[str, str] = {"S": ".", "Q": "؟", "E": "!"}
 _DEFAULT_MARK: str = "."
 _SEGMENT_WORD_BUDGET: int = 400
-_SEGMENT_MAX_TOKENS: int = 256
+# Must comfortably exceed the number of "index:code" pairs a _SEGMENT_WORD_BUDGET-word window can produce.
+_SEGMENT_MAX_TOKENS: int = 512
 
 
 def _parse_boundaries(reply: str, window_len: int) -> list[tuple[int, str]]:
@@ -63,18 +65,11 @@ def _parse_boundaries(reply: str, window_len: int) -> list[tuple[int, str]]:
         list[tuple[int, str]]: Ascending ``(index, mark)`` pairs; possibly empty.
     """
     marks_by_index: dict[int, str] = {}
-    for item in reply.split(","):
-        token = item.strip()
-        if not token or ":" not in token:
-            continue
-        index_text, _, code = token.partition(":")
-        try:
-            index = int(index_text.strip())
-        except ValueError:
-            continue
+    for index_text, code in re.findall(r"(-?\d+)\s*:\s*([A-Za-z])", reply):
+        index = int(index_text)
         if not 0 <= index < window_len:
             continue
-        marks_by_index.setdefault(index, _TYPE_TO_MARK.get(code.strip().upper(), _DEFAULT_MARK))
+        marks_by_index.setdefault(index, _TYPE_TO_MARK.get(code.upper(), _DEFAULT_MARK))
     return sorted(marks_by_index.items())
 
 

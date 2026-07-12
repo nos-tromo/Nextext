@@ -106,6 +106,13 @@ def test_segment_run_parses_index_code_and_forces_final_boundary() -> None:
     assert result == [(2, "."), (5, "؟")]
 
 
+def test_segment_run_parses_newline_separated_reply() -> None:
+    """A newline-separated reply parses identically to a comma-separated one."""
+    run = _words("abcdef")  # indices 0..5
+    result = _segment_run(run, _FakePipeline(["2:S\n5:Q"]))
+    assert result == [(2, "."), (5, "؟")]
+
+
 def test_segment_run_defaults_unknown_code_to_period() -> None:
     """Unknown / malformed codes fall back to a period."""
     run = _words("abcd")
