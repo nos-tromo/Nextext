@@ -113,8 +113,6 @@ Identity is resolved per request by `resolve_principal`: the trusted header (`NE
 - `nextext/utils/mappings/` — JSON config files for Whisper/spaCy model names, language codes.
 - `nextext/utils/prompts/` — LLM prompt templates (system, translation, summary, hate_speech), localized per language under `en/` and `de/` (selected by `NEXTEXT_RESPONSE_LANGUAGE`, English fallback).
 
-See `AGENTS.md` for detailed agent documentation including I/O contracts and how to add new agents.
-
 ## Environment
 
 Key env vars (see `.env.example`):
