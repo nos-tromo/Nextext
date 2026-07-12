@@ -480,9 +480,13 @@ Tokens:
 
 - [ ] **Step 4: Implement `_segment_run` and helpers**
 
-First add this import to the **top-of-file import block** (imports must stay at the top — ruff `E402`/`I001`):
+First add these imports to the **top-of-file import block** (imports must stay at the top — ruff `E402`/`I001`; `Any` and `logger` are first used here, so they belong in this task, and ruff `I` will sort them stdlib → third-party → first-party):
 
 ```python
+from typing import Any
+
+from loguru import logger
+
 from nextext.core.openai_cfg import InferencePipeline
 ```
 
