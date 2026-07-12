@@ -16,6 +16,7 @@ same job and receive the same events.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import shutil
 import tempfile
@@ -111,6 +112,13 @@ class JobState:
     # (XLSX, word cloud, docint) instead of recomputing it; only the cheap ZIP
     # compression is redone per download.
     archive_members_cache: dict[str, bytes] | None = None
+    # Worker task processing this job, so a delete can cancel a queued worker
+    # before it runs the pipeline against a removed upload.
+    task: asyncio.Task[None] | None = None
+    # Set by delete() while the pipeline thread is still running: the worker
+    # owns the tempdir cleanup (in its finally block) and suppresses further
+    # event dispatch for the no-longer-listed job.
+    deleted: bool = False
 
     def snapshot(self) -> JobSnapshot:
         """Return a Pydantic snapshot suitable for JSON serialization.
@@ -587,6 +595,7 @@ class JobManager:
         async with self._lock:
             self._jobs[job_id] = state
         task = asyncio.create_task(self._worker(state))
+        state.task = task
         self._background_tasks.add(task)
         task.add_done_callback(self._background_tasks.discard)
         return state
@@ -620,7 +629,24 @@ class JobManager:
             if state is None or (owner_id is not None and state.owner_id != owner_id):
                 return False
             self._jobs.pop(job_id, None)
-        await self._delete_state(state)
+        state.deleted = True
+        task = state.task
+        if task is not None and not task.done() and state.status is JobStatus.QUEUED:
+            # The worker is still parked on the semaphore (or not yet
+            # scheduled): cancel it before it can run the pipeline against
+            # the upload we are about to remove.
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+        if state.status is JobStatus.RUNNING:
+            # The blocking pipeline thread may still be reading the upload.
+            # Close subscribers now; the worker's finally block removes the
+            # tempdir once the thread has finished.
+            for queue in list(state.subscribers):
+                queue.put_nowait(None)
+            state.subscribers.clear()
+        else:
+            await self._delete_state(state)
         return True
 
     async def _delete_state(self, state: JobState) -> None:
@@ -771,6 +797,10 @@ class JobManager:
                     event_name: SSE event name.
                     payload: JSON-serializable payload.
                 """
+                if state.deleted:
+                    # The owner deleted the job mid-run; don't stream events
+                    # for a job that is no longer listed.
+                    return
                 tagged = {"job_id": state.job_id, **payload}
                 frame = _format_sse(event_name, tagged)
                 loop.call_soon_threadsafe(self._dispatch_event, state, event_name, tagged, frame)
@@ -803,6 +833,11 @@ class JobManager:
                         "timestamp": _utcnow().isoformat(),
                     },
                 )
+            finally:
+                if state.deleted:
+                    # delete() ran while the pipeline thread was still using
+                    # the upload and deferred the tempdir cleanup to us.
+                    await asyncio.to_thread(self._unlink_job_dir, state.file_path)
 
     def _dispatch_event(
         self,
