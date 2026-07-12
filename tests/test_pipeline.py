@@ -9,7 +9,7 @@ import pytest
 from nextext import pipeline
 from nextext.core.openai_cfg import InferencePipeline
 from nextext.pipeline import transcript_txt_exports
-from nextext.utils.env_cfg import DiarizeVadGateConfig, WhisperClientConfig
+from nextext.utils.env_cfg import DiarizeVadGateConfig, SentenceRestoreConfig, WhisperClientConfig
 
 
 @pytest.fixture
@@ -145,6 +145,9 @@ def test_transcription_pipeline_invokes_transcriber_and_diarizes(
     monkeypatch.setattr(pipeline, "diarize_file", fake_diarize_file)
     monkeypatch.setattr(pipeline, "canonicalize_speaker_labels", lambda turns: turns)
     monkeypatch.setattr(pipeline, "build_speaker_segments", fake_build)
+    monkeypatch.setattr(
+        pipeline, "load_sentence_restore_env", lambda: SentenceRestoreConfig(enabled=False, min_punct_ratio=0.01)
+    )
 
     df, detected_lang = pipeline.transcription_pipeline(
         file_path=Path("/tmp/audio.wav"),
@@ -279,6 +282,163 @@ def test_transcription_pipeline_skips_diarization_for_empty_transcript(
 
     assert list(df["text"]) == []
     assert detected_lang == "en"
+
+
+class _RestorableTranscriber:
+    """Transcriber stand-in with unpunctuated text and word timestamps."""
+
+    def __init__(self, **params: Any) -> None:
+        """Seed an unpunctuated one-segment result with words.
+
+        Args:
+            **params (Any): Ignored construction params.
+        """
+        self.src_lang = "ar"
+        self.transcription_result: dict[str, Any] = {
+            "segments": [{"start": 0.0, "end": 6.0, "text": "a b c d e f"}],
+            "words": [{"word": ch, "start": float(i), "end": float(i) + 0.5} for i, ch in enumerate("abcdef")],
+        }
+
+    def transcription(self) -> None:
+        """No-op stand-in for the Whisper call."""
+
+    def transcript_output(self) -> pd.DataFrame:
+        """Return a one-row transcript frame.
+
+        Returns:
+            pd.DataFrame: A dummy transcript.
+        """
+        return pd.DataFrame({"text": ["x"]})
+
+
+def _install_restorable(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Wire a restorable transcriber and a no-network InferencePipeline.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): The monkeypatch fixture.
+    """
+    monkeypatch.setattr(
+        pipeline, "load_whisper_env", lambda: WhisperClientConfig(api_base="http://a/v1", api_key="k", model="m")
+    )
+    monkeypatch.setattr(pipeline, "ExternalWhisperTranscriber", _RestorableTranscriber)
+    monkeypatch.setattr(pipeline, "InferencePipeline", lambda: object())
+
+
+def test_transcription_pipeline_restores_when_low_punctuation(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Undiarized low-punctuation transcript → restoration runs with turns=None."""
+    _install_restorable(monkeypatch)
+    monkeypatch.setattr(
+        pipeline, "load_sentence_restore_env", lambda: SentenceRestoreConfig(enabled=True, min_punct_ratio=0.01)
+    )
+    recorded: dict[str, Any] = {}
+
+    def fake_restore(words: list[dict[str, Any]], turns: Any, inference_pipeline: Any) -> list[dict[str, Any]]:
+        """Record the call and return one canned sentence segment.
+
+        Args:
+            words (list[dict[str, Any]]): Words forwarded by the pipeline.
+            turns (Any): Speaker turns (or None) forwarded by the pipeline.
+            inference_pipeline (Any): Inference client forwarded by the pipeline.
+
+        Returns:
+            list[dict[str, Any]]: A single restored segment.
+        """
+        recorded["called"] = True
+        recorded["turns"] = turns
+        return [{"start": 0.0, "end": 6.0, "text": "a b c d e f."}]
+
+    monkeypatch.setattr(pipeline, "restore_sentence_segments", fake_restore)
+
+    pipeline.transcription_pipeline(file_path=Path("/tmp/a.wav"), src_lang="ar", diarize=False)
+
+    assert recorded["called"] is True
+    assert recorded["turns"] is None
+
+
+def test_transcription_pipeline_skips_restore_when_well_punctuated(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A punctuated transcript is left alone (ratio above threshold)."""
+    _install_restorable(monkeypatch)
+    monkeypatch.setattr(
+        pipeline, "load_sentence_restore_env", lambda: SentenceRestoreConfig(enabled=True, min_punct_ratio=0.01)
+    )
+
+    class _Punctuated(_RestorableTranscriber):
+        """Restorable transcriber whose transcript is already punctuated."""
+
+        def __init__(self, **params: Any) -> None:
+            """Seed a punctuated segment (words inherited from the base).
+
+            Args:
+                **params (Any): Ignored construction params.
+            """
+            super().__init__(**params)
+            self.transcription_result["segments"] = [{"start": 0.0, "end": 6.0, "text": "a. b. c. d. e. f."}]
+
+    monkeypatch.setattr(pipeline, "ExternalWhisperTranscriber", _Punctuated)
+
+    def boom(*args: Any, **kwargs: Any) -> list[dict[str, Any]]:
+        """Fail if restoration is invoked on punctuated text.
+
+        Args:
+            *args (Any): Ignored.
+            **kwargs (Any): Ignored.
+
+        Returns:
+            list[dict[str, Any]]: Never returns.
+        """
+        pytest.fail("restore_sentence_segments should not run on punctuated text")
+
+    monkeypatch.setattr(pipeline, "restore_sentence_segments", boom)
+
+    pipeline.transcription_pipeline(file_path=Path("/tmp/a.wav"), src_lang="ar", diarize=False)
+
+
+def test_transcription_pipeline_restore_supersedes_build_when_diarized(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Diarized low-punctuation path uses restore (with turns), not build_speaker_segments."""
+    _install_restorable(monkeypatch)
+    monkeypatch.setattr(
+        pipeline, "load_sentence_restore_env", lambda: SentenceRestoreConfig(enabled=True, min_punct_ratio=0.01)
+    )
+    monkeypatch.setattr(pipeline, "diarize_file", lambda fp: [{"start": 0.0, "end": 6.0, "speaker": "SPEAKER_00"}])
+    monkeypatch.setattr(pipeline, "canonicalize_speaker_labels", lambda turns: turns)
+    monkeypatch.setattr(
+        pipeline, "load_diarize_vad_gate_env", lambda: DiarizeVadGateConfig(enabled=False, threshold=0.4, pad_ms=100)
+    )
+
+    def no_build(*args: Any, **kwargs: Any) -> list[dict[str, Any]]:
+        """Fail if build_speaker_segments runs when restoration supersedes it.
+
+        Args:
+            *args (Any): Ignored.
+            **kwargs (Any): Ignored.
+
+        Returns:
+            list[dict[str, Any]]: Never returns.
+        """
+        pytest.fail("build_speaker_segments should not run when restoration supersedes it")
+
+    monkeypatch.setattr(pipeline, "build_speaker_segments", no_build)
+    recorded: dict[str, Any] = {}
+
+    def fake_restore(words: list[dict[str, Any]], turns: Any, inference_pipeline: Any) -> list[dict[str, Any]]:
+        """Record the turns passed to restoration and return a canned segment.
+
+        Args:
+            words (list[dict[str, Any]]): Words forwarded by the pipeline.
+            turns (Any): Canonicalized speaker turns forwarded by the pipeline.
+            inference_pipeline (Any): Inference client forwarded by the pipeline.
+
+        Returns:
+            list[dict[str, Any]]: A single speaker-labeled restored segment.
+        """
+        recorded["turns"] = turns
+        return [{"start": 0.0, "end": 6.0, "text": "a b c d e f.", "speaker": "SPEAKER_00"}]
+
+    monkeypatch.setattr(pipeline, "restore_sentence_segments", fake_restore)
+
+    pipeline.transcription_pipeline(file_path=Path("/tmp/a.wav"), src_lang="ar", diarize=True)
+
+    assert recorded["turns"] == [{"start": 0.0, "end": 6.0, "speaker": "SPEAKER_00"}]
 
 
 @pytest.mark.parametrize(

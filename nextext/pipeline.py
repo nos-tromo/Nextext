@@ -16,11 +16,17 @@ from nextext.core.diarization import (
 from nextext.core.hate_speech import HateSpeechDetector
 from nextext.core.ner import extract_entities
 from nextext.core.openai_cfg import InferencePipeline
+from nextext.core.sentence_segmentation import restore_sentence_segments, terminal_punctuation_ratio
 from nextext.core.transcription import ExternalWhisperTranscriber
 from nextext.core.translation import Translator
 from nextext.core.vad import speech_segments
 from nextext.core.words import WordCounter
-from nextext.utils.env_cfg import load_diarize_vad_gate_env, load_summary_env, load_whisper_env
+from nextext.utils.env_cfg import (
+    load_diarize_vad_gate_env,
+    load_sentence_restore_env,
+    load_summary_env,
+    load_whisper_env,
+)
 
 
 def transcription_pipeline(
@@ -49,6 +55,16 @@ def transcription_pipeline(
     ``DIARIZE_API_BASE`` is unset or the service is unreachable. Diarization is
     skipped for ``diarize=False`` and for empty transcripts.
 
+    When the transcript's terminal-punctuation density is below the configured
+    threshold (see :func:`nextext.utils.env_cfg.load_sentence_restore_env`) and
+    word timestamps are available, ``TEXT_MODEL`` re-segments the transcript
+    into one row per sentence via
+    :func:`nextext.core.sentence_segmentation.restore_sentence_segments`,
+    carrying over any diarized speaker turns — this supersedes
+    ``build_speaker_segments`` on that path. A well-punctuated transcript, or a
+    low-punctuation one with no word timestamps, keeps the turn-level alignment
+    described above.
+
     Args:
         file_path (Path): Path to the audio file.
         src_lang (str): Source language code.
@@ -69,6 +85,7 @@ def transcription_pipeline(
     result = transcriber.transcription_result or {}
     segments: list[dict[str, Any]] = result.get("segments", [])
     words: list[dict[str, Any]] = result.get("words", [])
+    turns: list[dict[str, Any]] = []
     if diarize and segments and transcriber.transcription_result is not None:
         turns = diarize_file(file_path)
         gate = load_diarize_vad_gate_env()
@@ -77,7 +94,16 @@ def transcription_pipeline(
             if vad_intervals is not None:
                 turns = gate_turns_by_vad(turns, vad_intervals)
         turns = canonicalize_speaker_labels(turns)
-        if turns:
+
+    if segments and transcriber.transcription_result is not None:
+        restore_cfg = load_sentence_restore_env()
+        transcript_text = " ".join(str(seg.get("text", "")) for seg in segments)
+        low_punctuation = terminal_punctuation_ratio(transcript_text) < restore_cfg.min_punct_ratio
+        if restore_cfg.enabled and words and low_punctuation:
+            restored = restore_sentence_segments(words, turns or None, InferencePipeline())
+            if restored:
+                transcriber.transcription_result["segments"] = restored
+        elif diarize and turns:
             transcriber.transcription_result["segments"] = build_speaker_segments(segments, words, turns)
 
     df = transcriber.transcript_output()

@@ -135,6 +135,20 @@ def test_merge_transcriptions_splits_when_speaker_changes() -> None:
     ]
 
 
+def test_merge_splits_restored_sentences_into_rows() -> None:
+    """Restored terminal marks make _merge_transcriptions_by_sentence emit one row per sentence."""
+    data = pd.DataFrame(
+        {
+            "start": ["0:00:00", "0:00:03"],
+            "end": ["0:00:03", "0:00:06"],
+            "text": ["جملة أولى.", "جملة ثانية؟"],
+        }
+    )
+    merged = _merge_transcriptions_by_sentence(data)
+    assert len(merged) == 2
+    assert list(merged["text"]) == ["جملة أولى.", "جملة ثانية؟"]
+
+
 # ---------------------------------------------------------------------------
 # Module-level helper functions
 # ---------------------------------------------------------------------------
