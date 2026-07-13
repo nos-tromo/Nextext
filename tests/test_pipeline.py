@@ -1387,6 +1387,85 @@ class _GateTranscriber:
         return pd.DataFrame({"text": ["x"]})
 
 
+class _SpeakerReflectingTranscriber:
+    """Transcriber stand-in whose transcript_output mirrors the segments' speaker column."""
+
+    def __init__(self, **params: Any) -> None:
+        """Seed a three-segment result so the diarize path runs.
+
+        Args:
+            **params (Any): Ignored construction params.
+        """
+        self.src_lang = "en"
+        self.transcription_result: dict[str, Any] = {
+            "segments": [
+                {"start": 0.0, "end": 1.0, "text": "a"},
+                {"start": 1.0, "end": 2.0, "text": "b"},
+                {"start": 2.0, "end": 3.0, "text": "c"},
+            ],
+            "words": [],
+        }
+
+    def transcription(self) -> None:
+        """No-op stand-in for the Whisper call."""
+
+    def transcript_output(self) -> pd.DataFrame:
+        """Return a frame mirroring each final segment's text and speaker.
+
+        Returns:
+            pd.DataFrame: One row per final segment with ``text`` and ``speaker``.
+        """
+        segments = self.transcription_result["segments"]
+        return pd.DataFrame(
+            {"text": [s["text"] for s in segments], "speaker": [s.get("speaker", "") for s in segments]}
+        )
+
+
+def test_transcription_pipeline_renumbers_speakers_by_transcript_order(monkeypatch: pytest.MonkeyPatch) -> None:
+    """End-to-end: alignment labels out of order are renumbered by first appearance in the output.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): The monkeypatch fixture for modifying behavior.
+    """
+    monkeypatch.setattr(
+        pipeline, "load_whisper_env", lambda: WhisperClientConfig(api_base="http://a/v1", api_key="k", model="m")
+    )
+    monkeypatch.setattr(pipeline, "ExternalWhisperTranscriber", _SpeakerReflectingTranscriber)
+    monkeypatch.setattr(pipeline, "diarize_file", lambda fp: [{"start": 0.0, "end": 3.0, "speaker": "SPEAKER_00"}])
+    monkeypatch.setattr(
+        pipeline, "load_diarize_vad_gate_env", lambda: DiarizeVadGateConfig(enabled=False, threshold=0.4, pad_ms=100)
+    )
+    monkeypatch.setattr(
+        pipeline, "load_sentence_restore_env", lambda: SentenceRestoreConfig(enabled=False, min_punct_ratio=0.01)
+    )
+
+    def fake_build(
+        segments: list[dict[str, Any]], words: list[dict[str, Any]], turns: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """Return segments whose speaker labels are NOT in first-appearance order.
+
+        Args:
+            segments (list[dict[str, Any]]): Whisper segments.
+            words (list[dict[str, Any]]): Whisper words.
+            turns (list[dict[str, Any]]): Speaker turns.
+
+        Returns:
+            list[dict[str, Any]]: Segments labelled Speaker 5, Speaker 2, Speaker 5.
+        """
+        return [
+            {"start": 0.0, "end": 1.0, "text": "a", "speaker": "Speaker 5"},
+            {"start": 1.0, "end": 2.0, "text": "b", "speaker": "Speaker 2"},
+            {"start": 2.0, "end": 3.0, "text": "c", "speaker": "Speaker 5"},
+        ]
+
+    monkeypatch.setattr(pipeline, "build_speaker_segments", fake_build)
+
+    df, _ = pipeline.transcription_pipeline(file_path=Path("/tmp/a.wav"), src_lang="en", diarize=True)
+
+    # Speaker 5 first-heard -> Speaker 1; Speaker 2 next-new -> Speaker 2; back to 5 -> Speaker 1.
+    assert list(df["speaker"]) == ["Speaker 1", "Speaker 2", "Speaker 1"]
+
+
 def test_transcription_pipeline_gates_turns_by_vad_when_enabled(monkeypatch: pytest.MonkeyPatch) -> None:
     """With gating enabled, diarize turns are cropped to the VAD speech timeline before labeling.
 
