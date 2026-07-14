@@ -2,6 +2,16 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Data confidentiality — hard rule
+
+**NEVER expose actual production or testing data in any file committed or
+pushed to git.** This covers not only file contents but also metadata that
+references real data: filenames, file descriptions, social-media account
+names or handles, user identifications, sample records, log excerpts, and
+screenshots. It applies everywhere git sees — source code, tests, fixtures,
+docs, examples, configs, commit messages, and CI files. Use fully synthetic,
+invented placeholders instead.
+
 ## Project Overview
 
 Nextext is a modular audio analysis toolkit that transcribes, translates, and analyzes natural language from audio/video files. All model inference runs on external endpoints: Whisper transcription via an OpenAI-compatible audio API, voice-activity detection (`/vad`), speaker diarization (`/diarize`), and GLiNER NER (`/gliner`) via dedicated out-of-process HTTP services, and LLMs (Ollama, vLLM, or OpenAI-compatible endpoints) for translation, summarization, and hate-speech detection. Only spaCy/NLTK word-level NLP runs in-process; every upload is re-encoded to 16 kHz mono FLAC via the PyAV wheel (bundled ffmpeg) before transcription. The backend ships no model weights and needs no GPU — PyAV is the only local media dependency, and no apt audio tooling is installed.
