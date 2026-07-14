@@ -11,7 +11,6 @@ from nextext.core.diarization import (
     build_speaker_segments,
     canonicalize_speaker_labels,
     diarize_file,
-    gate_turns_by_vad,
     renumber_speakers_by_appearance,
 )
 from nextext.core.hate_speech import HateSpeechDetector
@@ -20,10 +19,8 @@ from nextext.core.openai_cfg import InferencePipeline
 from nextext.core.sentence_segmentation import restore_sentence_segments, terminal_punctuation_ratio
 from nextext.core.transcription import ExternalWhisperTranscriber
 from nextext.core.translation import Translator
-from nextext.core.vad import speech_segments
 from nextext.core.words import WordCounter
 from nextext.utils.env_cfg import (
-    load_diarize_vad_gate_env,
     load_sentence_restore_env,
     load_summary_env,
     load_whisper_env,
@@ -45,13 +42,13 @@ def transcription_pipeline(
 
     When ``diarize`` is true and the transcript is non-empty, the audio is sent
     to the ``/diarize`` service with **no** speaker bounds (pyannote estimates
-    the count). The returned turns are gated by the ``/vad`` speech timeline
-    (when ``NEXTEXT_DIARIZE_VAD_GATE`` is on, the default): each turn is cropped
-    to VAD speech, so music/noise the diarizer over-detects as speech is dropped
-    — a VAD outage leaves the turns ungated. The gated turns are then relabeled
-    to contiguous ``Speaker N`` by first appearance and aligned onto the
-    transcript at the word level, so a Whisper segment spanning a speaker change
-    is split at the exact word. It degrades to segment-level alignment when the
+    the count). VAD-gating of the turns (cropping to the Silero speech timeline
+    so music/noise the diarizer over-detects as speech is dropped) happens
+    server-side in the diarize backend (``DIARIZE_VAD_URL``, on by default in
+    the full inference stack), so the returned turns arrive pre-gated. The
+    turns are then relabeled to contiguous ``Speaker N`` by first appearance
+    and aligned onto the transcript at the word level, so a Whisper segment
+    spanning a speaker change is split at the exact word. It degrades to segment-level alignment when the
     endpoint returns no words, and to an unlabelled transcript when
     ``DIARIZE_API_BASE`` is unset or the service is unreachable. Diarization is
     skipped for ``diarize=False`` and for empty transcripts.
@@ -89,11 +86,6 @@ def transcription_pipeline(
     turns: list[dict[str, Any]] = []
     if diarize and segments and transcriber.transcription_result is not None:
         turns = diarize_file(file_path)
-        gate = load_diarize_vad_gate_env()
-        if turns and gate.enabled:
-            vad_intervals = speech_segments(file_path, threshold=gate.threshold, pad_ms=gate.pad_ms)
-            if vad_intervals is not None:
-                turns = gate_turns_by_vad(turns, vad_intervals)
         turns = canonicalize_speaker_labels(turns)
 
     if segments and transcriber.transcription_result is not None:
@@ -113,7 +105,7 @@ def transcription_pipeline(
             transcriber.transcription_result["segments"] = build_speaker_segments(segments, words, turns)
 
         # Authoritative display numbering: canonicalize_speaker_labels numbered the
-        # turns by turn order, but word-level alignment, VAD-gating, and sentence
+        # turns by turn order, but word-level alignment and sentence
         # restoration can make a speaker first surface in the assembled transcript
         # in a different order. Renumber by first appearance in the finished
         # transcript so the labels read Speaker 1, 2, 3, … top to bottom.
