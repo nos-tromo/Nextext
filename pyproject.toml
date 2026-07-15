@@ -11,7 +11,7 @@ authors = [
 ]
 requires-python = ">=3.12,<3.13"
 dependencies = [
-    "anyio>=4.14.1",
+    "anyio>=4.14.2",
     "arabic-reshaper>=3.0.0",
     "av>=18.0.0",
     "camel-tools>=1.5.2",
@@ -22,7 +22,7 @@ dependencies = [
     "matplotlib>=3.9.2",
     "nltk>=3.10.0",
     "numpy>=2.5.1",
-    "openai>=2.44.0",
+    "openai>=2.45.0",
     "openpyxl>=3.1.5",
     "pandas>=2.2.3",
     "pillow>=12.3.0",
@@ -36,8 +36,8 @@ dependencies = [
     "spacy>=3.8.4",
     "sse-starlette>=3.4.5",
     "typer>=0.26.8,<1",
-    "types-requests>=2.33.0.20260518",
-    "uvicorn[standard]>=0.50.2",
+    "types-requests>=2.33.0.20260712",
+    "uvicorn[standard]>=0.51.0",
     "watchdog>=6.0.0",
     "wordcloud>=1.9.4",
 ]
