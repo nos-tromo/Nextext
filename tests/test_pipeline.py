@@ -9,7 +9,7 @@ import pytest
 from nextext import pipeline
 from nextext.core.openai_cfg import InferencePipeline
 from nextext.pipeline import transcript_txt_exports
-from nextext.utils.env_cfg import DiarizeVadGateConfig, SentenceRestoreConfig, WhisperClientConfig
+from nextext.utils.env_cfg import SentenceRestoreConfig, WhisperClientConfig
 
 
 @pytest.fixture
@@ -401,9 +401,6 @@ def test_transcription_pipeline_restore_supersedes_build_when_diarized(monkeypat
     )
     monkeypatch.setattr(pipeline, "diarize_file", lambda fp: [{"start": 0.0, "end": 6.0, "speaker": "SPEAKER_00"}])
     monkeypatch.setattr(pipeline, "canonicalize_speaker_labels", lambda turns: turns)
-    monkeypatch.setattr(
-        pipeline, "load_diarize_vad_gate_env", lambda: DiarizeVadGateConfig(enabled=False, threshold=0.4, pad_ms=100)
-    )
 
     def no_build(*args: Any, **kwargs: Any) -> list[dict[str, Any]]:
         """Fail if build_speaker_segments runs when restoration supersedes it.
@@ -451,9 +448,6 @@ def test_transcription_pipeline_restore_failure_falls_back_to_build_speaker_segm
     )
     monkeypatch.setattr(pipeline, "diarize_file", lambda fp: [{"start": 0.0, "end": 6.0, "speaker": "SPEAKER_00"}])
     monkeypatch.setattr(pipeline, "canonicalize_speaker_labels", lambda turns: turns)
-    monkeypatch.setattr(
-        pipeline, "load_diarize_vad_gate_env", lambda: DiarizeVadGateConfig(enabled=False, threshold=0.4, pad_ms=100)
-    )
 
     def boom(*args: Any, **kwargs: Any) -> list[dict[str, Any]]:
         """Raise to simulate a restoration failure exercising the fail-soft path.
@@ -1433,9 +1427,6 @@ def test_transcription_pipeline_renumbers_speakers_by_transcript_order(monkeypat
     monkeypatch.setattr(pipeline, "ExternalWhisperTranscriber", _SpeakerReflectingTranscriber)
     monkeypatch.setattr(pipeline, "diarize_file", lambda fp: [{"start": 0.0, "end": 3.0, "speaker": "SPEAKER_00"}])
     monkeypatch.setattr(
-        pipeline, "load_diarize_vad_gate_env", lambda: DiarizeVadGateConfig(enabled=False, threshold=0.4, pad_ms=100)
-    )
-    monkeypatch.setattr(
         pipeline, "load_sentence_restore_env", lambda: SentenceRestoreConfig(enabled=False, min_punct_ratio=0.01)
     )
 
@@ -1464,174 +1455,3 @@ def test_transcription_pipeline_renumbers_speakers_by_transcript_order(monkeypat
 
     # Speaker 5 first-heard -> Speaker 1; Speaker 2 next-new -> Speaker 2; back to 5 -> Speaker 1.
     assert list(df["speaker"]) == ["Speaker 1", "Speaker 2", "Speaker 1"]
-
-
-def test_transcription_pipeline_gates_turns_by_vad_when_enabled(monkeypatch: pytest.MonkeyPatch) -> None:
-    """With gating enabled, diarize turns are cropped to the VAD speech timeline before labeling.
-
-    Args:
-        monkeypatch (pytest.MonkeyPatch): The monkeypatch fixture for modifying behavior.
-    """
-    monkeypatch.setattr(
-        pipeline, "load_whisper_env", lambda: WhisperClientConfig(api_base="http://a/v1", api_key="k", model="m")
-    )
-    monkeypatch.setattr(pipeline, "ExternalWhisperTranscriber", _GateTranscriber)
-    monkeypatch.setattr(pipeline, "diarize_file", lambda fp: [{"start": 0.0, "end": 10.0, "speaker": "SPEAKER_00"}])
-    monkeypatch.setattr(pipeline, "canonicalize_speaker_labels", lambda turns: turns)
-    monkeypatch.setattr(
-        pipeline, "load_diarize_vad_gate_env", lambda: DiarizeVadGateConfig(enabled=True, threshold=0.4, pad_ms=100)
-    )
-    vad_calls: dict[str, Any] = {}
-
-    def fake_segments(file_path: Path, *, threshold: float, pad_ms: int) -> list[tuple[float, float]]:
-        """Record the gating params and report speech only over 0-3s.
-
-        Args:
-            file_path (Path): Path forwarded by the pipeline.
-            threshold (float): Silero threshold forwarded by the pipeline.
-            pad_ms (int): Silero pad forwarded by the pipeline.
-
-        Returns:
-            list[tuple[float, float]]: A single speech interval.
-        """
-        vad_calls["threshold"] = threshold
-        vad_calls["pad_ms"] = pad_ms
-        return [(0.0, 3.0)]
-
-    monkeypatch.setattr(pipeline, "speech_segments", fake_segments)
-    build_turns: dict[str, Any] = {}
-
-    def fake_build(
-        segments: list[dict[str, Any]], words: list[dict[str, Any]], turns: list[dict[str, Any]]
-    ) -> list[dict[str, Any]]:
-        """Capture the turns passed to alignment.
-
-        Args:
-            segments (list[dict[str, Any]]): Whisper segments.
-            words (list[dict[str, Any]]): Whisper words.
-            turns (list[dict[str, Any]]): Turns after gating + canonicalization.
-
-        Returns:
-            list[dict[str, Any]]: The input segments, unchanged.
-        """
-        build_turns["turns"] = turns
-        return segments
-
-    monkeypatch.setattr(pipeline, "build_speaker_segments", fake_build)
-
-    pipeline.transcription_pipeline(file_path=Path("/tmp/a.wav"), src_lang="en", diarize=True)
-
-    assert vad_calls == {"threshold": 0.4, "pad_ms": 100}
-    assert build_turns["turns"] == [{"start": 0.0, "end": 3.0, "speaker": "SPEAKER_00"}]
-
-
-def test_transcription_pipeline_skips_gating_when_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
-    """With gating disabled, speech_segments is never called and turns pass through ungated.
-
-    Args:
-        monkeypatch (pytest.MonkeyPatch): The monkeypatch fixture for modifying behavior.
-    """
-    monkeypatch.setattr(
-        pipeline, "load_whisper_env", lambda: WhisperClientConfig(api_base="http://a/v1", api_key="k", model="m")
-    )
-    monkeypatch.setattr(pipeline, "ExternalWhisperTranscriber", _GateTranscriber)
-    monkeypatch.setattr(pipeline, "diarize_file", lambda fp: [{"start": 0.0, "end": 10.0, "speaker": "SPEAKER_00"}])
-    monkeypatch.setattr(pipeline, "canonicalize_speaker_labels", lambda turns: turns)
-    monkeypatch.setattr(
-        pipeline, "load_diarize_vad_gate_env", lambda: DiarizeVadGateConfig(enabled=False, threshold=0.4, pad_ms=100)
-    )
-
-    def fail_segments(*args: Any, **kwargs: Any) -> list[tuple[float, float]]:
-        """Fail if VAD is queried while gating is disabled.
-
-        Args:
-            *args (Any): Ignored.
-            **kwargs (Any): Ignored.
-
-        Returns:
-            list[tuple[float, float]]: Never returns.
-        """
-        pytest.fail("speech_segments must not be called when gating is disabled")
-
-    monkeypatch.setattr(pipeline, "speech_segments", fail_segments)
-    build_turns: dict[str, Any] = {}
-
-    def fake_build(
-        segments: list[dict[str, Any]], words: list[dict[str, Any]], turns: list[dict[str, Any]]
-    ) -> list[dict[str, Any]]:
-        """Capture the turns passed to alignment.
-
-        Args:
-            segments (list[dict[str, Any]]): Whisper segments.
-            words (list[dict[str, Any]]): Whisper words.
-            turns (list[dict[str, Any]]): Turns after (skipped) gating.
-
-        Returns:
-            list[dict[str, Any]]: The input segments, unchanged.
-        """
-        build_turns["turns"] = turns
-        return segments
-
-    monkeypatch.setattr(pipeline, "build_speaker_segments", fake_build)
-
-    pipeline.transcription_pipeline(file_path=Path("/tmp/a.wav"), src_lang="en", diarize=True)
-
-    assert build_turns["turns"] == [{"start": 0.0, "end": 10.0, "speaker": "SPEAKER_00"}]
-
-
-def test_transcription_pipeline_skips_gating_when_vad_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Gating enabled but /vad returns None (outage) → turns pass through ungated (fail-open).
-
-    This guards the feature's safety-critical property: an unreachable /vad must
-    never silently drop speaker turns.
-
-    Args:
-        monkeypatch (pytest.MonkeyPatch): The monkeypatch fixture for modifying behavior.
-    """
-    monkeypatch.setattr(
-        pipeline, "load_whisper_env", lambda: WhisperClientConfig(api_base="http://a/v1", api_key="k", model="m")
-    )
-    monkeypatch.setattr(pipeline, "ExternalWhisperTranscriber", _GateTranscriber)
-    monkeypatch.setattr(pipeline, "diarize_file", lambda fp: [{"start": 0.0, "end": 10.0, "speaker": "SPEAKER_00"}])
-    monkeypatch.setattr(pipeline, "canonicalize_speaker_labels", lambda turns: turns)
-    monkeypatch.setattr(
-        pipeline, "load_diarize_vad_gate_env", lambda: DiarizeVadGateConfig(enabled=True, threshold=0.4, pad_ms=100)
-    )
-    monkeypatch.setattr(pipeline, "speech_segments", lambda file_path, *, threshold, pad_ms: None)  # VAD outage
-
-    def fail_gate(*args: Any, **kwargs: Any) -> list[dict[str, Any]]:
-        """Fail if gating is attempted when /vad is unavailable.
-
-        Args:
-            *args (Any): Ignored.
-            **kwargs (Any): Ignored.
-
-        Returns:
-            list[dict[str, Any]]: Never returns.
-        """
-        pytest.fail("gate_turns_by_vad must not be called when /vad returns None")
-
-    monkeypatch.setattr(pipeline, "gate_turns_by_vad", fail_gate)
-    build_turns: dict[str, Any] = {}
-
-    def fake_build(
-        segments: list[dict[str, Any]], words: list[dict[str, Any]], turns: list[dict[str, Any]]
-    ) -> list[dict[str, Any]]:
-        """Capture the turns passed to alignment.
-
-        Args:
-            segments (list[dict[str, Any]]): Whisper segments.
-            words (list[dict[str, Any]]): Whisper words.
-            turns (list[dict[str, Any]]): Turns after the (skipped) gating.
-
-        Returns:
-            list[dict[str, Any]]: The input segments, unchanged.
-        """
-        build_turns["turns"] = turns
-        return segments
-
-    monkeypatch.setattr(pipeline, "build_speaker_segments", fake_build)
-
-    pipeline.transcription_pipeline(file_path=Path("/tmp/a.wav"), src_lang="en", diarize=True)
-
-    assert build_turns["turns"] == [{"start": 0.0, "end": 10.0, "speaker": "SPEAKER_00"}]
