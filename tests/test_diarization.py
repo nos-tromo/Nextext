@@ -12,6 +12,7 @@ from nextext.core.diarization import (
     build_speaker_segments,
     canonicalize_speaker_labels,
     diarize_file,
+    fill_speakers_by_nearest_turn,
     renumber_speakers_by_appearance,
 )
 
@@ -289,6 +290,89 @@ def test_renumber_leaves_unlabeled_segments_untouched() -> None:
 def test_renumber_empty_is_empty() -> None:
     """No segments renumbers to no segments."""
     assert renumber_speakers_by_appearance([]) == []
+
+
+# ---------------------------------------------------------------------------
+# fill_speakers_by_nearest_turn
+# ---------------------------------------------------------------------------
+
+
+def test_fill_inherits_nearest_preceding_turn() -> None:
+    """An unlabeled segment inherits the label of the closest turn when it precedes."""
+    segments = [{"start": 1.0, "end": 2.0, "text": "orphan"}]
+    turns = [
+        {"start": 0.0, "end": 0.9, "speaker": "Speaker 1"},  # gap 0.1s
+        {"start": 2.5, "end": 3.0, "speaker": "Speaker 2"},  # gap 0.5s
+    ]
+    result = fill_speakers_by_nearest_turn(segments, turns)
+    assert result[0]["speaker"] == "Speaker 1"
+
+
+def test_fill_inherits_nearest_following_turn() -> None:
+    """An unlabeled segment inherits the label of the closest turn when it follows."""
+    segments = [{"start": 1.0, "end": 2.0, "text": "orphan"}]
+    turns = [
+        {"start": 0.0, "end": 0.5, "speaker": "Speaker 1"},  # gap 0.5s
+        {"start": 2.1, "end": 3.0, "speaker": "Speaker 2"},  # gap 0.1s
+    ]
+    result = fill_speakers_by_nearest_turn(segments, turns)
+    assert result[0]["speaker"] == "Speaker 2"
+
+
+def test_fill_tie_prefers_preceding_turn() -> None:
+    """On an exact distance tie the preceding turn wins over the following one."""
+    segments = [{"start": 1.0, "end": 2.0, "text": "orphan"}]
+    turns = [
+        {"start": 0.0, "end": 0.8, "speaker": "Speaker 1"},  # gap 0.2s before
+        {"start": 2.2, "end": 3.0, "speaker": "Speaker 2"},  # gap 0.2s after
+    ]
+    result = fill_speakers_by_nearest_turn(segments, turns)
+    assert result[0]["speaker"] == "Speaker 1"
+
+
+def test_fill_prefers_overlapping_turn() -> None:
+    """A turn overlapping the segment (distance zero) beats any gapped turn."""
+    segments = [{"start": 1.0, "end": 2.0, "text": "orphan"}]
+    turns = [
+        {"start": 0.95, "end": 1.05, "speaker": "Speaker 1"},  # overlaps
+        {"start": 2.01, "end": 3.0, "speaker": "Speaker 2"},  # gap 0.01s
+    ]
+    result = fill_speakers_by_nearest_turn(segments, turns)
+    assert result[0]["speaker"] == "Speaker 1"
+
+
+def test_fill_leaves_labeled_segments_untouched() -> None:
+    """Segments that already carry a speaker keep it, even when another turn is nearer."""
+    segments = [
+        {"start": 0.0, "end": 1.0, "text": "a", "speaker": "Speaker 2"},
+        {"start": 1.0, "end": 2.0, "text": "b"},
+    ]
+    turns = [{"start": 0.0, "end": 1.0, "speaker": "Speaker 1"}]
+    result = fill_speakers_by_nearest_turn(segments, turns)
+    assert result[0]["speaker"] == "Speaker 2"
+    assert result[1]["speaker"] == "Speaker 1"
+
+
+def test_fill_without_turns_is_a_noop() -> None:
+    """No turns means no labels are invented; segments pass through unchanged."""
+    segments = [{"start": 0.0, "end": 1.0, "text": "a"}]
+    result = fill_speakers_by_nearest_turn(segments, [])
+    assert "speaker" not in result[0]
+    assert result[0]["text"] == "a"
+
+
+def test_fill_does_not_mutate_input() -> None:
+    """The input segment dicts are returned as new copies, not mutated in place."""
+    segments = [{"start": 1.0, "end": 2.0, "text": "orphan"}]
+    turns = [{"start": 0.0, "end": 0.5, "speaker": "Speaker 1"}]
+    result = fill_speakers_by_nearest_turn(segments, turns)
+    assert result[0]["speaker"] == "Speaker 1"
+    assert "speaker" not in segments[0]
+
+
+def test_fill_empty_segments_is_empty() -> None:
+    """No segments fills to no segments."""
+    assert fill_speakers_by_nearest_turn([], [{"start": 0.0, "end": 1.0, "speaker": "Speaker 1"}]) == []
 
 
 # ---------------------------------------------------------------------------

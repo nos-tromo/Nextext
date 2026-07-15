@@ -1455,3 +1455,39 @@ def test_transcription_pipeline_renumbers_speakers_by_transcript_order(monkeypat
 
     # Speaker 5 first-heard -> Speaker 1; Speaker 2 next-new -> Speaker 2; back to 5 -> Speaker 1.
     assert list(df["speaker"]) == ["Speaker 1", "Speaker 2", "Speaker 1"]
+
+
+def test_transcription_pipeline_fills_unlabeled_segments_from_nearest_turn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """End-to-end: a segment overlapping no diarize turn inherits the nearest turn's speaker.
+
+    Runs the real alignment functions (no fakes for build/fill/renumber) so the
+    middle segment — which overlaps neither turn — would previously stay
+    unlabeled and render as ``Unknown``. With the nearest-turn fallback it
+    inherits the closer (preceding) turn's label before renumbering.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): The monkeypatch fixture for modifying behavior.
+    """
+    monkeypatch.setattr(
+        pipeline, "load_whisper_env", lambda: WhisperClientConfig(api_base="http://a/v1", api_key="k", model="m")
+    )
+    monkeypatch.setattr(pipeline, "ExternalWhisperTranscriber", _SpeakerReflectingTranscriber)
+    monkeypatch.setattr(
+        pipeline,
+        "diarize_file",
+        lambda fp: [
+            {"start": 0.0, "end": 0.9, "speaker": "SPEAKER_00"},  # 0.1s before segment b
+            {"start": 2.2, "end": 3.0, "speaker": "SPEAKER_01"},  # 0.2s after segment b
+        ],
+    )
+    monkeypatch.setattr(
+        pipeline, "load_sentence_restore_env", lambda: SentenceRestoreConfig(enabled=False, min_punct_ratio=0.01)
+    )
+
+    df, _ = pipeline.transcription_pipeline(file_path=Path("/tmp/a.wav"), src_lang="en", diarize=True)
+
+    # a overlaps SPEAKER_00, c overlaps SPEAKER_01; b overlaps nothing and
+    # inherits the nearer preceding turn (SPEAKER_00) instead of staying blank.
+    assert list(df["speaker"]) == ["Speaker 1", "Speaker 1", "Speaker 2"]

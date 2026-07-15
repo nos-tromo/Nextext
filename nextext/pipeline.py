@@ -11,6 +11,7 @@ from nextext.core.diarization import (
     build_speaker_segments,
     canonicalize_speaker_labels,
     diarize_file,
+    fill_speakers_by_nearest_turn,
     renumber_speakers_by_appearance,
 )
 from nextext.core.hate_speech import HateSpeechDetector
@@ -110,6 +111,12 @@ def transcription_pipeline(
         # in a different order. Renumber by first appearance in the finished
         # transcript so the labels read Speaker 1, 2, 3, … top to bottom.
         if diarize and turns:
+            # Nearest-turn fallback: word alignment / the diarize backend's
+            # VAD gating can leave a segment overlapping no turn (it would
+            # render as "Unknown"); inherit the nearest turn's speaker instead.
+            transcriber.transcription_result["segments"] = fill_speakers_by_nearest_turn(
+                transcriber.transcription_result["segments"], turns
+            )
             transcriber.transcription_result["segments"] = renumber_speakers_by_appearance(
                 transcriber.transcription_result["segments"]
             )
