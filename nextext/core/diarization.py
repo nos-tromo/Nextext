@@ -27,6 +27,7 @@ __all__ = [
     "build_speaker_segments",
     "canonicalize_speaker_labels",
     "diarize_file",
+    "fill_speakers_by_nearest_turn",
     "renumber_speakers_by_appearance",
 ]
 
@@ -233,6 +234,60 @@ def assign_speakers_by_overlap(
         speaker = _speaker_by_overlap(float(segment["start"]), float(segment["end"]), diarize_segments)
         if speaker is not None:
             segment["speaker"] = speaker
+
+
+def fill_speakers_by_nearest_turn(
+    segments: list[dict[str, Any]],
+    turns: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Label speakerless segments with the temporally nearest turn's speaker.
+
+    Word-level alignment and the diarize backend's VAD gating can leave a
+    transcript segment overlapping no diarization turn at all (e.g. quiet,
+    off-mic speech whose turn the gate cropped away), which renders as
+    ``Unknown``. This
+    post-pass assigns each such segment the speaker of the turn closest in
+    time — distance zero for an overlapping turn, else the gap between the
+    segment and the turn — preferring the preceding turn on an exact tie.
+    Segments that already carry a speaker are untouched, and with no turns at
+    all no labels are invented.
+
+    Args:
+        segments (list[dict[str, Any]]): Assembled transcript segments with
+            float ``start`` / ``end`` keys, each optionally carrying a
+            ``speaker`` key.
+        turns (list[dict[str, Any]]): Speaker turns with ``start`` / ``end`` /
+            ``speaker`` keys; may be empty.
+
+    Returns:
+        list[dict[str, Any]]: New segment dicts (same order, other keys
+            preserved) with every segment labeled when any turn exists.
+    """
+
+    def distance(segment: dict[str, Any], turn: dict[str, Any]) -> tuple[float, int]:
+        """Rank a turn's proximity to a segment: (time gap, following-turn bit).
+
+        Args:
+            segment (dict[str, Any]): Transcript segment with ``start`` / ``end``.
+            turn (dict[str, Any]): Speaker turn with ``start`` / ``end``.
+
+        Returns:
+            tuple[float, int]: The non-negative gap in seconds (zero when
+                overlapping) and ``1`` when the turn starts after the segment
+                ends, so ``min`` prefers the preceding turn on a gap tie.
+        """
+        gap_after = float(turn["start"]) - float(segment["end"])
+        gap_before = float(segment["start"]) - float(turn["end"])
+        return (max(gap_after, gap_before, 0.0), 1 if gap_after > 0 else 0)
+
+    filled: list[dict[str, Any]] = []
+    for segment in segments:
+        if segment.get("speaker") or not turns:
+            filled.append(dict(segment))
+            continue
+        nearest = min(turns, key=lambda turn: distance(segment, turn))
+        filled.append({**segment, "speaker": str(nearest["speaker"])})
+    return filled
 
 
 def build_speaker_segments(
