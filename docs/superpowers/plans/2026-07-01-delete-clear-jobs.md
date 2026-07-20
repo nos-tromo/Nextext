@@ -24,7 +24,7 @@
 
 ```bash
 corepack prepare pnpm@9.12.0 --activate
-pnpm --dir /home/user/dev/infra/Nextext/frontend install --frozen-lockfile
+pnpm --dir "$(git rev-parse --show-toplevel)"/frontend install --frozen-lockfile
 ```
 
 The absolute `--dir` is required (a relative `--dir frontend` breaks when cwd is already inside `frontend/`). The `install` is needed for `pnpm lint` (eslint flat config needs top-level devDeps); it leaves the lockfile untouched. Gates: `pnpm --dir <abs> test`, `pnpm --dir <abs> typecheck`, `pnpm --dir <abs> lint`.
@@ -132,7 +132,7 @@ describe('useClearJobs', () => {
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `pnpm --dir /home/user/dev/infra/Nextext/frontend test src/hooks/useJobs.test.tsx`
+Run: `pnpm --dir "$(git rev-parse --show-toplevel)"/frontend test src/hooks/useJobs.test.tsx`
 Expected: FAIL — `useDeleteJob`/`useClearJobs` are not exported from `./useJobs`.
 
 - [ ] **Step 3: Implement the mutations**
@@ -211,7 +211,7 @@ export function useClearJobs() {
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
-Run: `pnpm --dir /home/user/dev/infra/Nextext/frontend test src/hooks/useJobs.test.tsx`
+Run: `pnpm --dir "$(git rev-parse --show-toplevel)"/frontend test src/hooks/useJobs.test.tsx`
 Expected: PASS (4 tests).
 
 - [ ] **Step 5: Commit**
@@ -356,7 +356,7 @@ describe('ClearJobsMenu', () => {
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `pnpm --dir /home/user/dev/infra/Nextext/frontend test src/components/jobs/ClearJobsMenu.test.tsx`
+Run: `pnpm --dir "$(git rev-parse --show-toplevel)"/frontend test src/components/jobs/ClearJobsMenu.test.tsx`
 Expected: FAIL — `./ClearJobsMenu` module does not exist.
 
 - [ ] **Step 3: Implement the component**
@@ -517,7 +517,7 @@ export function ClearJobsMenu({ jobs }: ClearJobsMenuProps) {
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
-Run: `pnpm --dir /home/user/dev/infra/Nextext/frontend test src/components/jobs/ClearJobsMenu.test.tsx`
+Run: `pnpm --dir "$(git rev-parse --show-toplevel)"/frontend test src/components/jobs/ClearJobsMenu.test.tsx`
 Expected: PASS (8 tests).
 
 - [ ] **Step 5: Commit**
@@ -589,7 +589,7 @@ describe('BatchProgress', () => {
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `pnpm --dir /home/user/dev/infra/Nextext/frontend test src/components/jobs/BatchProgress.test.tsx`
+Run: `pnpm --dir "$(git rev-parse --show-toplevel)"/frontend test src/components/jobs/BatchProgress.test.tsx`
 Expected: FAIL — no `Clear ▾` button (`ClearJobsMenu` not wired yet).
 
 - [ ] **Step 3: Wire the component**
@@ -613,7 +613,7 @@ Replace the action-row `<div>` and its contents:
 
 - [ ] **Step 4: Run the test to verify it passes**
 
-Run: `pnpm --dir /home/user/dev/infra/Nextext/frontend test src/components/jobs/BatchProgress.test.tsx`
+Run: `pnpm --dir "$(git rev-parse --show-toplevel)"/frontend test src/components/jobs/BatchProgress.test.tsx`
 Expected: PASS (2 tests).
 
 - [ ] **Step 5: Commit**
@@ -713,7 +713,7 @@ describe('JobCard Remove', () => {
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `pnpm --dir /home/user/dev/infra/Nextext/frontend test src/components/jobs/JobCard.test.tsx`
+Run: `pnpm --dir "$(git rev-parse --show-toplevel)"/frontend test src/components/jobs/JobCard.test.tsx`
 Expected: FAIL — no button named `Remove`.
 
 - [ ] **Step 3: Implement the button**
@@ -764,7 +764,7 @@ with:
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
-Run: `pnpm --dir /home/user/dev/infra/Nextext/frontend test src/components/jobs/JobCard.test.tsx`
+Run: `pnpm --dir "$(git rev-parse --show-toplevel)"/frontend test src/components/jobs/JobCard.test.tsx`
 Expected: PASS (2 tests).
 
 - [ ] **Step 5: Commit**
@@ -782,17 +782,17 @@ git commit -m "feat(frontend): add per-job Remove button to JobCard"
 
 - [ ] **Step 1: Run the whole frontend test suite**
 
-Run: `pnpm --dir /home/user/dev/infra/Nextext/frontend test`
+Run: `pnpm --dir "$(git rev-parse --show-toplevel)"/frontend test`
 Expected: PASS — all suites green, including the four new/updated files.
 
 - [ ] **Step 2: Typecheck**
 
-Run: `pnpm --dir /home/user/dev/infra/Nextext/frontend typecheck`
+Run: `pnpm --dir "$(git rev-parse --show-toplevel)"/frontend typecheck`
 Expected: no errors.
 
 - [ ] **Step 3: Lint**
 
-Run: `pnpm --dir /home/user/dev/infra/Nextext/frontend lint`
+Run: `pnpm --dir "$(git rev-parse --show-toplevel)"/frontend lint`
 Expected: no errors. (If it fails with `ERR_MODULE_NOT_FOUND: 'globals'`, run the `install --frozen-lockfile` from the Toolchain section, then re-run.)
 
 - [ ] **Step 4: Manual smoke (optional, no browser required)**
