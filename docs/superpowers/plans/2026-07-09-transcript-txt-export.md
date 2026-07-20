@@ -15,7 +15,7 @@
 - The TXT delimiter is a literal tab (`\t`); TXT files include a header row.
 - No new environment variables, no new dependencies, no changes to CSV/XLSX layout or docint JSONL.
 - Backend artifact content-type for `.txt` is `text/plain; charset=utf-8` (reuse existing `_TEXT_PLAIN`).
-- Frontend package manager is pinned `pnpm@9.12.0`; run frontend commands as `corepack pnpm --dir /home/user/dev/infra/Nextext/frontend <script>` (pnpm is not on PATH).
+- Frontend package manager is pinned `pnpm@9.12.0`; run frontend commands as `corepack pnpm --dir "$(git rev-parse --show-toplevel)"/frontend <script>` (pnpm is not on PATH).
 - Run the full backend suite (`uv run pytest`) and `pre-commit run --all-files` before declaring done (project rule).
 
 ## File Structure
@@ -526,7 +526,7 @@ describe('TranscriptTab download buttons', () => {
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `corepack pnpm --dir /home/user/dev/infra/Nextext/frontend test -- TranscriptTab`
+Run: `corepack pnpm --dir "$(git rev-parse --show-toplevel)"/frontend test -- TranscriptTab`
 Expected: FAIL — no `TXT` / `Transcript TXT` / `Translation TXT` buttons exist yet.
 
 - [ ] **Step 3: Implement**
@@ -558,12 +558,12 @@ Then set the `DownloadButtons` items to interleave the TXT buttons between XLSX 
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
-Run: `corepack pnpm --dir /home/user/dev/infra/Nextext/frontend test -- TranscriptTab`
+Run: `corepack pnpm --dir "$(git rev-parse --show-toplevel)"/frontend test -- TranscriptTab`
 Expected: PASS (2 tests).
 
 - [ ] **Step 5: Typecheck + lint the frontend**
 
-Run: `corepack pnpm --dir /home/user/dev/infra/Nextext/frontend typecheck && corepack pnpm --dir /home/user/dev/infra/Nextext/frontend lint`
+Run: `corepack pnpm --dir "$(git rev-parse --show-toplevel)"/frontend typecheck && corepack pnpm --dir "$(git rev-parse --show-toplevel)"/frontend lint`
 Expected: no errors.
 
 - [ ] **Step 6: Commit**
@@ -586,7 +586,7 @@ Expected: all pass (note: `test_sse` stage-pair test rarely flakes on a cold run
 
 - [ ] **Step 2: Run the full frontend suite**
 
-Run: `corepack pnpm --dir /home/user/dev/infra/Nextext/frontend test`
+Run: `corepack pnpm --dir "$(git rev-parse --show-toplevel)"/frontend test`
 Expected: all pass.
 
 - [ ] **Step 3: Run pre-commit**
