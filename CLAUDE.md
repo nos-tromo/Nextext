@@ -12,6 +12,12 @@ screenshots. It applies everywhere git sees — source code, tests, fixtures,
 docs, examples, configs, commit messages, and CI files. Use fully synthetic,
 invented placeholders instead.
 
+**Likewise, NEVER expose local filepaths from development machines** —
+absolute paths or home directories such as `/Users/<name>/...`,
+`/home/<name>/...`, or `C:\Users\...` — anywhere git sees. The only
+permitted paths are relative project paths starting from the project's
+root (e.g. `docker/compose.yaml`).
+
 ## Project Overview
 
 Nextext is a modular audio analysis toolkit that transcribes, translates, and analyzes natural language from audio/video files. All model inference runs on external endpoints: Whisper transcription via an OpenAI-compatible audio API, voice-activity detection (`/vad`), speaker diarization (`/diarize`), and GLiNER NER (`/gliner`) via dedicated out-of-process HTTP services, and LLMs (Ollama, vLLM, or OpenAI-compatible endpoints) for translation, summarization, and hate-speech detection. Only spaCy/NLTK word-level NLP runs in-process; every upload is re-encoded to 16 kHz mono FLAC via the PyAV wheel (bundled ffmpeg) before transcription. The backend ships no model weights and needs no GPU — PyAV is the only local media dependency, and no apt audio tooling is installed.
