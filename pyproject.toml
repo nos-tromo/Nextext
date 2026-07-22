@@ -27,6 +27,7 @@ dependencies = [
     "pandas>=2.2.3",
     "pillow>=12.3.0",
     "pip>=25.0.1",
+    "prometheus-fastapi-instrumentator>=8.0.2",
     "pyarabic>=0.6.15",
     "pycountry>=24.6.1",
     "python-bidi>=0.6.11",

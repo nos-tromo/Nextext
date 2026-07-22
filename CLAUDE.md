@@ -98,6 +98,7 @@ Tests are in `tests/` using pytest with monkeypatch fixtures and `respx` for moc
 - `GET /jobs/{id}/artifacts/{name}` — binary download (transcript.csv/xlsx/txt, translation.txt, summary.txt, wordcounts.csv/xlsx, entities.csv/xlsx, wordcloud.png, hate_speech.csv/xlsx, docint.jsonl, archive.zip). Owner-scoped.
 - `DELETE /jobs/{id}` — cleanup (owner-scoped).
 - `GET /health`, `GET /languages` — meta endpoints.
+- `GET /metrics` — Prometheus exposition (aggregate request/latency counters only, no transcript or user data); unauthenticated, scraped by obs-plane over `inference-net`.
 
 Identity is resolved per request by `resolve_principal`: the trusted header (`NEXTEXT_AUTH_HEADER`, default `X-Auth-User`) if present, else `NEXTEXT_DEFAULT_IDENTITY` (the dev / header-less fallback), else `401`. The value scopes the caller's in-memory jobs; cross-owner reads return `404` so existence never leaks. The React frontend mints a per-browser id and carries it in its URL (`?owner=<id>`) on first visit, reading it back on every reload so the identity survives browser refreshes. There is no authentication — the backend trusts whoever can reach `inference-net` — and no durable storage: jobs live only in memory.
 
