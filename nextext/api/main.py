@@ -9,6 +9,7 @@ from importlib.metadata import PackageNotFoundError, version
 
 from fastapi import FastAPI
 from loguru import logger
+from prometheus_fastapi_instrumentator import Instrumentator
 
 from nextext.api.jobs import JobManager
 from nextext.api.routes import router as api_router
@@ -59,6 +60,11 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
     application.include_router(api_router)
+    # Aggregate request/latency counters only — no transcript or user data is
+    # ever recorded in a metric label or value. Unauthenticated by design:
+    # the obs-plane scraper (like every inference caller) reaches the backend
+    # over inference-net, which has no auth boundary today.
+    Instrumentator().instrument(application).expose(application, endpoint="/metrics", include_in_schema=False)
     return application
 
 
