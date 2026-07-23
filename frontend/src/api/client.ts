@@ -1,6 +1,12 @@
 import { resolveOwnerId } from '../identity/owner'
 
-export const API_BASE = '/api/v1'
+/** API base derived from Vite's base path so the SPA works under its
+ *  canonical sub-path (/nextext/) and at root (dev) alike. */
+export function apiBase(base: string = import.meta.env.BASE_URL): string {
+  return `${base.replace(/\/+$/, '')}/api/v1`
+}
+
+export const API_BASE = apiBase()
 /** Trusted identity header; mirrors the backend default NEXTEXT_AUTH_HEADER. */
 export const OWNER_HEADER = 'X-Auth-User'
 

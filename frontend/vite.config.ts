@@ -6,6 +6,7 @@ const BACKEND = process.env.NEXTEXT_BACKEND_ORIGIN ?? 'http://localhost:8000'
 
 export default defineConfig({
   plugins: [react()],
+  base: '/nextext/',
   resolve: {
     alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) },
   },
@@ -13,7 +14,13 @@ export default defineConfig({
     port: 5173,
     strictPort: true,
     proxy: {
-      '/api': { target: BACKEND, changeOrigin: true },
+      // SPA emits /nextext/api/... ; backend serves /api/... — strip here in dev
+      // (in prod the app's own nginx strips it).
+      '/nextext/api': {
+        target: BACKEND,
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/nextext/, ''),
+      },
     },
   },
   test: {
