@@ -20,7 +20,7 @@ include make/common.mk
 help:
 	@echo "nextext — build-host helpers"
 	@echo
-	@echo "  make network    create the external inference-net"
+	@echo "  make network    create the external inference-net + edge-net"
 	@echo "  make volumes    create the external Docker volumes"
 	@echo "  make build      build the backend + frontend images"
 	@echo "  make bundle     ship the built images as a versioned .tar.gz (latest annotated release tag)"

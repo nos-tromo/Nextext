@@ -193,7 +193,7 @@ sub-path behind the `edge-plane` gateway, not at its own vhost root. The
 `frontend` service joins the external `edge-net` network (alongside its
 existing `nextext-net` membership) as alias `nextext-frontend`, which is how
 the gateway reaches it. Vite is built with `base: '/nextext/'`, `API_BASE`
-derives from `BASE_URL` (`nextext/src/api/client.ts`'s `apiBase()`), the
+derives from `BASE_URL` (`frontend/src/api/client.ts`'s `apiBase()`), the
 `BrowserRouter` uses a matching `basename`, and the frontend's nginx config
 strips the `/nextext` prefix internally before falling through to the
 existing root-anchored locations (the SSE job-events endpoint included),
