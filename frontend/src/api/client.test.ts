@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { ApiError, apiGet, apiSend, OWNER_HEADER } from './client'
+import { apiBase, ApiError, apiGet, apiSend, OWNER_HEADER } from './client'
 import { OWNER_STORAGE_KEY } from '../identity/owner'
 
 afterEach(() => {
@@ -64,5 +64,14 @@ describe('apiSend', () => {
     const ri = init
     expect(ri.body).toBe(fd)
     expect(ri.headers).not.toHaveProperty('content-type')
+  })
+})
+
+describe('apiBase', () => {
+  it('derives the API base from a sub-path BASE_URL', () => {
+    expect(apiBase('/nextext/')).toBe('/nextext/api/v1')
+  })
+  it('falls back to root for BASE_URL "/"', () => {
+    expect(apiBase('/')).toBe('/api/v1')
   })
 })

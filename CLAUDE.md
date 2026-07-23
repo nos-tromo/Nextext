@@ -186,6 +186,23 @@ Reload resilience comes from the identity, not from storage. The owner id surviv
 
 Artifacts (`.csv`/`.xlsx`/`.png`/`.jsonl`/`.zip`) are materialised on demand from the in-memory `state.result` by `nextext/api/artifacts.py`; they are never written to disk.
 
+## Deployment: edge-plane gateway sub-path
+
+The Nextext SPA is served in production under the canonical `/nextext/`
+sub-path behind the `edge-plane` gateway, not at its own vhost root. The
+`frontend` service joins the external `edge-net` network (alongside its
+existing `nextext-net` membership) as alias `nextext-frontend`, which is how
+the gateway reaches it. Vite is built with `base: '/nextext/'`, `API_BASE`
+derives from `BASE_URL` (`nextext/src/api/client.ts`'s `apiBase()`), the
+`BrowserRouter` uses a matching `basename`, and the frontend's nginx config
+strips the `/nextext` prefix internally before falling through to the
+existing root-anchored locations (the SSE job-events endpoint included),
+redirecting bare `/` to `/nextext/`. The gateway is the sole production entry
+point and is what injects `X-Auth-User` for the backend's trusted-header
+principal seam (`nextext/api/identity.py`) — production leaves
+`NEXTEXT_DEFAULT_IDENTITY` unset so requests without that header are rejected
+as unauthenticated; any dev-only fallback stays dev-only.
+
 ## Commits
 
 - Prefer multiple small topical commits over a single catch-all commit.

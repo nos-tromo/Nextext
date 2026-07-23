@@ -11,7 +11,7 @@
 .DEFAULT_GOAL := help
 
 REPO     := nextext
-NETWORKS := inference-net
+NETWORKS := inference-net edge-net
 VOLUMES  := nltk-cache spacy-cache
 include make/common.mk
 
