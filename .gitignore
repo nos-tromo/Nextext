@@ -86,3 +86,5 @@
 !docs/superpowers/plans/*.md
 # Per-host job persistence (created by NEXTEXT_DATA_DIR default)
 .nextext-data/
+# Built image tag stamp written by `make build`; never committed.
+.nextext-version
