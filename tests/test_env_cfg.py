@@ -833,6 +833,30 @@ def test_load_language_env_invalid_warns_and_defaults(
     assert "NEXTEXT_RESPONSE_LANGUAGE" in sink.getvalue()
 
 
+def test_language_env_uniform_var(monkeypatch: pytest.MonkeyPatch) -> None:
+    """RESPONSE_LANGUAGE (uniform federation name) selects the language."""
+    monkeypatch.delenv("NEXTEXT_RESPONSE_LANGUAGE", raising=False)
+    monkeypatch.setenv("RESPONSE_LANGUAGE", "de")
+
+    assert load_language_env().code == "de"
+
+
+def test_language_env_uniform_var_wins_over_legacy(monkeypatch: pytest.MonkeyPatch) -> None:
+    """When both are set, the uniform name wins."""
+    monkeypatch.setenv("RESPONSE_LANGUAGE", "en")
+    monkeypatch.setenv("NEXTEXT_RESPONSE_LANGUAGE", "de")
+
+    assert load_language_env().code == "en"
+
+
+def test_language_env_legacy_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
+    """NEXTEXT_RESPONSE_LANGUAGE still works (deprecated, one release)."""
+    monkeypatch.delenv("RESPONSE_LANGUAGE", raising=False)
+    monkeypatch.setenv("NEXTEXT_RESPONSE_LANGUAGE", "de")
+
+    assert load_language_env().code == "de"
+
+
 # ---------------------------------------------------------------------------
 # load_job_concurrency
 # ---------------------------------------------------------------------------

@@ -171,3 +171,7 @@ export interface LanguagesResponse {
   target: LanguageEntry[]
   default_target: string
 }
+
+export interface ConfigResponse {
+  language: string
+}
