@@ -833,6 +833,32 @@ def test_load_language_env_invalid_warns_and_defaults(
     assert "NEXTEXT_RESPONSE_LANGUAGE" in sink.getvalue()
 
 
+def test_load_language_env_invalid_uniform_var_names_uniform_var(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An unsupported RESPONSE_LANGUAGE names itself, not the deprecated alias.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Fixture for patching environment variables.
+    """
+    from loguru import logger
+
+    monkeypatch.delenv("NEXTEXT_RESPONSE_LANGUAGE", raising=False)
+    monkeypatch.setenv("RESPONSE_LANGUAGE", "xx")
+
+    sink = io.StringIO()
+    handler_id = logger.add(sink, level="WARNING")
+    try:
+        cfg = load_language_env()
+    finally:
+        logger.remove(handler_id)
+
+    assert cfg.code == "en"
+    warning = sink.getvalue()
+    assert "Unknown RESPONSE_LANGUAGE 'xx'" in warning
+    assert "NEXTEXT_RESPONSE_LANGUAGE" not in warning
+
+
 def test_language_env_uniform_var(monkeypatch: pytest.MonkeyPatch) -> None:
     """RESPONSE_LANGUAGE (uniform federation name) selects the language."""
     monkeypatch.delenv("NEXTEXT_RESPONSE_LANGUAGE", raising=False)

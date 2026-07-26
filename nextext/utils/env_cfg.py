@@ -88,8 +88,10 @@ def load_language_env(default: str = DEFAULT_PROMPT_LANGUAGE) -> LanguageConfig:
     Returns:
         LanguageConfig: Dataclass carrying the resolved two-letter ``code``.
     """
+    var_name = "RESPONSE_LANGUAGE"
     raw = os.getenv("RESPONSE_LANGUAGE")
     if raw is None:
+        var_name = "NEXTEXT_RESPONSE_LANGUAGE"
         raw = os.getenv("NEXTEXT_RESPONSE_LANGUAGE")
         if raw is not None and raw.strip():
             logger.warning(
@@ -101,7 +103,8 @@ def load_language_env(default: str = DEFAULT_PROMPT_LANGUAGE) -> LanguageConfig:
     if candidate not in PROMPT_SUPPORTED_LANGUAGES:
         if raw is not None and raw.strip():
             logger.warning(
-                "Unknown NEXTEXT_RESPONSE_LANGUAGE '{}'. Falling back to '{}'.",
+                "Unknown {} '{}'. Falling back to '{}'.",
+                var_name,
                 raw,
                 default,
             )
