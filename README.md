@@ -51,9 +51,11 @@ make volumes
 The compose stack loads `.env` into each Nextext container via
 `env_file`, so runtime model downloads pick them up.
 
-#### Inference provider
+#### Inference provider and localization
 
 Nextext communicates with any OpenAI-compatible inference provider via `OPENAI_API_BASE` and `OPENAI_API_KEY`. Provider selection is handled entirely through environment variables — no code changes required.
+
+**Language selection:** Set `RESPONSE_LANGUAGE` to `en` (English, default) or `de` (German) to control both the LLM output language (summaries, hate-speech rationales, prompts) and the SPA UI language. Missing or unrecognized values fall back to English. The legacy `NEXTEXT_RESPONSE_LANGUAGE` is deprecated but accepted as a fallback for one release; prefer `RESPONSE_LANGUAGE` in new deployments.
 
 Every model class can also be re-pointed at a **dedicated endpoint**, falling back to the central pair when unset:
 
