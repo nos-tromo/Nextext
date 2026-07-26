@@ -128,7 +128,7 @@ Identity is resolved per request by `resolve_principal`: the trusted header (`NE
 - `nextext/core/openai_cfg.py` — `InferencePipeline` for OpenAI-compatible LLM calls.
 - `nextext/core/processing.py` — File I/O and export formatting (CLI).
 - `nextext/utils/mappings/` — JSON config files for Whisper/spaCy model names, language codes.
-- `nextext/utils/prompts/` — LLM prompt templates (system, translation, summary, hate_speech), localized per language under `en/` and `de/` (selected by `NEXTEXT_RESPONSE_LANGUAGE`, English fallback).
+- `nextext/utils/prompts/` — LLM prompt templates (system, translation, summary, hate_speech), localized per language under `en/` and `de/` (selected by `RESPONSE_LANGUAGE`, with `NEXTEXT_RESPONSE_LANGUAGE` honored as a deprecated fallback; English fallback).
 
 ## Environment
 

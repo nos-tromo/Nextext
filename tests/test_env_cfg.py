@@ -883,6 +883,24 @@ def test_language_env_legacy_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
     assert load_language_env().code == "de"
 
 
+def test_language_env_blank_uniform_falls_through_to_legacy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A blank RESPONSE_LANGUAGE still lets the legacy fallback through.
+
+    Covers the Docker case where an unset ``.env`` value resolves to a
+    blank ``RESPONSE_LANGUAGE`` via compose's ``${RESPONSE_LANGUAGE:-}``,
+    which must not shadow ``NEXTEXT_RESPONSE_LANGUAGE``.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Fixture for patching environment variables.
+    """
+    monkeypatch.setenv("RESPONSE_LANGUAGE", "")
+    monkeypatch.setenv("NEXTEXT_RESPONSE_LANGUAGE", "de")
+
+    assert load_language_env().code == "de"
+
+
 # ---------------------------------------------------------------------------
 # load_job_concurrency
 # ---------------------------------------------------------------------------

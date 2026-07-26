@@ -90,7 +90,7 @@ def load_language_env(default: str = DEFAULT_PROMPT_LANGUAGE) -> LanguageConfig:
     """
     var_name = "RESPONSE_LANGUAGE"
     raw = os.getenv("RESPONSE_LANGUAGE")
-    if raw is None:
+    if raw is None or not raw.strip():
         var_name = "NEXTEXT_RESPONSE_LANGUAGE"
         raw = os.getenv("NEXTEXT_RESPONSE_LANGUAGE")
         if raw is not None and raw.strip():
