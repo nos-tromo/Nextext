@@ -7,6 +7,11 @@ export const de: Strings = {
   'common.cancel': 'Abbrechen',
   'common.delete': 'Löschen',
   'common.close': 'Schließen',
+  'common.jobs_processing': '{count} in Verarbeitung',
+  'common.jobs_queued': '{count} in Warteschlange',
+  'common.jobs_finished': '{count} abgeschlossen',
+  'common.jobs_failed': '{count} fehlgeschlagen',
+  'common.batch_progress': '{pct}% der Dateien fertig',
 
   // upload
   'upload.drop_hint': 'Audio- oder Videodateien hier ablegen',

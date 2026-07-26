@@ -1,5 +1,6 @@
 import { useMemo } from 'react'
 import { Badge } from '@infra/ui'
+import { useT } from '../../i18n/LanguageContext'
 import { useJobs } from '../../hooks/useJobs'
 import { selectById, useJobProgressStore } from '../../lib/jobProgressStore'
 import { summarizeJobs } from '../../lib/jobStatusSummary'
@@ -18,6 +19,7 @@ const EMPTY: JobListItem[] = [] // stable ref so the memo holds while the list i
  * toward progress before the list has refetched. Renders nothing with no jobs.
  */
 export function StatusBar() {
+  const t = useT()
   const jobs = useJobs()
   const live = useJobProgressStore(selectById)
   const { counts } = useMemo(() => summarizeJobs(jobs.data?.jobs ?? EMPTY, live), [jobs.data, live])
@@ -29,12 +31,16 @@ export function StatusBar() {
   return (
     <div className="flex flex-col items-end gap-1 text-xs">
       <div className="flex items-center gap-2">
-        {counts.processing > 0 && <Badge variant="accent">{`${counts.processing} processing`}</Badge>}
-        {counts.queued > 0 && <Badge variant="neutral">{`${counts.queued} queued`}</Badge>}
-        {counts.finished > 0 && <Badge variant="neutral">{`${counts.finished} finished`}</Badge>}
-        {counts.failed > 0 && <Badge variant="danger">{`${counts.failed} failed`}</Badge>}
+        {counts.processing > 0 && (
+          <Badge variant="accent">{t('common.jobs_processing', { count: counts.processing })}</Badge>
+        )}
+        {counts.queued > 0 && <Badge variant="neutral">{t('common.jobs_queued', { count: counts.queued })}</Badge>}
+        {counts.finished > 0 && (
+          <Badge variant="neutral">{t('common.jobs_finished', { count: counts.finished })}</Badge>
+        )}
+        {counts.failed > 0 && <Badge variant="danger">{t('common.jobs_failed', { count: counts.failed })}</Badge>}
       </div>
-      <div className="flex items-center gap-2" title={`${pct}% of files done`}>
+      <div className="flex items-center gap-2" title={t('common.batch_progress', { pct })}>
         <div className="h-1.5 w-24 overflow-hidden rounded bg-muted">
           <div className="h-full bg-primary" style={{ width: `${pct}%` }} />
         </div>

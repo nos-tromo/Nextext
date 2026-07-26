@@ -5,6 +5,11 @@ export const en = {
   'common.cancel': 'Cancel',
   'common.delete': 'Delete',
   'common.close': 'Close',
+  'common.jobs_processing': '{count} processing',
+  'common.jobs_queued': '{count} queued',
+  'common.jobs_finished': '{count} finished',
+  'common.jobs_failed': '{count} failed',
+  'common.batch_progress': '{pct}% of files done',
 
   // upload
   'upload.drop_hint': 'Drop audio or video files here',
