@@ -23,7 +23,8 @@ export const en = {
   'upload.drop_hint': 'Drop audio/video files here, or click to choose',
   'upload.select_files': 'Select files',
   'upload.uploading': 'Uploading…',
-  'upload.file_too_large': 'File is too large',
+  'upload.file_too_large':
+    '"{name}" is {sizeGb} GB, over the {limitGb} GB per-file limit. Split it, or use `nextext-cli` for very large local files.',
   'upload.unsupported_format': 'Unsupported file format',
   'upload.read_error': 'Could not read the file',
   'upload.run': '▶ Run',
@@ -31,6 +32,8 @@ export const en = {
 
   // options
   'options.task': 'Task',
+  'options.task_transcribe': 'Transcribe',
+  'options.task_translate': 'Translate',
   'options.source_language': 'Source language',
   'options.target_language': 'Target language',
   'options.target_language_translate': 'Target language (translate)',
@@ -73,6 +76,7 @@ export const en = {
   'results.tab_wordcloud': 'Word Cloud',
   'results.tab_entities': 'Entities',
   'results.tab_hate_speech': 'Hate Speech',
+  'results.tab_nav_label': 'Result tabs',
   'results.loading': 'Loading results…',
   'results.load_failed': 'Failed to load results: {error}',
   'results.no_data': 'No result data available.',

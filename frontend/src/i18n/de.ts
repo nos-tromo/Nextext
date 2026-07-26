@@ -25,7 +25,8 @@ export const de: Strings = {
   'upload.drop_hint': 'Audio- oder Videodateien hier ablegen oder klicken, um sie auszuwählen',
   'upload.select_files': 'Dateien wählen',
   'upload.uploading': 'Wird hochgeladen…',
-  'upload.file_too_large': 'Datei ist zu groß',
+  'upload.file_too_large':
+    '"{name}" ist {sizeGb} GB groß und überschreitet das Limit von {limitGb} GB pro Datei. Teilen Sie die Datei auf, oder verwenden Sie `nextext-cli` für sehr große lokale Dateien.',
   'upload.unsupported_format': 'Nicht unterstütztes Dateiformat',
   'upload.read_error': 'Datei konnte nicht gelesen werden',
   'upload.run': '▶ Starten',
@@ -33,6 +34,8 @@ export const de: Strings = {
 
   // options
   'options.task': 'Aufgabe',
+  'options.task_transcribe': 'Transkribieren',
+  'options.task_translate': 'Übersetzen',
   'options.source_language': 'Ausgangssprache',
   'options.target_language': 'Zielsprache',
   'options.target_language_translate': 'Zielsprache (Übersetzung)',
@@ -74,6 +77,7 @@ export const de: Strings = {
   'results.tab_wordcloud': 'Wortwolke',
   'results.tab_entities': 'Entitäten',
   'results.tab_hate_speech': 'Hassrede',
+  'results.tab_nav_label': 'Ergebnis-Tabs',
   'results.loading': 'Ergebnisse werden geladen…',
   'results.load_failed': 'Ergebnisse konnten nicht geladen werden: {error}',
   'results.no_data': 'Keine Ergebnisdaten verfügbar.',

@@ -101,7 +101,7 @@ export function ResultPanel({ jobId, fileName }: ResultPanelProps) {
     <div className="space-y-4">
       {/* Header row: tab bar + archive download */}
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <nav className="flex flex-wrap gap-1" aria-label="Result tabs">
+        <nav className="flex flex-wrap gap-1" aria-label={t('results.tab_nav_label')}>
           {availableTabs.map((tab) => (
             <button
               key={tab.id}

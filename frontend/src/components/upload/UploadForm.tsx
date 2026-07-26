@@ -27,7 +27,9 @@ export function UploadForm({ pending, onRun }: UploadFormProps) {
   const [summarization, setSummarization] = useState(false)
   const [hateSpeech, setHateSpeech] = useState(false)
 
-  const sizeError = checkUploadAcceptable(files)
+  const sizeError = checkUploadAcceptable(files, undefined, (vars) =>
+    t('upload.file_too_large', { name: vars.name, sizeGb: vars.sizeGb, limitGb: vars.limitGb }),
+  )
   const canRun = files.length > 0 && !pending && !sizeError
 
   function run() {
@@ -79,8 +81,8 @@ export function UploadForm({ pending, onRun }: UploadFormProps) {
         <label className="space-y-1">
           <span className="text-sm text-muted-foreground">{t('options.task')}</span>
           <select className="w-full rounded border border-border bg-muted px-2 py-1" value={task} onChange={(e) => setTask(e.target.value as Task)}>
-            <option value="transcribe">transcribe</option>
-            <option value="translate">translate</option>
+            <option value="transcribe">{t('options.task_transcribe')}</option>
+            <option value="translate">{t('options.task_translate')}</option>
           </select>
         </label>
         <label className="space-y-1">
