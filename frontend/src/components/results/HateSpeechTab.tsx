@@ -1,5 +1,6 @@
 import { DownloadButtons } from './DownloadButtons'
 import { cn } from '../../lib/cn'
+import { useT } from '../../i18n/LanguageContext'
 import type { HateSpeechFinding, JobResult } from '../../api/types'
 
 interface HateSpeechTabProps {
@@ -24,17 +25,21 @@ const CONFIDENCE_CLASSES: Record<HateSpeechFinding['confidence'], string> = {
  * @param stem - Upload filename without extension; used to prefix download names.
  */
 export function HateSpeechTab({ jobId, result, stem }: HateSpeechTabProps) {
+  const t = useT()
   if (!result.hate_speech_findings || result.hate_speech_findings.length === 0) {
-    return <p className="text-sm text-muted-foreground">No hate-speech findings for this job.</p>
+    return <p className="text-sm text-muted-foreground">{t('results.no_hate_speech')}</p>
   }
 
   const flagged = result.hate_speech_findings.filter((f) => f.hate_speech)
+  const total = result.hate_speech_findings.length
 
   return (
     <div className="space-y-4">
       <p className="text-sm text-muted-foreground">
-        {flagged.length} of {result.hate_speech_findings.length} segment
-        {result.hate_speech_findings.length === 1 ? '' : 's'} flagged.
+        {t(total === 1 ? 'results.flagged_summary_one' : 'results.flagged_summary_other', {
+          flagged: flagged.length,
+          total,
+        })}
       </p>
       <ul className="space-y-3">
         {result.hate_speech_findings.map((finding, i) => (
@@ -46,7 +51,7 @@ export function HateSpeechTab({ jobId, result, stem }: HateSpeechTabProps) {
                   finding.hate_speech ? 'bg-danger/20 text-danger' : 'bg-muted text-muted-foreground',
                 )}
               >
-                {finding.hate_speech ? 'Flagged' : 'Clean'}
+                {finding.hate_speech ? t('results.flagged') : t('results.clean')}
               </span>
               {finding.hate_speech && (
                 <>

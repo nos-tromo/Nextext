@@ -2,8 +2,10 @@ import { useSubmitBatch } from '../hooks/useJobs'
 import { UploadForm } from '../components/upload/UploadForm'
 import { BatchProgress } from '../components/jobs/BatchProgress'
 import { Banner } from '@infra/ui'
+import { useT } from '../i18n/LanguageContext'
 
 export function Home() {
+  const t = useT()
   const submit = useSubmitBatch()
 
   // Collect per-file submission errors from the last batch (files that failed
@@ -16,17 +18,17 @@ export function Home() {
   return (
     <div className="space-y-8">
       {submit.error && (
-        <Banner variant="danger">{`Submission failed: ${submit.error.message}`}</Banner>
+        <Banner variant="danger">{t('errors.upload_failed', { error: submit.error.message })}</Banner>
       )}
       {fileErrors.length > 0 && (
         <Banner variant="danger">{fileErrors.join('\n')}</Banner>
       )}
       <section>
-        <h2 className="mb-3 text-base font-semibold">New job</h2>
+        <h2 className="mb-3 text-base font-semibold">{t('home.new_job')}</h2>
         <UploadForm pending={submit.isPending} onRun={(files, options) => submit.mutate({ files, options })} />
       </section>
       <section>
-        <h2 className="mb-3 text-base font-semibold">Jobs</h2>
+        <h2 className="mb-3 text-base font-semibold">{t('home.jobs_heading')}</h2>
         <BatchProgress />
       </section>
     </div>

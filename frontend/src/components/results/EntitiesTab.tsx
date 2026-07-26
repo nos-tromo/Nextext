@@ -1,4 +1,5 @@
 import { DownloadButtons } from './DownloadButtons'
+import { useT } from '../../i18n/LanguageContext'
 import type { JobResult } from '../../api/types'
 
 interface EntitiesTabProps {
@@ -17,8 +18,9 @@ interface EntitiesTabProps {
  * @param stem - Upload filename without extension; used to prefix download names.
  */
 export function EntitiesTab({ jobId, result, stem }: EntitiesTabProps) {
+  const t = useT()
   if (!result.named_entities || result.named_entities.length === 0) {
-    return <p className="text-sm text-muted-foreground">No named entities found for this job.</p>
+    return <p className="text-sm text-muted-foreground">{t('results.no_entities')}</p>
   }
 
   return (
@@ -27,9 +29,9 @@ export function EntitiesTab({ jobId, result, stem }: EntitiesTabProps) {
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-border bg-muted text-muted-foreground">
-              <th className="px-4 py-2 text-left font-medium">Entity</th>
-              <th className="px-4 py-2 text-left font-medium">Category</th>
-              <th className="px-4 py-2 text-right font-medium">Frequency</th>
+              <th className="px-4 py-2 text-left font-medium">{t('results.col_entity')}</th>
+              <th className="px-4 py-2 text-left font-medium">{t('results.col_category')}</th>
+              <th className="px-4 py-2 text-right font-medium">{t('results.col_frequency')}</th>
             </tr>
           </thead>
           <tbody>

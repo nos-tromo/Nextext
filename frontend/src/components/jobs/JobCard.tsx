@@ -3,15 +3,17 @@ import { useDeleteJob } from '../../hooks/useJobs'
 import { ResultPanel } from '../results/ResultPanel'
 import { useJobProgressStore } from '../../lib/jobProgressStore'
 import { initialJobProgress } from '../../lib/jobProgress'
+import { useT } from '../../i18n/LanguageContext'
+import type { Strings } from '../../i18n'
 import type { JobListItem } from '../../api/types'
 import type { JobProgressStatus } from '../../lib/jobProgress'
 
-const LABEL: Record<JobProgressStatus, string> = {
-  queued: 'Queued',
-  running: 'Processing',
-  completed: 'Complete',
-  failed: 'Failed',
-  cancelled: 'Cancelled',
+const LABEL_KEY: Record<JobProgressStatus, keyof Strings> = {
+  queued: 'jobs.status_queued',
+  running: 'jobs.status_running',
+  completed: 'processing.complete',
+  failed: 'processing.failed',
+  cancelled: 'processing.cancelled',
 }
 
 /**
@@ -19,7 +21,10 @@ const LABEL: Record<JobProgressStatus, string> = {
  * terminal-safe JobProgressStatus seed. `interrupted` becomes `failed`
  * so the SSE hook does not enter a reconnect loop for a dead job.
  */
-function seedOf(job: JobListItem): { status: JobProgressStatus; error: string | null } {
+function seedOf(
+  job: JobListItem,
+  t: (key: keyof Strings, vars?: Record<string, string | number>) => string,
+): { status: JobProgressStatus; error: string | null } {
   switch (job.status) {
     case 'running':
     case 'completed':
@@ -29,7 +34,7 @@ function seedOf(job: JobListItem): { status: JobProgressStatus; error: string | 
     case 'interrupted':
       return {
         status: 'failed',
-        error: job.error ?? 'Job was interrupted before it could finish.',
+        error: job.error ?? t('jobs.interrupted'),
       }
     default:
       return { status: 'queued', error: null }
@@ -38,7 +43,8 @@ function seedOf(job: JobListItem): { status: JobProgressStatus; error: string | 
 
 /** Live per-file progress, read from the shared owner-stream progress store. */
 export function JobCard({ job }: { job: JobListItem }) {
-  const seed = seedOf(job)
+  const t = useT()
+  const seed = seedOf(job, t)
   // The single owner-multiplexed SSE stream (mounted in the Shell) publishes
   // every job's reduced progress into this store, keyed by job_id. Fall back to
   // the list snapshot's status for jobs the stream has not reported yet (e.g. a
@@ -61,17 +67,17 @@ export function JobCard({ job }: { job: JobListItem }) {
               onClick={() => setShowResults((v) => !v)}
               className="text-sm text-primary hover:underline"
             >
-              {showResults ? 'Hide results' : 'Show results'}
+              {showResults ? t('jobs.hide_results') : t('jobs.show_results')}
             </button>
           )}
-          <span className="text-sm text-muted-foreground">{LABEL[p.status]}</span>
+          <span className="text-sm text-muted-foreground">{t(LABEL_KEY[p.status])}</span>
           <button
             type="button"
             disabled={del.isPending}
             onClick={() => del.mutate(job.job_id)}
             className="text-sm text-muted-foreground transition-colors hover:text-danger disabled:cursor-not-allowed disabled:opacity-60"
           >
-            {del.isPending ? 'Removing…' : 'Remove'}
+            {del.isPending ? t('jobs.removing') : t('common.remove')}
           </button>
         </div>
       </div>
@@ -83,17 +89,19 @@ export function JobCard({ job }: { job: JobListItem }) {
       </div>
       <p className="mt-1 text-sm text-muted-foreground">
         {p.status === 'failed'
-          ? (p.error ?? 'Unknown error')
+          ? (p.error ?? t('jobs.unknown_error'))
           : p.skipped
-            ? 'Skipped — no processable content'
+            ? t('jobs.skipped')
             : p.stageLabel
-              ? `${p.stageLabel} (${pct}%)`
+              ? t('jobs.stage_progress', { stage: p.stageLabel, pct })
               : p.status === 'completed'
-                ? 'Done'
-                : 'Waiting…'}
+                ? t('jobs.done')
+                : t('jobs.waiting')}
       </p>
       {del.isError && (
-        <p className="mt-1 text-sm text-danger">{`Could not remove job: ${del.error?.message ?? 'unknown error'}`}</p>
+        <p className="mt-1 text-sm text-danger">
+          {t('jobs.remove_failed', { error: del.error?.message ?? t('jobs.unknown_error') })}
+        </p>
       )}
       {p.status === 'completed' && showResults && (
         <div className="mt-4">

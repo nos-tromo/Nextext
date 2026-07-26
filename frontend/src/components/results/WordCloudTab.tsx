@@ -1,6 +1,7 @@
 import { useArtifactImage } from '../../hooks/useArtifactImage'
 import { Spinner } from '../common/Spinner'
 import { Banner } from '@infra/ui'
+import { useT } from '../../i18n/LanguageContext'
 import { DownloadButtons } from './DownloadButtons'
 
 interface WordCloudTabProps {
@@ -20,16 +21,17 @@ interface WordCloudTabProps {
  * @param stem - Upload filename without extension; used to prefix the download name.
  */
 export function WordCloudTab({ jobId, stem }: WordCloudTabProps) {
+  const t = useT()
   const { url, loading, error } = useArtifactImage(jobId, 'wordcloud.png', true)
 
   return (
     <div className="space-y-4">
-      {loading && <Spinner label="Loading word cloud…" />}
+      {loading && <Spinner label={t('results.wordcloud_loading')} />}
       {error && <Banner variant="danger">{error}</Banner>}
       {url && (
         <img
           src={url}
-          alt="Word cloud"
+          alt={t('results.wordcloud_alt')}
           className="max-w-full rounded-md border border-border"
         />
       )}

@@ -7,6 +7,7 @@ vi.mock('../api/sse', () => ({
 }))
 
 import { Home } from './Home'
+import { LanguageContext } from '../i18n/LanguageContext'
 
 function mountHome() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
@@ -14,6 +15,13 @@ function mountHome() {
     <QueryClientProvider client={qc}>
       <Home />
     </QueryClientProvider>,
+  )
+}
+
+function stubEmptyJobs() {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async () => new Response(JSON.stringify({ jobs: [] }), { status: 200, headers: { 'content-type': 'application/json' } })),
   )
 }
 
@@ -35,5 +43,20 @@ describe('Home', () => {
     mountHome()
     expect(screen.getByText('New job')).toBeInTheDocument()
     await waitFor(() => expect(screen.getByText('clip.wav')).toBeInTheDocument())
+  })
+})
+
+describe('Home German locale', () => {
+  it('renders the "New job" heading in German', () => {
+    stubEmptyJobs()
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(
+      <QueryClientProvider client={qc}>
+        <LanguageContext.Provider value="de">
+          <Home />
+        </LanguageContext.Provider>
+      </QueryClientProvider>,
+    )
+    expect(screen.getByText('Neuer Auftrag')).toBeInTheDocument()
   })
 })

@@ -1,4 +1,5 @@
 import { DownloadButtons } from './DownloadButtons'
+import { useT } from '../../i18n/LanguageContext'
 import type { JobResult } from '../../api/types'
 
 interface WordCountsTabProps {
@@ -16,8 +17,9 @@ interface WordCountsTabProps {
  * @param stem - Upload filename without extension; used to prefix download names.
  */
 export function WordCountsTab({ jobId, result, stem }: WordCountsTabProps) {
+  const t = useT()
   if (!result.word_counts || result.word_counts.length === 0) {
-    return <p className="text-sm text-muted-foreground">No word counts available for this job.</p>
+    return <p className="text-sm text-muted-foreground">{t('results.no_word_counts')}</p>
   }
 
   return (
@@ -26,8 +28,8 @@ export function WordCountsTab({ jobId, result, stem }: WordCountsTabProps) {
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-border bg-muted text-muted-foreground">
-              <th className="px-4 py-2 text-left font-medium">Word</th>
-              <th className="px-4 py-2 text-right font-medium">Count</th>
+              <th className="px-4 py-2 text-left font-medium">{t('results.col_word')}</th>
+              <th className="px-4 py-2 text-right font-medium">{t('results.col_count')}</th>
             </tr>
           </thead>
           <tbody>
