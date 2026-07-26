@@ -7,8 +7,6 @@ export const de: Strings = {
   'common.cancel': 'Abbrechen',
   'common.delete': 'Löschen',
   'common.close': 'Schließen',
-  'common.settings': 'Einstellungen',
-  'common.sign_out': 'Abmelden',
 
   // upload
   'upload.drop_hint': 'Audio- oder Videodateien hier ablegen',

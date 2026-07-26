@@ -172,10 +172,6 @@ export interface LanguagesResponse {
   default_target: string
 }
 
-export interface ConfigResponse {
-  language: string
-}
-
 export interface AppConfig {
   language: 'en' | 'de'
 }

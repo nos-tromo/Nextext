@@ -5,8 +5,6 @@ export const en = {
   'common.cancel': 'Cancel',
   'common.delete': 'Delete',
   'common.close': 'Close',
-  'common.settings': 'Settings',
-  'common.sign_out': 'Sign out',
 
   // upload
   'upload.drop_hint': 'Drop audio or video files here',
