@@ -1,10 +1,6 @@
 export const en = {
   // common
-  'common.loading': 'Loading…',
-  'common.copied': 'Copied',
   'common.cancel': 'Cancel',
-  'common.delete': 'Delete',
-  'common.close': 'Close',
   'common.remove': 'Remove',
   'common.clear_all': 'Clear all',
   'common.file_count_one': '{count} file',
@@ -21,12 +17,8 @@ export const en = {
 
   // upload
   'upload.drop_hint': 'Drop audio/video files here, or click to choose',
-  'upload.select_files': 'Select files',
-  'upload.uploading': 'Uploading…',
   'upload.file_too_large':
     '"{name}" is {sizeGb} GB, over the {limitGb} GB per-file limit. Split it, or use `nextext-cli` for very large local files.',
-  'upload.unsupported_format': 'Unsupported file format',
-  'upload.read_error': 'Could not read the file',
   'upload.run': '▶ Run',
   'upload.submitting': 'Submitting…',
 
@@ -35,17 +27,10 @@ export const en = {
   'options.task_transcribe': 'Transcribe',
   'options.task_translate': 'Translate',
   'options.source_language': 'Source language',
-  'options.target_language': 'Target language',
   'options.target_language_translate': 'Target language (translate)',
   'options.auto_detect': 'Detect language',
-  'options.transcription': 'Transcription',
-  'options.translation': 'Translation',
-  'options.analyze_entities': 'Analyze entities',
-  'options.summarization': 'Summarization',
   'options.summary': 'Summary',
-  'options.hate_speech_detection': 'Hate speech detection',
   'options.hate_speech': 'Hate speech',
-  'options.speaker_diarization': 'Speaker diarization',
   'options.detect_speakers': 'Detect speakers',
   'options.word_analysis': 'Word analysis',
 
@@ -56,12 +41,6 @@ export const en = {
   'processing.cancelled': 'Cancelled',
 
   // artifacts
-  'artifacts.download_transcript': 'Download transcript',
-  'artifacts.download_translation': 'Download translation',
-  'artifacts.download_summary': 'Download summary',
-  'artifacts.download_wordcounts': 'Download word counts',
-  'artifacts.download_entities': 'Download entities',
-  'artifacts.download_hate_speech': 'Download hate speech analysis',
   'artifacts.download_archive': 'Download all (.zip)',
 
   // downloads (per-artifact button labels; CSV/XLSX/TXT/PNG/JSONL are format
@@ -137,7 +116,4 @@ export const en = {
 
   // errors
   'errors.upload_failed': 'Submission failed: {error}',
-  'errors.processing_failed': 'Processing failed: {error}',
-  'errors.network_error': 'Network error',
-  'errors.try_again': 'Try again',
 }

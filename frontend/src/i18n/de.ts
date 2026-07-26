@@ -2,11 +2,7 @@ import type { Strings } from './index'
 
 export const de: Strings = {
   // common
-  'common.loading': 'Lädt…',
-  'common.copied': 'Kopiert',
   'common.cancel': 'Abbrechen',
-  'common.delete': 'Löschen',
-  'common.close': 'Schließen',
   'common.remove': 'Entfernen',
   'common.clear_all': 'Alle entfernen',
   'common.file_count_one': '{count} Datei',
@@ -23,12 +19,8 @@ export const de: Strings = {
 
   // upload
   'upload.drop_hint': 'Audio- oder Videodateien hier ablegen oder klicken, um sie auszuwählen',
-  'upload.select_files': 'Dateien wählen',
-  'upload.uploading': 'Wird hochgeladen…',
   'upload.file_too_large':
     '"{name}" ist {sizeGb} GB groß und überschreitet das Limit von {limitGb} GB pro Datei. Teilen Sie die Datei auf, oder verwenden Sie `nextext-cli` für sehr große lokale Dateien.',
-  'upload.unsupported_format': 'Nicht unterstütztes Dateiformat',
-  'upload.read_error': 'Datei konnte nicht gelesen werden',
   'upload.run': '▶ Starten',
   'upload.submitting': 'Wird übermittelt…',
 
@@ -37,17 +29,10 @@ export const de: Strings = {
   'options.task_transcribe': 'Transkribieren',
   'options.task_translate': 'Übersetzen',
   'options.source_language': 'Ausgangssprache',
-  'options.target_language': 'Zielsprache',
   'options.target_language_translate': 'Zielsprache (Übersetzung)',
   'options.auto_detect': 'Sprache erkennen',
-  'options.transcription': 'Transkription',
-  'options.translation': 'Übersetzung',
-  'options.analyze_entities': 'Entitäten analysieren',
-  'options.summarization': 'Zusammenfassung',
   'options.summary': 'Zusammenfassung',
-  'options.hate_speech_detection': 'Erkennung von Hassrede',
   'options.hate_speech': 'Hassrede',
-  'options.speaker_diarization': 'Sprechererkennung',
   'options.detect_speakers': 'Sprecher erkennen',
   'options.word_analysis': 'Wortanalyse',
 
@@ -58,12 +43,6 @@ export const de: Strings = {
   'processing.cancelled': 'Abgebrochen',
 
   // artifacts
-  'artifacts.download_transcript': 'Transkription herunterladen',
-  'artifacts.download_translation': 'Übersetzung herunterladen',
-  'artifacts.download_summary': 'Zusammenfassung herunterladen',
-  'artifacts.download_wordcounts': 'Worthäufigkeiten herunterladen',
-  'artifacts.download_entities': 'Entitäten herunterladen',
-  'artifacts.download_hate_speech': 'Analyse von Hassrede herunterladen',
   'artifacts.download_archive': 'Alles herunterladen (.zip)',
 
   // downloads
@@ -138,7 +117,4 @@ export const de: Strings = {
 
   // errors
   'errors.upload_failed': 'Übermittlung fehlgeschlagen: {error}',
-  'errors.processing_failed': 'Verarbeitung fehlgeschlagen: {error}',
-  'errors.network_error': 'Netzwerkfehler',
-  'errors.try_again': 'Erneut versuchen',
 }
