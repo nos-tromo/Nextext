@@ -66,6 +66,20 @@ describe('JobCard progress', () => {
   })
 })
 
+describe('JobCard failure message', () => {
+  it('shows the interrupted-specific message for an interrupted job', () => {
+    renderCard(<JobCard job={mkJob('j1', 'interrupted')} />)
+    expect(
+      screen.getByText('Job was interrupted before it could finish.'),
+    ).toBeInTheDocument()
+  })
+
+  it('shows the generic unknown-error message for any other failed job', () => {
+    renderCard(<JobCard job={mkJob('j1', 'failed')} />)
+    expect(screen.getByText('Unknown error')).toBeInTheDocument()
+  })
+})
+
 describe('JobCard Remove', () => {
   it('deletes the job when Remove is clicked', async () => {
     renderCard(<JobCard job={mkJob('j1', 'completed')} />)

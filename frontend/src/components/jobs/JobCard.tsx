@@ -90,7 +90,9 @@ export function JobCard({ job }: { job: JobListItem }) {
       </div>
       <p className="mt-1 text-sm text-muted-foreground">
         {p.status === 'failed'
-          ? t('jobs.unknown_error')
+          ? job.status === 'interrupted'
+            ? t('jobs.interrupted')
+            : t('jobs.unknown_error')
           : p.skipped
             ? t('jobs.skipped')
             : p.stageLabel
