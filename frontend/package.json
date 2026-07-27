@@ -59,7 +59,8 @@
     "overrides": {
       "js-yaml@<4.3.0": "4.3.0",
       "brace-expansion@<1.1.16": "1.1.16",
-      "brace-expansion@>=3.0.0 <5.0.7": "5.0.7"
+      "brace-expansion@>=3.0.0 <5.0.7": "5.0.7",
+      "postcss": "^8.5.18"
     }
   }
 }
