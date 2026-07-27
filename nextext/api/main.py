@@ -11,6 +11,7 @@ from fastapi import FastAPI
 from loguru import logger
 from prometheus_fastapi_instrumentator import Instrumentator
 
+from nextext.api.errors import install_error_handlers
 from nextext.api.jobs import JobManager
 from nextext.api.routes import router as api_router
 from nextext.utils.log_cfg import setup_logging
@@ -59,6 +60,7 @@ def create_app() -> FastAPI:
         version=_APP_VERSION,
         lifespan=lifespan,
     )
+    install_error_handlers(application)
     application.include_router(api_router)
     # Aggregate request/latency counters only — no transcript or user data is
     # ever recorded in a metric label or value. Unauthenticated by design:
