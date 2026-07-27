@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { isActive, useClearJobs } from '../../hooks/useJobs'
 import { cn } from '../../lib/cn'
+import { useT } from '../../i18n/LanguageContext'
 import type { JobListItem } from '../../api/types'
 
 interface ClearJobsMenuProps {
@@ -22,6 +23,7 @@ type ConfirmScope = 'finished' | 'all'
  * @param jobs - The caller's current jobs.
  */
 export function ClearJobsMenu({ jobs }: ClearJobsMenuProps) {
+  const t = useT()
   const [open, setOpen] = useState(false)
   const [confirm, setConfirm] = useState<ConfirmScope | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -61,7 +63,13 @@ export function ClearJobsMenu({ jobs }: ClearJobsMenuProps) {
     setConfirm(null)
     setOpen(false)
     if (res.failed > 0) {
-      setError(`Cleared ${res.cleared} of ${res.cleared + res.failed}; ${res.failed} failed`)
+      setError(
+        t('jobs.clear_partial_failure', {
+          cleared: res.cleared,
+          total: res.cleared + res.failed,
+          failed: res.failed,
+        }),
+      )
     }
   }
 
@@ -73,7 +81,7 @@ export function ClearJobsMenu({ jobs }: ClearJobsMenuProps) {
         disabled={disabled}
         aria-haspopup="menu"
         aria-expanded={open}
-        title={allIds.length === 0 ? 'No jobs to clear' : undefined}
+        title={allIds.length === 0 ? t('jobs.no_jobs_to_clear') : undefined}
         onClick={() => {
           setConfirm(null)
           setOpen((v) => !v)
@@ -85,7 +93,7 @@ export function ClearJobsMenu({ jobs }: ClearJobsMenuProps) {
             : 'text-foreground hover:border-primary hover:text-primary',
         )}
       >
-        {clear.isPending ? 'Clearing…' : 'Clear ▾'}
+        {clear.isPending ? t('jobs.clearing') : t('jobs.clear')}
       </button>
       {open && (
         <div
@@ -106,7 +114,7 @@ export function ClearJobsMenu({ jobs }: ClearJobsMenuProps) {
                     : 'text-foreground hover:bg-accent hover:text-primary',
                 )}
               >
-                {`Clear finished (${finishedIds.length})`}
+                {t('jobs.clear_finished', { count: finishedIds.length })}
               </button>
               <button
                 type="button"
@@ -114,13 +122,15 @@ export function ClearJobsMenu({ jobs }: ClearJobsMenuProps) {
                 onClick={() => setConfirm('all')}
                 className="block w-full px-3 py-1.5 text-left text-sm text-foreground hover:bg-accent hover:text-primary"
               >
-                {`Clear all (${allIds.length})`}
+                {t('jobs.clear_all', { count: allIds.length })}
               </button>
             </>
           ) : (
             <div className="px-3 py-2">
               <p className="max-w-[16rem] text-sm text-foreground">
-                {`Remove ${confirmIds.length} ${confirmIds.length === 1 ? 'job' : 'jobs'}? This can't be undone.`}
+                {t(confirmIds.length === 1 ? 'jobs.clear_confirm_one' : 'jobs.clear_confirm_other', {
+                  count: confirmIds.length,
+                })}
               </p>
               <div className="mt-2 flex justify-end gap-2">
                 <button
@@ -129,7 +139,7 @@ export function ClearJobsMenu({ jobs }: ClearJobsMenuProps) {
                   onClick={() => setConfirm(null)}
                   className="rounded border border-border px-2 py-1 text-sm text-foreground hover:border-primary hover:text-primary disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  Cancel
+                  {t('common.cancel')}
                 </button>
                 <button
                   type="button"
@@ -137,7 +147,7 @@ export function ClearJobsMenu({ jobs }: ClearJobsMenuProps) {
                   onClick={() => void runClear()}
                   className="rounded border border-danger px-2 py-1 text-sm font-medium text-danger transition-opacity hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  {clear.isPending ? 'Clearing…' : 'Clear'}
+                  {clear.isPending ? t('jobs.clearing') : t('jobs.clear_confirm_button')}
                 </button>
               </div>
             </div>

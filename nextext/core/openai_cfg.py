@@ -154,7 +154,8 @@ class InferencePipeline:
     def load_prompt(self, keyword: str = "system") -> str:
         """Load a localized prompt template by keyword.
 
-        The active language is resolved from ``NEXTEXT_RESPONSE_LANGUAGE`` via
+        The active language is resolved from ``RESPONSE_LANGUAGE`` (deprecated
+        fallback: ``NEXTEXT_RESPONSE_LANGUAGE``) via
         :func:`nextext.utils.env_cfg.load_language_env`; the prompt is read from
         ``{prompt_dir}/{code}/{keyword}.txt``. When that locale lacks the file
         (e.g. ``de/translation.txt``), it falls back to the English copy under

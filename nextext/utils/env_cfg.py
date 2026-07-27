@@ -66,30 +66,45 @@ class LanguageConfig:
 
 
 def load_language_env(default: str = DEFAULT_PROMPT_LANGUAGE) -> LanguageConfig:
-    """Loads the LLM response-language setting from ``NEXTEXT_RESPONSE_LANGUAGE``.
+    """Loads the LLM response-language setting from ``RESPONSE_LANGUAGE``.
 
-    The value selects which localized prompt subdirectory
-    (``nextext/utils/prompts/<code>/``) supplies the system, summary, and
-    hate-speech prompts, so it governs the language of generated summaries and
-    hate-speech rationales independently of the transcription source language or
-    the translation target. Translation output is unaffected — it is driven by
-    explicit source/target language codes. Unrecognised values warn and fall
-    back to ``default`` (then ``"en"``) so a typo cannot break bring-up.
+    ``RESPONSE_LANGUAGE`` is the uniform federation-wide name for this setting;
+    ``NEXTEXT_RESPONSE_LANGUAGE`` is honored as a deprecated fallback (warns
+    when it is the only one set) for one release. The value selects which
+    localized prompt subdirectory (``nextext/utils/prompts/<code>/``) supplies
+    the system, summary, and hate-speech prompts, so it governs the language of
+    generated summaries and hate-speech rationales independently of the
+    transcription source language or the translation target. Translation
+    output is unaffected — it is driven by explicit source/target language
+    codes. Unrecognised values warn and fall back to ``default`` (then
+    ``"en"``) so a typo cannot break bring-up.
 
     Args:
-        default: Fallback language code used when ``NEXTEXT_RESPONSE_LANGUAGE``
-            is unset, blank, or invalid. Defaults to
-            :data:`DEFAULT_PROMPT_LANGUAGE` (``"en"``).
+        default: Fallback language code used when neither ``RESPONSE_LANGUAGE``
+            nor ``NEXTEXT_RESPONSE_LANGUAGE`` is set, or the resolved value is
+            blank or invalid. Defaults to :data:`DEFAULT_PROMPT_LANGUAGE`
+            (``"en"``).
 
     Returns:
         LanguageConfig: Dataclass carrying the resolved two-letter ``code``.
     """
-    raw = os.getenv("NEXTEXT_RESPONSE_LANGUAGE")
+    var_name = "RESPONSE_LANGUAGE"
+    raw = os.getenv("RESPONSE_LANGUAGE")
+    if raw is None or not raw.strip():
+        var_name = "NEXTEXT_RESPONSE_LANGUAGE"
+        raw = os.getenv("NEXTEXT_RESPONSE_LANGUAGE")
+        if raw is not None and raw.strip():
+            logger.warning(
+                "NEXTEXT_RESPONSE_LANGUAGE is deprecated; use the uniform "
+                "RESPONSE_LANGUAGE instead. Honoring the legacy value '{}'.",
+                raw,
+            )
     candidate = (raw if raw is not None else default).strip().lower()
     if candidate not in PROMPT_SUPPORTED_LANGUAGES:
         if raw is not None and raw.strip():
             logger.warning(
-                "Unknown NEXTEXT_RESPONSE_LANGUAGE '{}'. Falling back to '{}'.",
+                "Unknown {} '{}'. Falling back to '{}'.",
+                var_name,
                 raw,
                 default,
             )

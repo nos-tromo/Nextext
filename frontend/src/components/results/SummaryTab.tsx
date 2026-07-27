@@ -1,6 +1,7 @@
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { DownloadButtons } from './DownloadButtons'
+import { useT } from '../../i18n/LanguageContext'
 import type { JobResult } from '../../api/types'
 
 interface SummaryTabProps {
@@ -18,8 +19,9 @@ interface SummaryTabProps {
  * @param stem - Upload filename without extension; used to prefix download names.
  */
 export function SummaryTab({ jobId, result, stem }: SummaryTabProps) {
+  const t = useT()
   if (!result.summary) {
-    return <p className="text-sm text-muted-foreground">No summary produced for this job.</p>
+    return <p className="text-sm text-muted-foreground">{t('results.no_summary')}</p>
   }
 
   return (

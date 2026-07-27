@@ -8,13 +8,14 @@ from fastapi import APIRouter
 from loguru import logger
 
 from nextext.api.schemas import (
+    ConfigResponse,
     HealthResponse,
     LanguageEntry,
     LanguagesResponse,
     VersionResponse,
 )
 from nextext.core.openai_cfg import InferencePipeline
-from nextext.utils.env_cfg import DEFAULT_TARGET_LANG, load_default_target_lang
+from nextext.utils.env_cfg import DEFAULT_TARGET_LANG, load_default_target_lang, load_language_env
 from nextext.utils.mappings_loader import load_mappings
 
 router = APIRouter(tags=["health"])
@@ -52,6 +53,12 @@ def get_health() -> HealthResponse:
 def get_version() -> VersionResponse:
     """Return the running app version (unauthenticated)."""
     return VersionResponse(version=_package_version())
+
+
+@router.get("/config", response_model=ConfigResponse)
+def get_config() -> ConfigResponse:
+    """Return the SPA bootstrap config (UI language). Unauthenticated, like /health."""
+    return ConfigResponse(language=load_language_env().code)
 
 
 def _mapping_to_entries(mapping: dict[str, str]) -> list[LanguageEntry]:

@@ -4,6 +4,7 @@ import { checkUploadAcceptable } from '../../lib/uploadGuard'
 import { readStoredTargetLang, writeStoredTargetLang } from '../../lib/targetLang'
 import { Dropzone } from './Dropzone'
 import { Banner, FileList, mergeFiles } from '@infra/ui'
+import { useT } from '../../i18n/LanguageContext'
 import type { JobOptions, Task } from '../../api/types'
 
 export interface UploadFormProps {
@@ -13,6 +14,7 @@ export interface UploadFormProps {
 
 /** Pipeline-options form + Dropzone. Calls onRun(files, options) on submit. */
 export function UploadForm({ pending, onRun }: UploadFormProps) {
+  const t = useT()
   const languages = useLanguages()
   const [files, setFiles] = useState<File[]>([])
   const [task, setTask] = useState<Task>('transcribe')
@@ -25,7 +27,9 @@ export function UploadForm({ pending, onRun }: UploadFormProps) {
   const [summarization, setSummarization] = useState(false)
   const [hateSpeech, setHateSpeech] = useState(false)
 
-  const sizeError = checkUploadAcceptable(files)
+  const sizeError = checkUploadAcceptable(files, undefined, (vars) =>
+    t('upload.file_too_large', { name: vars.name, sizeGb: vars.sizeGb, limitGb: vars.limitGb }),
+  )
   const canRun = files.length > 0 && !pending && !sizeError
 
   function run() {
@@ -64,29 +68,34 @@ export function UploadForm({ pending, onRun }: UploadFormProps) {
         files={files}
         onRemove={pending ? undefined : (i) => setFiles(files.filter((_, j) => j !== i))}
         onClear={pending ? undefined : () => setFiles([])}
+        labels={{
+          clearAll: t('common.clear_all'),
+          remove: t('common.remove'),
+          files: (count) => t(count === 1 ? 'common.file_count_one' : 'common.file_count_other', { count }),
+        }}
       />
 
       {sizeError && <Banner variant="danger">{sizeError}</Banner>}
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         <label className="space-y-1">
-          <span className="text-sm text-muted-foreground">Task</span>
+          <span className="text-sm text-muted-foreground">{t('options.task')}</span>
           <select className="w-full rounded border border-border bg-muted px-2 py-1" value={task} onChange={(e) => setTask(e.target.value as Task)}>
-            <option value="transcribe">transcribe</option>
-            <option value="translate">translate</option>
+            <option value="transcribe">{t('options.task_transcribe')}</option>
+            <option value="translate">{t('options.task_translate')}</option>
           </select>
         </label>
         <label className="space-y-1">
-          <span className="text-sm text-muted-foreground">Source language</span>
+          <span className="text-sm text-muted-foreground">{t('options.source_language')}</span>
           <select className="w-full rounded border border-border bg-muted px-2 py-1" value={srcLang} onChange={(e) => setSrcLang(e.target.value)}>
-            <option value="">Detect language</option>
+            <option value="">{t('options.auto_detect')}</option>
             {whisper.map((l) => (
               <option key={l.code} value={l.code}>{l.name}</option>
             ))}
           </select>
         </label>
         <label className="space-y-1">
-          <span className="text-sm text-muted-foreground">Target language (translate)</span>
+          <span className="text-sm text-muted-foreground">{t('options.target_language_translate')}</span>
           <select className="w-full rounded border border-border bg-muted px-2 py-1" value={effectiveTrgLang} onChange={(e) => selectTrgLang(e.target.value)}>
             {target.map((l) => (
               <option key={l.code} value={l.code}>{l.name}</option>
@@ -96,10 +105,10 @@ export function UploadForm({ pending, onRun }: UploadFormProps) {
       </div>
 
       <div className="flex gap-4 text-sm">
-        <label className="flex items-center gap-2"><input type="checkbox" checked={diarize} onChange={(e) => setDiarize(e.target.checked)} /> Detect speakers</label>
-        <label className="flex items-center gap-2"><input type="checkbox" checked={words} onChange={(e) => setWords(e.target.checked)} /> Word analysis</label>
-        <label className="flex items-center gap-2"><input type="checkbox" checked={summarization} onChange={(e) => setSummarization(e.target.checked)} /> Summary</label>
-        <label className="flex items-center gap-2"><input type="checkbox" checked={hateSpeech} onChange={(e) => setHateSpeech(e.target.checked)} /> Hate speech</label>
+        <label className="flex items-center gap-2"><input type="checkbox" checked={diarize} onChange={(e) => setDiarize(e.target.checked)} /> {t('options.detect_speakers')}</label>
+        <label className="flex items-center gap-2"><input type="checkbox" checked={words} onChange={(e) => setWords(e.target.checked)} /> {t('options.word_analysis')}</label>
+        <label className="flex items-center gap-2"><input type="checkbox" checked={summarization} onChange={(e) => setSummarization(e.target.checked)} /> {t('options.summary')}</label>
+        <label className="flex items-center gap-2"><input type="checkbox" checked={hateSpeech} onChange={(e) => setHateSpeech(e.target.checked)} /> {t('options.hate_speech')}</label>
       </div>
 
       <button
@@ -107,7 +116,7 @@ export function UploadForm({ pending, onRun }: UploadFormProps) {
         disabled={!canRun}
         onClick={run}
       >
-        {pending ? 'Submitting…' : '▶ Run'}
+        {pending ? t('upload.submitting') : t('upload.run')}
       </button>
     </div>
   )

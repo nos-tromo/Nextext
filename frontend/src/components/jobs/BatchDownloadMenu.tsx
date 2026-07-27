@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { downloadBatchArtifact } from '../../lib/download'
 import { cn } from '../../lib/cn'
+import { useT } from '../../i18n/LanguageContext'
 
 interface BatchDownloadMenuProps {
   /** Number of completed jobs available to include in the batch. */
@@ -10,15 +11,15 @@ interface BatchDownloadMenuProps {
 interface BatchItem {
   /** Backend batch artifact name. */
   name: string
-  /** Menu item label. */
-  label: string
+  /** Menu item label catalog key. */
+  labelKey: 'jobs.combined_jsonl' | 'jobs.full_batch_zip'
   /** Suggested download file name shown to the browser. */
   fileName: string
 }
 
 const ITEMS: BatchItem[] = [
-  { name: 'docint.jsonl', label: 'Combined JSONL (docint)', fileName: 'nextext_docint.jsonl' },
-  { name: 'archive.zip', label: 'Full batch (ZIP)', fileName: 'nextext_batch.zip' },
+  { name: 'docint.jsonl', labelKey: 'jobs.combined_jsonl', fileName: 'nextext_docint.jsonl' },
+  { name: 'archive.zip', labelKey: 'jobs.full_batch_zip', fileName: 'nextext_batch.zip' },
 ]
 
 /**
@@ -32,6 +33,7 @@ const ITEMS: BatchItem[] = [
  * @param completedCount - Number of completed jobs; enables the control.
  */
 export function BatchDownloadMenu({ completedCount }: BatchDownloadMenuProps) {
+  const t = useT()
   const [open, setOpen] = useState(false)
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -79,7 +81,7 @@ export function BatchDownloadMenu({ completedCount }: BatchDownloadMenuProps) {
         disabled={disabled}
         aria-haspopup="menu"
         aria-expanded={open}
-        title={completedCount === 0 ? 'No completed jobs yet' : undefined}
+        title={completedCount === 0 ? t('jobs.no_completed_yet') : undefined}
         onClick={() => setOpen((v) => !v)}
         className={cn(
           'rounded border border-border px-3 py-1 text-sm transition-colors',
@@ -88,7 +90,7 @@ export function BatchDownloadMenu({ completedCount }: BatchDownloadMenuProps) {
             : 'text-foreground hover:border-primary hover:text-primary',
         )}
       >
-        {busy !== null ? 'Downloading…' : 'Download all jobs ▾'}
+        {busy !== null ? t('jobs.downloading') : t('jobs.download_all')}
       </button>
       {open && (
         <div
@@ -103,7 +105,7 @@ export function BatchDownloadMenu({ completedCount }: BatchDownloadMenuProps) {
               onClick={() => void handleSelect(item)}
               className="block w-full px-3 py-1.5 text-left text-sm text-foreground hover:bg-accent hover:text-primary"
             >
-              {item.label}
+              {t(item.labelKey)}
             </button>
           ))}
         </div>

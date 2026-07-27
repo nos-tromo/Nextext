@@ -1,5 +1,6 @@
 import { DownloadButtons } from './DownloadButtons'
 import { transcriptHasSpeaker, transcriptHasTranslation } from '../../lib/transcriptTable'
+import { useT } from '../../i18n/LanguageContext'
 import type { TranscriptSegment } from '../../api/types'
 
 interface TranscriptTabProps {
@@ -22,13 +23,14 @@ interface TranscriptTabProps {
  * @param stem - Upload filename without extension; used to prefix download names.
  */
 export function TranscriptTab({ jobId, segments, stem }: TranscriptTabProps) {
+  const t = useT()
   const hasSpeaker = transcriptHasSpeaker(segments)
   const hasTranslation = transcriptHasTranslation(segments)
 
   const txtItems = hasTranslation
     ? [
-        { name: 'transcript.txt', label: 'Transcript TXT', fileName: `${stem}_transcript.txt` },
-        { name: 'translation.txt', label: 'Translation TXT', fileName: `${stem}_translation.txt` },
+        { name: 'transcript.txt', label: t('downloads.transcript_txt'), fileName: `${stem}_transcript.txt` },
+        { name: 'translation.txt', label: t('downloads.translation_txt'), fileName: `${stem}_translation.txt` },
       ]
     : [{ name: 'transcript.txt', label: 'TXT', fileName: `${stem}_transcript.txt` }]
 
@@ -38,11 +40,13 @@ export function TranscriptTab({ jobId, segments, stem }: TranscriptTabProps) {
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-border bg-muted text-muted-foreground">
-              <th className="px-4 py-2 text-left font-medium">Start</th>
-              <th className="px-4 py-2 text-left font-medium">End</th>
-              {hasSpeaker && <th className="px-4 py-2 text-left font-medium">Speaker</th>}
-              <th className="px-4 py-2 text-left font-medium">{hasTranslation ? 'Transcript' : 'Text'}</th>
-              {hasTranslation && <th className="px-4 py-2 text-left font-medium">Translation</th>}
+              <th className="px-4 py-2 text-left font-medium">{t('results.col_start')}</th>
+              <th className="px-4 py-2 text-left font-medium">{t('results.col_end')}</th>
+              {hasSpeaker && <th className="px-4 py-2 text-left font-medium">{t('results.col_speaker')}</th>}
+              <th className="px-4 py-2 text-left font-medium">
+                {hasTranslation ? t('results.col_transcript') : t('results.col_text')}
+              </th>
+              {hasTranslation && <th className="px-4 py-2 text-left font-medium">{t('results.col_translation')}</th>}
             </tr>
           </thead>
           <tbody>

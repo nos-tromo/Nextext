@@ -833,6 +833,74 @@ def test_load_language_env_invalid_warns_and_defaults(
     assert "NEXTEXT_RESPONSE_LANGUAGE" in sink.getvalue()
 
 
+def test_load_language_env_invalid_uniform_var_names_uniform_var(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An unsupported RESPONSE_LANGUAGE names itself, not the deprecated alias.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Fixture for patching environment variables.
+    """
+    from loguru import logger
+
+    monkeypatch.delenv("NEXTEXT_RESPONSE_LANGUAGE", raising=False)
+    monkeypatch.setenv("RESPONSE_LANGUAGE", "xx")
+
+    sink = io.StringIO()
+    handler_id = logger.add(sink, level="WARNING")
+    try:
+        cfg = load_language_env()
+    finally:
+        logger.remove(handler_id)
+
+    assert cfg.code == "en"
+    warning = sink.getvalue()
+    assert "Unknown RESPONSE_LANGUAGE 'xx'" in warning
+    assert "NEXTEXT_RESPONSE_LANGUAGE" not in warning
+
+
+def test_language_env_uniform_var(monkeypatch: pytest.MonkeyPatch) -> None:
+    """RESPONSE_LANGUAGE (uniform federation name) selects the language."""
+    monkeypatch.delenv("NEXTEXT_RESPONSE_LANGUAGE", raising=False)
+    monkeypatch.setenv("RESPONSE_LANGUAGE", "de")
+
+    assert load_language_env().code == "de"
+
+
+def test_language_env_uniform_var_wins_over_legacy(monkeypatch: pytest.MonkeyPatch) -> None:
+    """When both are set, the uniform name wins."""
+    monkeypatch.setenv("RESPONSE_LANGUAGE", "en")
+    monkeypatch.setenv("NEXTEXT_RESPONSE_LANGUAGE", "de")
+
+    assert load_language_env().code == "en"
+
+
+def test_language_env_legacy_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
+    """NEXTEXT_RESPONSE_LANGUAGE still works (deprecated, one release)."""
+    monkeypatch.delenv("RESPONSE_LANGUAGE", raising=False)
+    monkeypatch.setenv("NEXTEXT_RESPONSE_LANGUAGE", "de")
+
+    assert load_language_env().code == "de"
+
+
+def test_language_env_blank_uniform_falls_through_to_legacy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A blank RESPONSE_LANGUAGE still lets the legacy fallback through.
+
+    Covers the Docker case where an unset ``.env`` value resolves to a
+    blank ``RESPONSE_LANGUAGE`` via compose's ``${RESPONSE_LANGUAGE:-}``,
+    which must not shadow ``NEXTEXT_RESPONSE_LANGUAGE``.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Fixture for patching environment variables.
+    """
+    monkeypatch.setenv("RESPONSE_LANGUAGE", "")
+    monkeypatch.setenv("NEXTEXT_RESPONSE_LANGUAGE", "de")
+
+    assert load_language_env().code == "de"
+
+
 # ---------------------------------------------------------------------------
 # load_job_concurrency
 # ---------------------------------------------------------------------------

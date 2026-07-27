@@ -1,5 +1,6 @@
 import { useRef, useState, type DragEvent } from 'react'
 import { cn } from '../../lib/cn'
+import { useT } from '../../i18n/LanguageContext'
 
 const ACCEPT = '.mp3,.m4a,.mp4,.mkv,.ogg,.wav,.webm'
 
@@ -10,6 +11,7 @@ export interface DropzoneProps {
 
 /** Click-or-drag file picker. Calls onFiles with the selected File[]. */
 export function Dropzone({ onFiles, disabled = false }: DropzoneProps) {
+  const t = useT()
   const inputRef = useRef<HTMLInputElement>(null)
   const [dragging, setDragging] = useState(false)
 
@@ -49,7 +51,7 @@ export function Dropzone({ onFiles, disabled = false }: DropzoneProps) {
         disabled && 'cursor-not-allowed opacity-50',
       )}
     >
-      <p className="text-foreground">Drop audio/video files here, or click to choose</p>
+      <p className="text-foreground">{t('upload.drop_hint')}</p>
       <p className="mt-1 text-sm text-muted-foreground">mp3, m4a, mp4, mkv, ogg, wav, webm</p>
       <input
         ref={inputRef}

@@ -143,6 +143,12 @@ class VersionResponse(BaseModel):
     version: str
 
 
+class ConfigResponse(BaseModel):
+    """Client bootstrap config for the SPA."""
+
+    language: str
+
+
 class LanguageEntry(BaseModel):
     """One language entry returned by ``GET /languages``."""
 

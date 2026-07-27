@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useJobResult } from '../../hooks/useJobResult'
 import { Spinner } from '../common/Spinner'
 import { Banner } from '@infra/ui'
+import { useT } from '../../i18n/LanguageContext'
 import { DownloadButtons } from './DownloadButtons'
 import { TranscriptTab } from './TranscriptTab'
 import { SummaryTab } from './SummaryTab'
@@ -37,6 +38,7 @@ interface TabSpec {
  *   prefixing download filenames (e.g. `clip.wav` → stem `clip`).
  */
 export function ResultPanel({ jobId, fileName }: ResultPanelProps) {
+  const t = useT()
   const query = useJobResult(jobId, true)
   const [activeTab, setActiveTab] = useState<TabId>('transcript')
 
@@ -47,24 +49,26 @@ export function ResultPanel({ jobId, fileName }: ResultPanelProps) {
   const stem = (dotIdx > 0 ? fileName.slice(0, dotIdx) : fileName) || 'result'
 
   if (query.isLoading) {
-    return <Spinner label="Loading results…" />
+    return <Spinner label={t('results.loading')} />
   }
 
   if (query.isError) {
     const msg = query.error instanceof Error ? query.error.message : String(query.error)
-    return <Banner variant="danger">{`Failed to load results: ${msg}`}</Banner>
+    return <Banner variant="danger">{t('results.load_failed', { error: msg })}</Banner>
   }
 
   const result = query.data
 
   if (result === null || result === undefined) {
-    return <p className="text-sm text-muted-foreground">No result data available.</p>
+    return <p className="text-sm text-muted-foreground">{t('results.no_data')}</p>
   }
 
   if (result.skipped) {
     return (
       <p className="text-sm text-muted-foreground">
-        Job was skipped{result.skip_reason ? `: ${result.skip_reason}` : '.'}
+        {result.skip_reason
+          ? t('results.skipped_reason', { reason: result.skip_reason })
+          : t('results.skipped')}
       </p>
     )
   }
@@ -73,20 +77,20 @@ export function ResultPanel({ jobId, fileName }: ResultPanelProps) {
   const availableTabs: TabSpec[] = []
 
   if (result.transcript.length > 0) {
-    availableTabs.push({ id: 'transcript', label: 'Transcript' })
+    availableTabs.push({ id: 'transcript', label: t('results.tab_transcript') })
   }
   if (result.summary) {
-    availableTabs.push({ id: 'summary', label: 'Summary' })
+    availableTabs.push({ id: 'summary', label: t('results.tab_summary') })
   }
   if (result.word_counts && result.word_counts.length > 0) {
-    availableTabs.push({ id: 'words', label: 'Words' })
-    availableTabs.push({ id: 'wordcloud', label: 'Word Cloud' })
+    availableTabs.push({ id: 'words', label: t('results.tab_words') })
+    availableTabs.push({ id: 'wordcloud', label: t('results.tab_wordcloud') })
   }
   if (result.named_entities && result.named_entities.length > 0) {
-    availableTabs.push({ id: 'entities', label: 'Entities' })
+    availableTabs.push({ id: 'entities', label: t('results.tab_entities') })
   }
   if (result.hate_speech_findings && result.hate_speech_findings.length > 0) {
-    availableTabs.push({ id: 'hate_speech', label: 'Hate Speech' })
+    availableTabs.push({ id: 'hate_speech', label: t('results.tab_hate_speech') })
   }
 
   // If the current active tab is no longer available, fall back to the first one.
@@ -97,7 +101,7 @@ export function ResultPanel({ jobId, fileName }: ResultPanelProps) {
     <div className="space-y-4">
       {/* Header row: tab bar + archive download */}
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <nav className="flex flex-wrap gap-1" aria-label="Result tabs">
+        <nav className="flex flex-wrap gap-1" aria-label={t('results.tab_nav_label')}>
           {availableTabs.map((tab) => (
             <button
               key={tab.id}
@@ -119,7 +123,7 @@ export function ResultPanel({ jobId, fileName }: ResultPanelProps) {
           items={[
             {
               name: 'archive.zip',
-              label: 'Download all (.zip)',
+              label: t('artifacts.download_archive'),
               fileName: `${stem}_archive.zip`,
             },
           ]}
