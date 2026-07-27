@@ -1,6 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { deleteJob, listJobs, submitJob } from '../api/jobs'
 import { ApiError } from '../api/client'
+import { describeError } from '../api/errorMessage'
+import type { ErrorDescriptor } from '../api/errorMessage'
 import type { JobListItem, JobOptions } from '../api/types'
 
 /** The caller's jobs, re-fetched on mount (reload re-discovery). */
@@ -20,7 +22,7 @@ export interface SubmitBatchVars {
 export interface SubmittedJob {
   job_id: string
   file_name: string
-  error?: string
+  error?: ErrorDescriptor
 }
 
 /**
@@ -37,7 +39,7 @@ export function useSubmitBatch() {
           const res = await submitJob(file.name, file, options)
           submitted.push({ job_id: res.job_id, file_name: file.name })
         } catch (err) {
-          submitted.push({ job_id: '', file_name: file.name, error: err instanceof Error ? err.message : String(err) })
+          submitted.push({ job_id: '', file_name: file.name, error: describeError(err) })
         }
       }
       return submitted

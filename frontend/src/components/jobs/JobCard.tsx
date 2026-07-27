@@ -4,6 +4,7 @@ import { ResultPanel } from '../results/ResultPanel'
 import { useJobProgressStore } from '../../lib/jobProgressStore'
 import { initialJobProgress } from '../../lib/jobProgress'
 import { useT } from '../../i18n/LanguageContext'
+import { describeError } from '../../api/errorMessage'
 import type { Strings } from '../../i18n'
 import type { JobListItem } from '../../api/types'
 import type { JobProgressStatus } from '../../lib/jobProgress'
@@ -89,7 +90,7 @@ export function JobCard({ job }: { job: JobListItem }) {
       </div>
       <p className="mt-1 text-sm text-muted-foreground">
         {p.status === 'failed'
-          ? (p.error ?? t('jobs.unknown_error'))
+          ? t('jobs.unknown_error')
           : p.skipped
             ? t('jobs.skipped')
             : p.stageLabel
@@ -100,7 +101,7 @@ export function JobCard({ job }: { job: JobListItem }) {
       </p>
       {del.isError && (
         <p className="mt-1 text-sm text-danger">
-          {t('jobs.remove_failed', { error: del.error?.message ?? t('jobs.unknown_error') })}
+          {t('jobs.remove_failed')} {t(describeError(del.error).key, describeError(del.error).vars)}
         </p>
       )}
       {p.status === 'completed' && showResults && (

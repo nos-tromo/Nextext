@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from 'react'
 import { downloadBatchArtifact } from '../../lib/download'
 import { cn } from '../../lib/cn'
 import { useT } from '../../i18n/LanguageContext'
+import { describeError } from '../../api/errorMessage'
+import type { ErrorDescriptor } from '../../api/errorMessage'
 
 interface BatchDownloadMenuProps {
   /** Number of completed jobs available to include in the batch. */
@@ -36,7 +38,7 @@ export function BatchDownloadMenu({ completedCount }: BatchDownloadMenuProps) {
   const t = useT()
   const [open, setOpen] = useState(false)
   const [busy, setBusy] = useState<string | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState<ErrorDescriptor | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
 
   const disabled = completedCount === 0 || busy !== null
@@ -67,7 +69,7 @@ export function BatchDownloadMenu({ completedCount }: BatchDownloadMenuProps) {
     try {
       await downloadBatchArtifact(item.name, item.fileName)
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
+      setError(describeError(err))
     } finally {
       setBusy(null)
     }
@@ -75,7 +77,7 @@ export function BatchDownloadMenu({ completedCount }: BatchDownloadMenuProps) {
 
   return (
     <div ref={containerRef} className="relative flex items-center gap-2">
-      {error && <span className="text-sm text-danger">{error}</span>}
+      {error && <span className="text-sm text-danger">{t(error.key, error.vars)}</span>}
       <button
         type="button"
         disabled={disabled}
