@@ -18,7 +18,7 @@ export const de: Strings = {
   'home.jobs_heading': 'Aufträge',
 
   // upload
-  'upload.drop_hint': 'Audio- oder Videodateien hier ablegen oder klicken, um sie auszuwählen',
+  'upload.drop_hint': 'Audio- oder Videodateien hochladen',
   'upload.file_too_large':
     '"{name}" ist {sizeGb} GB groß und überschreitet das Limit von {limitGb} GB pro Datei. Teilen Sie die Datei auf, oder verwenden Sie `nextext-cli` für sehr große lokale Dateien.',
   'upload.run': '▶ Starten',
@@ -27,13 +27,13 @@ export const de: Strings = {
   // options
   'options.task': 'Aufgabe',
   'options.task_transcribe': 'Transkribieren',
-  'options.task_translate': 'Übersetzen',
-  'options.source_language': 'Ausgangssprache',
+  'options.task_translate': 'Transkribieren & Übersetzen',
+  'options.source_language': 'Ausgangssprache (Daten)',
   'options.target_language_translate': 'Zielsprache (Übersetzung)',
   'options.auto_detect': 'Sprache erkennen',
   'options.summary': 'Zusammenfassung',
-  'options.hate_speech': 'Hassrede',
-  'options.detect_speakers': 'Sprecher erkennen',
+  'options.hate_speech': 'Hatespeech',
+  'options.detect_speakers': 'Sprechererkennung',
   'options.word_analysis': 'Wortanalyse',
 
   // processing (terminal job states only; in-flight stage text is protocol —
@@ -53,9 +53,9 @@ export const de: Strings = {
   'results.tab_transcript': 'Transkript',
   'results.tab_summary': 'Zusammenfassung',
   'results.tab_words': 'Wörter',
-  'results.tab_wordcloud': 'Wortwolke',
+  'results.tab_wordcloud': 'Wörterwolke',
   'results.tab_entities': 'Entitäten',
-  'results.tab_hate_speech': 'Hassrede',
+  'results.tab_hate_speech': 'Hatespeech',
   'results.tab_nav_label': 'Ergebnis-Tabs',
   'results.loading': 'Ergebnisse werden geladen…',
   'results.load_failed': 'Ergebnisse konnten nicht geladen werden: {error}',
@@ -70,7 +70,7 @@ export const de: Strings = {
   'results.col_category': 'Kategorie',
   'results.col_frequency': 'Häufigkeit',
   'results.no_summary': 'Keine Zusammenfassung für diesen Auftrag erstellt.',
-  'results.no_hate_speech': 'Keine Hassrede-Befunde für diesen Auftrag.',
+  'results.no_hate_speech': 'Keine Hatespeech-Befunde für diesen Auftrag.',
   'results.flagged_summary_one': '{flagged} von {total} Segment markiert.',
   'results.flagged_summary_other': '{flagged} von {total} Segmenten markiert.',
   'results.flagged': 'Markiert',
@@ -81,8 +81,8 @@ export const de: Strings = {
   'results.col_transcript': 'Transkript',
   'results.col_text': 'Text',
   'results.col_translation': 'Übersetzung',
-  'results.wordcloud_loading': 'Wortwolke wird geladen…',
-  'results.wordcloud_alt': 'Wortwolke',
+  'results.wordcloud_loading': 'Wörterwolke wird geladen…',
+  'results.wordcloud_alt': 'Wörterwolke',
 
   // jobs (JobCard, BatchProgress, BatchDownloadMenu, ClearJobsMenu)
   'jobs.status_queued': 'In Warteschlange',
@@ -116,5 +116,5 @@ export const de: Strings = {
   'jobs.no_jobs_to_clear': 'Keine Aufträge zu löschen',
 
   // errors
-  'errors.upload_failed': 'Übermittlung fehlgeschlagen: {error}',
+  'errors.upload_failed': 'Upload fehlgeschlagen: {error}',
 }

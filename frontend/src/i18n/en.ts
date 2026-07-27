@@ -16,7 +16,7 @@ export const en = {
   'home.jobs_heading': 'Jobs',
 
   // upload
-  'upload.drop_hint': 'Drop audio/video files here, or click to choose',
+  'upload.drop_hint': 'Upload audio/video files',
   'upload.file_too_large':
     '"{name}" is {sizeGb} GB, over the {limitGb} GB per-file limit. Split it, or use `nextext-cli` for very large local files.',
   'upload.run': '▶ Run',
@@ -25,8 +25,8 @@ export const en = {
   // options
   'options.task': 'Task',
   'options.task_transcribe': 'Transcribe',
-  'options.task_translate': 'Translate',
-  'options.source_language': 'Source language',
+  'options.task_translate': 'Transcribe & translate',
+  'options.source_language': 'Source language (data)',
   'options.target_language_translate': 'Target language (translate)',
   'options.auto_detect': 'Detect language',
   'options.summary': 'Summary',
