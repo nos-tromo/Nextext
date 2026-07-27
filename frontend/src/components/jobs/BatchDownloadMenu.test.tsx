@@ -42,11 +42,15 @@ describe('BatchDownloadMenu', () => {
     await waitFor(() => expect(mockedDownload).toHaveBeenCalledWith('archive.zip', 'nextext_batch.zip'))
   })
 
-  it('surfaces an inline error when the download fails', async () => {
+  it('surfaces a generic localized inline error when the download fails', async () => {
     mockedDownload.mockRejectedValueOnce(new Error('no jobs to download'))
     render(<BatchDownloadMenu completedCount={1} />)
     fireEvent.click(screen.getByRole('button', { name: /Download all jobs/ }))
     fireEvent.click(screen.getByRole('menuitem', { name: 'Combined JSONL (docint)' }))
-    await waitFor(() => expect(screen.getByText('no jobs to download')).toBeInTheDocument())
+    await waitFor(() =>
+      expect(
+        screen.getByText('Something went wrong. Please try again or contact support.'),
+      ).toBeInTheDocument(),
+    )
   })
 })

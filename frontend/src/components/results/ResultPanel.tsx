@@ -3,6 +3,7 @@ import { useJobResult } from '../../hooks/useJobResult'
 import { Spinner } from '../common/Spinner'
 import { Banner } from '@infra/ui'
 import { useT } from '../../i18n/LanguageContext'
+import { describeError } from '../../api/errorMessage'
 import { DownloadButtons } from './DownloadButtons'
 import { TranscriptTab } from './TranscriptTab'
 import { SummaryTab } from './SummaryTab'
@@ -53,8 +54,12 @@ export function ResultPanel({ jobId, fileName }: ResultPanelProps) {
   }
 
   if (query.isError) {
-    const msg = query.error instanceof Error ? query.error.message : String(query.error)
-    return <Banner variant="danger">{t('results.load_failed', { error: msg })}</Banner>
+    const d = describeError(query.error)
+    return (
+      <Banner variant="danger">
+        {t('results.load_failed')} {t(d.key, d.vars)}
+      </Banner>
+    )
   }
 
   const result = query.data

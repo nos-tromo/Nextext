@@ -3,6 +3,9 @@ export const en = {
   'common.cancel': 'Cancel',
   'common.remove': 'Remove',
   'common.clear_all': 'Clear all',
+  'common.error_request': 'Something went wrong ({status}). Please try again or contact support.',
+  'common.error_unknown': 'Something went wrong. Please try again or contact support.',
+  'common.error_network': 'Service unreachable. Please check your connection or try again later.',
   'common.file_count_one': '{count} file',
   'common.file_count_other': '{count} files',
   'common.jobs_processing': '{count} processing',
@@ -57,7 +60,7 @@ export const en = {
   'results.tab_hate_speech': 'Hate Speech',
   'results.tab_nav_label': 'Result tabs',
   'results.loading': 'Loading results…',
-  'results.load_failed': 'Failed to load results: {error}',
+  'results.load_failed': 'Failed to load results.',
   'results.no_data': 'No result data available.',
   'results.skipped': 'Job was skipped.',
   'results.skipped_reason': 'Job was skipped: {reason}',
@@ -95,9 +98,9 @@ export const en = {
   'jobs.waiting': 'Waiting…',
   'jobs.done': 'Done',
   'jobs.stage_progress': '{stage} ({pct}%)',
-  'jobs.remove_failed': 'Could not remove job: {error}',
+  'jobs.remove_failed': 'Could not remove job.',
   'jobs.loading': 'Loading jobs…',
-  'jobs.load_failed': 'Could not load jobs: {error}',
+  'jobs.load_failed': 'Could not load jobs.',
   'jobs.none_yet': 'No jobs yet.',
   'jobs.download_all': 'Download all jobs ▾',
   'jobs.downloading': 'Downloading…',
@@ -115,5 +118,5 @@ export const en = {
   'jobs.no_jobs_to_clear': 'No jobs to clear',
 
   // errors
-  'errors.upload_failed': 'Submission failed: {error}',
+  'errors.upload_failed': 'Submission failed.',
 }

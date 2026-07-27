@@ -820,16 +820,16 @@ class JobManager:
                         "timestamp": _utcnow().isoformat(),
                     },
                 )
-            except Exception as exc:
+            except Exception:
                 logger.exception("Job {} failed.", state.job_id)
                 state.status = JobStatus.FAILED
-                state.error = str(exc)
+                state.error = "Job failed."
                 state.finished_at = _utcnow()
                 _push(
                     "job_failed",
                     {
                         "job_id": state.job_id,
-                        "error": str(exc),
+                        "error": "Job failed.",
                         "timestamp": _utcnow().isoformat(),
                     },
                 )

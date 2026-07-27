@@ -5,6 +5,9 @@ export const de: Strings = {
   'common.cancel': 'Abbrechen',
   'common.remove': 'Entfernen',
   'common.clear_all': 'Alle entfernen',
+  'common.error_request': 'Fehler ({status}) – Bitte versuchen Sie es erneut oder kontaktieren Sie den Support.',
+  'common.error_unknown': 'Fehler – Bitte versuchen Sie es erneut oder kontaktieren Sie den Support.',
+  'common.error_network': 'Dienst nicht erreichbar – Bitte prüfen Sie Ihre Verbindung oder versuchen Sie es später erneut.',
   'common.file_count_one': '{count} Datei',
   'common.file_count_other': '{count} Dateien',
   'common.jobs_processing': '{count} in Verarbeitung',
@@ -58,7 +61,7 @@ export const de: Strings = {
   'results.tab_hate_speech': 'Hatespeech',
   'results.tab_nav_label': 'Ergebnis-Tabs',
   'results.loading': 'Ergebnisse werden geladen…',
-  'results.load_failed': 'Ergebnisse konnten nicht geladen werden: {error}',
+  'results.load_failed': 'Ergebnisse konnten nicht geladen werden.',
   'results.no_data': 'Keine Ergebnisdaten verfügbar.',
   'results.skipped': 'Auftrag wurde übersprungen.',
   'results.skipped_reason': 'Auftrag wurde übersprungen: {reason}',
@@ -96,9 +99,9 @@ export const de: Strings = {
   'jobs.waiting': 'Wartet…',
   'jobs.done': 'Fertig',
   'jobs.stage_progress': '{stage} ({pct}%)',
-  'jobs.remove_failed': 'Auftrag konnte nicht entfernt werden: {error}',
+  'jobs.remove_failed': 'Auftrag konnte nicht entfernt werden.',
   'jobs.loading': 'Aufträge werden geladen…',
-  'jobs.load_failed': 'Aufträge konnten nicht geladen werden: {error}',
+  'jobs.load_failed': 'Aufträge konnten nicht geladen werden.',
   'jobs.none_yet': 'Noch keine Aufträge.',
   'jobs.download_all': 'Alle Aufträge herunterladen ▾',
   'jobs.downloading': 'Wird heruntergeladen…',
@@ -116,5 +119,5 @@ export const de: Strings = {
   'jobs.no_jobs_to_clear': 'Keine Aufträge zu löschen',
 
   // errors
-  'errors.upload_failed': 'Upload fehlgeschlagen: {error}',
+  'errors.upload_failed': 'Übermittlung fehlgeschlagen.',
 }

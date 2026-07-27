@@ -1,6 +1,9 @@
 import { useState } from 'react'
 import { downloadArtifact } from '../../lib/download'
 import { cn } from '../../lib/cn'
+import { useT } from '../../i18n/LanguageContext'
+import { describeError } from '../../api/errorMessage'
+import type { ErrorDescriptor } from '../../api/errorMessage'
 
 interface DownloadSpec {
   /** Artifact name on the backend, e.g. `transcript.csv`. */
@@ -27,8 +30,9 @@ interface DownloadButtonsProps {
  * @param items - The list of artifacts to expose as download buttons.
  */
 export function DownloadButtons({ jobId, items }: DownloadButtonsProps) {
+  const t = useT()
   const [busy, setBusy] = useState<string | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState<ErrorDescriptor | null>(null)
 
   async function handleClick(item: DownloadSpec) {
     if (busy) return
@@ -37,7 +41,7 @@ export function DownloadButtons({ jobId, items }: DownloadButtonsProps) {
     try {
       await downloadArtifact(jobId, item.name, item.fileName)
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
+      setError(describeError(err))
     } finally {
       setBusy(null)
     }
@@ -61,7 +65,7 @@ export function DownloadButtons({ jobId, items }: DownloadButtonsProps) {
           {busy === item.name ? '…' : item.label}
         </button>
       ))}
-      {error && <span className="text-sm text-danger">{error}</span>}
+      {error && <span className="text-sm text-danger">{t(error.key, error.vars)}</span>}
     </div>
   )
 }

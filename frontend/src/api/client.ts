@@ -14,7 +14,7 @@ export class ApiError extends Error {
   readonly status: number
   readonly detail: unknown
   constructor(status: number, detail: unknown) {
-    super(`API ${status}: ${typeof detail === 'string' ? detail : JSON.stringify(detail)}`)
+    super(`API ${status}`)
     this.name = 'ApiError'
     this.status = status
     this.detail = detail

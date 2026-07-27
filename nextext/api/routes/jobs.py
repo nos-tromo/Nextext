@@ -119,16 +119,18 @@ def _parse_options(raw: str) -> JobOptions:
     try:
         payload = json.loads(raw)
     except json.JSONDecodeError as exc:
+        logger.warning(f"Invalid options JSON: {exc}")
         raise HTTPException(
             status_code=422,
-            detail=f"Invalid JSON in `options`: {exc.msg}",
+            detail="Invalid request.",
         ) from exc
     try:
         return JobOptions.model_validate(payload)
     except ValidationError as exc:
+        logger.warning(f"Invalid options: {exc.errors()}")
         raise HTTPException(
             status_code=422,
-            detail=exc.errors(),
+            detail="Invalid request.",
         ) from exc
 
 

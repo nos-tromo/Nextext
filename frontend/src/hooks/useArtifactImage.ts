@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react'
 import { fetchArtifactObjectUrl } from '../lib/download'
+import { describeError } from '../api/errorMessage'
+import type { ErrorDescriptor } from '../api/errorMessage'
 
 interface ArtifactImageState {
   url: string | null
   loading: boolean
-  error: string | null
+  error: ErrorDescriptor | null
 }
 
 /**
@@ -43,7 +45,7 @@ export function useArtifactImage(
         }
       } catch (err: unknown) {
         if (!revoked) {
-          setState({ url: null, loading: false, error: err instanceof Error ? err.message : String(err) })
+          setState({ url: null, loading: false, error: describeError(err) })
         }
       }
     }
