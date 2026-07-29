@@ -45,7 +45,9 @@ describe('Shell', () => {
   it('renders the app title and its children', () => {
     stubJobs([])
     mountShell()
-    expect(screen.getByText('Nextext')).toBeInTheDocument()
+    // Both the AppHeader (portal nav) and the sticky Shell header show the
+    // app title.
+    expect(screen.getAllByText('Nextext')).toHaveLength(2)
     expect(screen.getByText('page-body')).toBeInTheDocument()
   })
 
@@ -78,6 +80,9 @@ describe('Shell', () => {
   it('pins the header to the top so it stays visible while scrolling', () => {
     stubJobs([])
     mountShell()
-    expect(screen.getByRole('banner')).toHaveClass('sticky', 'top-0')
+    const banners = screen.getAllByRole('banner')
+    expect(banners.some((el) => el.classList.contains('sticky') && el.classList.contains('top-0'))).toBe(
+      true,
+    )
   })
 })
