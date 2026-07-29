@@ -1,17 +1,20 @@
 import type { ReactNode } from 'react'
-import { AppHeader, Shell as UIShell } from '@infra/ui'
+import { useQuery } from '@tanstack/react-query'
+import { AppHeader } from '@infra/ui'
 import { StatusBar } from './StatusBar'
-import { VersionBadge } from '../VersionBadge'
+import { getVersion } from '../../api/meta'
 import { useOwnerJobStream } from '../../hooks/useOwnerJobStream'
 import { useT } from '../../i18n/LanguageContext'
 
 /**
- * Nextext app shell: the shared `@infra/ui` AppHeader (portal link, theme
- * toggle) sits above the shared, sticky `@infra/ui` Shell, which supplies the
- * app title and the global job StatusBar plus the version badge as its
- * right-aligned actions slot. Nextext has no server-exposed signed-in
- * identity to show in AppHeader's `user` slot (the backend's trusted-header
- * principal is never echoed back to the browser), so it's left undefined.
+ * Nextext app shell: a single header row — the shared `@infra/ui` AppHeader
+ * (back link, title, version, theme toggle) — above the page body. Nextext
+ * has no server-exposed signed-in identity to show in AppHeader's `user`
+ * slot (the backend's trusted-header principal is never echoed back to the
+ * browser), so it's left undefined. The global job {@link StatusBar} (empty
+ * when there are no jobs) renders as a slim, non-header strip directly below
+ * AppHeader rather than inside it, so it never competes with the single
+ * header row.
  *
  * Mounts {@link useOwnerJobStream} once here so the whole session shares a
  * single owner-multiplexed SSE connection feeding every job's live progress —
@@ -20,10 +23,17 @@ import { useT } from '../../i18n/LanguageContext'
 export function Shell({ children }: { children: ReactNode }) {
   useOwnerJobStream()
   const t = useT()
+  const { data } = useQuery({
+    queryKey: ['version'],
+    queryFn: getVersion,
+    staleTime: Infinity,
+  })
   return (
-    <>
+    <div className="min-h-screen flex flex-col bg-background text-foreground">
       <AppHeader
         title="Nextext"
+        version={data?.version ? `v${data.version}` : undefined}
+        className="sticky top-0 z-20"
         homeLabel={t('header.home')}
         themeLabels={{
           system: t('header.theme_system'),
@@ -31,17 +41,10 @@ export function Shell({ children }: { children: ReactNode }) {
           dark: t('header.theme_dark'),
         }}
       />
-      <UIShell
-        title="Nextext"
-        actions={
-          <div className="flex items-center gap-2">
-            <StatusBar />
-            <VersionBadge />
-          </div>
-        }
-      >
-        {children}
-      </UIShell>
-    </>
+      <div className="flex justify-end px-6 py-2">
+        <StatusBar />
+      </div>
+      <main className="mx-auto w-full max-w-5xl flex-1 px-6 py-8">{children}</main>
+    </div>
   )
 }
