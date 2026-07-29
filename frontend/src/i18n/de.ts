@@ -16,6 +16,12 @@ export const de: Strings = {
   'common.jobs_failed': '{count} fehlgeschlagen',
   'common.batch_progress': '{pct}% der Dateien fertig',
 
+  // header (AppHeader)
+  'header.home': 'Übersicht',
+  'header.theme_system': 'System',
+  'header.theme_light': 'Hell',
+  'header.theme_dark': 'Dunkel',
+
   // home
   'home.new_job': 'Neuer Auftrag',
   'home.jobs_heading': 'Aufträge',

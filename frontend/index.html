@@ -1,9 +1,18 @@
 <!doctype html>
-<html lang="en" class="dark">
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Nextext</title>
+    <script>
+      /* infra-ui theme: stamp explicit choice before first paint (FOUC guard) */
+      ;(function () {
+        try {
+          var t = localStorage.getItem('infra-ui-theme')
+          if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t
+        } catch (e) {}
+      })()
+    </script>
   </head>
   <body>
     <div id="root"></div>

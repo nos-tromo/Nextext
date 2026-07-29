@@ -3,8 +3,23 @@
 @plugin '@tailwindcss/typography';
 @source '../../node_modules/@infra/ui/dist';
 
+/* Nextext doesn't otherwise set --app-accent, so it inherits the family
+   blue (hsl(217 91% 60%)). That default is used as text (e.g. JobCard
+   links) and only reaches ~3.6:1 on the light palette's white background —
+   below WCAG AA (4.5:1). Darken it to hsl(217 91% 45%) (~6:1 on white) for
+   the light palette; the dark palette keeps the original, which is already
+   AA on its dark background. Mirrors theme.css's own attribute/media
+   cascade so the accent tracks whichever palette is actually resolved. */
 :root {
-  color-scheme: dark;
+  --app-accent: hsl(217 91% 45%);
+}
+:root[data-theme='dark'] {
+  --app-accent: hsl(217 91% 60%);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) {
+    --app-accent: hsl(217 91% 60%);
+  }
 }
 
 html,

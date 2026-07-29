@@ -14,6 +14,12 @@ export const en = {
   'common.jobs_failed': '{count} failed',
   'common.batch_progress': '{pct}% of files done',
 
+  // header (AppHeader)
+  'header.home': 'Apps',
+  'header.theme_system': 'system',
+  'header.theme_light': 'light',
+  'header.theme_dark': 'dark',
+
   // home
   'home.new_job': 'New job',
   'home.jobs_heading': 'Jobs',
