@@ -149,6 +149,16 @@ class ConfigResponse(BaseModel):
     language: str
 
 
+class WhoamiResponse(BaseModel):
+    """The resolved calling identity, for the SPA's AppHeader."""
+
+    username: str
+    # Decorative only — the edge gateway's Authelia displayname, injected
+    # alongside (not instead of) X-Auth-User. Never part of principal
+    # resolution/identity; None when the gateway isn't in front (dev).
+    display_name: str | None = None
+
+
 class LanguageEntry(BaseModel):
     """One language entry returned by ``GET /languages``."""
 
