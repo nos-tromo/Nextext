@@ -175,3 +175,8 @@ export interface LanguagesResponse {
 export interface AppConfig {
   language: 'en' | 'de'
 }
+
+export interface WhoamiResponse {
+  username: string
+  display_name: string | null
+}

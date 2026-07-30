@@ -1,5 +1,5 @@
 import { apiGet } from './client'
-import type { AppConfig, HealthResponse, LanguagesResponse } from './types'
+import type { AppConfig, HealthResponse, LanguagesResponse, WhoamiResponse } from './types'
 
 export function getHealth(): Promise<HealthResponse> {
   return apiGet<HealthResponse>('/health')
@@ -15,4 +15,9 @@ export function getVersion(): Promise<{ version: string }> {
 
 export function getConfig(): Promise<AppConfig> {
   return apiGet<AppConfig>('/config') // → GET /api/v1/config
+}
+
+/** Signed-in principal served by the backend's authenticated `/whoami` route. */
+export function getWhoami(): Promise<WhoamiResponse> {
+  return apiGet<WhoamiResponse>('/whoami') // → GET /api/v1/whoami
 }

@@ -10,7 +10,10 @@ import type { JobListItem } from '../../api/types'
 const { streamSseMock } = vi.hoisted(() => ({ streamSseMock: vi.fn() }))
 vi.mock('../../api/sse', () => ({ streamSse: streamSseMock }))
 
-function stubJobs(jobs: JobListItem[]): void {
+function stubJobs(
+  jobs: JobListItem[],
+  whoami: { username: string; display_name: string | null } | null = null,
+): void {
   const jobsUrl = '/jobs'
   vi.stubGlobal(
     'fetch',
@@ -18,6 +21,15 @@ function stubJobs(jobs: JobListItem[]): void {
       const url = typeof input === 'string' ? input : input.toString()
       if (url.includes('/version')) {
         return new Response(JSON.stringify({ version: '1.2.3' }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        })
+      }
+      if (url.includes('/whoami')) {
+        if (!whoami) {
+          return new Response('{}', { status: 401, headers: { 'content-type': 'application/json' } })
+        }
+        return new Response(JSON.stringify(whoami), {
           status: 200,
           headers: { 'content-type': 'application/json' },
         })
@@ -104,5 +116,23 @@ describe('Shell', () => {
     mountShell()
     const banner = screen.getByRole('banner')
     expect(banner.classList.contains('sticky') && banner.classList.contains('top-0')).toBe(true)
+  })
+
+  it('shows the display name in the header when whoami resolves', async () => {
+    stubJobs([], { username: 'alice', display_name: 'Alice Example' })
+    mountShell()
+    expect(await screen.findByText('Alice Example')).toBeInTheDocument()
+  })
+
+  it('falls back to the username when no display name is set', async () => {
+    stubJobs([], { username: 'alice', display_name: null })
+    mountShell()
+    expect(await screen.findByText('alice')).toBeInTheDocument()
+  })
+
+  it('omits the identity slot when whoami fails (dev, no gateway)', () => {
+    stubJobs([], null)
+    mountShell()
+    expect(screen.queryByText('alice')).not.toBeInTheDocument()
   })
 })
