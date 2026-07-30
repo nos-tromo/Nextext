@@ -64,6 +64,8 @@ uv run pyrefly check
 
 Tests are in `tests/` using pytest with monkeypatch fixtures and `respx` for mocking the HTTP inference clients (Whisper, NER, diarization). Tests simulate Docker detection and environment configuration. No GPU, no network, and no model downloads required for tests.
 
+Several modules call `load_dotenv()` at import time (`nextext/utils/env_cfg.py`, `nextext/core/openai_cfg.py`, `nextext/core/words.py`, `nextext/utils/model_loader.py`), which copies a local, uncommitted `.env`'s values straight into the real process environment the first time one of those modules is imported — not into a test-scoped sandbox, and not reverted by `monkeypatch`. A developer `.env` with e.g. `RESPONSE_LANGUAGE=de` (a normal local-dev setup, see `.env.example`) then silently outranks any test asserting "unset" default behavior, for the rest of that pytest session. `tests/conftest.py` carries an autouse fixture that clears `RESPONSE_LANGUAGE`/`NEXTEXT_RESPONSE_LANGUAGE` before every test so the suite is hermetic against ambient `.env` state; add the same pattern there for any other env var a test needs to assume is unset by default.
+
 ## Docstrings & Style
 
 - All new/modified Python functions must have Google-style docstrings.
