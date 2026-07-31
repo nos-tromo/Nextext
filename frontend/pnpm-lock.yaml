@@ -18,8 +18,8 @@ importers:
         specifier: ^5.1.0
         version: 5.2.8
       '@infra/ui':
-        specifier: github:nos-tromo/infra-ui#v0.7.1
-        version: https://codeload.github.com/nos-tromo/infra-ui/tar.gz/14931ef37e85c34f79dff4841750cc3d1ad11077(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+        specifier: github:nos-tromo/infra-ui#v0.8.0
+        version: https://codeload.github.com/nos-tromo/infra-ui/tar.gz/10eb6ea1f5e390ac50caae358a01a5439184cca7(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
       '@tanstack/react-query':
         specifier: ^5.100.14
         version: 5.101.0(react@19.2.7)
@@ -287,9 +287,9 @@ packages:
     resolution: {integrity: sha512-bV0Tgo9K4hfPCek+aMAn81RppFKv2ySDQeMoSZuvTASywNTnVJCArCZE2FWqpvIatKu7VMRLWlR1EazvVhDyhQ==}
     engines: {node: '>=18.18'}
 
-  '@infra/ui@https://codeload.github.com/nos-tromo/infra-ui/tar.gz/14931ef37e85c34f79dff4841750cc3d1ad11077':
-    resolution: {tarball: https://codeload.github.com/nos-tromo/infra-ui/tar.gz/14931ef37e85c34f79dff4841750cc3d1ad11077}
-    version: 0.7.1
+  '@infra/ui@https://codeload.github.com/nos-tromo/infra-ui/tar.gz/10eb6ea1f5e390ac50caae358a01a5439184cca7':
+    resolution: {tarball: https://codeload.github.com/nos-tromo/infra-ui/tar.gz/10eb6ea1f5e390ac50caae358a01a5439184cca7}
+    version: 0.8.0
     peerDependencies:
       react: ^19.0.0
       react-dom: ^19.0.0
@@ -2654,7 +2654,7 @@ snapshots:
 
   '@humanwhocodes/retry@0.4.3': {}
 
-  '@infra/ui@https://codeload.github.com/nos-tromo/infra-ui/tar.gz/14931ef37e85c34f79dff4841750cc3d1ad11077(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
+  '@infra/ui@https://codeload.github.com/nos-tromo/infra-ui/tar.gz/10eb6ea1f5e390ac50caae358a01a5439184cca7(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
     dependencies:
       class-variance-authority: 0.7.1
       clsx: 2.1.1
