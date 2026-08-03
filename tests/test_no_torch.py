@@ -2,10 +2,10 @@
 
 All model inference runs on external endpoints, so the backend environment
 must stay free of the heavyweight ML runtimes. camel-tools declares torch /
-transformers in its metadata for morphology models Nextext never imports;
-``[tool.uv] override-dependencies`` excludes them, and these tests pin that
-invariant so a future lock regeneration cannot silently reintroduce the
-packages.
+transformers / scikit-learn / scipy in its metadata for morphology models
+Nextext never imports; ``[tool.uv] override-dependencies`` excludes them, and
+these tests pin that invariant so a future lock regeneration cannot silently
+reintroduce the packages.
 """
 
 import importlib.util
@@ -15,7 +15,16 @@ import pytest
 
 @pytest.mark.parametrize(
     "package",
-    ["torch", "transformers", "pyannote", "gliner", "whisper", "accelerate"],
+    [
+        "torch",
+        "transformers",
+        "pyannote",
+        "gliner",
+        "whisper",
+        "accelerate",
+        "scipy",
+        "sklearn",
+    ],
 )
 def test_local_ml_runtimes_are_not_installed(package: str) -> None:
     """The torch-family ML runtimes must be absent from the environment.

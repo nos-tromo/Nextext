@@ -29,7 +29,6 @@ dependencies = [
     "pip>=25.0.1",
     "prometheus-fastapi-instrumentator>=8.1.0",
     "pyarabic>=0.6.15",
-    "pycountry>=24.6.1",
     "python-bidi>=0.6.11",
     "python-dotenv>=1.0.1",
     "python-multipart>=0.0.20",
@@ -109,6 +108,8 @@ package = true
 # NER models Nextext never imports. Override them away so the image stays
 # torch-free — tests/test_no_torch.py pins this invariant.
 override-dependencies = [
+  "scikit-learn; sys_platform == 'never'",
+  "scipy; sys_platform == 'never'",
   "torch; sys_platform == 'never'",
   "transformers; sys_platform == 'never'",
 ]
