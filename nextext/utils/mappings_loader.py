@@ -30,6 +30,30 @@ def load_mappings(
     return cast(dict[str, str], code2name)
 
 
+def language_name_from_code(lang_code: str | None, default: str = "") -> str:
+    """Resolve an ISO 639-1 language code to its English language name.
+
+    Backed by the bundled ``whisper_languages.json`` mapping (the language
+    space Nextext actually handles), so no external ISO database dependency
+    is needed. Locale/script suffixes collapse to the base code
+    (``"zh-cn"`` → ``"Chinese"``).
+
+    Args:
+        lang_code (str | None): The ISO 639-1 language code, optionally with
+            a locale suffix (e.g. ``"en"``, ``"de-CH"``).
+        default (str): Value returned when the code is empty or unknown.
+            Defaults to ``""``.
+
+    Returns:
+        str: The English language name, or ``default`` if unresolvable.
+    """
+    if not lang_code:
+        return default
+    code = lang_code.lower()
+    names = load_mappings("whisper_languages.json")
+    return names.get(code) or names.get(code.split("-", 1)[0]) or default
+
+
 def load_and_sort_mappings(file: str) -> tuple[dict[str, str], list[str]]:
     """Load language mappings from a JSON file.
 

@@ -18,9 +18,9 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 import pandas as pd
-import pycountry
 
 from nextext.pipeline import normalize_language_code
+from nextext.utils.mappings_loader import language_name_from_code
 
 __all__ = [
     "build_docint_jsonl",
@@ -43,8 +43,7 @@ def language_name(lang_code: str | None) -> str:
     """
     if not lang_code:
         return "German"
-    lang = pycountry.languages.get(alpha_2=normalize_language_code(lang_code))
-    return lang.name if lang is not None else lang_code
+    return language_name_from_code(normalize_language_code(lang_code), default=lang_code)
 
 
 def format_hhmmss(seconds: float) -> str:
