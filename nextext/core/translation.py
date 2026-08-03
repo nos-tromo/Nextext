@@ -1,10 +1,9 @@
 """LLM-based segment translation via the inference provider abstraction."""
 
-import pycountry
 from langdetect import detect
 
 from nextext.core.openai_cfg import InferencePipeline
-from nextext.utils.mappings_loader import load_mappings
+from nextext.utils.mappings_loader import language_name_from_code, load_mappings
 
 
 class Translator:
@@ -40,8 +39,7 @@ class Translator:
             dict[str, str]: A dictionary containing the detected language name and ISO code.
         """
         self.src_lang = detect(text)
-        lang_obj = pycountry.languages.get(alpha_2=self.src_lang)
-        src_lang_name = lang_obj.name if lang_obj is not None else ""
+        src_lang_name = language_name_from_code(self.src_lang)
         return {"name": src_lang_name, "code": self.src_lang or ""}
 
     @staticmethod
@@ -68,8 +66,7 @@ class Translator:
         mapped = self.languages.get(lang_code)
         if mapped:
             return mapped
-        lang_obj = pycountry.languages.get(alpha_2=lang_code)
-        return lang_obj.name if lang_obj is not None else lang_code
+        return language_name_from_code(lang_code, default=lang_code)
 
     def _translation_prompt(self, src_lang: str, trg_lang: str, text: str) -> str:
         """Build the translation prompt from the templated translation prompt file.
