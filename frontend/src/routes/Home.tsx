@@ -24,8 +24,8 @@ export function Home() {
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <PageHeader title={t('page.title')} caption={t('page.caption')} />
-      <div className="grid min-h-0 flex-1 items-start gap-6 lg:grid-cols-[minmax(20rem,1fr)_minmax(0,1fr)]">
-        <section className="space-y-4">
+      <div className="min-h-0 flex-1 space-y-6">
+        <section className="max-w-3xl space-y-4">
           <Card title={t('home.new_job')}>
             <UploadForm
               pending={submit.isPending}
