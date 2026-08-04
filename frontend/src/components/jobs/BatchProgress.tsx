@@ -11,7 +11,7 @@ import { describeError } from '../../api/errorMessage'
 export function BatchProgress() {
   const t = useT()
   const jobs = useJobs()
-  if (jobs.isLoading) return <Spinner label={t('jobs.loading')} />
+  if (jobs.isLoading) return <div className="flex items-center gap-2 text-sm text-muted-foreground"><Spinner label={t('jobs.loading')} /><span aria-hidden>{t('jobs.loading')}</span></div>
   if (jobs.error) {
     const d = describeError(jobs.error)
     return (

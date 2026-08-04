@@ -75,6 +75,7 @@ export function JobCard({ job }: { job: JobListItem }) {
             type="button"
             disabled={del.isPending}
             onClick={() => del.mutate(job.job_id)}
+            className="hover:text-danger"
           >
             {del.isPending ? t('jobs.removing') : t('common.remove')}
           </Button>

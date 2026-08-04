@@ -26,7 +26,7 @@ export function WordCloudTab({ jobId, stem }: WordCloudTabProps) {
 
   return (
     <div className="space-y-4">
-      {loading && <Spinner label={t('results.wordcloud_loading')} />}
+      {loading && <div className="flex items-center gap-2 text-sm text-muted-foreground"><Spinner label={t('results.wordcloud_loading')} /><span aria-hidden>{t('results.wordcloud_loading')}</span></div>}
       {error && <Banner variant="danger">{t(error.key, error.vars)}</Banner>}
       {url && (
         <img
