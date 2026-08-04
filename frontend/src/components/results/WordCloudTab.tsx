@@ -1,5 +1,5 @@
 import { useArtifactImage } from '../../hooks/useArtifactImage'
-import { Spinner } from '../common/Spinner'
+import { Spinner } from '@infra/ui'
 import { Banner } from '@infra/ui'
 import { useT } from '../../i18n/LanguageContext'
 import { DownloadButtons } from './DownloadButtons'

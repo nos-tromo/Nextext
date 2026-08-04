@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useJobResult } from '../../hooks/useJobResult'
-import { Spinner } from '../common/Spinner'
+import { Spinner } from '@infra/ui'
 import { Banner } from '@infra/ui'
 import { useT } from '../../i18n/LanguageContext'
 import { describeError } from '../../api/errorMessage'
