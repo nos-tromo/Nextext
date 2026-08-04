@@ -25,7 +25,7 @@ export function Home() {
     <div className="flex min-h-0 flex-1 flex-col">
       <PageHeader title={t('page.title')} caption={t('page.caption')} />
       <div className="min-h-0 flex-1 space-y-6">
-        <section className="max-w-3xl space-y-4">
+        <section className="space-y-4">
           <Card title={t('home.new_job')}>
             <UploadForm
               pending={submit.isPending}
