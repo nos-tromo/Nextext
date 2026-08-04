@@ -3,7 +3,7 @@ import { useLanguages } from '../../hooks/useLanguages'
 import { checkUploadAcceptable } from '../../lib/uploadGuard'
 import { readStoredTargetLang, writeStoredTargetLang } from '../../lib/targetLang'
 import { Dropzone } from './Dropzone'
-import { Banner, FileList, mergeFiles } from '@infra/ui'
+import { Banner, Button, FileList, Select, mergeFiles } from '@infra/ui'
 import { useT } from '../../i18n/LanguageContext'
 import type { JobOptions, Task } from '../../api/types'
 
@@ -80,27 +80,27 @@ export function UploadForm({ pending, onRun }: UploadFormProps) {
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         <label className="space-y-1">
           <span className="text-sm text-muted-foreground">{t('options.task')}</span>
-          <select className="w-full rounded border border-border bg-muted px-2 py-1" value={task} onChange={(e) => setTask(e.target.value as Task)}>
+          <Select className="w-full" value={task} onChange={(e) => setTask(e.target.value as Task)}>
             <option value="transcribe">{t('options.task_transcribe')}</option>
             <option value="translate">{t('options.task_translate')}</option>
-          </select>
+          </Select>
         </label>
         <label className="space-y-1">
           <span className="text-sm text-muted-foreground">{t('options.source_language')}</span>
-          <select className="w-full rounded border border-border bg-muted px-2 py-1" value={srcLang} onChange={(e) => setSrcLang(e.target.value)}>
+          <Select className="w-full" value={srcLang} onChange={(e) => setSrcLang(e.target.value)}>
             <option value="">{t('options.auto_detect')}</option>
             {whisper.map((l) => (
               <option key={l.code} value={l.code}>{l.name}</option>
             ))}
-          </select>
+          </Select>
         </label>
         <label className="space-y-1">
           <span className="text-sm text-muted-foreground">{t('options.target_language_translate')}</span>
-          <select className="w-full rounded border border-border bg-muted px-2 py-1" value={effectiveTrgLang} onChange={(e) => selectTrgLang(e.target.value)}>
+          <Select className="w-full" value={effectiveTrgLang} onChange={(e) => selectTrgLang(e.target.value)}>
             {target.map((l) => (
               <option key={l.code} value={l.code}>{l.name}</option>
             ))}
-          </select>
+          </Select>
         </label>
       </div>
 
@@ -111,13 +111,9 @@ export function UploadForm({ pending, onRun }: UploadFormProps) {
         <label className="flex items-center gap-2"><input type="checkbox" checked={hateSpeech} onChange={(e) => setHateSpeech(e.target.checked)} /> {t('options.hate_speech')}</label>
       </div>
 
-      <button
-        className="rounded bg-primary px-4 py-2 text-primary-foreground disabled:opacity-50"
-        disabled={!canRun}
-        onClick={run}
-      >
+      <Button type="button" disabled={!canRun} onClick={run}>
         {pending ? t('upload.submitting') : t('upload.run')}
-      </button>
+      </Button>
     </div>
   )
 }

@@ -92,42 +92,23 @@ describe('Shell', () => {
     expect(streamSseMock.mock.calls[0][0]).toBe('/jobs/events')
   })
 
-  it('surfaces the job status bar below the header', async () => {
-    stubJobs([
-      {
-        job_id: 'j1',
-        status: 'completed',
-        file_name: 'a.wav',
-        stage: null,
-        progress: 1,
-        error: null,
-        created_at: 't',
-        started_at: null,
-        finished_at: null,
-        task: 'transcribe',
-      },
-    ])
-    mountShell()
-    expect(await screen.findByText('1 finished')).toBeInTheDocument()
-  })
-
-  it('pins the single header to the top so it stays visible while scrolling', () => {
+  it('renders the chrome header and the scrolling canvas main', () => {
     stubJobs([])
     mountShell()
-    const banner = screen.getByRole('banner')
-    expect(banner.classList.contains('sticky') && banner.classList.contains('top-0')).toBe(true)
+    expect(screen.getByRole('banner')).toBeInTheDocument()
+    expect(screen.getByRole('main')).toHaveTextContent('page-body')
   })
 
   it('shows the display name in the header when whoami resolves', async () => {
     stubJobs([], { username: 'alice', display_name: 'Alice Example' })
     mountShell()
-    expect(await screen.findByText('Alice Example')).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: /Alice Example/ })).toBeInTheDocument()
   })
 
   it('falls back to the username when no display name is set', async () => {
     stubJobs([], { username: 'alice', display_name: null })
     mountShell()
-    expect(await screen.findByText('alice')).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: /alice/ })).toBeInTheDocument()
   })
 
   it('omits the identity slot when whoami fails (dev, no gateway)', () => {

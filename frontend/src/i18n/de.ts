@@ -21,6 +21,11 @@ export const de: Strings = {
   'header.theme_system': 'System',
   'header.theme_light': 'Hell',
   'header.theme_dark': 'Dunkel',
+  'header.sign_out': 'Abmelden',
+
+  // page
+  'page.title': 'Transkribieren',
+  'page.caption': 'Audio- und Video-Transkription, Übersetzung und Analyse',
 
   // home
   'home.new_job': 'Neuer Auftrag',

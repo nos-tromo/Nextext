@@ -1,21 +1,19 @@
 import type { ReactNode } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { AppHeader } from '@infra/ui'
-import { StatusBar } from './StatusBar'
+import { AppShell } from '@infra/ui'
 import { getVersion } from '../../api/meta'
 import { useOwnerJobStream } from '../../hooks/useOwnerJobStream'
 import { useWhoami } from '../../hooks/useWhoami'
 import { useT } from '../../i18n/LanguageContext'
 
 /**
- * Nextext app shell: a single header row — the shared `@infra/ui` AppHeader
- * (back link, title, version, theme toggle) — above the page body. It carries
- * the signed-in identity (`user`, from the authenticated `GET /whoami`,
- * preferring the gateway's decorative display name over the raw username;
- * undefined while loading/on error) and the release version. The global job
- * {@link StatusBar} (empty when there are no jobs) renders as a slim,
- * non-header strip directly below AppHeader rather than inside it, so it
- * never competes with the single header row.
+ * Nextext app shell: the shared `@infra/ui` AppShell chrome (back link,
+ * title, version, identity menu, theme toggle) wrapping a scrolling canvas.
+ * It carries the signed-in identity (`user`, from the authenticated
+ * `GET /whoami`, preferring the gateway's decorative display name over the
+ * raw username; undefined while loading/on error) and the release version.
+ * The global job status bar now lives in the jobs column on Home rather
+ * than in the shell chrome.
  *
  * Mounts {@link useOwnerJobStream} once here so the whole session shares a
  * single owner-multiplexed SSE connection feeding every job's live progress —
@@ -31,23 +29,19 @@ export function Shell({ children }: { children: ReactNode }) {
   })
   const { data: whoami } = useWhoami()
   return (
-    <div className="min-h-screen flex flex-col bg-background text-foreground">
-      <AppHeader
-        title="Nextext"
-        version={data?.version ? `v${data.version}` : undefined}
-        user={whoami?.display_name ?? whoami?.username}
-        className="sticky top-0 z-20"
-        homeLabel={t('header.home')}
-        themeLabels={{
-          system: t('header.theme_system'),
-          light: t('header.theme_light'),
-          dark: t('header.theme_dark'),
-        }}
-      />
-      <div className="flex justify-end px-6 py-2">
-        <StatusBar />
-      </div>
-      <main className="mx-auto w-full max-w-5xl flex-1 px-6 py-8">{children}</main>
-    </div>
+    <AppShell
+      title="Nextext"
+      version={data?.version ? `v${data.version}` : undefined}
+      user={whoami?.display_name ?? whoami?.username}
+      homeLabel={t('header.home')}
+      themeLabels={{
+        system: t('header.theme_system'),
+        light: t('header.theme_light'),
+        dark: t('header.theme_dark'),
+      }}
+      signOutLabel={t('header.sign_out')}
+    >
+      <div className="flex h-full min-h-0 flex-col p-8">{children}</div>
+    </AppShell>
   )
 }

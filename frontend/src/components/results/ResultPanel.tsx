@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useJobResult } from '../../hooks/useJobResult'
-import { Spinner } from '../common/Spinner'
+import { Spinner } from '@infra/ui'
 import { Banner } from '@infra/ui'
 import { useT } from '../../i18n/LanguageContext'
 import { describeError } from '../../api/errorMessage'
@@ -50,7 +50,7 @@ export function ResultPanel({ jobId, fileName }: ResultPanelProps) {
   const stem = (dotIdx > 0 ? fileName.slice(0, dotIdx) : fileName) || 'result'
 
   if (query.isLoading) {
-    return <Spinner label={t('results.loading')} />
+    return <div className="flex items-center gap-2 text-sm text-muted-foreground"><Spinner label={t('results.loading')} /><span aria-hidden>{t('results.loading')}</span></div>
   }
 
   if (query.isError) {

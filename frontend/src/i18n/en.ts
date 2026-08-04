@@ -19,6 +19,11 @@ export const en = {
   'header.theme_system': 'system',
   'header.theme_light': 'light',
   'header.theme_dark': 'dark',
+  'header.sign_out': 'Sign out',
+
+  // page
+  'page.title': 'Transcribe',
+  'page.caption': 'Audio and video transcription, translation, and analysis',
 
   // home
   'home.new_job': 'New job',

@@ -43,6 +43,8 @@ describe('Home', () => {
     mountHome()
     expect(screen.getByText('New job')).toBeInTheDocument()
     await waitFor(() => expect(screen.getByText('clip.wav')).toBeInTheDocument())
+    // The relocated StatusBar (now in the jobs column) reflects the same job list.
+    await waitFor(() => expect(screen.getByText('1 finished')).toBeInTheDocument())
   })
 })
 

@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { Button, Card } from '@infra/ui'
 import { useDeleteJob } from '../../hooks/useJobs'
 import { ResultPanel } from '../results/ResultPanel'
 import { useJobProgressStore } from '../../lib/jobProgressStore'
@@ -58,31 +59,29 @@ export function JobCard({ job }: { job: JobListItem }) {
   const del = useDeleteJob()
 
   return (
-    <div className="rounded-lg border border-border p-4">
+    <Card>
       <div className="flex items-center justify-between">
         <span className="text-foreground">{job.file_name}</span>
         <div className="flex items-center gap-3">
           {p.status === 'completed' && (
-            <button
-              type="button"
-              onClick={() => setShowResults((v) => !v)}
-              className="text-sm text-primary hover:underline"
-            >
+            <Button variant="ghost" size="sm" type="button" onClick={() => setShowResults((v) => !v)}>
               {showResults ? t('jobs.hide_results') : t('jobs.show_results')}
-            </button>
+            </Button>
           )}
           <span className="text-sm text-muted-foreground">{t(LABEL_KEY[p.status])}</span>
-          <button
+          <Button
+            variant="ghost"
+            size="sm"
             type="button"
             disabled={del.isPending}
             onClick={() => del.mutate(job.job_id)}
-            className="text-sm text-muted-foreground transition-colors hover:text-danger disabled:cursor-not-allowed disabled:opacity-60"
+            className="hover:text-danger"
           >
             {del.isPending ? t('jobs.removing') : t('common.remove')}
-          </button>
+          </Button>
         </div>
       </div>
-      <div className="mt-2 h-2 w-full overflow-hidden rounded bg-muted">
+      <div className="mt-2 h-2 w-full overflow-hidden rounded bg-background">
         <div
           className={p.status === 'failed' ? 'h-full bg-danger' : 'h-full bg-primary'}
           style={{ width: `${p.status === 'failed' ? 100 : pct}%` }}
@@ -111,6 +110,6 @@ export function JobCard({ job }: { job: JobListItem }) {
           <ResultPanel jobId={job.job_id} fileName={job.file_name} />
         </div>
       )}
-    </div>
+    </Card>
   )
 }
