@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Button, Card } from '@infra/ui'
+import { Button, Card, DeleteButton } from '@infra/ui'
 import { useDeleteJob } from '../../hooks/useJobs'
 import { ResultPanel } from '../results/ResultPanel'
 import { useJobProgressStore } from '../../lib/jobProgressStore'
@@ -69,16 +69,14 @@ export function JobCard({ job }: { job: JobListItem }) {
             </Button>
           )}
           <span className="text-sm text-muted-foreground">{t(LABEL_KEY[p.status])}</span>
-          <Button
-            variant="ghost"
-            size="sm"
-            type="button"
-            disabled={del.isPending}
+          {/* Trash, not ×: this deletes the job and its artifacts on the
+              server. `busy` also blocks the second click that would delete an
+              already-deleted job. */}
+          <DeleteButton
+            label={del.isPending ? t('jobs.removing') : t('common.remove')}
+            busy={del.isPending}
             onClick={() => del.mutate(job.job_id)}
-            className="hover:text-danger"
-          >
-            {del.isPending ? t('jobs.removing') : t('common.remove')}
-          </Button>
+          />
         </div>
       </div>
       <div className="mt-2 h-2 w-full overflow-hidden rounded bg-background">

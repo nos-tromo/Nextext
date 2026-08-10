@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
+import { ChevronDownIcon, DownloadButton } from '@infra/ui'
 import { downloadBatchArtifact } from '../../lib/download'
-import { cn } from '../../lib/cn'
 import { useT } from '../../i18n/LanguageContext'
 import { describeError } from '../../api/errorMessage'
 import type { ErrorDescriptor } from '../../api/errorMessage'
@@ -78,22 +78,21 @@ export function BatchDownloadMenu({ completedCount }: BatchDownloadMenuProps) {
   return (
     <div ref={containerRef} className="relative flex items-center gap-2">
       {error && <span className="text-sm text-danger">{t(error.key, error.vars)}</span>}
-      <button
-        type="button"
+      {/* Only the trigger becomes an icon; the menu items below name the
+          artifact they produce and keep their words. The caret is what says
+          this opens a list rather than downloading on the spot. */}
+      <DownloadButton
+        label={t('jobs.download_all')}
+        hint={completedCount === 0 ? t('jobs.no_completed_yet') : undefined}
         disabled={disabled}
+        busy={busy !== null}
         aria-haspopup="menu"
         aria-expanded={open}
-        title={completedCount === 0 ? t('jobs.no_completed_yet') : undefined}
         onClick={() => setOpen((v) => !v)}
-        className={cn(
-          'rounded border border-border px-3 py-1 text-sm transition-colors',
-          disabled
-            ? 'cursor-not-allowed text-muted-foreground'
-            : 'text-foreground hover:border-primary hover:text-primary',
-        )}
+        className="gap-1 px-2"
       >
-        {busy !== null ? t('jobs.downloading') : t('jobs.download_all')}
-      </button>
+        <ChevronDownIcon className="h-3.5 w-3.5" />
+      </DownloadButton>
       {open && (
         <div
           role="menu"

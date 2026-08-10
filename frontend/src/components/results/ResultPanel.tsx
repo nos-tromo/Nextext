@@ -128,7 +128,7 @@ export function ResultPanel({ jobId, fileName }: ResultPanelProps) {
           items={[
             {
               name: 'archive.zip',
-              label: t('artifacts.download_archive'),
+              title: t('artifacts.download_archive'),
               fileName: `${stem}_archive.zip`,
             },
           ]}

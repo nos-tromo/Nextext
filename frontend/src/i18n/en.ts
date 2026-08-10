@@ -63,6 +63,8 @@ export const en = {
   'downloads.translation_txt': 'Translation TXT',
 
   // results (ResultPanel and its tabs)
+  // Accessible name for a download button whose visible chip is the bare format.
+  'results.download_artifact': 'Download {label}',
   'results.tab_transcript': 'Transcript',
   'results.tab_summary': 'Summary',
   'results.tab_words': 'Words',
@@ -113,12 +115,12 @@ export const en = {
   'jobs.loading': 'Loading jobs…',
   'jobs.load_failed': 'Could not load jobs.',
   'jobs.none_yet': 'No jobs yet.',
-  'jobs.download_all': 'Download all jobs ▾',
+  'jobs.download_all': 'Download all jobs',
   'jobs.downloading': 'Downloading…',
   'jobs.no_completed_yet': 'No completed jobs yet',
   'jobs.combined_jsonl': 'Combined JSONL (docint)',
   'jobs.full_batch_zip': 'Full batch (ZIP)',
-  'jobs.clear': 'Clear ▾',
+  'jobs.clear': 'Clear jobs',
   'jobs.clearing': 'Clearing…',
   'jobs.clear_finished': 'Clear finished ({count})',
   'jobs.clear_all': 'Clear all ({count})',
