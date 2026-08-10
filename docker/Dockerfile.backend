@@ -46,7 +46,18 @@ RUN apt-get update -y && apt-get install -y --no-install-recommends \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
+# Non-root runtime user (deploy ADR 0001). /app stays root-owned and
+# read-only to the app user; runtime writes go to the language-resource
+# cache volumes under /home/app and the /tmp job workspace. HOME matters:
+# the spaCy cache default derives from it.
+RUN groupadd --gid 10001 app \
+    && useradd --uid 10001 --gid app --create-home --home-dir /home/app \
+       --shell /usr/sbin/nologin app
+ENV HOME=/home/app
+
 COPY --from=builder /app /app
+
+USER 10001:10001
 
 EXPOSE 8000
 

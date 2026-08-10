@@ -18,17 +18,33 @@ x-logging: &default-logging
     max-file: "5"
     compress: "true"
 
+##########################################################
+# Shared hardening (deploy ADR 0001) — no privilege
+# escalation, no capabilities; both images run non-root
+# with read-only root filesystems.
+##########################################################
+x-hardened: &hardened
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+
 services:
   ##########################################################
   # Nextext backend — FastAPI + pipeline + CLI. CPU-only:
   # all model inference runs on external endpoints.
   ##########################################################
   backend:
+    <<: *hardened
     image: nextext-backend:${NEXTEXT_VERSION:-latest}
     build:
       context: ..
       dockerfile: docker/Dockerfile.backend
     logging: *default-logging
+    # /tmp holds per-job media workspaces (multi-GB uploads get normalized
+    # there), so it is a disk-backed scratch volume rather than a RAM tmpfs;
+    # `down -v` may delete it — it never holds durable state.
+    read_only: true
     environment:
       <<: *no-proxy-env
       DIARIZE_API_BASE: ${DIARIZE_API_BASE:-}
@@ -52,10 +68,15 @@ services:
       WHISPER_API_BASE: ${WHISPER_API_BASE:-}
       WHISPER_API_KEY: ${WHISPER_API_KEY:-}
       WHISPER_MODEL: ${WHISPER_MODEL:-}
+      # Explicit (match the volume mounts) rather than derived from $HOME
+      # (deploy ADR 0001 — the non-root user's rootfs is read-only).
+      NLTK_DATA: /home/app/nltk_data
+      SPACY_MODEL_DIR: /home/app/.cache/spacy
     env_file: *env-file
     volumes:
-      - nltk-cache:/root/nltk_data
-      - spacy-cache:/root/.cache/spacy
+      - nltk-cache:/home/app/nltk_data
+      - spacy-cache:/home/app/.cache/spacy
+      - tmp-jobs:/tmp
     networks:
       nextext-net:
         aliases:
@@ -70,11 +91,21 @@ services:
   # without buffering whole files in any Python process.
   ##########################################################
   frontend:
+    <<: *hardened
     image: nextext-frontend:${NEXTEXT_VERSION:-latest}
     build:
       context: ..
       dockerfile: docker/Dockerfile.frontend
     logging: *default-logging
+    # nginx (unprivileged image) writes pid/temp under /tmp; the envsubst
+    # entrypoint renders the template into /etc/nginx/conf.d at startup
+    # (mode=1777: the tmpfs shadows the image dir root-owned). Uploads
+    # stream through unbuffered (proxy_request_buffering off), so no
+    # large temp space is needed here.
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m
+      - /etc/nginx/conf.d:size=1m,mode=1777
     environment:
       <<: *no-proxy-env
       NEXTEXT_CLIENT_MAX_BODY_SIZE: ${NEXTEXT_CLIENT_MAX_BODY_SIZE:-8192m}
@@ -97,6 +128,8 @@ volumes:
     external: true
   spacy-cache:
     external: true
+  # Disk-backed /tmp job workspace (scratch by nature, not external).
+  tmp-jobs:
 
 ##########################################################
 # Networks
