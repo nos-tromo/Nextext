@@ -64,6 +64,8 @@ export const de: Strings = {
   'downloads.translation_txt': 'Übersetzung TXT',
 
   // results (ResultPanel and its tabs)
+  // Barrierefreier Name eines Download-Buttons, dessen Chip nur das Format zeigt.
+  'results.download_artifact': '{label} herunterladen',
   'results.tab_transcript': 'Transkript',
   'results.tab_summary': 'Zusammenfassung',
   'results.tab_words': 'Wörter',
@@ -114,12 +116,12 @@ export const de: Strings = {
   'jobs.loading': 'Aufträge werden geladen…',
   'jobs.load_failed': 'Aufträge konnten nicht geladen werden.',
   'jobs.none_yet': 'Noch keine Aufträge.',
-  'jobs.download_all': 'Alle Aufträge herunterladen ▾',
+  'jobs.download_all': 'Alle Aufträge herunterladen',
   'jobs.downloading': 'Wird heruntergeladen…',
   'jobs.no_completed_yet': 'Noch keine abgeschlossenen Aufträge',
   'jobs.combined_jsonl': 'Kombinierte JSONL (docint)',
   'jobs.full_batch_zip': 'Gesamter Batch (ZIP)',
-  'jobs.clear': 'Löschen ▾',
+  'jobs.clear': 'Aufträge löschen',
   'jobs.clearing': 'Wird gelöscht…',
   'jobs.clear_finished': 'Abgeschlossene löschen ({count})',
   'jobs.clear_all': 'Alle löschen ({count})',

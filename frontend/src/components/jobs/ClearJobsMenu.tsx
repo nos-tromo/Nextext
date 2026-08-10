@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { ChevronDownIcon, DeleteButton } from '@infra/ui'
 import { isActive, useClearJobs } from '../../hooks/useJobs'
 import { cn } from '../../lib/cn'
 import { useT } from '../../i18n/LanguageContext'
@@ -13,7 +14,7 @@ interface ClearJobsMenuProps {
 type ConfirmScope = 'finished' | 'all'
 
 /**
- * A "Clear ▾" dropdown that removes jobs from the list. Offers "Clear finished"
+ * A "Clear" dropdown that removes jobs from the list. Offers "Clear finished"
  * (terminal jobs only, leaving queued/running runs untouched) and "Clear all".
  * Both actions require an inline confirmation because deletion is irreversible
  * (jobs live only in memory). Mirrors {@link BatchDownloadMenu}: closes on
@@ -76,25 +77,23 @@ export function ClearJobsMenu({ jobs }: ClearJobsMenuProps) {
   return (
     <div ref={containerRef} className="relative flex items-center gap-2">
       {error && <span className="text-sm text-danger">{error}</span>}
-      <button
-        type="button"
+      {/* Only the trigger becomes an icon. The menu items below carry counts
+          and the confirmation asks a question — both need their words. */}
+      <DeleteButton
+        label={t('jobs.clear')}
+        hint={allIds.length === 0 ? t('jobs.no_jobs_to_clear') : undefined}
         disabled={disabled}
+        busy={clear.isPending}
         aria-haspopup="menu"
         aria-expanded={open}
-        title={allIds.length === 0 ? t('jobs.no_jobs_to_clear') : undefined}
         onClick={() => {
           setConfirm(null)
           setOpen((v) => !v)
         }}
-        className={cn(
-          'rounded border border-border px-3 py-1 text-sm transition-colors',
-          disabled
-            ? 'cursor-not-allowed text-muted-foreground'
-            : 'text-foreground hover:border-primary hover:text-primary',
-        )}
+        className="gap-1 px-2"
       >
-        {clear.isPending ? t('jobs.clearing') : t('jobs.clear')}
-      </button>
+        <ChevronDownIcon className="h-3.5 w-3.5" />
+      </DeleteButton>
       {open && (
         <div
           role="menu"

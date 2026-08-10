@@ -90,7 +90,7 @@ describe('BatchProgress clear control', () => {
   it('renders the Clear control alongside the jobs when the list is non-empty', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => jobsResponse('completed')))
     mountBatchProgress()
-    expect(await screen.findByRole('button', { name: /Clear ▾/ })).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: /Clear jobs/ })).toBeInTheDocument()
     expect(screen.getByText('clip.wav')).toBeInTheDocument()
   })
 
@@ -98,6 +98,6 @@ describe('BatchProgress clear control', () => {
     vi.stubGlobal('fetch', vi.fn(async () => emptyJobsResponse()))
     mountBatchProgress()
     expect(await screen.findByText('No jobs yet.')).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: /Clear/ })).toBeNull()
+    expect(screen.queryByRole('button', { name: /Clear jobs/ })).toBeNull()
   })
 })

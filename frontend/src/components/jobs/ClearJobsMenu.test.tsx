@@ -45,26 +45,26 @@ afterEach(() => vi.restoreAllMocks())
 describe('ClearJobsMenu', () => {
   it('disables the trigger when there are no jobs', () => {
     renderMenu(<ClearJobsMenu jobs={[]} />)
-    expect(screen.getByRole('button', { name: /Clear/ })).toBeDisabled()
+    expect(screen.getByRole('button', { name: /Clear jobs/ })).toBeDisabled()
   })
 
   it('opens the menu with finished + all counts', () => {
     renderMenu(<ClearJobsMenu jobs={[mkJob('a', 'completed'), mkJob('b', 'running'), mkJob('c', 'failed')]} />)
-    fireEvent.click(screen.getByRole('button', { name: /Clear ▾/ }))
+    fireEvent.click(screen.getByRole('button', { name: /Clear jobs/ }))
     expect(screen.getByRole('menuitem', { name: 'Clear finished (2)' })).toBeInTheDocument()
     expect(screen.getByRole('menuitem', { name: 'Clear all (3)' })).toBeInTheDocument()
   })
 
   it('disables "Clear finished" when only active jobs exist', () => {
     renderMenu(<ClearJobsMenu jobs={[mkJob('a', 'running'), mkJob('b', 'queued')]} />)
-    fireEvent.click(screen.getByRole('button', { name: /Clear ▾/ }))
+    fireEvent.click(screen.getByRole('button', { name: /Clear jobs/ }))
     expect(screen.getByRole('menuitem', { name: 'Clear finished (0)' })).toBeDisabled()
     expect(screen.getByRole('menuitem', { name: 'Clear all (2)' })).toBeEnabled()
   })
 
   it('deletes every job on confirmed "Clear all"', async () => {
     renderMenu(<ClearJobsMenu jobs={[mkJob('a', 'completed'), mkJob('b', 'running')]} />)
-    fireEvent.click(screen.getByRole('button', { name: /Clear ▾/ }))
+    fireEvent.click(screen.getByRole('button', { name: /Clear jobs/ }))
     fireEvent.click(screen.getByRole('menuitem', { name: 'Clear all (2)' }))
     expect(screen.getByText(/Remove 2 jobs\?/)).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Clear' }))
@@ -75,7 +75,7 @@ describe('ClearJobsMenu', () => {
 
   it('deletes only finished jobs on confirmed "Clear finished"', async () => {
     renderMenu(<ClearJobsMenu jobs={[mkJob('done', 'completed'), mkJob('run', 'running')]} />)
-    fireEvent.click(screen.getByRole('button', { name: /Clear ▾/ }))
+    fireEvent.click(screen.getByRole('button', { name: /Clear jobs/ }))
     fireEvent.click(screen.getByRole('menuitem', { name: 'Clear finished (1)' }))
     fireEvent.click(screen.getByRole('button', { name: 'Clear' }))
     await waitFor(() => expect(mockedDelete).toHaveBeenCalledTimes(1))
@@ -85,7 +85,7 @@ describe('ClearJobsMenu', () => {
 
   it('cancels without deleting and returns to the menu', () => {
     renderMenu(<ClearJobsMenu jobs={[mkJob('a', 'completed')]} />)
-    fireEvent.click(screen.getByRole('button', { name: /Clear ▾/ }))
+    fireEvent.click(screen.getByRole('button', { name: /Clear jobs/ }))
     fireEvent.click(screen.getByRole('menuitem', { name: 'Clear all (1)' }))
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
     expect(mockedDelete).not.toHaveBeenCalled()
@@ -98,7 +98,7 @@ describe('ClearJobsMenu', () => {
       return undefined
     })
     renderMenu(<ClearJobsMenu jobs={[mkJob('ok', 'completed'), mkJob('bad', 'failed')]} />)
-    fireEvent.click(screen.getByRole('button', { name: /Clear ▾/ }))
+    fireEvent.click(screen.getByRole('button', { name: /Clear jobs/ }))
     fireEvent.click(screen.getByRole('menuitem', { name: 'Clear all (2)' }))
     fireEvent.click(screen.getByRole('button', { name: 'Clear' }))
     await waitFor(() => expect(screen.getByText('Cleared 1 of 2; 1 failed')).toBeInTheDocument())
@@ -106,7 +106,7 @@ describe('ClearJobsMenu', () => {
 
   it('closes on Escape', () => {
     renderMenu(<ClearJobsMenu jobs={[mkJob('a', 'completed')]} />)
-    fireEvent.click(screen.getByRole('button', { name: /Clear ▾/ }))
+    fireEvent.click(screen.getByRole('button', { name: /Clear jobs/ }))
     expect(screen.getByRole('menu')).toBeInTheDocument()
     fireEvent.keyDown(document, { key: 'Escape' })
     expect(screen.queryByRole('menu')).toBeNull()
@@ -114,7 +114,7 @@ describe('ClearJobsMenu', () => {
 
   it('closes on outside pointerdown', () => {
     renderMenu(<ClearJobsMenu jobs={[mkJob('a', 'completed')]} />)
-    fireEvent.click(screen.getByRole('button', { name: /Clear ▾/ }))
+    fireEvent.click(screen.getByRole('button', { name: /Clear jobs/ }))
     expect(screen.getByRole('menu')).toBeInTheDocument()
     fireEvent.pointerDown(document.body)
     expect(screen.queryByRole('menu')).toBeNull()
@@ -128,7 +128,7 @@ describe('ClearJobsMenu', () => {
         <ClearJobsMenu jobs={[mkJob('a', 'completed')]} />
       </QueryClientProvider>,
     )
-    fireEvent.click(screen.getByRole('button', { name: /Clear ▾/ }))
+    fireEvent.click(screen.getByRole('button', { name: /Clear jobs/ }))
     fireEvent.click(screen.getByRole('menuitem', { name: 'Clear all (1)' }))
     fireEvent.click(screen.getByRole('button', { name: 'Clear' }))
     await waitFor(() => expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['jobs'] }))

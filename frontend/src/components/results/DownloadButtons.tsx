@@ -1,6 +1,6 @@
 import { useState } from 'react'
+import { DownloadButton } from '@infra/ui'
 import { downloadArtifact } from '../../lib/download'
-import { cn } from '../../lib/cn'
 import { useT } from '../../i18n/LanguageContext'
 import { describeError } from '../../api/errorMessage'
 import type { ErrorDescriptor } from '../../api/errorMessage'
@@ -8,8 +8,14 @@ import type { ErrorDescriptor } from '../../api/errorMessage'
 interface DownloadSpec {
   /** Artifact name on the backend, e.g. `transcript.csv`. */
   name: string
-  /** Label shown on the button, e.g. `CSV`. */
-  label: string
+  /**
+   * Short format chip beside the icon, e.g. `CSV`. Set it where several
+   * downloads sit side by side and the icon alone cannot tell them apart;
+   * omit it for a lone download, which then stands as the icon by itself.
+   */
+  label?: string
+  /** Accessible name. Defaults to "Download {label}". */
+  title?: string
   /** Suggested download file name shown to the browser, e.g. `transcript.csv`. */
   fileName: string
 }
@@ -49,21 +55,19 @@ export function DownloadButtons({ jobId, items }: DownloadButtonsProps) {
 
   return (
     <div className="flex flex-wrap items-center gap-2">
+      {/* Each keeps its format beside the icon: these sit side by side, and a
+          row of identical download icons would be a guessing game. The busy
+          one shows a spinner rather than the `…` this used to type out. */}
       {items.map((item) => (
-        <button
+        <DownloadButton
           key={item.name}
-          type="button"
+          label={item.title ?? t('results.download_artifact', { label: item.label ?? '' })}
+          busy={busy === item.name}
           disabled={busy !== null}
           onClick={() => void handleClick(item)}
-          className={cn(
-            'rounded border border-border px-3 py-1 text-sm transition-colors',
-            busy === item.name
-              ? 'cursor-not-allowed text-muted-foreground'
-              : 'text-foreground hover:border-primary hover:text-primary',
-          )}
         >
-          {busy === item.name ? '…' : item.label}
-        </button>
+          {item.label}
+        </DownloadButton>
       ))}
       {error && <span className="text-sm text-danger">{t(error.key, error.vars)}</span>}
     </div>
