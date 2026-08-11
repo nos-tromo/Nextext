@@ -31,6 +31,40 @@ x-hardened: &hardened
 
 services:
   ##########################################################
+  # Volume ownership (deploy ADR 0001, self-healing)
+  #
+  # The backend runs as uid 10001, but external volumes keep whatever
+  # ownership they were created with (root, on a fresh `docker volume
+  # create`). This one-shot root container fixes ownership before the
+  # backend starts; it reuses the backend image so the airgap bundle
+  # needs no extra image. The find form only touches wrong-owner
+  # entries. Canonical shape: docint/docker/compose.yaml.
+  ##########################################################
+  volume-permissions:
+    image: nextext-backend:${NEXTEXT_VERSION:-latest}
+    logging: *default-logging
+    user: "0:0"
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    network_mode: none
+    # Roots are the three mountpoints themselves — their parent dirs
+    # live on the read-only image rootfs and must not (and cannot) be
+    # chowned. The volume shadows the image's /tmp inside this
+    # container, so chowning it is safe.
+    entrypoint:
+      - /bin/sh
+      - -c
+      - >-
+        find /home/app/nltk_data /home/app/.cache/spacy /tmp
+        -xdev ! -user 10001 -exec chown -h 10001:10001 {} +
+    volumes:
+      - nltk-cache:/home/app/nltk_data
+      - spacy-cache:/home/app/.cache/spacy
+      - tmp-jobs:/tmp
+    restart: "no"
+
+  ##########################################################
   # Nextext backend — FastAPI + pipeline + CLI. CPU-only:
   # all model inference runs on external endpoints.
   ##########################################################
@@ -84,6 +118,9 @@ services:
       inference-net:
         aliases:
           - nextext-backend
+    depends_on:
+      volume-permissions:
+        condition: service_completed_successfully
 
   ##########################################################
   # Nextext frontend — React SPA (nginx). Same-origin proxy
