@@ -181,6 +181,16 @@ The stack shares `inference-net` with the inference provider (vllm-service / Oll
 
 The React SPA source lives in `frontend/`; run `cd frontend && pnpm {dev,build,test,lint,typecheck}` for local development without Docker.
 
+**Container hardening (deploy ADR 0001):** both containers run non-root with
+read-only root filesystems — the backend as uid `10001` (`app`,
+`HOME=/home/app`; `NLTK_DATA`/`SPACY_MODEL_DIR` point at the cache volumes
+under `/home/app`, `/tmp` is a disk-backed scratch volume sized for multi-GB
+job media), the frontend on `nginxinc/nginx-unprivileged` as uid `101`
+listening on **:8080** (the edge gateway's `nextext-frontend` upstream must
+match). Compose applies `no-new-privileges` + `cap_drop: ALL` via the
+`x-hardened` anchor. On existing hosts the `nltk-cache`/`spacy-cache` volumes
+need a one-time `chown -R 10001:10001` (runbook in the `deploy` repo).
+
 ## Persistence model
 
 Jobs live only in memory. `JobManager` holds them in a dict keyed by `job_id` and scoped by `owner_id`; there is no SQLite index, no on-disk artifacts, and no TTL sweeper. A job is retained until the owner `DELETE`s it or the backend process exits — nothing ever cuts off a long-running job.

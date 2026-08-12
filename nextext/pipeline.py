@@ -3,6 +3,7 @@
 from pathlib import Path
 from typing import Any
 
+import openai
 import pandas as pd
 from loguru import logger
 from matplotlib.figure import Figure
@@ -434,6 +435,28 @@ def _is_context_length_error(exc: Exception) -> bool:
     return any(marker in message for marker in _CONTEXT_LENGTH_ERROR_MARKERS)
 
 
+def _is_transient_inference_error(exc: Exception) -> bool:
+    """Report whether an exception is a transient inference-service failure.
+
+    Transient means the request itself was well-formed but the service could
+    not serve it right now: client-side connection failures (including
+    timeouts) and retryable server statuses (HTTP 429 and 5xx, e.g. a router
+    that cannot reach its upstream model). Configuration-shaped errors
+    (4xx such as 401/404) are not transient and must surface loudly.
+
+    Args:
+        exc (Exception): The exception raised by an inference call.
+
+    Returns:
+        bool: ``True`` when the failure is transient and safe to degrade on.
+    """
+    if isinstance(exc, openai.APIConnectionError):
+        return True
+    if isinstance(exc, openai.APIStatusError):
+        return exc.status_code == 429 or exc.status_code >= 500
+    return False
+
+
 def summarization_pipeline(
     text: str,
     inference_pipeline: InferencePipeline,
@@ -454,14 +477,21 @@ def summarization_pipeline(
     smallest budget overflows, it degrades to an empty summary rather than
     crashing the job (fail-soft, mirroring the NER/diarization clients).
 
+    Transient inference-service failures — connection errors, timeouts, and
+    retryable statuses (HTTP 429/5xx, e.g. a router whose upstream model is
+    down) — likewise degrade to an empty summary instead of failing the job,
+    which would discard the already-completed transcription held only in
+    memory. Non-transient API errors (4xx configuration problems such as bad
+    credentials) still raise.
+
     Args:
         text (str): The text to summarize.
         inference_pipeline (InferencePipeline): An inference pipeline for language model interactions.
 
     Returns:
         str: The summarized text, or an empty string if every retry still
-            overflowed the context window (a fail-soft degrade, logged as a
-            warning).
+            overflowed the context window or the inference service failed
+            transiently (fail-soft degrades, logged as warnings).
 
     Raises:
         ValueError: If the input text is empty.
@@ -472,8 +502,15 @@ def summarization_pipeline(
     for attempt in range(_MAX_OVERFLOW_RETRIES + 1):
         try:
             return _summarize_within_budget(text, inference_pipeline, char_budget, depth=0)
-        except Exception as exc:  # context-length overflows are retried; other errors re-raise
+        except Exception as exc:  # overflows retry smaller; transient outages fail-soft; else re-raise
             if not _is_context_length_error(exc):
+                if _is_transient_inference_error(exc):
+                    logger.warning(
+                        "Summarization request failed with a transient inference error; "
+                        "returning an empty summary instead of failing the job: {}",
+                        exc,
+                    )
+                    return ""
                 raise
             if attempt == _MAX_OVERFLOW_RETRIES:
                 logger.warning(
@@ -541,6 +578,13 @@ def hate_speech_pipeline(
     otherwise the original transcribed text (``text`` column) — see
     :func:`effective_text_column`.
 
+    A transient inference-service failure (connection error, timeout, HTTP
+    429/5xx) mid-sweep stops the sweep and returns the findings collected up
+    to the failing segment, instead of failing the job (which would discard
+    the already-completed transcription held only in memory) or hammering an
+    unreachable endpoint once per remaining segment. Non-transient API errors
+    (4xx configuration problems) still raise.
+
     Args:
         df (pd.DataFrame): Transcript DataFrame with a ``text`` column.
         inference_pipeline (InferencePipeline): Shared inference client.
@@ -548,14 +592,29 @@ def hate_speech_pipeline(
 
     Returns:
         list[dict]: Flagged segments, each containing hate_speech, category,
-            confidence, reason, text, and start (segment timestamp when available).
+            confidence, reason, text, and start (segment timestamp when
+            available). Possibly a truncated set if the sweep was cut short by
+            a transient inference failure (fail-soft, logged as a warning).
     """
     detector = HateSpeechDetector(inference_pipeline, max_chars)
     has_start = "start" in df.columns
     text_column = effective_text_column(df)
     results: list[dict[str, Any]] = []
-    for _, row in df.iterrows():
-        detection = detector.detect(str(row[text_column]))
+    for position, (_, row) in enumerate(df.iterrows()):
+        try:
+            detection = detector.detect(str(row[text_column]))
+        except Exception as exc:
+            if not _is_transient_inference_error(exc):
+                raise
+            logger.warning(
+                "Hate-speech detection failed with a transient inference error on segment "
+                "{}/{}; keeping the {} finding(s) collected so far instead of failing the job: {}",
+                position + 1,
+                len(df),
+                len(results),
+                exc,
+            )
+            break
         if detection["hate_speech"]:
             entry = dict(detection)
             entry["text"] = str(row[text_column])

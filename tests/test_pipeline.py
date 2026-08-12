@@ -3,6 +3,8 @@
 from pathlib import Path
 from typing import Any, override
 
+import httpx
+import openai
 import pandas as pd
 import pytest
 
@@ -1260,6 +1262,178 @@ def test_summarization_degrades_to_empty_after_exhausting_retries(
 
     assert result == ""
     assert overflower.overflow_count == pipeline._MAX_OVERFLOW_RETRIES + 1
+
+
+class _ErroringPipeline(_OverflowingPipeline):
+    """Inference double whose every model call raises a given exception.
+
+    Attributes:
+        error: The exception instance raised by :meth:`call_model`.
+        call_count: Number of model calls attempted before raising.
+    """
+
+    def __init__(self, error: Exception) -> None:
+        """Configure the exception raised on every model call.
+
+        Args:
+            error (Exception): The exception instance to raise.
+        """
+        super().__init__(max_payload_chars=-1)
+        self.error = error
+        self.call_count = 0
+
+    @override
+    def call_model(self, prompt: str, **kwargs: Any) -> str:  # pyrefly: ignore[bad-override]
+        """Raise the configured exception unconditionally.
+
+        Args:
+            prompt (str): The prompt sent to the model (ignored).
+            **kwargs (Any): Unused test double arguments.
+
+        Returns:
+            str: Never returns.
+
+        Raises:
+            Exception: The configured ``error`` instance, always.
+        """
+        del prompt, kwargs
+        self.call_count += 1
+        raise self.error
+
+
+def _api_status_error(status_code: int, message: str) -> openai.APIStatusError:
+    """Build an ``openai.APIStatusError`` (or subclass) for a status code.
+
+    Args:
+        status_code (int): The simulated HTTP status code.
+        message (str): The error message carried by the exception.
+
+    Returns:
+        openai.APIStatusError: The SDK exception the client would raise for
+            that status, e.g. :class:`openai.InternalServerError` for 500.
+    """
+    request = httpx.Request("POST", "http://inference.invalid/v1/chat/completions")
+    response = httpx.Response(status_code, request=request)
+    return openai.APIStatusError(message, response=response, body=None)
+
+
+def test_summarization_degrades_to_empty_on_transient_5xx(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A 5xx from the inference endpoint fail-softs to an empty summary.
+
+    Mirrors the production incident where the LLM router returned 500
+    (upstream connection error) and the whole job crashed instead of
+    degrading like the NER/diarization clients do.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Fixture for patching environment variables.
+    """
+    monkeypatch.delenv("SUMMARY_MAX_INPUT_TOKENS", raising=False)
+    erroring = _ErroringPipeline(_api_status_error(500, "InternalServerError - Connection error."))
+
+    result = pipeline.summarization_pipeline("some transcript text", erroring)
+
+    assert result == ""
+    assert erroring.call_count == 1
+
+
+def test_summarization_degrades_to_empty_on_connection_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A client-side connection failure fail-softs to an empty summary.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Fixture for patching environment variables.
+    """
+    monkeypatch.delenv("SUMMARY_MAX_INPUT_TOKENS", raising=False)
+    request = httpx.Request("POST", "http://inference.invalid/v1/chat/completions")
+    erroring = _ErroringPipeline(openai.APIConnectionError(request=request))
+
+    result = pipeline.summarization_pipeline("some transcript text", erroring)
+
+    assert result == ""
+
+
+def test_summarization_reraises_non_transient_api_errors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Configuration-shaped API errors (4xx) still fail the job loudly.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Fixture for patching environment variables.
+    """
+    monkeypatch.delenv("SUMMARY_MAX_INPUT_TOKENS", raising=False)
+    erroring = _ErroringPipeline(_api_status_error(401, "invalid api key"))
+
+    with pytest.raises(openai.APIStatusError, match="invalid api key"):
+        pipeline.summarization_pipeline("some transcript text", erroring)
+
+
+def test_hate_speech_pipeline_keeps_partial_findings_on_transient_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A transient inference failure mid-sweep returns the findings so far.
+
+    A router outage during the per-segment loop must not crash the job (and
+    with it the completed transcription); the sweep stops at the failing
+    segment and the findings collected up to that point are kept.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): The monkeypatch fixture.
+    """
+
+    class DummyDetector:
+        def __init__(self, inference_pipeline: Any, max_chars: int) -> None:
+            self.calls = 0
+
+        def detect(self, text: str) -> dict[str, Any]:
+            if text == "second text":
+                raise _api_status_error(500, "InternalServerError - Connection error.")
+            return {
+                "hate_speech": True,
+                "category": "other",
+                "confidence": "low",
+                "reason": "",
+            }
+
+    monkeypatch.setattr(pipeline, "HateSpeechDetector", DummyDetector)
+    df = pd.DataFrame(
+        {
+            "start": ["00:00:01", "00:00:05", "00:00:09"],
+            "text": ["first text", "second text", "third text"],
+        }
+    )
+    dummy_ip = InferencePipeline.__new__(InferencePipeline)
+
+    results = pipeline.hate_speech_pipeline(df, dummy_ip)
+
+    assert len(results) == 1
+    assert results[0]["text"] == "first text"
+
+
+def test_hate_speech_pipeline_reraises_non_transient_api_errors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Configuration-shaped API errors (4xx) during detection still raise.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): The monkeypatch fixture.
+    """
+
+    class DummyDetector:
+        def __init__(self, inference_pipeline: Any, max_chars: int) -> None:
+            pass
+
+        def detect(self, text: str) -> dict[str, Any]:
+            raise _api_status_error(401, "invalid api key")
+
+    monkeypatch.setattr(pipeline, "HateSpeechDetector", DummyDetector)
+    df = pd.DataFrame({"start": ["00:00:01"], "text": ["some text"]})
+    dummy_ip = InferencePipeline.__new__(InferencePipeline)
+
+    with pytest.raises(openai.APIStatusError, match="invalid api key"):
+        pipeline.hate_speech_pipeline(df, dummy_ip)
 
 
 def test_transcript_txt_exports_transcribe_returns_single_block_file() -> None:
