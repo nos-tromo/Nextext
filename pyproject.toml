@@ -1,10 +1,10 @@
 [build-system]
-requires = ["setuptools>=83.0.0", "wheel"]
+requires = ["setuptools>=84.0.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "nextext"
-version = "1.4.0"
+version = "1.4.1"
 description = "Audio transcription and analysis."
 authors = [
     { name = "nos-tromo" }
@@ -20,22 +20,22 @@ dependencies = [
     "langdetect>=1.0.9",
     "loguru>=0.7.3",
     "matplotlib>=3.11.1",
-    "nltk>=3.10.1",
+    "nltk>=3.10.2",
     "numpy>=2.5.1",
-    "openai>=2.52.0",
+    "openai>=2.53.0",
     "openpyxl>=3.1.5",
     "pandas>=3.0.5",
     "pillow>=12.3.0",
-    "pip>=26.2",
+    "pip>=26.2.1",
     "prometheus-fastapi-instrumentator>=8.1.0",
     "pyarabic>=0.6.15",
     "python-bidi>=0.6.11",
     "python-dotenv>=1.0.1",
     "python-multipart>=0.0.20",
     "requests>=2.32",
-    "spacy>=3.8.4",
-    "sse-starlette>=3.4.6",
-    "typer>=0.27.0,<1",
+    "spacy>=3.8.15",
+    "sse-starlette>=3.4.8",
+    "typer>=0.27.1,<1",
     "types-requests>=2.33.0.20260712",
     "uvicorn[standard]>=0.52.1",
     "watchdog>=6.0.0",
