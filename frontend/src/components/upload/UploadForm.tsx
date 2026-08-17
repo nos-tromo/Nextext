@@ -111,7 +111,7 @@ export function UploadForm({ pending, onRun }: UploadFormProps) {
         <label className="flex items-center gap-2"><input type="checkbox" checked={hateSpeech} onChange={(e) => setHateSpeech(e.target.checked)} /> {t('options.hate_speech')}</label>
       </div>
 
-      <Button type="button" disabled={!canRun} onClick={run}>
+      <Button type="button" className="w-full" disabled={!canRun} onClick={run}>
         {pending ? t('upload.submitting') : t('upload.run')}
       </Button>
     </div>
