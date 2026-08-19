@@ -3,7 +3,7 @@
 from pathlib import Path
 from typing import Any, override
 
-import httpx
+import httpx2
 import openai
 import pandas as pd
 import pytest
@@ -1312,8 +1312,8 @@ def _api_status_error(status_code: int, message: str) -> openai.APIStatusError:
         openai.APIStatusError: The SDK exception the client would raise for
             that status, e.g. :class:`openai.InternalServerError` for 500.
     """
-    request = httpx.Request("POST", "http://inference.invalid/v1/chat/completions")
-    response = httpx.Response(status_code, request=request)
+    request = httpx2.Request("POST", "http://inference.invalid/v1/chat/completions")
+    response = httpx2.Response(status_code, request=request)
     return openai.APIStatusError(message, response=response, body=None)
 
 
@@ -1347,7 +1347,7 @@ def test_summarization_degrades_to_empty_on_connection_error(
         monkeypatch (pytest.MonkeyPatch): Fixture for patching environment variables.
     """
     monkeypatch.delenv("SUMMARY_MAX_INPUT_TOKENS", raising=False)
-    request = httpx.Request("POST", "http://inference.invalid/v1/chat/completions")
+    request = httpx2.Request("POST", "http://inference.invalid/v1/chat/completions")
     erroring = _ErroringPipeline(openai.APIConnectionError(request=request))
 
     result = pipeline.summarization_pipeline("some transcript text", erroring)
