@@ -158,7 +158,7 @@ Key env vars (see `.env.example`):
   `!`, else `.`. Fail-soft: a model outage degrades to today's behavior. Resolved
   by `load_sentence_restore_env`. Set `NEXTEXT_SENTENCE_RESTORE=off` to disable.
 - `NEXTEXT_OFFLINE=1` (default) — gates the spaCy/NLTK downloads (`is_offline()`); the only local downloads left. Offline + uncached spaCy model raises an actionable error.
-- `NEXTEXT_HOST_PORT` (frontend, dev/override only) — host port published by `make up-dev` for the nginx frontend container. Defaults to `8501`; maps to nginx port 80.
+- `NEXTEXT_HOST_PORT` (frontend, dev/override only) — host port published by `make up-dev` for the nginx frontend container. Defaults to `8501`; maps to nginx port `8080` (the unprivileged nginx image listens there — see Container hardening below).
 - `NEXTEXT_CLIENT_MAX_BODY_SIZE` (frontend) — nginx `client_max_body_size` for the `/api/v1` upload proxy. Defaults to `8192m`.
 - `NEXTEXT_API_HOST` / `NEXTEXT_API_PORT` (backend only) — uvicorn bind address. Defaults to `0.0.0.0:8000`.
 - `NEXTEXT_DEFAULT_TARGET_LANG` (backend only) — Initial translation target language code surfaced by `GET /languages` as `default_target` and used to seed the frontend's "Target language" dropdown on a fresh browser. Must be a supported target code; an unsupported (or unset) value falls back to English (`en`). The frontend persists the user's own selection per-browser (localStorage), so it survives reloads and takes precedence over this default. Defaults to `en`.

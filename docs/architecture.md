@@ -9,9 +9,13 @@ endpoints, `edge-net` for the production gateway).
 The stack brings up two containers:
 
 - **Backend** (`backend`) — FastAPI on port 8000 (internal). Owns the pipeline, the HTTP inference clients, and the in-memory job store. Exposes `/api/v1/health`, `/api/v1/languages`, `/api/v1/jobs/*`. Not published to the host by default.
-- **Frontend** (`frontend`) — React SPA served by nginx on port 80 (internal). nginx proxies `/api/v1` to the backend same-origin, so browser uploads stream through nginx without buffering whole files in Python.
+- **Frontend** (`frontend`) — React SPA served by nginx on port 8080 (internal). nginx proxies `/api/v1` to the backend same-origin, so browser uploads stream through nginx without buffering whole files in Python.
 
-With `make up-dev`, the frontend is published on `http://localhost:${NEXTEXT_HOST_PORT:-8501}/` (nginx → React SPA).
+Both images run non-root with read-only root filesystems (deploy ADR 0001):
+the backend as uid `10001`, the frontend on `nginxinc/nginx-unprivileged` as
+uid `101` listening on `:8080`. With `make up-dev`, the frontend is published
+on `http://localhost:${NEXTEXT_HOST_PORT:-8501}/`, which maps to that nginx
+port 8080.
 
 `nextext-cli` keeps a third, container-free path: it imports the pipeline
 directly and runs end-to-end in-process, without a backend. It ships inside the
