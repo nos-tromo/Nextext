@@ -88,5 +88,3 @@
 .nextext-data/
 # Built image tag stamp written by `make build`; never committed.
 .nextext-version
-# Evergreen reference manual is tracked despite the *.md ignore.
-!docs/*.md
