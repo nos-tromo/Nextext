@@ -33,4 +33,4 @@ help:
 	@echo "  make logs       tail combined logs"
 	@echo "  make pre-commit run pre-commit hooks (ruff + pyrefly)"
 	@echo "  make verify     pre-push gate: pre-commit + frontend lint/build; mirrors CI's lint gate"
-	@echo "  make test       run the test suite"
+	@echo "  make test       run pytest + vitest (test-backend / test-frontend for one)"
