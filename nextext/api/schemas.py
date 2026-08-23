@@ -8,6 +8,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from nextext.core.outcomes import FailureCode, SkipReason
 from nextext.utils.env_cfg import load_keyframe_defaults
 
 
@@ -95,7 +96,10 @@ class JobResult(BaseModel):
     keyframes_url: str | None = None
     hate_speech_findings: list[HateSpeechFinding] | None = None
     skipped: bool = False
+    # Human-readable fallback prose; the SPA localizes ``skip_reason_code``
+    # instead and never renders this string.
     skip_reason: str | None = None
+    skip_reason_code: SkipReason | None = None
     task: Literal["transcribe", "translate"] = "transcribe"
 
 
@@ -111,6 +115,13 @@ class JobSnapshot(BaseModel):
     stage_index: int = 0
     progress: float = 0.0
     error: str | None = None
+    # Typed cause of a failure, so clients can distinguish a user-fixable
+    # upload problem from an outage without ever seeing the raw detail.
+    error_code: FailureCode | None = None
+    # Lifted out of ``result`` so a client can tell a job produced nothing
+    # without fetching or parsing the whole result payload.
+    skipped: bool = False
+    skip_reason_code: SkipReason | None = None
     created_at: datetime
     started_at: datetime | None = None
     finished_at: datetime | None = None
@@ -183,6 +194,11 @@ class JobListItem(BaseModel):
     stage: str | None = None
     progress: float = 0.0
     error: str | None = None
+    error_code: FailureCode | None = None
+    # Carried here too: after a browser reload the list is the SPA's only
+    # source, so without these a skipped job would read as a plain "done".
+    skipped: bool = False
+    skip_reason_code: SkipReason | None = None
     created_at: datetime
     started_at: datetime | None = None
     finished_at: datetime | None = None

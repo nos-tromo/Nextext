@@ -31,6 +31,7 @@ import pandas as pd
 from loguru import logger
 from matplotlib.figure import Figure
 
+from nextext.api.metrics import record_completed, record_failed, record_skipped
 from nextext.api.schemas import (
     HateSpeechFinding,
     JobOptions,
@@ -41,7 +42,9 @@ from nextext.api.schemas import (
     TranscriptSegment,
     WordCount,
 )
+from nextext.core.audio import AudioDecodeError
 from nextext.core.keyframes import extract_keyframes
+from nextext.core.outcomes import FailureCode, SkipReason, skip_reason_text
 from nextext.utils.env_cfg import load_job_concurrency
 
 _TERMINAL_EVENT_NAMES: frozenset[str] = frozenset({"job_completed", "job_failed", "job_cancelled"})
@@ -101,6 +104,9 @@ class JobState:
     stage_index: int = 0
     progress: float = 0.0
     error: str | None = None
+    # Typed cause of a failure. ``error`` stays the static, non-leaking
+    # message; this is what lets a client explain the failure.
+    error_code: FailureCode | None = None
     created_at: datetime = field(default_factory=_utcnow)
     started_at: datetime | None = None
     finished_at: datetime | None = None
@@ -120,6 +126,25 @@ class JobState:
     # event dispatch for the no-longer-listed job.
     deleted: bool = False
 
+    @property
+    def is_skipped(self) -> bool:
+        """Whether the job completed without producing a transcript.
+
+        Returns:
+            bool: ``True`` for a completed job whose result is a skip payload.
+        """
+        return bool(self.result.get("skipped", False))
+
+    @property
+    def skip_reason_code(self) -> SkipReason | None:
+        """Typed reason the job produced no transcript.
+
+        Returns:
+            SkipReason | None: The recorded code, or ``None`` when the job
+            was not skipped.
+        """
+        return self.result.get("skip_reason_code")
+
     def snapshot(self) -> JobSnapshot:
         """Return a Pydantic snapshot suitable for JSON serialization.
 
@@ -136,6 +161,9 @@ class JobState:
             stage_index=self.stage_index,
             progress=self.progress,
             error=self.error,
+            error_code=self.error_code,
+            skipped=self.is_skipped,
+            skip_reason_code=self.skip_reason_code,
             created_at=self.created_at,
             started_at=self.started_at,
             finished_at=self.finished_at,
@@ -275,6 +303,7 @@ def _serialize_result(result: dict[str, Any]) -> JobResult:
         hate_speech_findings=_normalize_hate_speech(result.get("hate_speech_findings")),
         skipped=bool(result.get("skipped", False)),
         skip_reason=result.get("skip_reason"),
+        skip_reason_code=result.get("skip_reason_code"),
         task=result.get("task", "transcribe"),
     )
 
@@ -360,12 +389,13 @@ def _run_pipeline_blocking(state: JobState, push_event: PushEvent) -> dict[str, 
 
     # Transcription -----------------------------------------------------------
     _notify(0)
-    df, updated_src_lang = transcription_pipeline(
+    outcome = transcription_pipeline(
         file_path=state.file_path,
         src_lang=file_opts["src_lang"] or "",
         diarize=file_opts["diarize"],
     )
-    file_opts["src_lang"] = updated_src_lang
+    df = outcome.transcript
+    file_opts["src_lang"] = outcome.src_lang
 
     # Keyframes ---------------------------------------------------------------
     keyframes = extract_keyframes(
@@ -377,9 +407,17 @@ def _run_pipeline_blocking(state: JobState, push_event: PushEvent) -> dict[str, 
     # in scope; mirrors the ``_wordcloud_url`` pattern below.
     keyframes_url = f"/api/v1/jobs/{state.job_id}/artifacts/keyframes.zip"
 
-    transcript_text = " ".join(df["text"].astype(str).tolist()).strip()
-    if df.empty or not transcript_text:
+    if outcome.is_empty:
+        # Not a failure: the file was processed, it simply held no speech to
+        # transcribe. The typed code is what the SPA localizes and what the
+        # operator alerts on; ``skip_reason`` is English fallback prose.
+        reason_code = outcome.skip_reason
         transcript_language = file_opts["trg_lang" if file_opts["task"] == "translate" else "src_lang"]
+        logger.warning(
+            "Job {} skipped: {} (stages after transcription not run).",
+            state.job_id,
+            reason_code or "unknown",
+        )
         payload = {
             "transcript": df,
             "summary": None,
@@ -390,12 +428,13 @@ def _run_pipeline_blocking(state: JobState, push_event: PushEvent) -> dict[str, 
             "resolved_src_lang": file_opts["src_lang"],
             "transcript_language": transcript_language,
             "skipped": True,
-            "skip_reason": "No speech detected in audio file.",
+            "skip_reason": skip_reason_text(reason_code),
+            "skip_reason_code": reason_code,
             "task": file_opts["task"],
             "keyframes": keyframes,
             "_keyframes_url": keyframes_url,
         }
-        _complete(0, {"transcript_segments": 0, "skipped": True})
+        _complete(0, {"transcript_segments": 0, "skipped": True, "skip_reason_code": reason_code})
         return payload
 
     _complete(
@@ -812,24 +851,42 @@ class JobManager:
                 state.status = JobStatus.COMPLETED
                 state.progress = 1.0
                 state.stage = None
+                skipped = bool(result.get("skipped", False))
+                skip_code = result.get("skip_reason_code")
+                if skipped:
+                    record_skipped(skip_code)
+                else:
+                    record_completed()
                 _push(
                     "job_completed",
                     {
                         "job_id": state.job_id,
-                        "skipped": bool(result.get("skipped", False)),
+                        "skipped": skipped,
+                        "skip_reason_code": skip_code,
                         "timestamp": _utcnow().isoformat(),
                     },
                 )
-            except Exception:
-                logger.exception("Job {} failed.", state.job_id)
+            except Exception as exc:
+                # An undecodable upload is the user's to fix, so it earns a
+                # typed code and a warning; everything else is ours and keeps
+                # the full traceback. Neither leaks detail past ``error``.
+                if isinstance(exc, AudioDecodeError):
+                    failure_code: FailureCode = "undecodable_media"
+                    logger.warning("Job {} failed: media could not be decoded ({}).", state.job_id, exc)
+                else:
+                    failure_code = "internal"
+                    logger.exception("Job {} failed.", state.job_id)
+                record_failed(failure_code)
                 state.status = JobStatus.FAILED
                 state.error = "Job failed."
+                state.error_code = failure_code
                 state.finished_at = _utcnow()
                 _push(
                     "job_failed",
                     {
                         "job_id": state.job_id,
                         "error": "Job failed.",
+                        "error_code": failure_code,
                         "timestamp": _utcnow().isoformat(),
                     },
                 )
