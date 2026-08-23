@@ -8,6 +8,8 @@ import io
 import zipfile
 from pathlib import Path
 
+import pandas as pd
+
 from nextext.api import artifacts
 from nextext.api.jobs import JobState
 from nextext.api.schemas import JobOptions, JobStatus
@@ -79,9 +81,25 @@ def test_archive_zip_nests_keyframes_under_subfolder() -> None:
 
 
 def test_archive_zip_without_keyframes_has_no_keyframes_folder() -> None:
-    """No keyframes in the result means no ``keyframes/`` entries in the archive."""
-    rendered = artifacts.render_artifact(_job_with_keyframes([]), "archive.zip")
+    """No keyframes in the result means no ``keyframes/`` entries in the archive.
+
+    The job still carries a transcript, so the archive itself exists — a
+    result with no members at all is covered by the test below.
+    """
+    state = _job_with_keyframes([])
+    state.result["transcript"] = pd.DataFrame({"start": ["0:00:00"], "end": ["0:00:01"], "text": ["hi."]})
+    rendered = artifacts.render_artifact(state, "archive.zip")
     assert rendered is not None
     payload, _content_type = rendered
     with zipfile.ZipFile(io.BytesIO(payload)) as zf:
         assert not any("keyframes/" in name for name in zf.namelist())
+
+
+def test_archive_zip_absent_when_job_produced_nothing() -> None:
+    """A job with no outputs has no archive, matching every sibling artifact.
+
+    A skipped (speech-free, frame-less) job used to be handed a 200 with an
+    empty ZIP while its transcript/summary artifacts 404'd — an empty archive
+    reads as a real but empty result.
+    """
+    assert artifacts.render_artifact(_job_with_keyframes([]), "archive.zip") is None
