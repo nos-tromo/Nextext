@@ -28,7 +28,7 @@ describe('jobProgress reducer', () => {
   it('marks completed + carries skipped', () => {
     const s = reduceJobEvent(initialJobProgress(), {
       name: 'job_completed',
-      data: { job_id: 'j1', skipped: true, timestamp: 't' },
+      data: { job_id: 'j1', skipped: true, skip_reason_code: null, timestamp: 't' },
     })
     expect(s).toMatchObject({ status: 'completed', progress: 1, skipped: true, terminal: true })
   })
@@ -36,7 +36,7 @@ describe('jobProgress reducer', () => {
   it('marks failed + carries error', () => {
     const s = reduceJobEvent(initialJobProgress(), {
       name: 'job_failed',
-      data: { job_id: 'j1', error: 'boom', timestamp: 't' },
+      data: { job_id: 'j1', error: 'boom', error_code: null, timestamp: 't' },
     })
     expect(s).toMatchObject({ status: 'failed', error: 'boom', terminal: true })
   })
@@ -48,6 +48,40 @@ describe('jobProgress reducer', () => {
     let twice = initialJobProgress()
     for (const e of [...events, ...events]) twice = reduceJobEvent(twice, e)
     expect(twice).toEqual(once)
+  })
+
+  it('seeds the skip and failure codes from a list item so they survive a reload', () => {
+    const seeded = initialJobProgress('completed', null, {
+      skipped: true,
+      skipReason: 'vad_no_speech',
+      errorCode: null,
+    })
+    expect(seeded).toMatchObject({ status: 'completed', skipped: true, skipReason: 'vad_no_speech' })
+
+    const failed = initialJobProgress('failed', 'Job failed.', {
+      skipped: false,
+      skipReason: null,
+      errorCode: 'undecodable_media',
+    })
+    expect(failed).toMatchObject({ status: 'failed', errorCode: 'undecodable_media' })
+  })
+
+  it('defaults the codes to unset when the caller passes none', () => {
+    expect(initialJobProgress()).toMatchObject({ skipped: false, skipReason: null, errorCode: null })
+  })
+
+  it('carries the typed codes off the terminal events', () => {
+    const done = reduceJobEvent(initialJobProgress(), {
+      name: 'job_completed',
+      data: { job_id: 'j1', skipped: true, skip_reason_code: 'asr_empty_transcript', timestamp: 't' },
+    })
+    expect(done).toMatchObject({ skipped: true, skipReason: 'asr_empty_transcript' })
+
+    const failed = reduceJobEvent(initialJobProgress(), {
+      name: 'job_failed',
+      data: { job_id: 'j1', error: 'Job failed.', error_code: 'undecodable_media', timestamp: 't' },
+    })
+    expect(failed).toMatchObject({ status: 'failed', errorCode: 'undecodable_media' })
   })
 
   it('seeds error only for a failed initial status', () => {
