@@ -13,18 +13,31 @@ function mkJob(partial: { job_id: string; status: JobStatus } & Partial<JobListI
     started_at: null,
     finished_at: null,
     task: 'transcribe',
+    error_code: null,
+    skipped: false,
+    skip_reason_code: null,
     ...partial,
   }
 }
 
 function mkProgress(partial: { status: JobProgressStatus } & Partial<JobProgress>): JobProgress {
-  return { stageIndex: 0, stageLabel: null, progress: 0, error: null, skipped: false, terminal: false, ...partial }
+  return {
+    stageIndex: 0,
+    stageLabel: null,
+    progress: 0,
+    error: null,
+    skipped: false,
+    skipReason: null,
+    errorCode: null,
+    terminal: false,
+    ...partial,
+  }
 }
 
 describe('summarizeJobs', () => {
   it('returns all-zero counts and no running job for an empty list', () => {
     expect(summarizeJobs([], {})).toEqual({
-      counts: { processing: 0, queued: 0, finished: 0, failed: 0, total: 0 },
+      counts: { processing: 0, queued: 0, finished: 0, skipped: 0, failed: 0, total: 0 },
       running: null,
     })
   })
@@ -35,7 +48,7 @@ describe('summarizeJobs', () => {
     const jobs = [mkJob({ job_id: 'a', status: 'queued', file_name: 'a.wav' }), mkJob({ job_id: 'b', status: 'completed' })]
     const live = { a: mkProgress({ status: 'running', stageLabel: 'Translating', progress: 0.4 }) }
     const { counts, running } = summarizeJobs(jobs, live)
-    expect(counts).toEqual({ processing: 1, queued: 0, finished: 1, failed: 0, total: 2 })
+    expect(counts).toEqual({ processing: 1, queued: 0, finished: 1, skipped: 0, failed: 0, total: 2 })
     expect(running).toEqual({ stageLabel: 'Translating', progress: 0.4, fileName: 'a.wav' })
   })
 
@@ -57,7 +70,7 @@ describe('summarizeJobs', () => {
       mkJob({ job_id: 'f', status: 'failed' }),
     ]
     const { counts } = summarizeJobs(jobs, {})
-    expect(counts).toEqual({ processing: 1, queued: 2, finished: 3, failed: 1, total: 7 })
+    expect(counts).toEqual({ processing: 1, queued: 2, finished: 3, skipped: 0, failed: 1, total: 7 })
     expect(counts.processing + counts.queued + counts.finished + counts.failed).toBe(counts.total)
   })
 
@@ -70,7 +83,7 @@ describe('summarizeJobs', () => {
     const jobs = [mkJob({ job_id: 'a', status: 'completed' })]
     const live = { ghost: mkProgress({ status: 'running' }) }
     const { counts, running } = summarizeJobs(jobs, live)
-    expect(counts).toEqual({ processing: 0, queued: 0, finished: 1, failed: 0, total: 1 })
+    expect(counts).toEqual({ processing: 0, queued: 0, finished: 1, skipped: 0, failed: 0, total: 1 })
     expect(running).toBeNull()
   })
 
@@ -89,5 +102,24 @@ describe('summarizeJobs', () => {
     const jobs = [mkJob({ job_id: 'a', status: 'running', stage: 'should-be-ignored', file_name: 'a.wav' })]
     const live = { a: mkProgress({ status: 'running', stageLabel: null, progress: 0 }) }
     expect(summarizeJobs(jobs, live).running).toEqual({ stageLabel: null, progress: 0, fileName: 'a.wav' })
+  })
+})
+
+describe('summarizeJobs skipped bucket', () => {
+  it('counts a skipped job apart from a finished one', () => {
+    const jobs = [
+      mkJob({ job_id: 'a', status: 'completed' }),
+      mkJob({ job_id: 'b', status: 'completed', skipped: true, skip_reason_code: 'vad_no_speech' }),
+    ]
+    const { counts } = summarizeJobs(jobs, {})
+    expect(counts.finished).toBe(1)
+    expect(counts.skipped).toBe(1)
+    expect(counts.processing + counts.queued + counts.finished + counts.skipped + counts.failed).toBe(counts.total)
+  })
+
+  it('prefers the live store entry when it reports a skip the list has not refetched', () => {
+    const jobs = [mkJob({ job_id: 'a', status: 'completed' })]
+    const live = { a: mkProgress({ status: 'completed', skipped: true, terminal: true }) }
+    expect(summarizeJobs(jobs, live).counts).toMatchObject({ finished: 0, skipped: 1 })
   })
 })

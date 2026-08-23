@@ -16,12 +16,25 @@ function mkJob(partial: { job_id: string; status: JobStatus } & Partial<JobListI
     started_at: null,
     finished_at: null,
     task: 'transcribe',
+    error_code: null,
+    skipped: false,
+    skip_reason_code: null,
     ...partial,
   }
 }
 
 function mkProgress(partial: { status: JobProgressStatus } & Partial<JobProgress>): JobProgress {
-  return { stageIndex: 0, stageLabel: null, progress: 0, error: null, skipped: false, terminal: false, ...partial }
+  return {
+    stageIndex: 0,
+    stageLabel: null,
+    progress: 0,
+    error: null,
+    skipped: false,
+    skipReason: null,
+    errorCode: null,
+    terminal: false,
+    ...partial,
+  }
 }
 
 function stubJobs(jobs: JobListItem[]): void {
@@ -102,5 +115,23 @@ describe('StatusBar', () => {
     mountStatusBar()
     await screen.findByText('1 finished')
     expect(await screen.findByText('1/2')).toBeInTheDocument()
+  })
+})
+
+describe('StatusBar skipped jobs', () => {
+  it('badges skipped jobs separately from finished ones', async () => {
+    stubJobs([
+      mkJob({ job_id: 'a', status: 'completed' }),
+      mkJob({ job_id: 'b', status: 'completed', skipped: true, skip_reason_code: 'vad_no_speech' }),
+    ])
+    mountStatusBar()
+    await waitFor(() => expect(screen.getByText('1 finished')).toBeInTheDocument())
+    expect(screen.getByText('1 skipped')).toBeInTheDocument()
+  })
+
+  it('counts a skipped job as done so batch progress can still reach 100%', async () => {
+    stubJobs([mkJob({ job_id: 'a', status: 'completed', skipped: true, skip_reason_code: 'vad_no_speech' })])
+    mountStatusBar()
+    await waitFor(() => expect(screen.getByText('1/1')).toBeInTheDocument())
   })
 })

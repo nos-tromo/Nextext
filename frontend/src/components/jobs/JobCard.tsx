@@ -1,9 +1,10 @@
 import { useState } from 'react'
-import { Button, Card, DeleteButton } from '@infra/ui'
+import { Button, Card, DeleteButton, WarningIcon } from '@infra/ui'
 import { useDeleteJob } from '../../hooks/useJobs'
 import { ResultPanel } from '../results/ResultPanel'
 import { useJobProgressStore } from '../../lib/jobProgressStore'
 import { initialJobProgress } from '../../lib/jobProgress'
+import { failureMessageKey, jobSkipMessageKey } from '../../lib/outcomeMessages'
 import { useT } from '../../i18n/LanguageContext'
 import { describeError } from '../../api/errorMessage'
 import type { Strings } from '../../i18n'
@@ -53,7 +54,15 @@ export function JobCard({ job }: { job: JobListItem }) {
   // still-queued job with no events). List refetch on completion is handled by
   // the owner stream, so this card no longer owns a stream of its own.
   const live = useJobProgressStore((state) => state.byId[job.job_id])
-  const p = live ?? initialJobProgress(seed.status, seed.error)
+  // Seed the terminal detail from the list item: after a browser reload the
+  // store is empty, and without it a skipped job would read as plain "Done".
+  const p =
+    live ??
+    initialJobProgress(seed.status, seed.error, {
+      skipped: job.skipped,
+      skipReason: job.skip_reason_code,
+      errorCode: job.error_code,
+    })
   const pct = Math.round(p.progress * 100)
   const [showResults, setShowResults] = useState(false)
   const del = useDeleteJob()
@@ -85,19 +94,24 @@ export function JobCard({ job }: { job: JobListItem }) {
           style={{ width: `${p.status === 'failed' ? 100 : pct}%` }}
         />
       </div>
-      <p className="mt-1 text-sm text-muted-foreground">
-        {p.status === 'failed'
-          ? job.status === 'interrupted'
-            ? t('jobs.interrupted')
-            : t('jobs.unknown_error')
-          : p.skipped
-            ? t('jobs.skipped')
-            : p.stageLabel
-              ? t('jobs.stage_progress', { stage: p.stageLabel, pct })
-              : p.status === 'completed'
-                ? t('jobs.done')
-                : t('jobs.waiting')}
-      </p>
+      {p.status === 'failed' || p.skipped ? (
+        <p className="mt-1 flex items-center gap-1.5 text-sm text-muted-foreground">
+          <WarningIcon className={p.status === 'failed' ? 'text-danger' : 'text-muted-foreground'} aria-hidden />
+          <span>
+            {p.status === 'failed'
+              ? t(failureMessageKey(p.errorCode, job.status === 'interrupted'))
+              : t(jobSkipMessageKey(p.skipReason))}
+          </span>
+        </p>
+      ) : (
+        <p className="mt-1 text-sm text-muted-foreground">
+          {p.stageLabel
+            ? t('jobs.stage_progress', { stage: p.stageLabel, pct })
+            : p.status === 'completed'
+              ? t('jobs.done')
+              : t('jobs.waiting')}
+        </p>
+      )}
       {del.isError && (
         <p className="mt-1 text-sm text-danger">
           {t('jobs.remove_failed')} {t(describeError(del.error).key, describeError(del.error).vars)}

@@ -2,11 +2,14 @@ import type { JobListItem, JobStatus } from '../api/types'
 import type { JobProgress } from './jobProgress'
 
 /** Aggregate counts across the caller's jobs. Buckets are exhaustive, so
- * `processing + queued + finished + failed === total`. */
+ * `processing + queued + finished + skipped + failed === total`. A skipped job
+ * completed but produced nothing, so it is counted apart from `finished` —
+ * "8 finished" should not include files that yielded no transcript. */
 export interface JobCounts {
   processing: number
   queued: number
   finished: number
+  skipped: number
   failed: number
   total: number
 }
@@ -37,7 +40,7 @@ export interface JobStatusSummary {
  * @returns Counts by bucket and the first running job's live detail, or `null`.
  */
 export function summarizeJobs(jobs: JobListItem[], live: Record<string, JobProgress>): JobStatusSummary {
-  const counts: JobCounts = { processing: 0, queued: 0, finished: 0, failed: 0, total: jobs.length }
+  const counts: JobCounts = { processing: 0, queued: 0, finished: 0, skipped: 0, failed: 0, total: jobs.length }
   let running: RunningJob | null = null
 
   for (const job of jobs) {
@@ -54,7 +57,8 @@ export function summarizeJobs(jobs: JobListItem[], live: Record<string, JobProgr
         counts.queued += 1
         break
       case 'completed':
-        counts.finished += 1
+        if (livePart?.skipped ?? job.skipped) counts.skipped += 1
+        else counts.finished += 1
         break
       default: // failed | interrupted | cancelled (the worker never sets the last two; folded defensively)
         counts.failed += 1

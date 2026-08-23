@@ -38,6 +38,9 @@ const job: JobListItem = {
   started_at: null,
   finished_at: null,
   task: 'transcribe',
+  error_code: null,
+  skipped: false,
+  skip_reason_code: null,
 }
 
 /** Mounts the single owner stream (as the Shell does) without any UI. */
