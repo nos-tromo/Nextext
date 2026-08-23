@@ -22,9 +22,9 @@ export function Home() {
   const submitErrorDescriptor = submit.error ? describeError(submit.error) : null
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
+    <div className="flex flex-1 flex-col">
       <PageHeader title={t('page.title')} caption={t('page.caption')} />
-      <div className="min-h-0 flex-1 space-y-6">
+      <div className="flex-1 space-y-6">
         <section className="space-y-4">
           <Card title={t('home.new_job')}>
             <UploadForm
