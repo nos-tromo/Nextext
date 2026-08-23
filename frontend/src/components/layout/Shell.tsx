@@ -41,7 +41,7 @@ export function Shell({ children }: { children: ReactNode }) {
       }}
       signOutLabel={t('header.sign_out')}
     >
-      <div className="flex h-full min-h-0 flex-col p-8">{children}</div>
+      <div className="flex min-h-full flex-col p-8">{children}</div>
     </AppShell>
   )
 }

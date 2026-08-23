@@ -116,4 +116,17 @@ describe('Shell', () => {
     mountShell()
     expect(screen.queryByText('alice')).not.toBeInTheDocument()
   })
+
+  it('lets the padded canvas grow past the fold so its bottom padding renders', () => {
+    stubJobs([])
+    mountShell()
+    const canvas = screen.getByRole('main').firstElementChild
+    // `h-full` would pin the canvas to exactly one viewport slice, stranding
+    // `p-8`'s bottom half at the fold instead of below the last job card —
+    // an ancestor's padding is not part of the scroll container's overflow
+    // region. `min-h-full` still fills a short page but grows with content.
+    expect(canvas).toHaveClass('min-h-full', 'p-8')
+    expect(canvas).not.toHaveClass('h-full')
+    expect(canvas).not.toHaveClass('min-h-0')
+  })
 })
