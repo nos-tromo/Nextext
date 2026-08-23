@@ -200,9 +200,7 @@ def decode_failure_app_client() -> Iterator[tuple[TestClient, list[str]]]:
 # ---------------------------------------------------------------------------
 
 
-def test_pipeline_records_skip_reason_code_from_transcription(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_pipeline_records_skip_reason_code_from_transcription(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """The worker must carry the transcription outcome's code into the result.
 
     Args:
@@ -248,9 +246,7 @@ def test_pipeline_logs_the_skipped_outcome(monkeypatch: pytest.MonkeyPatch, tmp_
     empty = pd.DataFrame({"start": [], "end": [], "speaker": [], "text": []})
     monkeypatch.setattr(
         "nextext.pipeline.transcription_pipeline",
-        lambda **kwargs: TranscriptionOutcome(
-            transcript=empty, src_lang="en", skip_reason="asr_all_segments_filtered"
-        ),
+        lambda **kwargs: TranscriptionOutcome(transcript=empty, src_lang="en", skip_reason="asr_all_segments_filtered"),
     )
     monkeypatch.setattr(jobs_module, "extract_keyframes", lambda path, **kw: [])
 
