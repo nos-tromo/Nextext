@@ -48,7 +48,7 @@ docker run -d \
   --gpus all \
   -v ollama-cache:/root/.ollama \
   -p 11434:11434 \
-  ollama/ollama:0.20.2
+  ollama/ollama:0.32.15@sha256:57d60e686821ea81a7748a3ec8141308c8b8f95b27105713954abf7a6529e700
 ```
 
 Then configure Nextext to reach it by adding the following to your `.env` file (Ollama serves no transcription API, so Whisper needs an explicit dedicated endpoint):
