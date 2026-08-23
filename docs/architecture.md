@@ -25,6 +25,16 @@ backend image alongside the API — see [cli.md](cli.md).
 
 Jobs live only in memory — there is no durable storage and no TTL, so a long-running job is never cut off and is retained until you delete it or the backend restarts. Identity is anonymous: the frontend mints a per-browser id and stamps it into the URL (`?owner=<id>`) on first visit, sending it to the backend as the trusted identity header (`X-Auth-User` by default) to scope your jobs. Because that id survives a refresh, reloading the page mid-run re-discovers your jobs and resumes the live progress view; closing the tab and reopening the bare host starts a fresh identity. Developers calling the API directly can skip the header and set `NEXTEXT_DEFAULT_IDENTITY` instead. There is no authentication — the backend trusts whoever can reach `inference-net`.
 
+A job whose file held no processable speech still **completes** — it is a
+result, not a failure — and carries `skipped: true` with a typed
+`skip_reason_code` (`vad_no_speech`, `asr_empty_transcript`,
+`asr_all_segments_filtered`) on the snapshot, the job list, and the
+`job_completed` event. Failures carry a typed `error_code`
+(`undecodable_media`, `internal`) beside the static `"Job failed."` message.
+The SPA localizes these codes; the backend logs one warning per outcome and
+counts them in `/metrics` (see
+[configuration.md](configuration.md#metrics)).
+
 Cross-owner reads return `404` rather than `403`, so the existence of another
 owner's job never leaks. In production the `edge-plane` gateway is what injects
 the trusted header; see

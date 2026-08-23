@@ -25,6 +25,17 @@ Running `uv run nextext-cli [ARGS]` from the command line supports the following
 -F, --full-analysis   Enable full analysis, equivalent to using -w -sum (default: False).
 ```
 
+## Exit codes
+
+| Code | Meaning |
+|------|---------|
+| `0`  | The run produced a transcript. |
+| `2`  | The file held no processable speech — nothing was transcribed and the analysis stages were skipped. An empty transcript is still written, and the warning names which of the three causes fired (`vad_no_speech`, `asr_empty_transcript`, `asr_all_segments_filtered`). |
+| `1`  | The run failed (unhandled error, e.g. an undecodable file or an unreachable endpoint). |
+
+Exit `2` is what lets a batch loop tell "nothing to transcribe" apart from a
+successful run.
+
 ## Batch processing
 
 In CLI mode, you can let Nextext iterate over a directory to batch process files:
@@ -32,6 +43,19 @@ In CLI mode, you can let Nextext iterate over a directory to batch process files
 ```bash
 for file in path/to/your/directory/*; do
     uv run nextext-cli -f $file [ARGS]
+done
+```
+
+To collect the files that yielded nothing, branch on the exit code:
+
+```bash
+for file in path/to/your/directory/*; do
+    uv run nextext-cli -f "$file" [ARGS]
+    case $? in
+        0) ;;
+        2) echo "no speech: $file" >> no_speech.txt ;;
+        *) echo "failed:    $file" >> failed.txt ;;
+    esac
 done
 ```
 
