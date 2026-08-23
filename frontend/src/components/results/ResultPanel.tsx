@@ -75,9 +75,10 @@ export function ResultPanel({ jobId, fileName }: ResultPanelProps) {
     return (
       <Banner variant="danger">
         <span className="flex items-start gap-2">
-          <WarningIcon className="mt-0.5 shrink-0" aria-hidden />
+          {/* Repeat the size classes: our className replaces the icon default. */}
+          <WarningIcon className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
           <span>
-            <strong className="font-medium">{t('results.skipped_title')}</strong>{' '}
+            <strong className="block font-medium">{t('results.skipped_title')}</strong>
             {t(resultSkipMessageKey(result.skip_reason_code))}
           </span>
         </span>

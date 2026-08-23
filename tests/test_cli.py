@@ -128,7 +128,9 @@ def test_run_main_returns_nonzero_exit_code_when_nothing_was_transcribed(
     """A speech-free file must be distinguishable from a successful run.
 
     Batch scripts drive the CLI; exiting 0 makes "nothing was transcribed"
-    look like "transcribed fine".
+    look like "transcribed fine". The code is 3, not 2 — argparse already
+    exits 2 for a usage error, and a caller must not confuse a typo'd flag
+    with a speech-free file.
 
     Args:
         monkeypatch (pytest.MonkeyPatch): Overrides the processor and pipeline.
@@ -137,7 +139,7 @@ def test_run_main_returns_nonzero_exit_code_when_nothing_was_transcribed(
     monkeypatch.setattr(cli, "FileProcessor", lambda *a, **k: _SpyProcessor())
     monkeypatch.setattr(cli, "transcription_pipeline", lambda **kwargs: _skipping_outcome())
 
-    assert cli._run_main(_args(tmp_path / "clip.wav")) == 2
+    assert cli._run_main(_args(tmp_path / "clip.wav")) == 3
 
 
 def test_run_main_returns_zero_for_a_normal_run(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

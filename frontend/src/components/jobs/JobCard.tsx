@@ -96,7 +96,12 @@ export function JobCard({ job }: { job: JobListItem }) {
       </div>
       {p.status === 'failed' || p.skipped ? (
         <p className="mt-1 flex items-center gap-1.5 text-sm text-muted-foreground">
-          <WarningIcon className={p.status === 'failed' ? 'text-danger' : 'text-muted-foreground'} aria-hidden />
+          {/* WarningIcon's default className carries its size, and passing our
+              own replaces it — so the size classes must be repeated here. */}
+          <WarningIcon
+            className={`h-4 w-4 shrink-0 ${p.status === 'failed' ? 'text-danger' : 'text-muted-foreground'}`}
+            aria-hidden
+          />
           <span>
             {p.status === 'failed'
               ? t(failureMessageKey(p.errorCode, job.status === 'interrupted'))

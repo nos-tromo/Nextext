@@ -129,6 +129,16 @@ describe('JobCard skipped message', () => {
     expect(screen.getByText('Skipped — no speech detected in the audio')).toBeInTheDocument()
   })
 
+  it('keeps the warning icon sized (its default className is replaced, not merged)', () => {
+    const { container } = renderCard(
+      <JobCard job={{ ...mkJob('j1', 'completed'), skipped: true, skip_reason_code: 'vad_no_speech' }} />,
+    )
+    const icon = container.querySelector('svg')
+    expect(icon).not.toBeNull()
+    expect(icon?.getAttribute('class')).toMatch(/\bh-4\b/)
+    expect(icon?.getAttribute('class')).toMatch(/\bw-4\b/)
+  })
+
   it('explains an undecodable upload instead of calling it an unknown error', () => {
     renderCard(<JobCard job={{ ...mkJob('j1', 'failed'), error_code: 'undecodable_media' }} />)
     expect(screen.getByText(/could not be decoded/)).toBeInTheDocument()

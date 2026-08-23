@@ -267,8 +267,9 @@ def main() -> None:
     word statistics, and summarization. Handles the command-line arguments
     and manages the flow of data through the various modules.
 
-    Exits with ``0`` on success and ``2`` when the file held no processable
-    speech, so a batch caller can tell the two apart.
+    Exits with ``0`` on success and ``3`` when the file held no processable
+    speech, so a batch caller can tell the two apart. ``2`` is left to
+    argparse, which uses it for command-line usage errors.
 
     Raises:
         SystemExit: Always, carrying the exit code from :func:`_run_main`.
@@ -293,8 +294,9 @@ def _run_main(args: argparse.Namespace) -> int:
             :func:`parse_arguments`.
 
     Returns:
-        int: ``0`` for a normal run; ``2`` when the file yielded no
-            transcript (see :mod:`nextext.core.outcomes`).
+        int: ``0`` for a normal run; ``3`` when the file yielded no
+            transcript (see :mod:`nextext.core.outcomes`). ``2`` is reserved
+            by argparse for usage errors, so it is deliberately not reused.
 
     Raises:
         ValueError: If ``args.task`` is not ``"transcribe"`` or
@@ -334,7 +336,7 @@ def _run_main(args: argparse.Namespace) -> int:
                     language=None,
                     force_overwrite=getattr(args, "force_docint_jsonl", False),
                 )
-            return 2
+            return 3
     else:
         logger.error("Invalid task specified: {}", args.task)
         raise ValueError("Invalid task. Please specify 'transcribe' or 'translate'.")
