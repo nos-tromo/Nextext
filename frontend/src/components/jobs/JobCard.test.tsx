@@ -29,6 +29,9 @@ function mkJob(job_id: string, status: JobStatus): JobListItem {
     started_at: null,
     finished_at: null,
     task: 'transcribe',
+    error_code: null,
+    skipped: false,
+    skip_reason_code: null,
   }
 }
 
@@ -53,6 +56,8 @@ describe('JobCard progress', () => {
       progress: 0.4,
       error: null,
       skipped: false,
+      skipReason: null,
+      errorCode: null,
       terminal: false,
     })
     renderCard(<JobCard job={mkJob('j1', 'running')} />)
@@ -92,5 +97,50 @@ describe('JobCard Remove', () => {
     renderCard(<JobCard job={mkJob('j1', 'completed')} />)
     fireEvent.click(screen.getByRole('button', { name: 'Remove' }))
     await waitFor(() => expect(screen.getByText(/Could not remove job/)).toBeInTheDocument())
+  })
+})
+
+describe('JobCard skipped message', () => {
+  it.each([
+    ['vad_no_speech', 'Skipped — no speech detected in the audio'],
+    ['asr_empty_transcript', 'Skipped — transcription returned no text'],
+    ['asr_all_segments_filtered', 'Skipped — only non-speech audio was detected'],
+  ] as const)('names the reason for %s', (code, text) => {
+    useJobProgressStore.getState().setJobProgress('j1', {
+      status: 'completed',
+      stageIndex: 0,
+      stageLabel: null,
+      progress: 1,
+      error: null,
+      skipped: true,
+      skipReason: code,
+      errorCode: null,
+      terminal: true,
+    })
+    renderCard(<JobCard job={{ ...mkJob('j1', 'completed'), skipped: true, skip_reason_code: code }} />)
+    expect(screen.getByText(text)).toBeInTheDocument()
+  })
+
+  it('still reports the skip after a reload, with only the job list to go on', () => {
+    // No live store entry — exactly the post-refresh state.
+    renderCard(
+      <JobCard job={{ ...mkJob('j1', 'completed'), skipped: true, skip_reason_code: 'vad_no_speech' }} />,
+    )
+    expect(screen.getByText('Skipped — no speech detected in the audio')).toBeInTheDocument()
+  })
+
+  it('keeps the warning icon sized (its default className is replaced, not merged)', () => {
+    const { container } = renderCard(
+      <JobCard job={{ ...mkJob('j1', 'completed'), skipped: true, skip_reason_code: 'vad_no_speech' }} />,
+    )
+    const icon = container.querySelector('svg')
+    expect(icon).not.toBeNull()
+    expect(icon?.getAttribute('class')).toMatch(/\bh-4\b/)
+    expect(icon?.getAttribute('class')).toMatch(/\bw-4\b/)
+  })
+
+  it('explains an undecodable upload instead of calling it an unknown error', () => {
+    renderCard(<JobCard job={{ ...mkJob('j1', 'failed'), error_code: 'undecodable_media' }} />)
+    expect(screen.getByText(/could not be decoded/)).toBeInTheDocument()
   })
 })

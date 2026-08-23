@@ -10,7 +10,7 @@ const EMPTY: JobListItem[] = [] // stable ref so the memo holds while the list i
 
 /**
  * Global header status bar. Shows aggregate job counts
- * (processing / queued / finished / failed) plus an overall **batch progress**
+ * (processing / queued / finished / skipped / failed) plus an overall **batch progress**
  * bar measured in files done (terminal) over total — 1 of 10 finished reads
  * 10%. This tracks the whole upload rather than one job's intra-progress, so a
  * long batch advances steadily instead of resetting to 0% on every new file.
@@ -26,7 +26,7 @@ export function StatusBar() {
 
   if (counts.total === 0) return null
 
-  const done = counts.finished + counts.failed // terminal files
+  const done = counts.finished + counts.skipped + counts.failed // terminal files
   const pct = Math.round((done / counts.total) * 100)
   return (
     <div className="flex flex-col items-end gap-1 text-xs">
@@ -37,6 +37,9 @@ export function StatusBar() {
         {counts.queued > 0 && <Badge variant="neutral">{t('common.jobs_queued', { count: counts.queued })}</Badge>}
         {counts.finished > 0 && (
           <Badge variant="neutral">{t('common.jobs_finished', { count: counts.finished })}</Badge>
+        )}
+        {counts.skipped > 0 && (
+          <Badge variant="neutral">{t('common.jobs_skipped', { count: counts.skipped })}</Badge>
         )}
         {counts.failed > 0 && <Badge variant="danger">{t('common.jobs_failed', { count: counts.failed })}</Badge>}
       </div>

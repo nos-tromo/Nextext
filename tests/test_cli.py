@@ -14,8 +14,11 @@ from typing import Any
 
 import pandas as pd
 import pytest
+from loguru import logger
 
 from nextext import cli
+from nextext.core.outcomes import SkipReason
+from nextext.pipeline import TranscriptionOutcome
 
 
 class _SpyProcessor:
@@ -62,7 +65,9 @@ def test_run_main_saves_transcript_via_write_transcript_output(monkeypatch: pyte
 
     monkeypatch.setattr(cli, "FileProcessor", _make)
     df = pd.DataFrame({"start": ["0:00:00"], "end": ["0:00:02"], "text": ["Hello."]})
-    monkeypatch.setattr(cli, "transcription_pipeline", lambda **kwargs: (df, "en"))
+    monkeypatch.setattr(
+        cli, "transcription_pipeline", lambda **kwargs: TranscriptionOutcome(transcript=df, src_lang="en")
+    )
 
     cli._run_main(_args(tmp_path / "clip.wav"))
 
@@ -83,7 +88,11 @@ def test_run_main_no_speech_saves_via_write_transcript_output(monkeypatch: pytes
 
     monkeypatch.setattr(cli, "FileProcessor", _make)
     empty = pd.DataFrame(columns=pd.Index(["start", "end", "text"]))
-    monkeypatch.setattr(cli, "transcription_pipeline", lambda **kwargs: (empty, None))
+    monkeypatch.setattr(
+        cli,
+        "transcription_pipeline",
+        lambda **kwargs: TranscriptionOutcome(transcript=empty, src_lang="en", skip_reason="vad_no_speech"),
+    )
 
     cli._run_main(_args(tmp_path / "clip.wav"))
 
@@ -98,3 +107,92 @@ def test_cli_diarize_defaults_on_and_can_be_disabled() -> None:
 
     assert parse_arguments(["-f", "x.wav"]).diarize is True
     assert parse_arguments(["-f", "x.wav", "--no-diarize"]).diarize is False
+
+
+def _skipping_outcome(reason: SkipReason = "vad_no_speech") -> TranscriptionOutcome:
+    """Build a skipped transcription outcome for CLI stubs.
+
+    Args:
+        reason (SkipReason): The typed skip reason to report.
+
+    Returns:
+        TranscriptionOutcome: An outcome with an empty transcript.
+    """
+    empty = pd.DataFrame(columns=pd.Index(["start", "end", "text"]))
+    return TranscriptionOutcome(transcript=empty, src_lang="en", skip_reason=reason)
+
+
+def test_run_main_returns_nonzero_exit_code_when_nothing_was_transcribed(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A speech-free file must be distinguishable from a successful run.
+
+    Batch scripts drive the CLI; exiting 0 makes "nothing was transcribed"
+    look like "transcribed fine". The code is 3, not 2 — argparse already
+    exits 2 for a usage error, and a caller must not confuse a typo'd flag
+    with a speech-free file.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Overrides the processor and pipeline.
+        tmp_path (Path): Temporary working directory.
+    """
+    monkeypatch.setattr(cli, "FileProcessor", lambda *a, **k: _SpyProcessor())
+    monkeypatch.setattr(cli, "transcription_pipeline", lambda **kwargs: _skipping_outcome())
+
+    assert cli._run_main(_args(tmp_path / "clip.wav")) == 3
+
+
+def test_run_main_returns_zero_for_a_normal_run(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """A run that produced a transcript exits successfully.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Overrides the processor and pipeline.
+        tmp_path (Path): Temporary working directory.
+    """
+    monkeypatch.setattr(cli, "FileProcessor", lambda *a, **k: _SpyProcessor())
+    df = pd.DataFrame({"start": ["0:00:00"], "end": ["0:00:02"], "text": ["Hello."]})
+    monkeypatch.setattr(
+        cli, "transcription_pipeline", lambda **kwargs: TranscriptionOutcome(transcript=df, src_lang="en")
+    )
+
+    assert cli._run_main(_args(tmp_path / "clip.wav")) == 0
+
+
+def test_run_main_logs_the_typed_skip_reason(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """The warning must name which of the three causes fired.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Overrides the processor and pipeline.
+        tmp_path (Path): Temporary working directory.
+    """
+    monkeypatch.setattr(cli, "FileProcessor", lambda *a, **k: _SpyProcessor())
+    monkeypatch.setattr(cli, "transcription_pipeline", lambda **kwargs: _skipping_outcome("asr_all_segments_filtered"))
+
+    records: list[str] = []
+    sink_id = logger.add(lambda message: records.append(str(message)), level="DEBUG")
+    try:
+        cli._run_main(_args(tmp_path / "clip.wav"))
+    finally:
+        logger.remove(sink_id)
+
+    assert any("asr_all_segments_filtered" in record for record in records)
+
+
+def test_run_main_still_reports_docint_export_when_skipped(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """A requested docint export must be handled, not silently dropped.
+
+    The early return used to skip the export block entirely, so ``--emit-docint-jsonl``
+    produced neither a file nor a word about why.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Overrides the processor and pipeline.
+        tmp_path (Path): Temporary working directory.
+    """
+    calls: list[Path] = []
+    monkeypatch.setattr(cli, "FileProcessor", lambda *a, **k: _SpyProcessor())
+    monkeypatch.setattr(cli, "transcription_pipeline", lambda **kwargs: _skipping_outcome())
+    monkeypatch.setattr(cli, "_emit_docint_jsonl", lambda **kwargs: calls.append(kwargs["output_path"]))
+
+    cli._run_main(_args(tmp_path / "clip.wav", emit_docint_jsonl=tmp_path / "out.jsonl"))
+
+    assert calls == [tmp_path / "out.jsonl"]

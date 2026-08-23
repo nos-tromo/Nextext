@@ -15,6 +15,7 @@ from loguru import logger
 from openai import APIStatusError, OpenAI
 
 from nextext.core.audio import normalize_for_transcription
+from nextext.core.outcomes import SkipReason
 from nextext.core.vad import has_speech
 from nextext.utils.env_cfg import load_inference_env, load_whisper_env
 from nextext.utils.mappings_loader import load_mappings
@@ -242,6 +243,9 @@ class ExternalWhisperTranscriber:
         self.speaker_column = speaker_column
         self.text_column = text_column
         self.transcription_result: dict[str, Any] | None = None
+        # Set by ``transcription()`` when a run yields no usable segments, so
+        # callers can tell the three no-transcript causes apart.
+        self.skip_reason: SkipReason | None = None
         self._client: Any = None
 
     @property
@@ -290,12 +294,14 @@ class ExternalWhisperTranscriber:
         ``/v1/audio/translations`` endpoint. ``task`` itself is not
         accepted on either endpoint.
         """
+        self.skip_reason = None
         if not has_speech(self.file_path):
             logger.warning(
                 "VAD service reported no speech in {}; skipping external transcription request.",
                 self.file_path.name,
             )
             self.transcription_result = {"segments": [], "words": []}
+            self.skip_reason = "vad_no_speech"
             return
 
         provider = load_inference_env().provider
@@ -359,6 +365,10 @@ class ExternalWhisperTranscriber:
             for seg in response.segments
         ]
         segments = _filter_no_speech_segments(raw_segments)
+        if not segments:
+            # Distinguish "the endpoint returned nothing" from "everything it
+            # returned scored as non-speech" — different operator stories.
+            self.skip_reason = "asr_all_segments_filtered" if raw_segments else "asr_empty_transcript"
         words = [
             {
                 "word": str(getattr(w, "word", "")),

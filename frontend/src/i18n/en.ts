@@ -11,6 +11,7 @@ export const en = {
   'common.jobs_processing': '{count} processing',
   'common.jobs_queued': '{count} queued',
   'common.jobs_finished': '{count} finished',
+  'common.jobs_skipped': '{count} skipped',
   'common.jobs_failed': '{count} failed',
   'common.batch_progress': '{pct}% of files done',
 
@@ -77,6 +78,14 @@ export const en = {
   'results.no_data': 'No result data available.',
   'results.skipped': 'Job was skipped.',
   'results.skipped_reason': 'Job was skipped: {reason}',
+  'results.skipped_title': 'Nothing was transcribed',
+  'results.skipped_vad_no_speech':
+    'No speech was detected in this file, so it was not transcribed or analyzed.',
+  'results.skipped_asr_empty':
+    'Transcription returned no text for this file, so there was nothing to analyze.',
+  'results.skipped_asr_filtered':
+    'Only non-speech audio (music, noise or silence) was detected, so the transcribed text was discarded.',
+  'results.no_transcript': 'No transcript segments were produced for this job.',
   'results.no_word_counts': 'No word counts available for this job.',
   'results.col_word': 'Word',
   'results.col_count': 'Count',
@@ -108,6 +117,10 @@ export const en = {
   'jobs.interrupted': 'Job was interrupted before it could finish.',
   'jobs.unknown_error': 'Unknown error',
   'jobs.skipped': 'Skipped — no processable content',
+  'jobs.skipped_vad_no_speech': 'Skipped — no speech detected in the audio',
+  'jobs.skipped_asr_empty': 'Skipped — transcription returned no text',
+  'jobs.skipped_asr_filtered': 'Skipped — only non-speech audio was detected',
+  'jobs.error_undecodable': 'File could not be decoded — is it a valid audio or video file?',
   'jobs.waiting': 'Waiting…',
   'jobs.done': 'Done',
   'jobs.stage_progress': '{stage} ({pct}%)',

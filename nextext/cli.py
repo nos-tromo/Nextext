@@ -15,6 +15,7 @@ from nextext.core.docint_transcript import (
     transcript_segments_from_df as _transcript_segments_from_df,
 )
 from nextext.core.openai_cfg import InferencePipeline
+from nextext.core.outcomes import skip_reason_text
 from nextext.core.processing import FileProcessor
 from nextext.pipeline import (
     effective_text_column,
@@ -266,7 +267,12 @@ def main() -> None:
     word statistics, and summarization. Handles the command-line arguments
     and manages the flow of data through the various modules.
 
+    Exits with ``0`` on success and ``3`` when the file held no processable
+    speech, so a batch caller can tell the two apart. ``2`` is left to
+    argparse, which uses it for command-line usage errors.
+
     Raises:
+        SystemExit: Always, carrying the exit code from :func:`_run_main`.
         ValueError: If an invalid task is specified or if the source language
             cannot be resolved for analysis.
         ConnectionError: If the configured inference provider is not
@@ -277,15 +283,20 @@ def main() -> None:
     # Parse command-line arguments
     args = parse_arguments()
 
-    _run_main(args)
+    raise SystemExit(_run_main(args))
 
 
-def _run_main(args: argparse.Namespace) -> None:
+def _run_main(args: argparse.Namespace) -> int:
     """Execute the main Nextext pipeline on the parsed CLI arguments.
 
     Args:
         args (argparse.Namespace): Parsed CLI arguments from
             :func:`parse_arguments`.
+
+    Returns:
+        int: ``0`` for a normal run; ``3`` when the file yielded no
+            transcript (see :mod:`nextext.core.outcomes`). ``2`` is reserved
+            by argparse for usage errors, so it is deliberately not reused.
 
     Raises:
         ValueError: If ``args.task`` is not ``"transcribe"`` or
@@ -297,22 +308,35 @@ def _run_main(args: argparse.Namespace) -> None:
 
     # Transcribe and diarize the audio file
     if args.task in ["transcribe", "translate"]:
-        transcript_df, updated_src_lang = transcription_pipeline(
+        outcome = transcription_pipeline(
             file_path=args.file_path,
             src_lang=args.src_lang,
             diarize=args.diarize,
         )
-        args.src_lang = updated_src_lang  # Update source language if detected
+        transcript_df = outcome.transcript
+        args.src_lang = outcome.src_lang  # Update source language if detected
 
         # Guard: stop early when the transcript contains no speech
-        transcript_text = " ".join(transcript_df["text"].astype(str).tolist()).strip()
-        if transcript_df.empty or not transcript_text:
+        if outcome.is_empty:
             logger.warning(
-                "No speech detected in '{}'. Writing empty transcript and skipping analysis.",
+                "No transcript produced for '{}' (reason: {}): {} Skipping analysis.",
                 args.file_path,
+                outcome.skip_reason or "unknown",
+                skip_reason_text(outcome.skip_reason),
             )
             file_processor.write_transcript_output(transcript_df)
-            return
+            # Honour an explicit export request even here: the helper warns
+            # that there are no segments rather than leaving the caller to
+            # wonder why its target file never appeared.
+            if getattr(args, "emit_docint_jsonl", None) is not None:
+                _emit_docint_jsonl(
+                    transcript_df=transcript_df,
+                    source_path=args.file_path,
+                    output_path=args.emit_docint_jsonl,
+                    language=None,
+                    force_overwrite=getattr(args, "force_docint_jsonl", False),
+                )
+            return 3
     else:
         logger.error("Invalid task specified: {}", args.task)
         raise ValueError("Invalid task. Please specify 'transcribe' or 'translate'.")
@@ -430,6 +454,7 @@ def _run_main(args: argparse.Namespace) -> None:
         )
 
     logger.info("The end of our elaborate plans, the end of everything that stands.")
+    return 0
 
 
 if __name__ == "__main__":

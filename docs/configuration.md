@@ -164,3 +164,18 @@ they agree on it.
 of aggregate request/latency counters only — no transcript or user data. It is
 unauthenticated by design: the `obs-plane` scraper, like every inference
 caller, reaches the backend over `inference-net`.
+
+Alongside the HTTP series from `prometheus_fastapi_instrumentator`, the backend
+publishes job-outcome counters (`nextext/api/metrics.py`). Their labels are
+typed codes only — never a filename, owner id, or transcript text:
+
+| Metric | Labels | What it counts |
+|--------|--------|----------------|
+| `nextext_jobs_total` | `outcome` = `completed` \| `skipped` \| `failed` | Every job that reached a terminal state. |
+| `nextext_jobs_skipped_total` | `reason` = `vad_no_speech` \| `asr_empty_transcript` \| `asr_all_segments_filtered` \| `unknown` | Jobs that completed without a transcript. |
+| `nextext_jobs_failed_total` | `code` = `undecodable_media` \| `internal` | Failed jobs, by typed cause. |
+
+A rising `nextext_jobs_skipped_total{reason="vad_no_speech"}` usually means the
+`/vad` endpoint is over-reporting silence; a rising
+`nextext_jobs_failed_total{code="undecodable_media"}` means users are uploading
+containers PyAV cannot decode. Both are visible without reading logs.

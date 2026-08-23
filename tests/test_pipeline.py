@@ -89,6 +89,7 @@ def test_transcription_pipeline_invokes_transcriber_and_diarizes(
             self.params = params
             self.transcription_called = False
             self.src_lang = "fr"
+            self.skip_reason: str | None = None
             self.transcription_result: dict[str, Any] = {
                 "segments": [{"start": 0.0, "end": 1.0, "text": "bonjour"}],
                 "words": [{"word": "bonjour", "start": 0.0, "end": 1.0}],
@@ -151,7 +152,7 @@ def test_transcription_pipeline_invokes_transcriber_and_diarizes(
         pipeline, "load_sentence_restore_env", lambda: SentenceRestoreConfig(enabled=False, min_punct_ratio=0.01)
     )
 
-    df, detected_lang = pipeline.transcription_pipeline(
+    outcome = pipeline.transcription_pipeline(
         file_path=Path("/tmp/audio.wav"),
         src_lang="auto",
         diarize=True,
@@ -164,8 +165,8 @@ def test_transcription_pipeline_invokes_transcriber_and_diarizes(
     assert diarize_calls.get("called") is True
     assert "max_speakers" not in diarize_calls and "num_speakers" not in diarize_calls  # auto-detect
     assert len(build_calls) == 1
-    assert list(df["text"]) == ["bonjour"]
-    assert detected_lang == "fr"
+    assert list(outcome.transcript["text"]) == ["bonjour"]
+    assert outcome.src_lang == "fr"
 
 
 def test_transcription_pipeline_falls_back_to_original_language(
@@ -189,6 +190,7 @@ def test_transcription_pipeline_falls_back_to_original_language(
             """Initialise the dummy transcriber; args/kwargs accepted to match the real signature."""
             self.src_lang: str | None = None
             self.transcription_result: dict[str, Any] | None = None
+            self.skip_reason: str | None = None
 
         def transcription(self) -> None:
             """Simulate transcription, populating a segment but leaving src_lang unset."""
@@ -217,14 +219,14 @@ def test_transcription_pipeline_falls_back_to_original_language(
     monkeypatch.setattr(pipeline, "ExternalWhisperTranscriber", DummyTranscriber)
     monkeypatch.setattr(pipeline, "diarize_file", fail_diarize)
 
-    df, detected_lang = pipeline.transcription_pipeline(
+    outcome = pipeline.transcription_pipeline(
         file_path=Path("/tmp/audio.wav"),
         src_lang="es",
         diarize=False,
     )
 
-    assert list(df["text"]) == ["hola"]
-    assert detected_lang == "es"
+    assert list(outcome.transcript["text"]) == ["hola"]
+    assert outcome.src_lang == "es"
 
 
 def test_transcription_pipeline_skips_diarization_for_empty_transcript(
@@ -248,6 +250,7 @@ def test_transcription_pipeline_skips_diarization_for_empty_transcript(
             """Initialise the dummy transcriber; args/kwargs accepted to match the real signature."""
             self.src_lang = "en"
             self.transcription_result: dict[str, Any] | None = None
+            self.skip_reason: str | None = None
 
         def transcription(self) -> None:
             """Simulate transcription that produced no segments (e.g. silent audio)."""
@@ -276,14 +279,14 @@ def test_transcription_pipeline_skips_diarization_for_empty_transcript(
     monkeypatch.setattr(pipeline, "ExternalWhisperTranscriber", DummyTranscriber)
     monkeypatch.setattr(pipeline, "diarize_file", fail_diarize)
 
-    df, detected_lang = pipeline.transcription_pipeline(
+    outcome = pipeline.transcription_pipeline(
         file_path=Path("/tmp/audio.wav"),
         src_lang="en",
         diarize=True,
     )
 
-    assert list(df["text"]) == []
-    assert detected_lang == "en"
+    assert list(outcome.transcript["text"]) == []
+    assert outcome.src_lang == "en"
 
 
 class _RestorableTranscriber:
@@ -296,6 +299,7 @@ class _RestorableTranscriber:
             **params (Any): Ignored construction params.
         """
         self.src_lang = "ar"
+        self.skip_reason: str | None = None
         self.transcription_result: dict[str, Any] = {
             "segments": [{"start": 0.0, "end": 6.0, "text": "a b c d e f"}],
             "words": [{"word": ch, "start": float(i), "end": float(i) + 0.5} for i, ch in enumerate("abcdef")],
@@ -1538,6 +1542,7 @@ class _GateTranscriber:
         """
         self.params = params
         self.src_lang = "en"
+        self.skip_reason: str | None = None
         self.transcription_result: dict[str, Any] = {
             "segments": [{"start": 0.0, "end": 10.0, "text": "x"}],
             "words": [],
@@ -1565,6 +1570,7 @@ class _SpeakerReflectingTranscriber:
             **params (Any): Ignored construction params.
         """
         self.src_lang = "en"
+        self.skip_reason: str | None = None
         self.transcription_result: dict[str, Any] = {
             "segments": [
                 {"start": 0.0, "end": 1.0, "text": "a"},
@@ -1625,10 +1631,10 @@ def test_transcription_pipeline_renumbers_speakers_by_transcript_order(monkeypat
 
     monkeypatch.setattr(pipeline, "build_speaker_segments", fake_build)
 
-    df, _ = pipeline.transcription_pipeline(file_path=Path("/tmp/a.wav"), src_lang="en", diarize=True)
+    outcome = pipeline.transcription_pipeline(file_path=Path("/tmp/a.wav"), src_lang="en", diarize=True)
 
     # Speaker 5 first-heard -> Speaker 1; Speaker 2 next-new -> Speaker 2; back to 5 -> Speaker 1.
-    assert list(df["speaker"]) == ["Speaker 1", "Speaker 2", "Speaker 1"]
+    assert list(outcome.transcript["speaker"]) == ["Speaker 1", "Speaker 2", "Speaker 1"]
 
 
 def test_transcription_pipeline_fills_unlabeled_segments_from_nearest_turn(
@@ -1660,8 +1666,131 @@ def test_transcription_pipeline_fills_unlabeled_segments_from_nearest_turn(
         pipeline, "load_sentence_restore_env", lambda: SentenceRestoreConfig(enabled=False, min_punct_ratio=0.01)
     )
 
-    df, _ = pipeline.transcription_pipeline(file_path=Path("/tmp/a.wav"), src_lang="en", diarize=True)
+    outcome = pipeline.transcription_pipeline(file_path=Path("/tmp/a.wav"), src_lang="en", diarize=True)
 
     # a overlaps SPEAKER_00, c overlaps SPEAKER_01; b overlaps nothing and
     # inherits the nearer preceding turn (SPEAKER_00) instead of staying blank.
-    assert list(df["speaker"]) == ["Speaker 1", "Speaker 1", "Speaker 2"]
+    assert list(outcome.transcript["speaker"]) == ["Speaker 1", "Speaker 1", "Speaker 2"]
+
+
+# ---------------------------------------------------------------------------
+# Typed skip reasons carried out of transcription_pipeline
+# ---------------------------------------------------------------------------
+
+
+class _SkippingTranscriber:
+    """Transcriber stand-in that produced no segments for a typed reason."""
+
+    reason: str | None = "vad_no_speech"
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        """Initialise the stand-in; args/kwargs match the real signature."""
+        self.src_lang = "en"
+        self.transcription_result: dict[str, Any] | None = None
+        self.skip_reason: str | None = None
+
+    def transcription(self) -> None:
+        """Simulate a run that yielded no segments."""
+        self.transcription_result = {"segments": [], "words": []}
+        self.skip_reason = type(self).reason
+
+    def transcript_output(self) -> pd.DataFrame:
+        """Return an empty transcript DataFrame.
+
+        Returns:
+            pd.DataFrame: An empty-text DataFrame.
+        """
+        return pd.DataFrame({"text": []})
+
+
+def test_transcription_pipeline_carries_skip_reason(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The reason recorded by the transcriber must reach the caller.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Overrides the Whisper env and transcriber.
+    """
+    monkeypatch.setattr(
+        pipeline,
+        "load_whisper_env",
+        lambda: WhisperClientConfig(api_base="http://audio:8000/v1", api_key="k", model="test-model"),
+    )
+    monkeypatch.setattr(pipeline, "ExternalWhisperTranscriber", _SkippingTranscriber)
+
+    outcome = pipeline.transcription_pipeline(file_path=Path("/tmp/a.wav"), src_lang="en", diarize=False)
+
+    assert outcome.transcript.empty
+    assert outcome.src_lang == "en"
+    assert outcome.skip_reason == "vad_no_speech"
+    assert outcome.is_empty is True
+
+
+def test_transcription_pipeline_defaults_skip_reason_for_empty_transcript(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An empty transcript with no recorded cause defaults to ``asr_empty_transcript``.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Overrides the Whisper env and transcriber.
+    """
+    monkeypatch.setattr(
+        pipeline,
+        "load_whisper_env",
+        lambda: WhisperClientConfig(api_base="http://audio:8000/v1", api_key="k", model="test-model"),
+    )
+    monkeypatch.setattr(_SkippingTranscriber, "reason", None)
+    monkeypatch.setattr(pipeline, "ExternalWhisperTranscriber", _SkippingTranscriber)
+
+    outcome = pipeline.transcription_pipeline(file_path=Path("/tmp/a.wav"), src_lang="en", diarize=False)
+
+    assert outcome.skip_reason == "asr_empty_transcript"
+
+
+def test_transcription_pipeline_reports_no_skip_reason_for_real_transcript(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A transcript with text must carry no skip reason and not read as empty.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Overrides the Whisper env and transcriber.
+    """
+    monkeypatch.setattr(
+        pipeline,
+        "load_whisper_env",
+        lambda: WhisperClientConfig(api_base="http://audio:8000/v1", api_key="k", model="test-model"),
+    )
+
+    class _SpeakingTranscriber(_SkippingTranscriber):
+        """Stand-in that produced one real segment."""
+
+        @override
+        def transcription(self) -> None:
+            """Simulate a successful run."""
+            self.transcription_result = {"segments": [{"start": 0.0, "end": 1.0, "text": "hola."}], "words": []}
+            self.skip_reason = None
+
+        @override
+        def transcript_output(self) -> pd.DataFrame:
+            """Return a one-row transcript.
+
+            Returns:
+                pd.DataFrame: A single-segment DataFrame.
+            """
+            return pd.DataFrame({"text": ["hola."]})
+
+    monkeypatch.setattr(pipeline, "ExternalWhisperTranscriber", _SpeakingTranscriber)
+
+    outcome = pipeline.transcription_pipeline(file_path=Path("/tmp/a.wav"), src_lang="es", diarize=False)
+
+    assert outcome.skip_reason is None
+    assert outcome.is_empty is False
+
+
+def test_transcription_outcome_is_empty_for_whitespace_only_text() -> None:
+    """A transcript of only blank text must count as empty."""
+    outcome = pipeline.TranscriptionOutcome(
+        transcript=pd.DataFrame({"text": ["   ", ""]}),
+        src_lang="en",
+        skip_reason=None,
+    )
+
+    assert outcome.is_empty is True

@@ -54,6 +54,12 @@ export interface HateSpeechFinding {
   start: string | null
 }
 
+/** Why a completed job produced no transcript. Mirrors nextext/core/outcomes.py. */
+export type SkipReason = 'vad_no_speech' | 'asr_empty_transcript' | 'asr_all_segments_filtered'
+
+/** Why a job failed. `internal` is everything the user cannot act on. */
+export type FailureCode = 'undecodable_media' | 'internal'
+
 export interface JobResult {
   transcript: TranscriptSegment[]
   transcript_language: string | null
@@ -65,7 +71,9 @@ export interface JobResult {
   keyframes_url: string | null
   hate_speech_findings: HateSpeechFinding[] | null
   skipped: boolean
+  /** Backend English prose. Never rendered — the SPA localizes the code below. */
   skip_reason: string | null
+  skip_reason_code: SkipReason | null
   task: Task
 }
 
@@ -79,6 +87,9 @@ export interface JobSnapshot {
   stage_index: number
   progress: number
   error: string | null
+  error_code: FailureCode | null
+  skipped: boolean
+  skip_reason_code: SkipReason | null
   created_at: string
   started_at: string | null
   finished_at: string | null
@@ -92,6 +103,10 @@ export interface JobListItem {
   stage: string | null
   progress: number
   error: string | null
+  error_code: FailureCode | null
+  /** Carried on the list too: after a reload this is the SPA's only source. */
+  skipped: boolean
+  skip_reason_code: SkipReason | null
   created_at: string
   started_at: string | null
   finished_at: string | null
@@ -132,12 +147,14 @@ export interface StageCompletedEvent {
 export interface JobCompletedEvent {
   job_id: string
   skipped: boolean
+  skip_reason_code: SkipReason | null
   timestamp: string
 }
 
 export interface JobFailedEvent {
   job_id: string
   error: string
+  error_code: FailureCode | null
   timestamp: string
 }
 

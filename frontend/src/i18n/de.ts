@@ -13,6 +13,7 @@ export const de: Strings = {
   'common.jobs_processing': '{count} in Verarbeitung',
   'common.jobs_queued': '{count} in Warteschlange',
   'common.jobs_finished': '{count} abgeschlossen',
+  'common.jobs_skipped': '{count} übersprungen',
   'common.jobs_failed': '{count} fehlgeschlagen',
   'common.batch_progress': '{pct}% der Dateien fertig',
 
@@ -78,6 +79,14 @@ export const de: Strings = {
   'results.no_data': 'Keine Ergebnisdaten verfügbar.',
   'results.skipped': 'Auftrag wurde übersprungen.',
   'results.skipped_reason': 'Auftrag wurde übersprungen: {reason}',
+  'results.skipped_title': 'Es wurde nichts transkribiert',
+  'results.skipped_vad_no_speech':
+    'In dieser Datei wurde keine Sprache erkannt, daher wurde sie weder transkribiert noch analysiert.',
+  'results.skipped_asr_empty':
+    'Die Transkription hat für diese Datei keinen Text geliefert, daher gab es nichts zu analysieren.',
+  'results.skipped_asr_filtered':
+    'Es wurde ausschließlich Nicht-Sprache (Musik, Geräusche oder Stille) erkannt, daher wurde der transkribierte Text verworfen.',
+  'results.no_transcript': 'Für diesen Auftrag wurden keine Transkriptsegmente erzeugt.',
   'results.no_word_counts': 'Keine Worthäufigkeiten für diesen Auftrag verfügbar.',
   'results.col_word': 'Wort',
   'results.col_count': 'Anzahl',
@@ -109,6 +118,10 @@ export const de: Strings = {
   'jobs.interrupted': 'Der Auftrag wurde unterbrochen, bevor er abgeschlossen werden konnte.',
   'jobs.unknown_error': 'Unbekannter Fehler',
   'jobs.skipped': 'Übersprungen — kein verarbeitbarer Inhalt',
+  'jobs.skipped_vad_no_speech': 'Übersprungen — keine Sprache im Audio erkannt',
+  'jobs.skipped_asr_empty': 'Übersprungen — Transkription lieferte keinen Text',
+  'jobs.skipped_asr_filtered': 'Übersprungen — nur Nicht-Sprache erkannt',
+  'jobs.error_undecodable': 'Datei konnte nicht dekodiert werden — ist es eine gültige Audio- oder Videodatei?',
   'jobs.waiting': 'Wartet…',
   'jobs.done': 'Fertig',
   'jobs.stage_progress': '{stage} ({pct}%)',

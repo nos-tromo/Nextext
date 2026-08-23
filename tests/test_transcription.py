@@ -701,3 +701,104 @@ def test_transcription_raises_on_undecodable_audio(
         transcriber.transcription()
 
     fake_client.audio.transcriptions.create.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Typed skip reasons (why a run produced no transcript)
+# ---------------------------------------------------------------------------
+
+
+def test_external_transcriber_skip_reason_is_vad_no_speech(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The /vad guard must record ``vad_no_speech`` as the typed cause.
+
+    The three no-transcript causes are indistinguishable downstream unless
+    the transcriber records which one fired; the API surfaces the code to
+    the user and the logs.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Overrides ``has_speech``.
+    """
+    transcriber = _make_external_transcriber()
+    monkeypatch.setattr(transcription, "has_speech", lambda _path: False)
+
+    transcriber.transcription()
+
+    assert transcriber.skip_reason == "vad_no_speech"
+
+
+def test_external_transcriber_skip_reason_is_asr_empty_transcript(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A Whisper response with zero segments records ``asr_empty_transcript``.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Overrides the VAD guard, the
+            normalizer, and the OpenAI client.
+    """
+    fake_response = SimpleNamespace(segments=[], words=[], language="en")
+    fake_client = MagicMock()
+    fake_client.audio.transcriptions.create.return_value = fake_response
+
+    transcriber = _make_external_transcriber()
+    monkeypatch.setattr(transcription, "has_speech", lambda _path: True)
+    monkeypatch.setattr(transcription, "normalize_for_transcription", _passthrough_normalize)
+    monkeypatch.setattr(type(transcriber), "_get_client", property(lambda self: fake_client))
+
+    transcriber.transcription()
+
+    assert transcriber.skip_reason == "asr_empty_transcript"
+
+
+def test_external_transcriber_skip_reason_is_asr_all_segments_filtered(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Dropping every segment on ``no_speech_prob`` records its own cause.
+
+    Whisper returned text, but all of it scored above the threshold — a
+    different operator story from "the endpoint returned nothing".
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Overrides the VAD guard, the
+            normalizer, and the OpenAI client.
+    """
+    hallucinated = SimpleNamespace(start=0.0, end=1.0, text="thanks for watching.", no_speech_prob=0.99)
+    fake_response = SimpleNamespace(segments=[hallucinated], words=[], language="en")
+    fake_client = MagicMock()
+    fake_client.audio.transcriptions.create.return_value = fake_response
+
+    transcriber = _make_external_transcriber()
+    monkeypatch.setattr(transcription, "has_speech", lambda _path: True)
+    monkeypatch.setattr(transcription, "normalize_for_transcription", _passthrough_normalize)
+    monkeypatch.setattr(type(transcriber), "_get_client", property(lambda self: fake_client))
+
+    transcriber.transcription()
+
+    assert transcriber.transcription_result is not None
+    assert transcriber.transcription_result["segments"] == []
+    assert transcriber.skip_reason == "asr_all_segments_filtered"
+
+
+def test_external_transcriber_skip_reason_is_none_for_a_normal_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A run that yields segments must leave ``skip_reason`` unset.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Overrides the VAD guard, the
+            normalizer, and the OpenAI client.
+    """
+    kept = SimpleNamespace(start=0.0, end=1.0, text="Hello.", no_speech_prob=0.1)
+    fake_response = SimpleNamespace(segments=[kept], words=[], language="en")
+    fake_client = MagicMock()
+    fake_client.audio.transcriptions.create.return_value = fake_response
+
+    transcriber = _make_external_transcriber()
+    monkeypatch.setattr(transcription, "has_speech", lambda _path: True)
+    monkeypatch.setattr(transcription, "normalize_for_transcription", _passthrough_normalize)
+    monkeypatch.setattr(type(transcriber), "_get_client", property(lambda self: fake_client))
+
+    transcriber.transcription()
+
+    assert transcriber.skip_reason is None

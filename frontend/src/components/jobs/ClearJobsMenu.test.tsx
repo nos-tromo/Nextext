@@ -28,6 +28,9 @@ function mkJob(job_id: string, status: JobStatus): JobListItem {
     started_at: null,
     finished_at: null,
     task: 'transcribe',
+    error_code: null,
+    skipped: false,
+    skip_reason_code: null,
   }
 }
 

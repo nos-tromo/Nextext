@@ -1,9 +1,9 @@
 import { useState } from 'react'
 import { useJobResult } from '../../hooks/useJobResult'
-import { Spinner } from '@infra/ui'
-import { Banner } from '@infra/ui'
+import { Banner, Spinner, WarningIcon } from '@infra/ui'
 import { useT } from '../../i18n/LanguageContext'
 import { describeError } from '../../api/errorMessage'
+import { resultSkipMessageKey } from '../../lib/outcomeMessages'
 import { DownloadButtons } from './DownloadButtons'
 import { TranscriptTab } from './TranscriptTab'
 import { SummaryTab } from './SummaryTab'
@@ -68,13 +68,21 @@ export function ResultPanel({ jobId, fileName }: ResultPanelProps) {
     return <p className="text-sm text-muted-foreground">{t('results.no_data')}</p>
   }
 
+  // A skipped job is not an error, but it IS the whole story of the run — a
+  // muted footnote let it read as an ordinary empty result. `skip_reason` is
+  // backend English prose; the localized code is what gets rendered.
   if (result.skipped) {
     return (
-      <p className="text-sm text-muted-foreground">
-        {result.skip_reason
-          ? t('results.skipped_reason', { reason: result.skip_reason })
-          : t('results.skipped')}
-      </p>
+      <Banner variant="danger">
+        <span className="flex items-start gap-2">
+          {/* Repeat the size classes: our className replaces the icon default. */}
+          <WarningIcon className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
+          <span>
+            <strong className="block font-medium">{t('results.skipped_title')}</strong>
+            {t(resultSkipMessageKey(result.skip_reason_code))}
+          </span>
+        </span>
+      </Banner>
     )
   }
 
@@ -137,9 +145,14 @@ export function ResultPanel({ jobId, fileName }: ResultPanelProps) {
 
       {/* Active tab content */}
       <div>
-        {resolvedTab === 'transcript' && (
-          <TranscriptTab jobId={jobId} segments={result.transcript} stem={stem} />
-        )}
+        {resolvedTab === 'transcript' &&
+          (result.transcript.length > 0 ? (
+            <TranscriptTab jobId={jobId} segments={result.transcript} stem={stem} />
+          ) : (
+            // No rows: render the same kind of empty state as the sibling tabs
+            // rather than a header-only table with download buttons under it.
+            <p className="text-sm text-muted-foreground">{t('results.no_transcript')}</p>
+          ))}
         {resolvedTab === 'summary' && (
           <SummaryTab jobId={jobId} result={result} stem={stem} />
         )}
