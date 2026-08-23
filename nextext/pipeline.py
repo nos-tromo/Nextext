@@ -1,5 +1,6 @@
 """Shared pipeline entry points for Nextext processing stages."""
 
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +19,7 @@ from nextext.core.diarization import (
 from nextext.core.hate_speech import HateSpeechDetector
 from nextext.core.ner import extract_entities
 from nextext.core.openai_cfg import InferencePipeline
+from nextext.core.outcomes import SkipReason
 from nextext.core.sentence_segmentation import restore_sentence_segments, terminal_punctuation_ratio
 from nextext.core.transcription import ExternalWhisperTranscriber
 from nextext.core.translation import Translator
@@ -29,11 +31,46 @@ from nextext.utils.env_cfg import (
 )
 
 
+@dataclass(frozen=True)
+class TranscriptionOutcome:
+    """Result of :func:`transcription_pipeline`.
+
+    Carries the typed cause alongside the transcript so callers can tell an
+    empty result apart from a failure, and tell the three no-transcript
+    causes apart from each other (see :mod:`nextext.core.outcomes`).
+
+    Attributes:
+        transcript (pd.DataFrame): The sentence-merged transcript; empty when
+            the run produced no usable speech.
+        src_lang (str): The resolved source language code.
+        skip_reason (SkipReason | None): Why the transcript is empty, or
+            ``None`` for a normal run.
+    """
+
+    transcript: pd.DataFrame
+    src_lang: str
+    skip_reason: SkipReason | None = None
+
+    @property
+    def is_empty(self) -> bool:
+        """Whether the transcript carries no usable text.
+
+        A frame with rows whose text is blank counts as empty — the single
+        definition both the API worker and the CLI branch on.
+
+        Returns:
+            bool: ``True`` when there are no rows or no non-blank text.
+        """
+        if self.transcript.empty or "text" not in self.transcript.columns:
+            return True
+        return not " ".join(self.transcript["text"].astype(str).tolist()).strip()
+
+
 def transcription_pipeline(
     file_path: Path,
     src_lang: str,
     diarize: bool,
-) -> tuple[pd.DataFrame, str]:
+) -> TranscriptionOutcome:
     """Transcribe the audio file via the external Whisper API, optionally diarized.
 
     The audio always goes to an OpenAI-compatible ``/v1/audio/transcriptions``
@@ -71,8 +108,9 @@ def transcription_pipeline(
         diarize (bool): Whether to run speaker diarization.
 
     Returns:
-        tuple[pd.DataFrame, str]: The transcript DataFrame and the
-            resolved source language code.
+        TranscriptionOutcome: The transcript, the resolved source language
+            code, and the typed reason the transcript is empty (``None``
+            for a normal run).
     """
     config = load_whisper_env()
     transcriber = ExternalWhisperTranscriber(
@@ -124,7 +162,16 @@ def transcription_pipeline(
 
     df = transcriber.transcript_output()
     updated_src_lang = transcriber.src_lang or src_lang
-    return df, updated_src_lang
+    outcome = TranscriptionOutcome(
+        transcript=df,
+        src_lang=updated_src_lang,
+        skip_reason=transcriber.skip_reason,
+    )
+    if outcome.is_empty and outcome.skip_reason is None:
+        # The transcriber recorded no cause but nothing survived merging;
+        # report the generic ASR-empty code rather than an unexplained skip.
+        outcome = TranscriptionOutcome(transcript=df, src_lang=updated_src_lang, skip_reason="asr_empty_transcript")
+    return outcome
 
 
 def normalize_language_code(lang_code: str | None) -> str | None:
