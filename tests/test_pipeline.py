@@ -1762,11 +1762,13 @@ def test_transcription_pipeline_reports_no_skip_reason_for_real_transcript(
     class _SpeakingTranscriber(_SkippingTranscriber):
         """Stand-in that produced one real segment."""
 
+        @override
         def transcription(self) -> None:
             """Simulate a successful run."""
             self.transcription_result = {"segments": [{"start": 0.0, "end": 1.0, "text": "hola."}], "words": []}
             self.skip_reason = None
 
+        @override
         def transcript_output(self) -> pd.DataFrame:
             """Return a one-row transcript.
 
