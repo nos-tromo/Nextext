@@ -106,6 +106,10 @@ services:
       # (deploy ADR 0001 — the non-root user's rootfs is read-only).
       NLTK_DATA: /home/app/nltk_data
       SPACY_MODEL_DIR: /home/app/.cache/spacy
+      # matplotlib config/font-cache dir; the default $HOME/.config/matplotlib
+      # is on the read-only rootfs. /tmp is the writable disk-backed scratch
+      # volume; matplotlib creates the dir itself.
+      MPLCONFIGDIR: /tmp/matplotlib
     env_file: *env-file
     volumes:
       - nltk-cache:/home/app/nltk_data
