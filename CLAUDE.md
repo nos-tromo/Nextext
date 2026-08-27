@@ -189,7 +189,9 @@ The React SPA source lives in `frontend/`; run `cd frontend && pnpm {dev,build,t
 read-only root filesystems — the backend as uid `10001` (`app`,
 `HOME=/home/app`; `NLTK_DATA`/`SPACY_MODEL_DIR` point at the cache volumes
 under `/home/app`, `/tmp` is a disk-backed scratch volume sized for multi-GB
-job media), the frontend on `nginxinc/nginx-unprivileged` as uid `101`
+job media, and `MPLCONFIGDIR=/tmp/matplotlib` keeps matplotlib's import-time
+config/font cache off the read-only `$HOME/.config`), the frontend on
+`nginxinc/nginx-unprivileged` as uid `101`
 listening on **:8080** (the edge gateway's `nextext-frontend` upstream must
 match). Compose applies `no-new-privileges` + `cap_drop: ALL` via the
 `x-hardened` anchor. On existing hosts the `nltk-cache`/`spacy-cache` volumes

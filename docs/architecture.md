@@ -12,8 +12,10 @@ The stack brings up two containers:
 - **Frontend** (`frontend`) — React SPA served by nginx on port 8080 (internal). nginx proxies `/api/v1` to the backend same-origin, so browser uploads stream through nginx without buffering whole files in Python.
 
 Both images run non-root with read-only root filesystems (deploy ADR 0001):
-the backend as uid `10001`, the frontend on `nginxinc/nginx-unprivileged` as
-uid `101` listening on `:8080`. With `make up-dev`, the frontend is published
+the backend as uid `10001` (cache env vars point at the writable mounts —
+`NLTK_DATA`/`SPACY_MODEL_DIR` at the cache volumes, `MPLCONFIGDIR` at
+`/tmp/matplotlib` on the scratch volume), the frontend on
+`nginxinc/nginx-unprivileged` as uid `101` listening on `:8080`. With `make up-dev`, the frontend is published
 on `http://localhost:${NEXTEXT_HOST_PORT:-8501}/`, which maps to that nginx
 port 8080.
 
