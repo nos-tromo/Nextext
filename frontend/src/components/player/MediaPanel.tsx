@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { IconButton, XIcon } from '@infra/ui'
 import { useMediaPlayerStore } from '../../lib/mediaPlayerStore'
+import { mediaSrcUrl } from '../../lib/mediaSrc'
 import { useT } from '../../i18n/LanguageContext'
 
 /** Upload extensions that carry a picture and therefore need a `<video>`. */
@@ -49,6 +50,9 @@ export function MediaPanel() {
   const [failed, setFailed] = useState(false)
 
   const open = session !== null
+  // The store holds the backend's server-relative URL; the element needs one
+  // resolved against the sub-path the SPA is mounted under.
+  const src = session ? mediaSrcUrl(session.mediaUrl) : undefined
 
   // Escape to close, plus focus return — the docint PreviewDialog contract
   // minus the modal parts.
@@ -115,8 +119,8 @@ export function MediaPanel() {
           ) : isVideoFile(session.fileName) ? (
             <video
               ref={mediaRef as React.RefObject<HTMLVideoElement>}
-              key={session.mediaUrl}
-              src={session.mediaUrl}
+              key={src}
+              src={src}
               controls
               playsInline
               preload="metadata"
@@ -131,8 +135,8 @@ export function MediaPanel() {
           ) : (
             <audio
               ref={mediaRef as React.RefObject<HTMLAudioElement>}
-              key={session.mediaUrl}
-              src={session.mediaUrl}
+              key={src}
+              src={src}
               controls
               preload="metadata"
               className="w-full"
