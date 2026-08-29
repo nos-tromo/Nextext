@@ -1,0 +1,7 @@
+Describe what is visible in this single video frame in one or two sentences.
+
+Instructions:
+1. Cover the setting, the people or objects present, and any action under way.
+2. Quote any legible on-screen text (captions, slides, signs) verbatim.
+3. Describe only what you can actually see. Do not guess at sound, dialogue, or what happens before or after this moment.
+4. Answer with the description alone: no Markdown, no preamble, no bullet points.

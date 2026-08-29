@@ -14,9 +14,11 @@ from nextext.core.docint_transcript import (
 from nextext.core.docint_transcript import (
     transcript_segments_from_df as _transcript_segments_from_df,
 )
+from nextext.core.keyframes import extract_keyframe_samples
 from nextext.core.openai_cfg import InferencePipeline
 from nextext.core.outcomes import skip_reason_text
 from nextext.core.processing import FileProcessor
+from nextext.core.visual_context import describe_keyframes, format_visual_context
 from nextext.pipeline import (
     effective_text_column,
     hate_speech_pipeline,
@@ -26,6 +28,11 @@ from nextext.pipeline import (
     transcription_pipeline,
     translation_pipeline,
     wordlevel_pipeline,
+)
+from nextext.utils.env_cfg import (
+    DEFAULT_KEYFRAMES_MAX,
+    DEFAULT_KEYFRAMES_PER_MINUTE,
+    load_visual_summary_env,
 )
 from nextext.utils.log_cfg import setup_logging
 
@@ -108,6 +115,15 @@ def parse_arguments(args_list: list[str] | None = None) -> argparse.Namespace:
         dest="summarize",
         action="store_true",
         help="Additional transcript summarization (default: False).",
+    )
+    parser.add_argument(
+        "--no-visual-context",
+        dest="visual_context",
+        action="store_false",
+        help=(
+            "Skip captioning video keyframes for the summary. Visual context is on by "
+            "default (see NEXTEXT_VISUAL_SUMMARY) and applies only with --summarize."
+        ),
     )
     parser.add_argument(
         "-hs",
@@ -404,15 +420,37 @@ def _run_main(args: argparse.Namespace) -> int:
                 "The configured inference provider is not reachable. Please ensure it is running and accessible."
             )
 
-        # Summarize the transcribed text (translated text when available)
-        if args.summarize:
-            summary_text_column = effective_text_column(transcript_df)
-            transcript_summary = summarization_pipeline(
-                text=" ".join(transcript_df[summary_text_column].astype(str).tolist()),
-                inference_pipeline=inference_pipeline,
+        # Visual context: for video, describe sampled keyframes so the summary
+        # covers what was shown as well as what was said. Strictly an
+        # enhancement — any failure degrades to an audio-only summary.
+        visual_context: str | None = None
+        visual_cfg = load_visual_summary_env()
+        if args.visual_context and visual_cfg.enabled:
+            samples = extract_keyframe_samples(
+                args.file_path,
+                per_minute=DEFAULT_KEYFRAMES_PER_MINUTE,
+                max_frames=DEFAULT_KEYFRAMES_MAX,
             )
-            if transcript_summary is not None:
-                file_processor.write_file_output(transcript_summary, "summary")
+            if samples:
+                captions = describe_keyframes(
+                    samples,
+                    inference_pipeline,
+                    max_frames=visual_cfg.max_frames,
+                    max_side=visual_cfg.max_side,
+                )
+                if captions:
+                    visual_context = format_visual_context(captions)
+                    file_processor.write_file_output(visual_context, "visual_context")
+
+        # Summarize the transcribed text (translated text when available)
+        summary_text_column = effective_text_column(transcript_df)
+        transcript_summary = summarization_pipeline(
+            text=" ".join(transcript_df[summary_text_column].astype(str).tolist()),
+            inference_pipeline=inference_pipeline,
+            visual_context=visual_context,
+        )
+        if transcript_summary:
+            file_processor.write_file_output(transcript_summary, "summary")
 
     # Hate speech detection
     if args.hate_speech:

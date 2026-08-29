@@ -10,6 +10,9 @@ from nextext.utils.env_cfg import (
     DEFAULT_NER_TIMEOUT,
     DEFAULT_SUMMARY_MAX_INPUT_TOKENS,
     DEFAULT_VAD_TIMEOUT,
+    DEFAULT_VISUAL_SUMMARY_IMAGE_MAX_SIDE,
+    DEFAULT_VISUAL_SUMMARY_MAX_FRAMES,
+    KEYFRAMES_MAX_CEILING,
     load_diarization_env,
     load_inference_env,
     load_job_concurrency,
@@ -18,6 +21,7 @@ from nextext.utils.env_cfg import (
     load_sentence_restore_env,
     load_summary_env,
     load_vad_env,
+    load_visual_summary_env,
     load_whisper_env,
 )
 
@@ -1035,3 +1039,79 @@ def test_load_sentence_restore_env_invalid_ratio_falls_back(monkeypatch: pytest.
     assert load_sentence_restore_env().min_punct_ratio == 0.01
     monkeypatch.setenv("SENTENCE_RESTORE_MIN_PUNCT_RATIO", "abc")
     assert load_sentence_restore_env().min_punct_ratio == 0.01
+
+
+# ---------------------------------------------------------------------------
+# load_visual_summary_env
+# ---------------------------------------------------------------------------
+
+
+def test_load_visual_summary_env_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Unset vars → enabled, with the documented frame and image-size budgets.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): The pytest fixture for patching
+            environment variables.
+    """
+    for name in ("NEXTEXT_VISUAL_SUMMARY", "VISUAL_SUMMARY_MAX_FRAMES", "VISUAL_SUMMARY_IMAGE_MAX_SIDE"):
+        monkeypatch.delenv(name, raising=False)
+    cfg = load_visual_summary_env()
+    assert cfg.enabled is True
+    assert cfg.max_frames == DEFAULT_VISUAL_SUMMARY_MAX_FRAMES
+    assert cfg.max_side == DEFAULT_VISUAL_SUMMARY_IMAGE_MAX_SIDE
+
+
+def test_load_visual_summary_env_disabled_by_falsy_token(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An explicit falsy token is the operator kill-switch.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): The pytest fixture for patching
+            environment variables.
+    """
+    monkeypatch.setenv("NEXTEXT_VISUAL_SUMMARY", "off")
+    assert load_visual_summary_env().enabled is False
+
+
+def test_load_visual_summary_env_custom_values(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Valid positive integers are honoured verbatim.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): The pytest fixture for patching
+            environment variables.
+    """
+    monkeypatch.delenv("NEXTEXT_VISUAL_SUMMARY", raising=False)
+    monkeypatch.setenv("VISUAL_SUMMARY_MAX_FRAMES", "6")
+    monkeypatch.setenv("VISUAL_SUMMARY_IMAGE_MAX_SIDE", "768")
+    cfg = load_visual_summary_env()
+    assert cfg.max_frames == 6
+    assert cfg.max_side == 768
+
+
+def test_load_visual_summary_env_invalid_values_fall_back(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Non-integer or non-positive budgets warn and fall back to the defaults.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): The pytest fixture for patching
+            environment variables.
+    """
+    monkeypatch.delenv("NEXTEXT_VISUAL_SUMMARY", raising=False)
+    monkeypatch.setenv("VISUAL_SUMMARY_MAX_FRAMES", "many")
+    monkeypatch.setenv("VISUAL_SUMMARY_IMAGE_MAX_SIDE", "0")
+    cfg = load_visual_summary_env()
+    assert cfg.max_frames == DEFAULT_VISUAL_SUMMARY_MAX_FRAMES
+    assert cfg.max_side == DEFAULT_VISUAL_SUMMARY_IMAGE_MAX_SIDE
+
+
+def test_load_visual_summary_env_clamps_frames_to_keyframe_ceiling(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A frame budget above the keyframe ceiling clamps instead of raising.
+
+    Captioning costs one request per frame, so an absurd operator value must
+    not turn a single job into hundreds of inference calls.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): The pytest fixture for patching
+            environment variables.
+    """
+    monkeypatch.delenv("NEXTEXT_VISUAL_SUMMARY", raising=False)
+    monkeypatch.setenv("VISUAL_SUMMARY_MAX_FRAMES", "5000")
+    assert load_visual_summary_env().max_frames == KEYFRAMES_MAX_CEILING

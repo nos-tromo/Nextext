@@ -83,6 +83,13 @@ class HateSpeechFinding(BaseModel):
     start: str | None = None
 
 
+class FrameCaptionOut(BaseModel):
+    """One timestamped description of a sampled video keyframe."""
+
+    time_sec: float
+    caption: str
+
+
 class JobResult(BaseModel):
     """Aggregate of all per-stage outputs for a single completed job."""
 
@@ -94,6 +101,7 @@ class JobResult(BaseModel):
     named_entities: list[NamedEntity] | None = None
     wordcloud_url: str | None = None
     keyframes_url: str | None = None
+    frame_captions: list[FrameCaptionOut] | None = None
     hate_speech_findings: list[HateSpeechFinding] | None = None
     skipped: bool = False
     # Human-readable fallback prose; the SPA localizes ``skip_reason_code``

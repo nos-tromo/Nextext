@@ -471,3 +471,189 @@ def test_load_prompt_unknown_keyword_raises(monkeypatch: pytest.MonkeyPatch) -> 
 
     with pytest.raises(FileNotFoundError):
         pipeline.load_prompt("does_not_exist")
+
+
+# ---------------------------------------------------------------------------
+# call_vision — multimodal content parts
+# ---------------------------------------------------------------------------
+
+
+def test_call_vision_sends_image_then_text_content_parts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """call_vision must send an image_url data URI part ahead of the instruction.
+
+    Image-first ordering matches what document/vision model clients use, and
+    the data URI is the only shape an OpenAI-compatible endpoint accepts for
+    inline bytes.
+    """
+    monkeypatch.setenv("OPENAI_API_KEY", "k")
+    monkeypatch.setenv("TEXT_MODEL", "vlm")
+    pipeline = InferencePipeline()
+    completions = _install_recording_client(monkeypatch, pipeline)
+
+    pipeline.call_vision(prompt="describe this", images=[b"\xff\xd8jpegbytes"])
+
+    content = completions.calls[0]["messages"][-1]["content"]
+    assert [part["type"] for part in content] == ["image_url", "text"]
+    assert content[0]["image_url"]["url"].startswith("data:image/jpeg;base64,")
+    assert content[1]["text"] == "describe this"
+    assert completions.calls[0]["messages"][-1]["role"] == "user"
+
+
+def test_call_vision_encodes_the_actual_image_bytes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The data URI payload must decode back to the exact bytes handed in."""
+    import base64
+
+    monkeypatch.setenv("OPENAI_API_KEY", "k")
+    monkeypatch.setenv("TEXT_MODEL", "vlm")
+    pipeline = InferencePipeline()
+    completions = _install_recording_client(monkeypatch, pipeline)
+    payload = b"\xff\xd8\x00binary\xfffra\x00me"
+
+    pipeline.call_vision(prompt="p", images=[payload])
+
+    url = completions.calls[0]["messages"][-1]["content"][0]["image_url"]["url"]
+    assert base64.b64decode(url.split(",", 1)[1]) == payload
+
+
+def test_call_vision_sends_every_image_before_the_instruction(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Multiple frames are all attached, with the text instruction last."""
+    monkeypatch.setenv("OPENAI_API_KEY", "k")
+    monkeypatch.setenv("TEXT_MODEL", "vlm")
+    pipeline = InferencePipeline()
+    completions = _install_recording_client(monkeypatch, pipeline)
+
+    pipeline.call_vision(prompt="p", images=[b"one", b"two", b"three"])
+
+    content = completions.calls[0]["messages"][-1]["content"]
+    assert [part["type"] for part in content] == ["image_url", "image_url", "image_url", "text"]
+
+
+def test_call_vision_honours_custom_mime_type(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A caller-supplied MIME type is what lands in the data URI."""
+    monkeypatch.setenv("OPENAI_API_KEY", "k")
+    monkeypatch.setenv("TEXT_MODEL", "vlm")
+    pipeline = InferencePipeline()
+    completions = _install_recording_client(monkeypatch, pipeline)
+
+    pipeline.call_vision(prompt="p", images=[b"png"], mime_type="image/png")
+
+    url = completions.calls[0]["messages"][-1]["content"][0]["image_url"]["url"]
+    assert url.startswith("data:image/png;base64,")
+
+
+def test_call_vision_includes_system_prompt_and_maps_num_predict(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """call_vision shares call_model's system-role and max_tokens conventions."""
+    monkeypatch.setenv("OPENAI_API_KEY", "k")
+    monkeypatch.setenv("TEXT_MODEL", "vlm")
+    pipeline = InferencePipeline()
+    completions = _install_recording_client(monkeypatch, pipeline)
+
+    pipeline.call_vision(prompt="p", images=[b"x"], num_predict=160, system_prompt="be terse")
+
+    kwargs = completions.calls[0]
+    assert kwargs["messages"][0] == {"role": "system", "content": "be terse"}
+    assert kwargs["max_tokens"] == 160
+    assert kwargs["model"] == "vlm"
+
+
+def test_call_vision_omits_system_message_when_disabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """include_system_prompt=False sends a lone user message."""
+    monkeypatch.setenv("OPENAI_API_KEY", "k")
+    monkeypatch.setenv("TEXT_MODEL", "vlm")
+    pipeline = InferencePipeline()
+    completions = _install_recording_client(monkeypatch, pipeline)
+
+    pipeline.call_vision(prompt="p", images=[b"x"], include_system_prompt=False)
+
+    assert [m["role"] for m in completions.calls[0]["messages"]] == ["user"]
+
+
+def test_call_vision_forwards_think_via_extra_body(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The tri-state think field reaches the provider the same way as for text."""
+    monkeypatch.setenv("OPENAI_API_KEY", "k")
+    monkeypatch.setenv("TEXT_MODEL", "vlm")
+    pipeline = InferencePipeline()
+    completions = _install_recording_client(monkeypatch, pipeline)
+
+    pipeline.call_vision(prompt="p", images=[b"x"], think=False)
+
+    assert completions.calls[0]["extra_body"] == {"think": False}
+
+
+def test_call_vision_requires_at_least_one_image(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An empty image list is a caller bug, not a request to send text-only."""
+    monkeypatch.setenv("OPENAI_API_KEY", "k")
+    monkeypatch.setenv("TEXT_MODEL", "vlm")
+    pipeline = InferencePipeline()
+    _install_recording_client(monkeypatch, pipeline)
+
+    with pytest.raises(ValueError):
+        pipeline.call_vision(prompt="p", images=[])
+
+
+def test_call_vision_raises_when_provider_unreachable(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An unreachable provider fails loudly; the caller decides to degrade."""
+    monkeypatch.setenv("OPENAI_API_KEY", "k")
+    monkeypatch.setenv("TEXT_MODEL", "vlm")
+    pipeline = InferencePipeline()
+    _install_recording_client(monkeypatch, pipeline)
+    monkeypatch.setattr(pipeline, "get_health", lambda: False)
+
+    with pytest.raises(RuntimeError):
+        pipeline.call_vision(prompt="p", images=[b"x"])
+
+
+# ---------------------------------------------------------------------------
+# frame_caption prompt (visual context)
+# ---------------------------------------------------------------------------
+
+
+def test_frame_caption_prompt_loads_in_english(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The caption instruction must exist in the fallback locale.
+
+    ``load_prompt`` raises when neither the localized nor the English file is
+    present, which would silently disable visual context for every job.
+    """
+    monkeypatch.setenv("OPENAI_API_KEY", "k")
+    monkeypatch.delenv("RESPONSE_LANGUAGE", raising=False)
+    prompt = InferencePipeline().load_prompt("frame_caption")
+    assert prompt.strip()
+    assert "{" not in prompt  # a plain instruction, not a format template
+
+
+def test_frame_caption_prompt_is_localized_for_german(monkeypatch: pytest.MonkeyPatch) -> None:
+    """German deployments caption in German, so the summary stays one language."""
+    monkeypatch.setenv("OPENAI_API_KEY", "k")
+    monkeypatch.setenv("RESPONSE_LANGUAGE", "de")
+    english = "Describe what is visible"
+    assert english not in InferencePipeline().load_prompt("frame_caption")
+
+
+@pytest.mark.parametrize("language", ["en", "de"])
+def test_summary_prompt_mentions_visual_context(monkeypatch: pytest.MonkeyPatch, language: str) -> None:
+    """Both summary templates must tell the model how to use a visual block.
+
+    Without the instruction the model tends to enumerate the frames verbatim
+    instead of weaving what was shown into the prose summary.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Fixture for patching env vars.
+        language (str): Prompt locale under test.
+    """
+    monkeypatch.setenv("OPENAI_API_KEY", "k")
+    monkeypatch.setenv("RESPONSE_LANGUAGE", language)
+    prompt = InferencePipeline().load_prompt("summary")
+    assert prompt.count("{text}") == 1
+    assert prompt.count("{") == 1  # str.format would choke on any other brace
+    keyword = "Visual context" if language == "en" else "Visueller Kontext"
+    assert keyword in prompt

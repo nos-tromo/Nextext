@@ -137,6 +137,35 @@ wins. Resolved by `load_keyframe_defaults` in `nextext/utils/env_cfg.py`.
   Clamped to `[0, 200]` (the schema's hard cap; larger values warn and clamp to
   `200`). Defaults to `20`.
 
+## Visual context (video summaries)
+
+When a job requests a summary and the uploaded file has a video stream, the
+sampled keyframes are captioned by `TEXT_MODEL` and the timestamped captions
+are prepended to the transcript before summarization, so the summary covers
+what was shown as well as what was said. There is no job option or checkbox:
+it applies whenever those two conditions hold. Captions also surface on
+`GET /jobs/{id}` as `frame_captions` and as the `visual_context.txt` artifact.
+
+This needs a **vision-capable** `TEXT_MODEL` (the shared `vllm-service` chat
+endpoint serves one). Captioning is fail-soft end to end: a per-frame outage
+costs that caption, and a model that rejects image input aborts after a single
+request, leaving the ordinary audio-only summary plus one warning. Each
+captioned frame costs one inference request, which is what the frame budget
+below bounds. Resolved by `load_visual_summary_env` in
+`nextext/utils/env_cfg.py`; `nextext-cli` honours the same settings and takes
+`--no-visual-context` for a one-off run.
+
+- `NEXTEXT_VISUAL_SUMMARY` (backend + CLI) — Master switch. Only an explicit
+  falsy token (`0`/`false`/`no`/`off`) disables captioning; unrecognised values
+  warn and keep the default. Defaults to on.
+- `VISUAL_SUMMARY_MAX_FRAMES` (backend + CLI) — Maximum frames captioned per
+  job; a longer clip's frames are subsampled evenly so coverage still spans the
+  whole file. Clamped to `200` (the keyframe ceiling); non-integer or
+  non-positive values warn and fall back. Defaults to `12`.
+- `VISUAL_SUMMARY_IMAGE_MAX_SIDE` (backend + CLI) — Longest edge in pixels each
+  frame is downscaled to before upload, bounding request size and image-token
+  count. Frames already within budget are not upscaled. Defaults to `1024`.
+
 ## Production sub-path
 
 The Nextext SPA is served in production under the canonical `/nextext/`

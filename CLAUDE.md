@@ -87,7 +87,7 @@ Several modules call `load_dotenv()` at import time (`nextext/utils/env_cfg.py`,
 1. **Transcription** (always-on) → every upload is re-encoded to 16 kHz mono FLAC (`nextext/core/audio.py`, PyAV) so libsndfile-only Whisper servers can decode it → external Whisper API (`/v1/audio/transcriptions`, always in the source language) behind an external `/vad` speech guard (defaults to the central endpoint; `VAD_API_BASE=off` skips it), + speaker diarization via the out-of-process `/diarize` HTTP service — on by default and auto-detecting the speaker count (no speaker bounds sent), bypassable per job (`diarize=false` / CLI `--no-diarize`); VAD-gating of the turns (cropping to the Silero speech timeline, dropping music/noise the diarizer over-detects as speech) happens server-side in the diarize backend (`DIARIZE_VAD_URL`, on by default in the full vllm-service stack), so turns arrive pre-gated; they are then aligned onto the transcript at the word level (falling back to segment-level overlap when the endpoint returns no word timestamps), with segments overlapping no turn inheriting the temporally nearest turn's speaker instead of rendering as `Unknown`, and finally renumbered to contiguous `Speaker N` by first appearance **in the assembled transcript**, so labels always read in order (Speaker 1, 2, 3 … top to bottom); the speaker column is omitted entirely when ≤1 distinct speaker is detected; low-punctuation transcripts (e.g. Arabic) are re-segmented into one sentence per row via `TEXT_MODEL` before merge/translate (`NEXTEXT_SENTENCE_RESTORE`, default on) → `pd.DataFrame`
 2. **Translation** (optional) → LLM-based segment translation, directly source → target for any target language, via `InferencePipeline`. Whisper's audio-translate task is not used.
 3. **Word-level analysis** (optional) → word counts, named entities via the out-of-process `/gliner` HTTP service, word clouds
-4. **Summarization** (optional) → LLM summary via `InferencePipeline`
+4. **Summarization** (optional) → LLM summary via `InferencePipeline`. For a video file, the keyframes sampled in step 1 are first captioned one request at a time via `TEXT_MODEL`'s vision path (`call_vision`), and the timestamped captions are prepended to the transcript as a "Visual context" block, so the summary covers what was shown as well as what was said (`NEXTEXT_VISUAL_SUMMARY`, default on; needs a vision-capable `TEXT_MODEL`). No job option gates it — it applies whenever a summary was requested and the file actually has frames. Fail-soft: a text-only model aborts captioning after one request and the job falls back to an audio-only summary
 5. **Hate-speech detection** (optional) → per-segment LLM classification
 6. **Artifacts** → backend renders `.txt`, `.csv`, `.xlsx`, `.png`, `.jsonl`, ZIP on demand at `/api/v1/jobs/{id}/artifacts/{name}`
 
@@ -97,7 +97,7 @@ Several modules call `load_dotenv()` at import time (`nextext/utils/env_cfg.py`,
 - `GET /jobs` — list the caller's in-memory jobs, newest first. The frontend calls this on load to re-discover and resume its jobs after a browser reload.
 - `GET /jobs/{id}` — point-in-time snapshot (owner-scoped).
 - `GET /jobs/{id}/events` — SSE stream of stage transitions (owner-scoped); replays event history on connect so a reattached client resumes mid-run.
-- `GET /jobs/{id}/artifacts/{name}` — binary download (transcript.csv/xlsx/txt, translation.txt, summary.txt, wordcounts.csv/xlsx, entities.csv/xlsx, wordcloud.png, hate_speech.csv/xlsx, docint.jsonl, archive.zip). Owner-scoped.
+- `GET /jobs/{id}/artifacts/{name}` — binary download (transcript.csv/xlsx/txt, translation.txt, summary.txt, visual_context.txt, wordcounts.csv/xlsx, entities.csv/xlsx, wordcloud.png, keyframes.zip, hate_speech.csv/xlsx, docint.jsonl, archive.zip). Owner-scoped.
 - `DELETE /jobs/{id}` — cleanup (owner-scoped).
 - `GET /health`, `GET /languages` — meta endpoints.
 - `GET /metrics` — Prometheus exposition (aggregate request/latency counters plus the job-outcome counters below; no transcript or user data); unauthenticated, scraped by obs-plane over `inference-net`.
@@ -122,6 +122,17 @@ Identity is resolved per request by `resolve_principal`: the trusted header (`NE
 - `nextext/core/audio.py` — audio-normalization agent: re-encodes any upload to 16 kHz mono FLAC via PyAV (bundled ffmpeg) before the Whisper call; fail-closed (`AudioDecodeError`) on undecodable input.
 - `nextext/core/vad.py` — voice-activity-detection agent: fail-open HTTP client for the out-of-process `/vad` service — `has_speech` (pre-Whisper guard); an unset/unreachable endpoint transcribes everything.
 - `nextext/core/diarization.py` — speaker-diarization agent: HTTP client for the out-of-process `/diarize` service; aligns turns onto the transcript at the word level (`build_speaker_segments`), falling back to segment-level overlap (`assign_speakers_by_overlap`) when word timestamps are unavailable, labels segments that overlap no turn with the temporally nearest turn's speaker (`fill_speakers_by_nearest_turn`, preferring the preceding turn on a tie, so no segment renders as `Unknown` while others carry speakers), then renumbers the finished transcript's speakers to contiguous `Speaker N` by first appearance in reading order (`renumber_speakers_by_appearance`; supersedes the earlier turn-order `canonicalize_speaker_labels` for what the transcript displays).
+- `nextext/core/visual_context.py` — visual-context agent: captions sampled
+  video keyframes via `InferencePipeline.call_vision` (`describe_keyframes`,
+  one request per frame), downscales each frame first (`prepare_frame`), and
+  renders the `[mm:ss] caption` block the summarizer receives
+  (`format_visual_context`). Fail-soft throughout — a per-frame outage skips
+  that caption, and a client rejection on the first frame (a text-only
+  `TEXT_MODEL`) aborts the run after one round-trip.
+- `nextext/core/keyframes.py` — keyframe sampler: `extract_keyframe_samples`
+  returns timestamped `Keyframe` objects spanning the clip's full duration;
+  `extract_keyframes` is the bytes-only wrapper the `keyframes.zip` artifact
+  uses.
 - `nextext/core/sentence_segmentation.py` — sentence-restoration agent: for
   low-punctuation transcripts (e.g. Arabic), re-segments the word stream into
   one segment per sentence via `TEXT_MODEL` (`restore_sentence_segments`), which
@@ -161,6 +172,17 @@ Key env vars (see `.env.example`):
   text — so words/timestamps stay untouched; questions get `؟`, exclamations
   `!`, else `.`. Fail-soft: a model outage degrades to today's behavior. Resolved
   by `load_sentence_restore_env`. Set `NEXTEXT_SENTENCE_RESTORE=off` to disable.
+- `NEXTEXT_VISUAL_SUMMARY` / `VISUAL_SUMMARY_MAX_FRAMES` / `VISUAL_SUMMARY_IMAGE_MAX_SIDE` (backend + CLI) —
+  Visual context for video summaries. When on (default) and a summary is
+  requested for a file with a video stream, the sampled keyframes are captioned
+  by `TEXT_MODEL` and folded into the summary; captions also surface as
+  `JobResult.frame_captions` and the `visual_context.txt` artifact. Requires a
+  vision-capable `TEXT_MODEL` — a text-only one degrades to today's audio-only
+  summary with one warning. `VISUAL_SUMMARY_MAX_FRAMES` (default `12`, clamped
+  to `200`) bounds the per-job cost at one inference request per frame;
+  `VISUAL_SUMMARY_IMAGE_MAX_SIDE` (default `1024`) bounds each frame's upload
+  size. Resolved by `load_visual_summary_env`. Set `NEXTEXT_VISUAL_SUMMARY=off`
+  to disable; `nextext-cli` also takes `--no-visual-context`.
 - `NEXTEXT_OFFLINE=1` (default) — gates the spaCy/NLTK downloads (`is_offline()`); the only local downloads left. Offline + uncached spaCy model raises an actionable error.
 - `NEXTEXT_HOST_PORT` (frontend, dev/override only) — host port published by `make up-dev` for the nginx frontend container. Defaults to `8501`; maps to nginx port `8080` (the unprivileged nginx image listens there — see Container hardening below).
 - `NEXTEXT_CLIENT_MAX_BODY_SIZE` (frontend) — nginx `client_max_body_size` for the `/api/v1` upload proxy. Defaults to `8192m`.

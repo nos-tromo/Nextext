@@ -60,6 +60,13 @@ export type SkipReason = 'vad_no_speech' | 'asr_empty_transcript' | 'asr_all_seg
 /** Why a job failed. `internal` is everything the user cannot act on. */
 export type FailureCode = 'undecodable_media' | 'internal'
 
+/** One model-written description of a sampled video keyframe. */
+export interface FrameCaption {
+  /** Seconds from the start of the clip. */
+  time_sec: number
+  caption: string
+}
+
 export interface JobResult {
   transcript: TranscriptSegment[]
   transcript_language: string | null
@@ -69,6 +76,8 @@ export interface JobResult {
   named_entities: NamedEntity[] | null
   wordcloud_url: string | null
   keyframes_url: string | null
+  /** Frame captions folded into the summary; null for audio-only jobs. */
+  frame_captions: FrameCaption[] | null
   hate_speech_findings: HateSpeechFinding[] | null
   skipped: boolean
   /** Backend English prose. Never rendered — the SPA localizes the code below. */

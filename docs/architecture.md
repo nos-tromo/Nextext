@@ -23,6 +23,24 @@ port 8080.
 directly and runs end-to-end in-process, without a backend. It ships inside the
 backend image alongside the API — see [cli.md](cli.md).
 
+## Visual context in summaries
+
+For video, transcription only hears the file. When a job asks for a summary and
+the upload has a video stream, the keyframes already sampled for the
+`keyframes.zip` artifact are also described by `TEXT_MODEL`'s vision path — one
+request per frame — and the resulting `[mm:ss] caption` block is prepended to
+the transcript before the ordinary map-reduce summarizer runs. The summary then
+covers slides, scenes and legible on-screen text alongside what was said.
+
+Nothing about this is a new pipeline stage: it happens inside the existing
+**Summarizing** stage, so the stage list and every SSE progress fraction are
+unchanged, and there is no job option to set — a summary plus a video stream is
+the whole trigger. It needs a vision-capable `TEXT_MODEL`; because captioning
+is fail-soft (a text-only model aborts it after one request), a deployment
+without one keeps today's audio-only summaries. Operators bound the cost with
+`VISUAL_SUMMARY_MAX_FRAMES` — see
+[configuration.md](configuration.md#visual-context-video-summaries).
+
 ## Jobs and identity
 
 Jobs live only in memory — there is no durable storage and no TTL, so a long-running job is never cut off and is retained until you delete it or the backend restarts. Identity is anonymous: the frontend mints a per-browser id and stamps it into the URL (`?owner=<id>`) on first visit, sending it to the backend as the trusted identity header (`X-Auth-User` by default) to scope your jobs. Because that id survives a refresh, reloading the page mid-run re-discovers your jobs and resumes the live progress view; closing the tab and reopening the bare host starts a fresh identity. Developers calling the API directly can skip the header and set `NEXTEXT_DEFAULT_IDENTITY` instead. There is no authentication — the backend trusts whoever can reach `inference-net`.

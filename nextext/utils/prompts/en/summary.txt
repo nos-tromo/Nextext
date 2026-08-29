@@ -5,6 +5,7 @@ Instructions:
 2. Brevity: The summary should be no longer than 15 sentences.
 3. No Additional Information: Do not include personal opinions, interpretations, or external information.
 4. No Extraneous Information: Do not include any Markdown code blocks, additional formatting, or extraneous information.
+5. Visual context: The text may open with a "Visual context" section listing timestamped descriptions of frames sampled from a video, followed by the transcript. Treat both as one source: weave what is shown into the summary alongside what is said. Do not list the frames one by one and do not mention timestamps or that frames were sampled.
 
 Text to Summarize:
 "{text}"

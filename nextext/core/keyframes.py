@@ -13,13 +13,29 @@ the job.
 from __future__ import annotations
 
 import io
+from dataclasses import dataclass
 from pathlib import Path
 
 import av
 from av.error import FFmpegError
 from loguru import logger
 
-__all__ = ["extract_keyframes", "subsample"]
+__all__ = ["Keyframe", "extract_keyframe_samples", "extract_keyframes", "subsample"]
+
+
+@dataclass(frozen=True)
+class Keyframe:
+    """A single sampled video keyframe and the moment it was taken from.
+
+    Attributes:
+        time_sec: Presentation time of the frame in seconds from the start of
+            the clip. Used to label visual-context captions so a reader can
+            tie what was on screen to what was said at that point.
+        jpeg: JPEG-encoded frame bytes.
+    """
+
+    time_sec: float
+    jpeg: bytes
 
 
 def subsample[T](items: list[T], target: int) -> list[T]:
@@ -41,7 +57,30 @@ def subsample[T](items: list[T], target: int) -> list[T]:
     return [items[int(i * step)] for i in range(target)]
 
 
-def extract_keyframes(file_path: Path, *, per_minute: int = 4, max_frames: int = 20) -> list[bytes]:
+def _frame_time(frame: av.VideoFrame, pts: int, stream: av.VideoStream) -> float:
+    """Resolve a decoded frame's presentation time in seconds.
+
+    Prefers PyAV's own ``frame.time`` (pts scaled by the frame's time base).
+    Some containers hand back frames without one, so fall back to scaling the
+    seek target by the stream's time base, then to the microsecond convention
+    ``av`` uses for container-level timestamps.
+
+    Args:
+        frame (av.VideoFrame): The decoded frame.
+        pts (int): Presentation timestamp the decoder was seeked to.
+        stream (av.VideoStream): Stream the frame was decoded from.
+
+    Returns:
+        float: Seconds from the start of the clip; never negative.
+    """
+    if frame.time is not None:
+        return max(0.0, float(frame.time))
+    if stream.time_base is not None:
+        return max(0.0, float(pts * stream.time_base))
+    return max(0.0, pts / 1_000_000)
+
+
+def extract_keyframe_samples(file_path: Path, *, per_minute: int = 4, max_frames: int = 20) -> list[Keyframe]:
     """Return video keyframes sampled evenly across the clip's full duration.
 
     Runs two passes over the container: a cheap demux pass collects every
@@ -58,13 +97,13 @@ def extract_keyframes(file_path: Path, *, per_minute: int = 4, max_frames: int =
         max_frames (int): Hard ceiling on returned frames.
 
     Returns:
-        list[bytes]: JPEG-encoded frames in time order; ``[]`` when arguments
+        list[Keyframe]: Timestamped frames in time order; ``[]`` when arguments
             are non-positive, there is no decodable video stream, or extraction
             fails before any frame is produced.
     """
     if per_minute <= 0 or max_frames <= 0:
         return []
-    frames: list[bytes] = []
+    frames: list[Keyframe] = []
     try:
         with av.open(str(file_path)) as container:
             if not container.streams.video:
@@ -88,8 +127,26 @@ def extract_keyframes(file_path: Path, *, per_minute: int = 4, max_frames: int =
                 for frame in container.decode(stream):
                     buffer = io.BytesIO()
                     frame.to_image().save(buffer, format="JPEG")
-                    frames.append(buffer.getvalue())
+                    frames.append(Keyframe(time_sec=_frame_time(frame, pts, stream), jpeg=buffer.getvalue()))
                     break
     except (FFmpegError, ValueError, OSError) as exc:
         logger.warning("Keyframe extraction failed for {}: {}", file_path.name, exc)
     return frames
+
+
+def extract_keyframes(file_path: Path, *, per_minute: int = 4, max_frames: int = 20) -> list[bytes]:
+    """Return sampled video keyframes as JPEG bytes, without timestamps.
+
+    Thin wrapper over :func:`extract_keyframe_samples` for the callers that
+    only archive the images (the ``keyframes.zip`` artifact).
+
+    Args:
+        file_path (Path): Path to the media file.
+        per_minute (int): Target frames per minute of video.
+        max_frames (int): Hard ceiling on returned frames.
+
+    Returns:
+        list[bytes]: JPEG-encoded frames in time order; ``[]`` under the same
+            conditions as :func:`extract_keyframe_samples`.
+    """
+    return [sample.jpeg for sample in extract_keyframe_samples(file_path, per_minute=per_minute, max_frames=max_frames)]

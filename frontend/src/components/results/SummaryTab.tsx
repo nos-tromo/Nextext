@@ -14,6 +14,9 @@ interface SummaryTabProps {
  * Displays the job summary rendered as Markdown, plus a download button
  * for `summary.txt`. Renders nothing when the job produced no summary.
  *
+ * For a video job the summary also draws on descriptions of sampled frames;
+ * those live in their own tab (see `VisualContextTab`) rather than here.
+ *
  * @param jobId - The job identifier, forwarded to {@link DownloadButtons}.
  * @param result - The completed job result containing the summary text.
  * @param stem - Upload filename without extension; used to prefix download names.
