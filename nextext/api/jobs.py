@@ -33,6 +33,7 @@ from matplotlib.figure import Figure
 
 from nextext.api.metrics import record_completed, record_failed, record_skipped
 from nextext.api.schemas import (
+    FrameCaptionOut,
     HateSpeechFinding,
     JobOptions,
     JobResult,
@@ -43,9 +44,9 @@ from nextext.api.schemas import (
     WordCount,
 )
 from nextext.core.audio import AudioDecodeError
-from nextext.core.keyframes import extract_keyframes
+from nextext.core.keyframes import extract_keyframe_samples
 from nextext.core.outcomes import FailureCode, SkipReason, skip_reason_text
-from nextext.utils.env_cfg import load_job_concurrency
+from nextext.utils.env_cfg import load_job_concurrency, load_visual_summary_env
 
 _TERMINAL_EVENT_NAMES: frozenset[str] = frozenset({"job_completed", "job_failed", "job_cancelled"})
 
@@ -291,6 +292,12 @@ def _serialize_result(result: dict[str, Any]) -> JobResult:
     if result.get("keyframes"):
         keyframes_url = result.get("_keyframes_url")
 
+    frame_captions: list[FrameCaptionOut] | None = None
+    if result.get("frame_captions"):
+        frame_captions = [
+            FrameCaptionOut(time_sec=caption.time_sec, caption=caption.caption) for caption in result["frame_captions"]
+        ]
+
     return JobResult(
         transcript=transcript,
         transcript_language=result.get("transcript_language"),
@@ -300,6 +307,7 @@ def _serialize_result(result: dict[str, Any]) -> JobResult:
         named_entities=_normalize_named_entities(result.get("named_entities")),
         wordcloud_url=wordcloud_url,
         keyframes_url=keyframes_url,
+        frame_captions=frame_captions,
         hate_speech_findings=_normalize_hate_speech(result.get("hate_speech_findings")),
         skipped=bool(result.get("skipped", False)),
         skip_reason=result.get("skip_reason"),
@@ -329,6 +337,7 @@ def _run_pipeline_blocking(state: JobState, push_event: PushEvent) -> dict[str, 
     """
     # Local imports keep test stubs and import-time module reloads predictable.
     from nextext.core.openai_cfg import InferencePipeline
+    from nextext.core.visual_context import FrameCaption, describe_keyframes, format_visual_context
     from nextext.pipeline import (
         effective_text_column,
         hate_speech_pipeline,
@@ -398,11 +407,12 @@ def _run_pipeline_blocking(state: JobState, push_event: PushEvent) -> dict[str, 
     file_opts["src_lang"] = outcome.src_lang
 
     # Keyframes ---------------------------------------------------------------
-    keyframes = extract_keyframes(
+    keyframe_samples = extract_keyframe_samples(
         state.file_path,
         per_minute=opts.keyframes_per_minute,
         max_frames=opts.keyframes_max,
     )
+    keyframes = [sample.jpeg for sample in keyframe_samples]
     # Pre-baked here (not in ``_serialize_result``) because ``state.job_id`` is
     # in scope; mirrors the ``_wordcloud_url`` pattern below.
     keyframes_url = f"/api/v1/jobs/{state.job_id}/artifacts/keyframes.zip"
@@ -433,6 +443,7 @@ def _run_pipeline_blocking(state: JobState, push_event: PushEvent) -> dict[str, 
             "task": file_opts["task"],
             "keyframes": keyframes,
             "_keyframes_url": keyframes_url,
+            "frame_captions": None,
         }
         _complete(0, {"transcript_segments": 0, "skipped": True, "skip_reason_code": reason_code})
         return payload
@@ -482,6 +493,7 @@ def _run_pipeline_blocking(state: JobState, push_event: PushEvent) -> dict[str, 
         "task": file_opts["task"],
         "keyframes": keyframes,
         "_keyframes_url": keyframes_url,
+        "frame_captions": None,
     }
 
     # Word-level analysis -----------------------------------------------------
@@ -516,11 +528,38 @@ def _run_pipeline_blocking(state: JobState, push_event: PushEvent) -> dict[str, 
                     "The configured inference provider is not reachable. Please ensure it is running and accessible."
                 )
         summary_text_column = effective_text_column(df)
+        # Visual context: for video, caption the sampled keyframes so the
+        # summary covers what was shown as well as what was said. Strictly an
+        # enhancement — any failure degrades to an audio-only summary.
+        visual_context: str | None = None
+        captions: list[FrameCaption] = []
+        visual_cfg = load_visual_summary_env()
+        if visual_cfg.enabled and keyframe_samples:
+            try:
+                captions = describe_keyframes(
+                    keyframe_samples,
+                    inference_pipeline,
+                    max_frames=visual_cfg.max_frames,
+                    max_side=visual_cfg.max_side,
+                )
+            except Exception as exc:
+                logger.warning("Job {} visual context unavailable: {}", state.job_id, exc)
+                captions = []
+            if captions:
+                result["frame_captions"] = captions
+                visual_context = format_visual_context(captions)
         result["summary"] = summarization_pipeline(
             " ".join(df[summary_text_column].astype(str).tolist()),
             inference_pipeline=inference_pipeline,
+            visual_context=visual_context,
         )
-        _complete(3, {"summary": bool(result["summary"])})
+        _complete(
+            3,
+            {
+                "summary": bool(result["summary"]),
+                "frame_captions": len(result["frame_captions"] or []),
+            },
+        )
     else:
         _complete(3, {"skipped": True})
 

@@ -214,7 +214,7 @@ def test_pipeline_records_skip_reason_code_from_transcription(monkeypatch: pytes
         "nextext.pipeline.transcription_pipeline",
         lambda **kwargs: TranscriptionOutcome(transcript=empty, src_lang="en", skip_reason="vad_no_speech"),
     )
-    monkeypatch.setattr(jobs_module, "extract_keyframes", lambda path, **kw: [])
+    monkeypatch.setattr(jobs_module, "extract_keyframe_samples", lambda path, **kw: [])
 
     state = JobState(
         job_id="j-skip",
@@ -248,7 +248,7 @@ def test_pipeline_logs_the_skipped_outcome(monkeypatch: pytest.MonkeyPatch, tmp_
         "nextext.pipeline.transcription_pipeline",
         lambda **kwargs: TranscriptionOutcome(transcript=empty, src_lang="en", skip_reason="asr_all_segments_filtered"),
     )
-    monkeypatch.setattr(jobs_module, "extract_keyframes", lambda path, **kw: [])
+    monkeypatch.setattr(jobs_module, "extract_keyframe_samples", lambda path, **kw: [])
 
     state = JobState(
         job_id="j-log",
