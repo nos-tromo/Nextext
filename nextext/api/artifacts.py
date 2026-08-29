@@ -19,6 +19,7 @@ from nextext.core.docint_transcript import (
     build_docint_jsonl,
     transcript_segments_from_df,
 )
+from nextext.core.visual_context import format_visual_context
 from nextext.pipeline import normalize_language_code, transcript_txt_exports
 
 
@@ -83,6 +84,25 @@ def build_docint_jsonl_for_job(state: JobState) -> bytes:
     )
 
 
+def _visual_context_text(result: dict[str, Any]) -> str:
+    """Render a job's frame captions as the timestamped visual-context block.
+
+    The same rendering handed to the summarizer, so what a reader downloads is
+    exactly what the model was shown.
+
+    Args:
+        result (dict[str, Any]): In-memory job result payload.
+
+    Returns:
+        str: The formatted block, or ``""`` when the job produced no captions
+            (an audio-only file, or captioning that degraded).
+    """
+    captions = result.get("frame_captions")
+    if not captions:
+        return ""
+    return format_visual_context(captions)
+
+
 def _render_archive_members(state: JobState) -> dict[str, bytes]:
     """Render every produced output for a job as ``name -> bytes`` members.
 
@@ -119,6 +139,10 @@ def _render_archive_members(state: JobState) -> dict[str, bytes]:
     summary = result.get("summary")
     if isinstance(summary, str) and summary.strip():
         members[f"{stem}_summary.txt"] = summary.encode("utf-8")
+
+    visual_context = _visual_context_text(result)
+    if visual_context:
+        members[f"{stem}_visual_context.txt"] = visual_context.encode("utf-8")
 
     word_counts = result.get("word_counts")
     if isinstance(word_counts, pd.DataFrame) and not word_counts.empty:
@@ -355,6 +379,11 @@ def render_artifact(state: JobState, name: str) -> tuple[bytes, str] | None:
         if not (isinstance(summary, str) and summary.strip()):
             return None
         return summary.encode("utf-8"), _TEXT_PLAIN
+    if name == "visual_context.txt":
+        visual_context = _visual_context_text(result)
+        if not visual_context:
+            return None
+        return visual_context.encode("utf-8"), _TEXT_PLAIN
     if name == "wordcounts.csv":
         if _missing_dataframe(state, "word_counts"):
             return None
@@ -421,6 +450,7 @@ SUPPORTED_ARTIFACTS: frozenset[str] = frozenset(
         "transcript.txt",
         "translation.txt",
         "summary.txt",
+        "visual_context.txt",
         "wordcounts.csv",
         "wordcounts.xlsx",
         "entities.csv",

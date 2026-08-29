@@ -13,6 +13,7 @@ import pandas as pd
 from nextext.api import artifacts
 from nextext.api.jobs import JobState
 from nextext.api.schemas import JobOptions, JobStatus
+from nextext.core.visual_context import FrameCaption
 
 
 def _job_with_keyframes(frames: list[bytes]) -> JobState:
@@ -103,3 +104,66 @@ def test_archive_zip_absent_when_job_produced_nothing() -> None:
     reads as a real but empty result.
     """
     assert artifacts.render_artifact(_job_with_keyframes([]), "archive.zip") is None
+
+
+# ---------------------------------------------------------------------------
+# visual_context.txt — the captions behind a video summary
+# ---------------------------------------------------------------------------
+
+
+def _job_with_captions(captions: list[FrameCaption]) -> JobState:
+    """Build a completed job carrying frame captions.
+
+    Args:
+        captions (list[FrameCaption]): Captions to place on the job result.
+
+    Returns:
+        JobState: A completed job state ready for artifact rendering.
+    """
+    return JobState(
+        job_id="j9",
+        owner_id="o",
+        file_name="clip.mp4",
+        file_path=Path("clip.mp4"),
+        source_file_hash="sha256:x",
+        options=JobOptions.model_validate({}),
+        status=JobStatus.COMPLETED,
+        result={"frame_captions": captions, "summary": "a summary"},
+    )
+
+
+def test_visual_context_txt_renders_the_timestamped_block() -> None:
+    """The artifact is the same block the summarizer was given."""
+    rendered = artifacts.render_artifact(
+        _job_with_captions(
+            [FrameCaption(time_sec=0.0, caption="a hallway"), FrameCaption(time_sec=61.0, caption="a sign")]
+        ),
+        "visual_context.txt",
+    )
+    assert rendered is not None
+    payload, media_type = rendered
+    assert payload.decode("utf-8") == "[00:00] a hallway\n[01:01] a sign"
+    assert media_type.startswith("text/plain")
+
+
+def test_visual_context_txt_absent_without_captions() -> None:
+    """An audio-only job 404s rather than serving an empty file."""
+    assert artifacts.render_artifact(_job_with_captions([]), "visual_context.txt") is None
+
+
+def test_visual_context_txt_is_a_supported_artifact() -> None:
+    """The route's allowlist must know the name or it 404s before rendering."""
+    assert "visual_context.txt" in artifacts.SUPPORTED_ARTIFACTS
+
+
+def test_archive_includes_the_visual_context_file() -> None:
+    """The combined archive carries the captions next to the summary."""
+    state = _job_with_captions([FrameCaption(time_sec=5.0, caption="a whiteboard")])
+    members = artifacts._render_archive_members(state)
+    assert members["clip_visual_context.txt"].decode("utf-8") == "[00:05] a whiteboard"
+
+
+def test_archive_omits_visual_context_when_absent() -> None:
+    """No captions means no member, not an empty one."""
+    members = artifacts._render_archive_members(_job_with_captions([]))
+    assert "clip_visual_context.txt" not in members
