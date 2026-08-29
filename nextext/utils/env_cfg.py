@@ -200,6 +200,32 @@ class SentenceRestoreConfig:
 
 
 @dataclass(frozen=True)
+class VisualSummaryConfig:
+    """Dataclass for visual context added to summaries of video files.
+
+    When enabled and the job requests a summary, sampled video keyframes are
+    captioned by ``TEXT_MODEL`` and the timestamped captions are prepended to
+    the transcript, so the summary covers what was shown as well as what was
+    said. Requires a vision-capable chat model; captioning is fail-soft, so a
+    text-only model simply yields an audio-only summary.
+
+    Attributes:
+        enabled: Whether captioning may run (``NEXTEXT_VISUAL_SUMMARY``,
+            default ``True``).
+        max_frames: Upper bound on frames captioned per job
+            (``VISUAL_SUMMARY_MAX_FRAMES``). One inference request is issued
+            per frame, so this bounds the stage's cost.
+        max_side: Longest edge in pixels each frame is downscaled to before
+            upload (``VISUAL_SUMMARY_IMAGE_MAX_SIDE``), bounding request size
+            and image-token count.
+    """
+
+    enabled: bool
+    max_frames: int
+    max_side: int
+
+
+@dataclass(frozen=True)
 class NerConfig:
     """Dataclass for the named-entity-recognition service configuration.
 
@@ -252,6 +278,8 @@ DEFAULT_SUMMARY_MAX_INPUT_TOKENS: int = 6000
 DEFAULT_KEYFRAMES_PER_MINUTE: int = 4
 DEFAULT_KEYFRAMES_MAX: int = 20
 KEYFRAMES_MAX_CEILING: int = 200
+DEFAULT_VISUAL_SUMMARY_MAX_FRAMES: int = 12
+DEFAULT_VISUAL_SUMMARY_IMAGE_MAX_SIDE: int = 1024
 DEFAULT_JOB_CONCURRENCY: int = 1
 
 
@@ -428,6 +456,65 @@ def load_sentence_restore_env() -> SentenceRestoreConfig:
             )
 
     return SentenceRestoreConfig(enabled=enabled, min_punct_ratio=min_punct_ratio)
+
+
+def _load_positive_int(name: str, default: int, *, ceiling: int | None = None) -> int:
+    """Reads a positive integer budget from the environment, fail-soft.
+
+    Args:
+        name: Environment variable to read.
+        default: Value used when unset, unparseable, or non-positive.
+        ceiling: Optional inclusive upper bound; larger values warn and clamp.
+
+    Returns:
+        int: The resolved budget, always positive and within ``ceiling``.
+    """
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        value = default
+    else:
+        try:
+            parsed = int(raw)
+            if parsed <= 0:
+                raise ValueError
+            value = parsed
+        except ValueError:
+            logger.warning("Invalid {} '{}'. Falling back to {}.", name, raw, default)
+            value = default
+    if ceiling is not None and value > ceiling:
+        logger.warning("{} {} exceeds the maximum {}. Clamping.", name, value, ceiling)
+        value = ceiling
+    return value
+
+
+def load_visual_summary_env() -> VisualSummaryConfig:
+    """Loads the visual-context (keyframe captioning) configuration.
+
+    Returns:
+        VisualSummaryConfig: the resolved settings.
+        - enabled (bool): ``NEXTEXT_VISUAL_SUMMARY`` (default ``True``; only an
+          explicit falsy token — ``0``/``false``/``no``/``off`` — disables it;
+          unrecognised values warn and keep the default).
+        - max_frames (int): ``VISUAL_SUMMARY_MAX_FRAMES``; defaults to
+          :data:`DEFAULT_VISUAL_SUMMARY_MAX_FRAMES` and is clamped to
+          :data:`KEYFRAMES_MAX_CEILING`, since each frame costs one request.
+        - max_side (int): ``VISUAL_SUMMARY_IMAGE_MAX_SIDE``; defaults to
+          :data:`DEFAULT_VISUAL_SUMMARY_IMAGE_MAX_SIDE`. Non-integer or
+          non-positive values warn and fall back.
+    """
+    parsed = _parse_tristate_bool("NEXTEXT_VISUAL_SUMMARY")
+    return VisualSummaryConfig(
+        enabled=True if parsed is None else parsed,
+        max_frames=_load_positive_int(
+            "VISUAL_SUMMARY_MAX_FRAMES",
+            DEFAULT_VISUAL_SUMMARY_MAX_FRAMES,
+            ceiling=KEYFRAMES_MAX_CEILING,
+        ),
+        max_side=_load_positive_int(
+            "VISUAL_SUMMARY_IMAGE_MAX_SIDE",
+            DEFAULT_VISUAL_SUMMARY_IMAGE_MAX_SIDE,
+        ),
+    )
 
 
 def load_ner_env() -> NerConfig:
