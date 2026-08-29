@@ -82,6 +82,8 @@ Several modules call `load_dotenv()` at import time (`nextext/utils/env_cfg.py`,
 
 `nextext-cli` keeps the in-process path: it imports `nextext.pipeline` directly and runs end-to-end without needing a backend container. Lives in the backend image alongside the API.
 
+**Playback.** The SPA has a slide-in media player (`frontend/src/components/player/MediaPanel.tsx`, mounted once in the Shell, driven by `lib/mediaPlayerStore.ts`). Clicking a timestamp in the Transcript or Visual context tab opens it and seeks there; the row under the playhead is highlighted as playback advances. It is non-modal by design — no backdrop, no `aria-modal` — and the canvas reserves room for it on wide screens, so the page stays usable. `TranscriptSegment` carries `start_seconds`/`end_seconds` (numeric twins of the `str(timedelta)` display strings) so the client seeks without re-implementing the parser.
+
 **Pipeline flow (server-side):**
 
 1. **Transcription** (always-on) → every upload is re-encoded to 16 kHz mono FLAC (`nextext/core/audio.py`, PyAV) so libsndfile-only Whisper servers can decode it → external Whisper API (`/v1/audio/transcriptions`, always in the source language) behind an external `/vad` speech guard (defaults to the central endpoint; `VAD_API_BASE=off` skips it), + speaker diarization via the out-of-process `/diarize` HTTP service — on by default and auto-detecting the speaker count (no speaker bounds sent), bypassable per job (`diarize=false` / CLI `--no-diarize`); VAD-gating of the turns (cropping to the Silero speech timeline, dropping music/noise the diarizer over-detects as speech) happens server-side in the diarize backend (`DIARIZE_VAD_URL`, on by default in the full vllm-service stack), so turns arrive pre-gated; they are then aligned onto the transcript at the word level (falling back to segment-level overlap when the endpoint returns no word timestamps), with segments overlapping no turn inheriting the temporally nearest turn's speaker instead of rendering as `Unknown`, and finally renumbered to contiguous `Speaker N` by first appearance **in the assembled transcript**, so labels always read in order (Speaker 1, 2, 3 … top to bottom); the speaker column is omitted entirely when ≤1 distinct speaker is detected; low-punctuation transcripts (e.g. Arabic) are re-segmented into one sentence per row via `TEXT_MODEL` before merge/translate (`NEXTEXT_SENTENCE_RESTORE`, default on) → `pd.DataFrame`
@@ -97,6 +99,7 @@ Several modules call `load_dotenv()` at import time (`nextext/utils/env_cfg.py`,
 - `GET /jobs` — list the caller's in-memory jobs, newest first. The frontend calls this on load to re-discover and resume its jobs after a browser reload.
 - `GET /jobs/{id}` — point-in-time snapshot (owner-scoped).
 - `GET /jobs/{id}/events` — SSE stream of stage transitions (owner-scoped); replays event history on connect so a reattached client resumes mid-run.
+- `GET /jobs/{id}/media?token=…` — the original upload, streamed for in-browser playback with HTTP Range (`206`) so the player can seek. Authorized by a per-job capability token, **not** by the principal: a `<video>`/`<audio>` element cannot attach the trusted header. The token is minted at job creation, handed out only on the owner-scoped snapshot (`JobResult.media_url`), kept off `GET /jobs`, and revoked by `DELETE`. Every failure is a `404` so a wrong token cannot probe which jobs exist.
 - `GET /jobs/{id}/artifacts/{name}` — binary download (transcript.csv/xlsx/txt, translation.txt, summary.txt, visual_context.txt, wordcounts.csv/xlsx, entities.csv/xlsx, wordcloud.png, keyframes.zip, hate_speech.csv/xlsx, docint.jsonl, archive.zip). Owner-scoped.
 - `DELETE /jobs/{id}` — cleanup (owner-scoped).
 - `GET /health`, `GET /languages` — meta endpoints.
@@ -112,6 +115,7 @@ Identity is resolved per request by `resolve_principal`: the trusted header (`NE
 - `nextext/api/jobs.py` — `JobManager`, async workers bounded by a configurable `asyncio.Semaphore` (`NEXTEXT_JOB_CONCURRENCY`, default `1` = single in-flight job), SSE event broker. Holds all jobs in memory; `list_for_owner` powers the frontend's reload re-discovery.
 - `nextext/api/identity.py` — `resolve_principal` FastAPI dependency. Reads the trusted header (`NEXTEXT_AUTH_HEADER`, default `X-Auth-User`); falls back to `NEXTEXT_DEFAULT_IDENTITY` for header-less/dev callers; returns `401` when neither is set. The React frontend carries the identity in its URL (`?owner=<id>`); there are no server-managed cookies. This is the single seam a real auth track would replace.
 - `nextext/api/routes/` — `health`, `jobs` routers. Per-route ownership checks return `404` on cross-owner access so existence never leaks.
+- `nextext/api/routes/jobs.py` — also serves `GET /jobs/{id}/media` via `FileResponse` (Starlette answers `Range` with `206`), with the MIME type guessed from the upload name.
 - `nextext/api/artifacts.py` — Per-job artifact byte materializers (CSV/XLSX/PNG/JSONL/ZIP) rendered on demand from the in-memory `state.result`.
 - `nextext/api/schemas.py` — Pydantic request/response models for jobs, snapshots, and the SSE event payloads.
 - `nextext/api/metrics.py` — job-outcome Prometheus counters (`nextext_jobs_total`, `nextext_jobs_skipped_total`, `nextext_jobs_failed_total`), registered on the default registry the instrumentator exposes. Typed-code labels only.
@@ -224,6 +228,8 @@ need a one-time `chown -R 10001:10001` (runbook in the `deploy` repo).
 Jobs live only in memory. `JobManager` holds them in a dict keyed by `job_id` and scoped by `owner_id`; there is no SQLite index, no on-disk artifacts, and no TTL sweeper. A job is retained until the owner `DELETE`s it or the backend process exits — nothing ever cuts off a long-running job.
 
 Reload resilience comes from the identity, not from storage. The owner id survives a browser refresh in the page URL (`?owner=<id>`), so on load the frontend calls `GET /jobs` to re-discover the caller's jobs and resumes them: it re-subscribes to any still running (the SSE broker replays each job's event history on connect) and re-renders those already finished. A run therefore survives a browser reload during processing, but not a backend restart.
+
+The upload itself outlives the pipeline: it stays at `state.file_path` until the owner `DELETE`s the job or the backend exits, which is what makes playback possible after a job completes. Nothing else reclaims it.
 
 Artifacts (`.csv`/`.xlsx`/`.png`/`.jsonl`/`.zip`) are materialised on demand from the in-memory `state.result` by `nextext/api/artifacts.py`; they are never written to disk.
 
