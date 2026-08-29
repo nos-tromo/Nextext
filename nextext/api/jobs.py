@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import secrets
 import shutil
 import tempfile
 import uuid
@@ -44,6 +45,7 @@ from nextext.api.schemas import (
     WordCount,
 )
 from nextext.core.audio import AudioDecodeError
+from nextext.core.docint_transcript import parse_hhmmss_to_seconds
 from nextext.core.keyframes import extract_keyframe_samples
 from nextext.core.outcomes import FailureCode, SkipReason, skip_reason_text
 from nextext.utils.env_cfg import load_job_concurrency, load_visual_summary_env
@@ -100,6 +102,10 @@ class JobState:
     file_path: Path
     source_file_hash: str
     options: JobOptions
+    # Capability granting read access to the upload. A ``<video src>`` cannot
+    # send the identity header, so playback authorizes with this instead of
+    # with the principal. Minted per job and never listed.
+    media_token: str = field(default_factory=lambda: secrets.token_urlsafe(32))
     status: JobStatus = JobStatus.QUEUED
     stage: str | None = None
     stage_index: int = 0
@@ -126,6 +132,22 @@ class JobState:
     # owns the tempdir cleanup (in its finally block) and suppresses further
     # event dispatch for the no-longer-listed job.
     deleted: bool = False
+
+    @property
+    def media_url(self) -> str | None:
+        """Capability URL for playing this job's upload, if the bytes remain.
+
+        Resolved per call rather than pre-baked: the upload outlives the
+        pipeline but not a delete, so a job whose file is gone must stop
+        advertising a URL that would only 404.
+
+        Returns:
+            str | None: The tokenized media URL, or ``None`` when the upload
+                is no longer on disk.
+        """
+        if not self.file_path.exists():
+            return None
+        return f"/api/v1/jobs/{self.job_id}/media?token={self.media_token}"
 
     @property
     def is_skipped(self) -> bool:
@@ -168,7 +190,9 @@ class JobState:
             created_at=self.created_at,
             started_at=self.started_at,
             finished_at=self.finished_at,
-            result=_serialize_result(self.result) if self.status == JobStatus.COMPLETED else None,
+            result=(
+                _serialize_result(self.result, media_url=self.media_url) if self.status == JobStatus.COMPLETED else None
+            ),
         )
 
 
@@ -189,10 +213,33 @@ def _normalize_transcript_row(row: dict[Hashable, Any]) -> TranscriptSegment:
     return TranscriptSegment(
         start=_optional_str(row.get("start")),
         end=_optional_str(row.get("end")),
+        start_seconds=_optional_seconds(row.get("start")),
+        end_seconds=_optional_seconds(row.get("end")),
         speaker=_optional_str(row.get("speaker")),
         text=str(row.get("text", "")),
         translation=_optional_str(row.get("translation")),
     )
+
+
+def _optional_seconds(value: Any) -> float | None:
+    """Parse a transcript timestamp to seconds, fail-soft.
+
+    The transcript stores ``str(timedelta)`` for display; the player needs a
+    number. A row whose timestamp cannot be parsed simply loses its seek
+    rather than failing the whole snapshot.
+
+    Args:
+        value: A timestamp cell from the transcript DataFrame.
+
+    Returns:
+        float | None: Offset in seconds, or ``None`` when absent/unparseable.
+    """
+    if _optional_str(value) is None:
+        return None
+    try:
+        return parse_hhmmss_to_seconds(value)
+    except (ValueError, IndexError):
+        return None
 
 
 def _optional_str(value: Any) -> str | None:
@@ -267,7 +314,7 @@ def _normalize_hate_speech(items: list[dict[str, Any]] | None) -> list[HateSpeec
     return [HateSpeechFinding(**item) for item in items]
 
 
-def _serialize_result(result: dict[str, Any]) -> JobResult:
+def _serialize_result(result: dict[str, Any], media_url: str | None = None) -> JobResult:
     """Convert an in-memory result dict into the JSON-friendly schema.
 
     The wordcloud Figure is intentionally not serialized into the JSON
@@ -275,6 +322,9 @@ def _serialize_result(result: dict[str, Any]) -> JobResult:
 
     Args:
         result: In-memory result payload populated by the worker.
+        media_url: Capability URL for the original upload, resolved by the
+            caller (which holds the ``JobState``); ``None`` when the bytes are
+            gone or the caller has no state to ask.
 
     Returns:
         JobResult: Pydantic representation suitable for HTTP responses.
@@ -307,6 +357,7 @@ def _serialize_result(result: dict[str, Any]) -> JobResult:
         named_entities=_normalize_named_entities(result.get("named_entities")),
         wordcloud_url=wordcloud_url,
         keyframes_url=keyframes_url,
+        media_url=media_url,
         frame_captions=frame_captions,
         hate_speech_findings=_normalize_hate_speech(result.get("hate_speech_findings")),
         skipped=bool(result.get("skipped", False)),
@@ -676,6 +727,30 @@ class JobManager:
         state.task = task
         self._background_tasks.add(task)
         task.add_done_callback(self._background_tasks.discard)
+        return state
+
+    async def get_by_media_token(self, job_id: str, token: str) -> JobState | None:
+        """Return a job only if ``token`` is its media capability.
+
+        The media route has no principal to check — a media element sends no
+        identity header — so the token *is* the authorization. Compared with
+        :func:`secrets.compare_digest` so a wrong guess cannot be timed, and
+        an unknown job is indistinguishable from a wrong token.
+
+        Args:
+            job_id: Job identifier from the URL path.
+            token: Candidate capability token from the query string.
+
+        Returns:
+            JobState | None: The job, or ``None`` for an unknown id, a deleted
+                job, or a token mismatch.
+        """
+        async with self._lock:
+            state = self._jobs.get(job_id)
+        if state is None or state.deleted:
+            return None
+        if not secrets.compare_digest(state.media_token, token):
+            return None
         return state
 
     async def get(self, job_id: str) -> JobState | None:

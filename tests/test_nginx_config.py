@@ -80,3 +80,37 @@ def test_download_locations_have_long_read_timeout() -> None:
             f"{path!r} resolves to `location ~ {winner[0]}` with "
             f"proxy_read_timeout={seconds!r}s; expected an explicit budget >= 300s."
         )
+
+
+_MEDIA_PATH = "/api/v1/jobs/9d1f7c2e-0000-4a00-8000-000000000000/media"
+
+
+def test_media_location_disables_response_buffering() -> None:
+    """Media playback must stream, not buffer through nginx's temp files.
+
+    With the default ``proxy_buffering on``, nginx spills a large upstream
+    response to ``proxy_temp_path`` — which lives on the frontend's 16 MB
+    tmpfs — so a multi-GB recording would fill it and fail. It also defeats
+    the point of Range requests: bytes must reach the player as they arrive.
+    """
+    conf = _CONF.read_text(encoding="utf-8")
+    locations = _regex_locations(conf)
+
+    winner = next(((rx, body) for rx, body in locations if re.match(rx, _MEDIA_PATH)), None)
+    assert winner is not None, (
+        f"No regex location matches {_MEDIA_PATH!r}; it falls through to "
+        "`location /api/`, where response buffering is on."
+    )
+    assert re.search(r"proxy_buffering\s+off", winner[1]), (
+        f"`location ~ {winner[0]}` must set `proxy_buffering off` so media streams."
+    )
+
+
+def test_media_location_has_long_read_timeout() -> None:
+    """A paused player can idle well past nginx's 60s default before seeking."""
+    conf = _CONF.read_text(encoding="utf-8")
+    locations = _regex_locations(conf)
+    winner = next(((rx, body) for rx, body in locations if re.match(rx, _MEDIA_PATH)), None)
+    assert winner is not None
+    seconds = _read_timeout_seconds(winner[1])
+    assert seconds is not None and seconds >= 300

@@ -52,6 +52,11 @@ class TranscriptSegment(BaseModel):
 
     start: str | None = None
     end: str | None = None
+    # Numeric twins of the display strings above, so a media player can seek
+    # without re-implementing the timedelta parser in the browser. ``None``
+    # when the stored timestamp is absent or unparseable.
+    start_seconds: float | None = None
+    end_seconds: float | None = None
     speaker: str | None = None
     text: str
     translation: str | None = None
@@ -101,6 +106,10 @@ class JobResult(BaseModel):
     named_entities: list[NamedEntity] | None = None
     wordcloud_url: str | None = None
     keyframes_url: str | None = None
+    # Capability URL for the original upload: a media element cannot send the
+    # trusted identity header, so the token in the URL is what authorizes it.
+    # ``None`` once the bytes are gone (deleted job / restarted backend).
+    media_url: str | None = None
     frame_captions: list[FrameCaptionOut] | None = None
     hate_speech_findings: list[HateSpeechFinding] | None = None
     skipped: bool = False
