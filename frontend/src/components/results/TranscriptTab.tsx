@@ -1,12 +1,17 @@
 import { DownloadButtons } from './DownloadButtons'
 import { transcriptHasSpeaker, transcriptHasTranslation } from '../../lib/transcriptTable'
 import { useT } from '../../i18n/LanguageContext'
+import { useMediaPlayerStore } from '../../lib/mediaPlayerStore'
+import { TimeCell } from './TimeCell'
+import { cn } from '../../lib/cn'
 import type { TranscriptSegment } from '../../api/types'
 
 interface TranscriptTabProps {
   jobId: string
   segments: TranscriptSegment[]
   stem: string
+  fileName: string
+  mediaUrl: string | null
 }
 
 /**
@@ -21,11 +26,26 @@ interface TranscriptTabProps {
  * @param jobId - The job identifier, forwarded to {@link DownloadButtons}.
  * @param segments - Transcript segments from the completed job result.
  * @param stem - Upload filename without extension; used to prefix download names.
+ * @param fileName - Original upload name, shown as the player's title.
+ * @param mediaUrl - Capability URL for playback; `null` disables the
+ *   timestamp controls (the upload is gone, so there is nothing to play).
  */
-export function TranscriptTab({ jobId, segments, stem }: TranscriptTabProps) {
+export function TranscriptTab({ jobId, segments, stem, fileName, mediaUrl }: TranscriptTabProps) {
   const t = useT()
+  const playingHere = useMediaPlayerStore((s) => s.session?.jobId === jobId)
+  const currentTime = useMediaPlayerStore((s) => s.currentTime)
   const hasSpeaker = transcriptHasSpeaker(segments)
   const hasTranslation = transcriptHasTranslation(segments)
+
+  /** The row the playhead sits in, or -1 when this job is not playing. */
+  const activeIndex = playingHere
+    ? segments.findIndex(
+        (seg, i) =>
+          seg.start_seconds !== null &&
+          currentTime >= seg.start_seconds &&
+          currentTime < (seg.end_seconds ?? segments[i + 1]?.start_seconds ?? Infinity),
+      )
+    : -1
 
   const txtItems = hasTranslation
     ? [
@@ -51,8 +71,21 @@ export function TranscriptTab({ jobId, segments, stem }: TranscriptTabProps) {
           </thead>
           <tbody>
             {segments.map((seg, i) => (
-              <tr key={i} className="border-b border-border last:border-0 hover:bg-accent/40">
-                <td className="px-4 py-2 tabular-nums text-muted-foreground">{seg.start ?? '—'}</td>
+              <tr
+                key={i}
+                aria-current={i === activeIndex ? 'true' : undefined}
+                className={cn(
+                  'border-b border-border last:border-0 hover:bg-accent/40',
+                  i === activeIndex && 'bg-accent/60',
+                )}
+              >
+                <TimeCell
+                  label={seg.start ?? '—'}
+                  seconds={seg.start_seconds}
+                  jobId={jobId}
+                  fileName={fileName}
+                  mediaUrl={mediaUrl}
+                />
                 <td className="px-4 py-2 tabular-nums text-muted-foreground">{seg.end ?? '—'}</td>
                 {hasSpeaker && (
                   <td className="px-4 py-2 text-muted-foreground">{seg.speaker ?? '—'}</td>

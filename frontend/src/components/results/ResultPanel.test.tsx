@@ -3,6 +3,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import type { JobSnapshot } from '../../api/types'
 import { ResultPanel } from './ResultPanel'
+import { useMediaPlayerStore } from '../../lib/mediaPlayerStore'
 
 function mountResultPanel(jobId: string, fileName: string) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
@@ -41,7 +42,15 @@ function makeSnapshot(overrides: Partial<JobSnapshot['result']> = {}): JobSnapsh
     finished_at: '2026-01-01T00:01:00Z',
     result: {
       transcript: [
-        { start: '0.00', end: '2.00', speaker: null, text: 'Hello world', translation: null },
+        {
+          start: '0.00',
+          end: '2.00',
+          start_seconds: 0,
+          end_seconds: 2,
+          speaker: null,
+          text: 'Hello world',
+          translation: null,
+        },
       ],
       transcript_language: 'en',
       resolved_src_lang: 'en',
@@ -50,6 +59,7 @@ function makeSnapshot(overrides: Partial<JobSnapshot['result']> = {}): JobSnapsh
       named_entities: null,
       wordcloud_url: null,
       keyframes_url: null,
+      media_url: null,
       frame_captions: null,
       hate_speech_findings: null,
       skipped: false,
@@ -61,7 +71,10 @@ function makeSnapshot(overrides: Partial<JobSnapshot['result']> = {}): JobSnapsh
   }
 }
 
-afterEach(() => vi.restoreAllMocks())
+afterEach(() => {
+  vi.restoreAllMocks()
+  useMediaPlayerStore.getState().clear()
+})
 
 describe('ResultPanel', () => {
   it('renders the transcript tab and its text after data loads', async () => {
@@ -287,5 +300,67 @@ describe('ResultPanel', () => {
       const btn = screenApi.getByRole('button', { name: 'Download all (.zip)' })
       expect(btn).toBeInTheDocument()
     })
+  })
+})
+
+describe('ResultPanel media player', () => {
+  it('offers an Open player control when the recording is still available', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        new Response(JSON.stringify(makeSnapshot({ media_url: '/api/v1/jobs/j1/media?token=t' })), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+      ),
+    )
+
+    mountResultPanel('j1', 'clip.wav')
+
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Open player' })).toBeInTheDocument(),
+    )
+  })
+
+  it('hides the control when the upload is gone', async () => {
+    // A deleted or restarted job has no bytes left; a control that only 404s
+    // is worse than no control.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        new Response(JSON.stringify(makeSnapshot({ media_url: null })), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+      ),
+    )
+
+    mountResultPanel('j1', 'clip.wav')
+
+    await waitFor(() => expect(screen.getByText('Hello world')).toBeInTheDocument())
+    expect(screen.queryByRole('button', { name: 'Open player' })).not.toBeInTheDocument()
+  })
+
+  it('opens the player from the tab bar without seeking', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        new Response(JSON.stringify(makeSnapshot({ media_url: '/api/v1/jobs/j1/media?token=t' })), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+      ),
+    )
+
+    mountResultPanel('j1', 'clip.wav')
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Open player' })).toBeInTheDocument(),
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Open player' }))
+
+    const state = useMediaPlayerStore.getState()
+    expect(state.session?.jobId).toBe('j1')
+    expect(state.session?.fileName).toBe('clip.wav')
+    expect(state.seekRequest).toBeNull()
   })
 })

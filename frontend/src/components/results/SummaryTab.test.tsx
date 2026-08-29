@@ -13,6 +13,7 @@ function makeResult(overrides: Partial<JobResult> = {}): JobResult {
     named_entities: null,
     wordcloud_url: null,
     keyframes_url: null,
+    media_url: null,
     frame_captions: null,
     hate_speech_findings: null,
     skipped: false,

@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useJobResult } from '../../hooks/useJobResult'
-import { Banner, Spinner, WarningIcon } from '@infra/ui'
+import { Banner, Button, Spinner, WarningIcon } from '@infra/ui'
 import { useT } from '../../i18n/LanguageContext'
 import { describeError } from '../../api/errorMessage'
 import { resultSkipMessageKey } from '../../lib/outcomeMessages'
@@ -13,6 +13,7 @@ import { WordCloudTab } from './WordCloudTab'
 import { EntitiesTab } from './EntitiesTab'
 import { HateSpeechTab } from './HateSpeechTab'
 import { cn } from '../../lib/cn'
+import { useMediaPlayerStore } from '../../lib/mediaPlayerStore'
 
 interface ResultPanelProps {
   jobId: string
@@ -50,6 +51,7 @@ export function ResultPanel({ jobId, fileName }: ResultPanelProps) {
   const t = useT()
   const query = useJobResult(jobId, true)
   const [activeTab, setActiveTab] = useState<TabId>('transcript')
+  const openPlayer = useMediaPlayerStore((s) => s.open)
 
   // Derive stem: strip everything from the last '.' onward (or use the full
   // name). Fall back to 'result' so an empty/extension-only name can't yield
@@ -144,30 +146,59 @@ export function ResultPanel({ jobId, fileName }: ResultPanelProps) {
             </button>
           ))}
         </nav>
-        <DownloadButtons
-          jobId={jobId}
-          items={[
-            {
-              name: 'archive.zip',
-              title: t('artifacts.download_archive'),
-              fileName: `${stem}_archive.zip`,
-            },
-          ]}
-        />
+        <div className="flex items-center gap-2">
+          {/* Opens the recording without jumping anywhere; the timestamps in
+              the tabs below are the seek controls. Hidden when the upload is
+              gone, since the player would only 404. */}
+          {result.media_url && (
+            <Button
+              variant="ghost"
+              size="sm"
+              type="button"
+              onClick={() =>
+                openPlayer({ jobId, fileName, mediaUrl: result.media_url as string })
+              }
+            >
+              {t('player.open')}
+            </Button>
+          )}
+          <DownloadButtons
+            jobId={jobId}
+            items={[
+              {
+                name: 'archive.zip',
+                title: t('artifacts.download_archive'),
+                fileName: `${stem}_archive.zip`,
+              },
+            ]}
+          />
+        </div>
       </div>
 
       {/* Active tab content */}
       <div>
         {resolvedTab === 'transcript' &&
           (result.transcript.length > 0 ? (
-            <TranscriptTab jobId={jobId} segments={result.transcript} stem={stem} />
+            <TranscriptTab
+              jobId={jobId}
+              segments={result.transcript}
+              stem={stem}
+              fileName={fileName}
+              mediaUrl={result.media_url}
+            />
           ) : (
             // No rows: render the same kind of empty state as the sibling tabs
             // rather than a header-only table with download buttons under it.
             <p className="text-sm text-muted-foreground">{t('results.no_transcript')}</p>
           ))}
         {resolvedTab === 'visual_context' && (
-          <VisualContextTab jobId={jobId} result={result} stem={stem} />
+          <VisualContextTab
+            jobId={jobId}
+            result={result}
+            stem={stem}
+            fileName={fileName}
+            mediaUrl={result.media_url}
+          />
         )}
         {resolvedTab === 'summary' && (
           <SummaryTab jobId={jobId} result={result} stem={stem} />

@@ -9,6 +9,8 @@ const seg = (
 ): TranscriptSegment => ({
   start: null,
   end: null,
+  start_seconds: null,
+  end_seconds: null,
   speaker,
   text,
   translation,

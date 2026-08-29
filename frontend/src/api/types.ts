@@ -29,6 +29,10 @@ export interface JobCreateResponse {
 export interface TranscriptSegment {
   start: string | null
   end: string | null
+  /** Numeric twin of `start`, for seeking the player. Null when unparseable. */
+  start_seconds: number | null
+  /** Numeric twin of `end`. */
+  end_seconds: number | null
   speaker: string | null
   text: string
   translation: string | null
@@ -76,6 +80,8 @@ export interface JobResult {
   named_entities: NamedEntity[] | null
   wordcloud_url: string | null
   keyframes_url: string | null
+  /** Capability URL for playing the original upload; null once it is gone. */
+  media_url: string | null
   /** Frame captions folded into the summary; null for audio-only jobs. */
   frame_captions: FrameCaption[] | null
   hate_speech_findings: HateSpeechFinding[] | null
