@@ -62,6 +62,8 @@ export const en = {
   // abbreviations, identical in both locales, and stay as plain literals)
   'downloads.transcript_txt': 'Transcript TXT',
   'downloads.translation_txt': 'Translation TXT',
+  'downloads.summary_txt': 'Summary TXT',
+  'downloads.visual_context_txt': 'Visual context TXT',
 
   // results (ResultPanel and its tabs)
   // Accessible name for a download button whose visible chip is the bare format.

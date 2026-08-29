@@ -63,6 +63,8 @@ export const de: Strings = {
   // downloads
   'downloads.transcript_txt': 'Transkript TXT',
   'downloads.translation_txt': 'Übersetzung TXT',
+  'downloads.summary_txt': 'Zusammenfassung TXT',
+  'downloads.visual_context_txt': 'Visueller Kontext TXT',
 
   // results (ResultPanel and its tabs)
   // Barrierefreier Name eines Download-Buttons, dessen Chip nur das Format zeigt.

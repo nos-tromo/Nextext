@@ -77,28 +77,28 @@ export function SummaryTab({ jobId, result, stem }: SummaryTabProps) {
 
   const captions = result.frame_captions ?? []
 
+  // Two bare "TXT" chips side by side would be indistinguishable, so name both
+  // as soon as the second one appears — the same split TranscriptTab makes
+  // between "Transcript TXT" and "Translation TXT".
+  const downloads =
+    captions.length > 0
+      ? [
+          { name: 'summary.txt', label: t('downloads.summary_txt'), fileName: `${stem}_summary.txt` },
+          {
+            name: 'visual_context.txt',
+            label: t('downloads.visual_context_txt'),
+            fileName: `${stem}_visual_context.txt`,
+          },
+        ]
+      : [{ name: 'summary.txt', label: 'TXT', fileName: `${stem}_summary.txt` }]
+
   return (
     <div className="space-y-4">
       <div className="prose prose-invert max-w-none text-sm">
         <ReactMarkdown remarkPlugins={[remarkGfm]}>{result.summary}</ReactMarkdown>
       </div>
       {captions.length > 0 && <VisualContext captions={captions} />}
-      <DownloadButtons
-        jobId={jobId}
-        items={[
-          { name: 'summary.txt', label: 'TXT', fileName: `${stem}_summary.txt` },
-          ...(captions.length > 0
-            ? [
-                {
-                  name: 'visual_context.txt',
-                  label: 'TXT',
-                  title: t('results.visual_context'),
-                  fileName: `${stem}_visual_context.txt`,
-                },
-              ]
-            : []),
-        ]}
-      />
+      <DownloadButtons jobId={jobId} items={downloads} />
     </div>
   )
 }
