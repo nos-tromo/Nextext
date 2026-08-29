@@ -63,13 +63,12 @@ export const de: Strings = {
   // downloads
   'downloads.transcript_txt': 'Transkript TXT',
   'downloads.translation_txt': 'Übersetzung TXT',
-  'downloads.summary_txt': 'Zusammenfassung TXT',
-  'downloads.visual_context_txt': 'Visueller Kontext TXT',
 
   // results (ResultPanel and its tabs)
   // Barrierefreier Name eines Download-Buttons, dessen Chip nur das Format zeigt.
   'results.download_artifact': '{label} herunterladen',
   'results.tab_transcript': 'Transkript',
+  'results.tab_visual_context': 'Visueller Kontext',
   'results.tab_summary': 'Zusammenfassung',
   'results.tab_words': 'Wörter',
   'results.tab_wordcloud': 'Wörterwolke',
@@ -97,8 +96,10 @@ export const de: Strings = {
   'results.col_category': 'Kategorie',
   'results.col_frequency': 'Häufigkeit',
   'results.no_summary': 'Keine Zusammenfassung für diesen Auftrag erstellt.',
-  'results.visual_context': 'Visueller Kontext',
-  'results.visual_context_hint': 'Was das Video zu diesen Zeitpunkten zeigte — in der Zusammenfassung oben berücksichtigt.',
+  'results.no_visual_context': 'Kein visueller Kontext für diesen Auftrag erstellt.',
+  'results.visual_context_hint': 'Was das Video zu den jeweils ausgewerteten Zeitpunkten zeigte. Eine Zusammenfassung dieses Auftrags berücksichtigt diese Beschreibungen ebenfalls.',
+  'results.col_time': 'Zeit',
+  'results.col_description': 'Zu sehen',
   'results.no_hate_speech': 'Keine Hatespeech-Befunde für diesen Auftrag.',
   'results.flagged_summary_one': '{flagged} von {total} Segment markiert.',
   'results.flagged_summary_other': '{flagged} von {total} Segmenten markiert.',

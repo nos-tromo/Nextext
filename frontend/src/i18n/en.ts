@@ -62,13 +62,12 @@ export const en = {
   // abbreviations, identical in both locales, and stay as plain literals)
   'downloads.transcript_txt': 'Transcript TXT',
   'downloads.translation_txt': 'Translation TXT',
-  'downloads.summary_txt': 'Summary TXT',
-  'downloads.visual_context_txt': 'Visual context TXT',
 
   // results (ResultPanel and its tabs)
   // Accessible name for a download button whose visible chip is the bare format.
   'results.download_artifact': 'Download {label}',
   'results.tab_transcript': 'Transcript',
+  'results.tab_visual_context': 'Visual context',
   'results.tab_summary': 'Summary',
   'results.tab_words': 'Words',
   'results.tab_wordcloud': 'Word Cloud',
@@ -96,8 +95,10 @@ export const en = {
   'results.col_category': 'Category',
   'results.col_frequency': 'Frequency',
   'results.no_summary': 'No summary produced for this job.',
-  'results.visual_context': 'Visual context',
-  'results.visual_context_hint': 'What the video showed at these moments, folded into the summary above.',
+  'results.no_visual_context': 'No visual context produced for this job.',
+  'results.visual_context_hint': 'What the video showed at each sampled moment. A summary of this job also draws on these descriptions.',
+  'results.col_time': 'Time',
+  'results.col_description': 'What is shown',
   'results.no_hate_speech': 'No hate-speech findings for this job.',
   'results.flagged_summary_one': '{flagged} of {total} segment flagged.',
   'results.flagged_summary_other': '{flagged} of {total} segments flagged.',

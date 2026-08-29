@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import type { JobSnapshot } from '../../api/types'
 import { ResultPanel } from './ResultPanel'
@@ -115,6 +115,73 @@ describe('ResultPanel', () => {
     mountResultPanel('j1', 'clip.wav')
 
     await waitFor(() => expect(screen.getByRole('button', { name: 'Summary' })).toBeInTheDocument())
+  })
+
+  it('does not render the Visual context tab for an audio-only job', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        new Response(JSON.stringify(makeSnapshot({ frame_captions: null })), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+      ),
+    )
+
+    mountResultPanel('j1', 'clip.wav')
+
+    await waitFor(() => expect(screen.getByText('Hello world')).toBeInTheDocument())
+    expect(screen.queryByRole('button', { name: 'Visual context' })).not.toBeInTheDocument()
+  })
+
+  it('places the Visual context tab directly after Transcript', async () => {
+    // It describes the same material the transcript covers, moment by moment,
+    // so it belongs beside it rather than after the derived analyses.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        new Response(
+          JSON.stringify(
+            makeSnapshot({
+              summary: 'A brief summary.',
+              frame_captions: [{ time_sec: 0, caption: 'A slide titled Roadmap' }],
+            }),
+          ),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        ),
+      ),
+    )
+
+    mountResultPanel('j1', 'clip.wav')
+
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Visual context' })).toBeInTheDocument(),
+    )
+    const tabs = screen.getByRole('navigation').querySelectorAll('button')
+    expect([...tabs].map((b) => b.textContent)).toEqual(['Transcript', 'Visual context', 'Summary'])
+  })
+
+  it('shows the captions when the Visual context tab is selected', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        new Response(
+          JSON.stringify(
+            makeSnapshot({ frame_captions: [{ time_sec: 5, caption: 'A speaker at a lectern' }] }),
+          ),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        ),
+      ),
+    )
+
+    mountResultPanel('j1', 'clip.wav')
+
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Visual context' })).toBeInTheDocument(),
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Visual context' }))
+    expect(screen.getByText('A speaker at a lectern')).toBeInTheDocument()
+    expect(screen.getByText('00:05')).toBeInTheDocument()
   })
 
   it('explains a skipped job in a banner, localized from the typed code', async () => {

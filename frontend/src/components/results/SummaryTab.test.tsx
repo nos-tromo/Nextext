@@ -28,41 +28,23 @@ const captions: FrameCaption[] = [
   { time_sec: 75, caption: 'A speaker at a lectern' },
 ]
 
-describe('SummaryTab visual context', () => {
-  it('lists the frame captions behind a video summary', () => {
+describe('SummaryTab', () => {
+  it('no longer carries the visual context — it has its own tab now', () => {
     render(<SummaryTab jobId="j1" result={makeResult({ frame_captions: captions })} stem="clip" />)
-    expect(screen.getByText('A slide titled Roadmap')).toBeInTheDocument()
-    expect(screen.getByText('A speaker at a lectern')).toBeInTheDocument()
+    expect(screen.queryByText('A slide titled Roadmap')).not.toBeInTheDocument()
+    expect(screen.queryByText(/visual context/i)).not.toBeInTheDocument()
   })
 
-  it('stamps each caption with its moment in the clip', () => {
-    render(<SummaryTab jobId="j1" result={makeResult({ frame_captions: captions })} stem="clip" />)
-    expect(screen.getByText('01:15')).toBeInTheDocument()
-  })
+  it('keeps a single plain TXT download whether or not captions exist', () => {
+    const { unmount } = render(
+      <SummaryTab jobId="j1" result={makeResult({ frame_captions: captions })} stem="clip" />,
+    )
+    expect(screen.getByRole('button', { name: 'Download TXT' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /visual context/i })).not.toBeInTheDocument()
+    unmount()
 
-  it('labels both downloads distinctly when a visual context exists', () => {
-    // Two bare "TXT" chips side by side would be a guessing game — the same
-    // reason TranscriptTab splits into "Transcript TXT" / "Translation TXT".
-    render(<SummaryTab jobId="j1" result={makeResult({ frame_captions: captions })} stem="clip" />)
-    expect(screen.getByRole('button', { name: 'Download Summary TXT' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Download Visual context TXT' })).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'Download TXT' })).not.toBeInTheDocument()
-  })
-
-  it('keeps the lone summary download a plain TXT chip', () => {
     render(<SummaryTab jobId="j1" result={makeResult()} stem="clip" />)
     expect(screen.getByRole('button', { name: 'Download TXT' })).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'Download Summary TXT' })).not.toBeInTheDocument()
-  })
-
-  it('shows no visual-context section for an audio-only summary', () => {
-    render(<SummaryTab jobId="j1" result={makeResult()} stem="clip" />)
-    expect(screen.queryByText(/visual context/i)).not.toBeInTheDocument()
-  })
-
-  it('shows no visual-context section when the caption list is empty', () => {
-    render(<SummaryTab jobId="j1" result={makeResult({ frame_captions: [] })} stem="clip" />)
-    expect(screen.queryByText(/visual context/i)).not.toBeInTheDocument()
   })
 
   it('still renders the summary text itself', () => {

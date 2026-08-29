@@ -6,6 +6,7 @@ import { describeError } from '../../api/errorMessage'
 import { resultSkipMessageKey } from '../../lib/outcomeMessages'
 import { DownloadButtons } from './DownloadButtons'
 import { TranscriptTab } from './TranscriptTab'
+import { VisualContextTab } from './VisualContextTab'
 import { SummaryTab } from './SummaryTab'
 import { WordCountsTab } from './WordCountsTab'
 import { WordCloudTab } from './WordCloudTab'
@@ -19,7 +20,14 @@ interface ResultPanelProps {
   fileName: string
 }
 
-type TabId = 'transcript' | 'summary' | 'words' | 'wordcloud' | 'entities' | 'hate_speech'
+type TabId =
+  | 'transcript'
+  | 'visual_context'
+  | 'summary'
+  | 'words'
+  | 'wordcloud'
+  | 'entities'
+  | 'hate_speech'
 
 interface TabSpec {
   id: TabId
@@ -92,6 +100,11 @@ export function ResultPanel({ jobId, fileName }: ResultPanelProps) {
   if (result.transcript.length > 0) {
     availableTabs.push({ id: 'transcript', label: t('results.tab_transcript') })
   }
+  // Directly after the transcript: both are accounts of the source material
+  // itself, ahead of the analyses derived from it.
+  if (result.frame_captions && result.frame_captions.length > 0) {
+    availableTabs.push({ id: 'visual_context', label: t('results.tab_visual_context') })
+  }
   if (result.summary) {
     availableTabs.push({ id: 'summary', label: t('results.tab_summary') })
   }
@@ -153,6 +166,9 @@ export function ResultPanel({ jobId, fileName }: ResultPanelProps) {
             // rather than a header-only table with download buttons under it.
             <p className="text-sm text-muted-foreground">{t('results.no_transcript')}</p>
           ))}
+        {resolvedTab === 'visual_context' && (
+          <VisualContextTab jobId={jobId} result={result} stem={stem} />
+        )}
         {resolvedTab === 'summary' && (
           <SummaryTab jobId={jobId} result={result} stem={stem} />
         )}
