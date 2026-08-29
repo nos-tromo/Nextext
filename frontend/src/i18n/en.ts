@@ -23,8 +23,8 @@ export const en = {
   'header.sign_out': 'Sign out',
 
   // page
-  'page.title': 'Transcribe',
-  'page.caption': 'Audio and video transcription, translation, and analysis',
+  'page.title': 'Audio & Video Analysis',
+  'page.caption': 'Transcription, keyframe extraction, translation, and analysis',
 
   // home
   'home.new_job': 'New job',

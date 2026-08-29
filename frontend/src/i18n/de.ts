@@ -25,8 +25,8 @@ export const de: Strings = {
   'header.sign_out': 'Abmelden',
 
   // page
-  'page.title': 'Transkribieren',
-  'page.caption': 'Audio- und Video-Transkription, Übersetzung und Analyse',
+  'page.title': 'Audio- und Videoanalyse',
+  'page.caption': 'Transkription, Keyframe-Extraktion, Übersetzung und Analyse',
 
   // home
   'home.new_job': 'Neuer Auftrag',
