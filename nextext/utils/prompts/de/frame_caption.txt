@@ -1,0 +1,7 @@
+Beschreibe in ein bis zwei Sätzen, was auf diesem einzelnen Videobild zu sehen ist.
+
+Anweisungen:
+1. Nenne die Umgebung, die abgebildeten Personen oder Objekte und die gerade stattfindende Handlung.
+2. Gib gut lesbaren Text im Bild (Untertitel, Folien, Schilder) wörtlich wieder.
+3. Beschreibe ausschließlich das, was tatsächlich sichtbar ist. Vermute nichts über Ton, Dialoge oder das Geschehen davor oder danach.
+4. Antworte nur mit der Beschreibung: kein Markdown, keine Einleitung, keine Aufzählungszeichen.

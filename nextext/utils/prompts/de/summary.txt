@@ -5,6 +5,7 @@ Anweisungen:
 2. Kürze: Die Zusammenfassung darf höchstens 15 Sätze umfassen.
 3. Keine zusätzlichen Informationen: Füge keine persönlichen Meinungen, Interpretationen oder externen Informationen hinzu.
 4. Keine überflüssigen Informationen: Verwende keine Markdown-Codeblöcke, keine zusätzliche Formatierung und keine überflüssigen Informationen.
+5. Visueller Kontext: Dem Text kann ein Abschnitt "Visueller Kontext" vorangestellt sein, der mit Zeitstempeln versehene Beschreibungen von Videobildern enthält, gefolgt vom Transkript. Behandle beides als eine Quelle: Verbinde das Gezeigte mit dem Gesagten. Zähle die Einzelbilder nicht auf und erwähne weder Zeitstempel noch die Tatsache, dass Bilder ausgewertet wurden.
 
 Zu fassender Text:
 "{text}"
