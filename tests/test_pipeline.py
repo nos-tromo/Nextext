@@ -1794,3 +1794,87 @@ def test_transcription_outcome_is_empty_for_whitespace_only_text() -> None:
     )
 
     assert outcome.is_empty is True
+
+
+# ---------------------------------------------------------------------------
+# summarization_pipeline — visual context
+# ---------------------------------------------------------------------------
+
+
+def test_summarization_prepends_visual_context_block(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Frame captions reach the model ahead of the transcript, clearly labelled.
+
+    The summary prompt tells the model to treat a leading "Visual context"
+    section as a second source, so the block must be inside the ``{text}``
+    payload — not a separate message the template never sees.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Fixture for patching environment variables.
+    """
+    monkeypatch.delenv("SUMMARY_MAX_INPUT_TOKENS", raising=False)
+    recorder = _RecordingPipeline(reply="s")
+
+    pipeline.summarization_pipeline(
+        "they discussed the roadmap",
+        recorder,
+        visual_context="[00:00] a slide titled Roadmap",
+    )
+
+    prompt = recorder.calls[0]["prompt"]
+    assert "[00:00] a slide titled Roadmap" in prompt
+    assert prompt.index("a slide titled Roadmap") < prompt.index("they discussed the roadmap")
+    assert "Visual context" in prompt
+    assert "Transcript" in prompt
+
+
+@pytest.mark.parametrize("empty", [None, "", "   "])
+def test_summarization_without_visual_context_is_unchanged(monkeypatch: pytest.MonkeyPatch, empty: str | None) -> None:
+    """An absent or blank block leaves the audio-only prompt byte-identical.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Fixture for patching environment variables.
+        empty (str | None): A falsy visual-context value.
+    """
+    monkeypatch.delenv("SUMMARY_MAX_INPUT_TOKENS", raising=False)
+    recorder = _RecordingPipeline(reply="s")
+
+    pipeline.summarization_pipeline("a short transcript", recorder, visual_context=empty)
+
+    assert recorder.calls[0]["prompt"] == "Summarize: a short transcript"
+
+
+def test_summarization_with_visual_context_still_rejects_empty_text(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Captions alone are not a transcript; an empty transcript still raises.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Fixture for patching environment variables.
+    """
+    monkeypatch.delenv("SUMMARY_MAX_INPUT_TOKENS", raising=False)
+    recorder = _RecordingPipeline(reply="s")
+
+    with pytest.raises(ValueError):
+        pipeline.summarization_pipeline("", recorder, visual_context="[00:00] a room")
+
+
+def test_summarization_with_visual_context_still_chunks_long_input(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The block is part of the budgeted payload, not an exemption from it.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Fixture for patching environment variables.
+    """
+    monkeypatch.setenv("SUMMARY_MAX_INPUT_TOKENS", "10")
+    recorder = _RecordingPipeline(reply="partial")
+
+    pipeline.summarization_pipeline(
+        " ".join(["word"] * 400),
+        recorder,
+        visual_context="[00:00] a hallway",
+    )
+
+    assert len(recorder.calls) > 1  # map-reduce still engaged

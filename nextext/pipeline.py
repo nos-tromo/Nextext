@@ -507,6 +507,7 @@ def _is_transient_inference_error(exc: Exception) -> bool:
 def summarization_pipeline(
     text: str,
     inference_pipeline: InferencePipeline,
+    visual_context: str | None = None,
 ) -> str:
     """Summarize transcript text with a context-window-safe map-reduce strategy.
 
@@ -531,9 +532,19 @@ def summarization_pipeline(
     memory. Non-transient API errors (4xx configuration problems such as bad
     credentials) still raise.
 
+    For video, the caller may pass a block of timestamped keyframe captions
+    (see :func:`nextext.core.visual_context.format_visual_context`). It is
+    prepended to the transcript inside the same payload — labelled, so the
+    summary prompt's visual-context instruction applies — and therefore
+    budgeted and chunked like any other text rather than exempted from the
+    context window.
+
     Args:
         text (str): The text to summarize.
         inference_pipeline (InferencePipeline): An inference pipeline for language model interactions.
+        visual_context (str | None): Optional timestamped descriptions of video
+            frames, prepended to ``text``. Blank or ``None`` leaves the payload
+            exactly as it would be for an audio-only file.
 
     Returns:
         str: The summarized text, or an empty string if every retry still
@@ -545,6 +556,8 @@ def summarization_pipeline(
     """
     if not text:
         raise ValueError("Text cannot be empty.")
+    if visual_context and visual_context.strip():
+        text = f"Visual context (frames sampled from the video):\n{visual_context.strip()}\n\nTranscript:\n{text}"
     char_budget = int(load_summary_env().max_input_tokens * _CHARS_PER_TOKEN)
     for attempt in range(_MAX_OVERFLOW_RETRIES + 1):
         try:
