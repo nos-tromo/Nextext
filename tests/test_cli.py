@@ -17,7 +17,9 @@ import pytest
 from loguru import logger
 
 from nextext import cli
+from nextext.core.keyframes import Keyframe
 from nextext.core.outcomes import SkipReason
+from nextext.core.visual_context import FrameCaption
 from nextext.pipeline import TranscriptionOutcome
 
 
@@ -49,6 +51,7 @@ def _args(file_path: Path, **overrides: Any) -> argparse.Namespace:
         "hate_speech": False,
         "emit_docint_jsonl": None,
         "force_docint_jsonl": False,
+        "visual_context": True,
     }
     base.update(overrides)
     return argparse.Namespace(**base)
@@ -196,3 +199,142 @@ def test_run_main_still_reports_docint_export_when_skipped(monkeypatch: pytest.M
     cli._run_main(_args(tmp_path / "clip.wav", emit_docint_jsonl=tmp_path / "out.jsonl"))
 
     assert calls == [tmp_path / "out.jsonl"]
+
+
+# ---------------------------------------------------------------------------
+# Visual context in CLI summaries
+# ---------------------------------------------------------------------------
+
+
+def _summarizable_cli(
+    monkeypatch: pytest.MonkeyPatch, *, samples: list[Any], captions: list[Any]
+) -> list[_SpyProcessor]:
+    """Stub the CLI's transcription, inference, keyframe and caption seams.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Fixture for patching module attributes.
+        samples (list[Any]): Keyframes ``extract_keyframe_samples`` should return.
+        captions (list[Any]): Captions ``describe_keyframes`` should return.
+
+    Returns:
+        list[_SpyProcessor]: Collector the created file processor lands in.
+    """
+    created: list[_SpyProcessor] = []
+
+    def _make(*args: Any, **kwargs: Any) -> _SpyProcessor:
+        processor = _SpyProcessor()
+        created.append(processor)
+        return processor
+
+    monkeypatch.setattr(cli, "FileProcessor", _make)
+    df = pd.DataFrame({"start": ["0:00:00"], "end": ["0:00:02"], "text": ["Hello."]})
+    monkeypatch.setattr(
+        cli, "transcription_pipeline", lambda **kwargs: TranscriptionOutcome(transcript=df, src_lang="en")
+    )
+
+    class _StubInference:
+        """Always-healthy stand-in for ``InferencePipeline``."""
+
+        def get_health(self) -> bool:
+            """Report the provider as reachable.
+
+            Returns:
+                bool: Always ``True``.
+            """
+            return True
+
+    monkeypatch.setattr(cli, "InferencePipeline", _StubInference)
+    monkeypatch.setattr(cli, "extract_keyframe_samples", lambda path, **kw: samples)
+    monkeypatch.setattr(cli, "describe_keyframes", lambda s, p, **kw: captions)
+    return created
+
+
+def test_cli_summary_includes_visual_context_for_video(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """A CLI video summary is fed the frame captions and writes them out.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Fixture for patching module attributes.
+        tmp_path (Path): Temporary directory fixture.
+    """
+    monkeypatch.delenv("NEXTEXT_VISUAL_SUMMARY", raising=False)
+    created = _summarizable_cli(
+        monkeypatch,
+        samples=[Keyframe(time_sec=0.0, jpeg=b"\xff\xd8a")],
+        captions=[FrameCaption(time_sec=0.0, caption="a hallway")],
+    )
+    seen: dict[str, Any] = {}
+
+    def _fake_summary(text: str, inference_pipeline: Any, visual_context: str | None = None) -> str:
+        seen["visual_context"] = visual_context
+        return "the summary"
+
+    monkeypatch.setattr(cli, "summarization_pipeline", _fake_summary)
+
+    cli._run_main(_args(tmp_path / "clip.mp4", summarize=True))
+
+    (processor,) = created
+    assert seen["visual_context"] == "[00:00] a hallway"
+    assert "visual_context" in processor.file_output_labels
+    assert "summary" in processor.file_output_labels
+
+
+def test_cli_audio_only_summary_writes_no_visual_context(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """An audio file yields no frames, so no visual-context file is written.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Fixture for patching module attributes.
+        tmp_path (Path): Temporary directory fixture.
+    """
+    monkeypatch.delenv("NEXTEXT_VISUAL_SUMMARY", raising=False)
+    created = _summarizable_cli(monkeypatch, samples=[], captions=[])
+    seen: dict[str, Any] = {}
+
+    def _fake_summary(text: str, inference_pipeline: Any, visual_context: str | None = None) -> str:
+        seen["visual_context"] = visual_context
+        return "the summary"
+
+    monkeypatch.setattr(cli, "summarization_pipeline", _fake_summary)
+
+    cli._run_main(_args(tmp_path / "clip.wav", summarize=True))
+
+    (processor,) = created
+    assert seen["visual_context"] is None
+    assert "visual_context" not in processor.file_output_labels
+
+
+def test_cli_no_visual_context_flag_disables_captioning(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """``--no-visual-context`` suppresses captioning for a one-off run.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Fixture for patching module attributes.
+        tmp_path (Path): Temporary directory fixture.
+    """
+    monkeypatch.delenv("NEXTEXT_VISUAL_SUMMARY", raising=False)
+    calls: list[Any] = []
+    created = _summarizable_cli(
+        monkeypatch,
+        samples=[Keyframe(time_sec=0.0, jpeg=b"\xff\xd8a")],
+        captions=[FrameCaption(time_sec=0.0, caption="a hallway")],
+    )
+    monkeypatch.setattr(cli, "describe_keyframes", lambda s, p, **kw: calls.append(s) or [])
+    seen: dict[str, Any] = {}
+
+    def _fake_summary(text: str, inference_pipeline: Any, visual_context: str | None = None) -> str:
+        seen["visual_context"] = visual_context
+        return "the summary"
+
+    monkeypatch.setattr(cli, "summarization_pipeline", _fake_summary)
+
+    cli._run_main(_args(tmp_path / "clip.mp4", summarize=True, visual_context=False))
+
+    (processor,) = created
+    assert calls == []
+    assert seen["visual_context"] is None
+    assert "visual_context" not in processor.file_output_labels
+
+
+def test_cli_visual_context_flag_defaults_to_enabled() -> None:
+    """Parsing without the flag leaves visual context on, matching the env default."""
+    args = cli.parse_arguments(["-f", "clip.mp4", "-sum"])
+    assert args.visual_context is True
+    assert cli.parse_arguments(["-f", "clip.mp4", "-sum", "--no-visual-context"]).visual_context is False
