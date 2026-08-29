@@ -50,6 +50,7 @@ function makeSnapshot(overrides: Partial<JobSnapshot['result']> = {}): JobSnapsh
       named_entities: null,
       wordcloud_url: null,
       keyframes_url: null,
+      frame_captions: null,
       hate_speech_findings: null,
       skipped: false,
       skip_reason: null,

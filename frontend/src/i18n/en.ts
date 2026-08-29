@@ -94,6 +94,8 @@ export const en = {
   'results.col_category': 'Category',
   'results.col_frequency': 'Frequency',
   'results.no_summary': 'No summary produced for this job.',
+  'results.visual_context': 'Visual context',
+  'results.visual_context_hint': 'What the video showed at these moments, folded into the summary above.',
   'results.no_hate_speech': 'No hate-speech findings for this job.',
   'results.flagged_summary_one': '{flagged} of {total} segment flagged.',
   'results.flagged_summary_other': '{flagged} of {total} segments flagged.',

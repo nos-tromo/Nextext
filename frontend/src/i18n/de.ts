@@ -95,6 +95,8 @@ export const de: Strings = {
   'results.col_category': 'Kategorie',
   'results.col_frequency': 'Häufigkeit',
   'results.no_summary': 'Keine Zusammenfassung für diesen Auftrag erstellt.',
+  'results.visual_context': 'Visueller Kontext',
+  'results.visual_context_hint': 'Was das Video zu diesen Zeitpunkten zeigte — in der Zusammenfassung oben berücksichtigt.',
   'results.no_hate_speech': 'Keine Hatespeech-Befunde für diesen Auftrag.',
   'results.flagged_summary_one': '{flagged} von {total} Segment markiert.',
   'results.flagged_summary_other': '{flagged} von {total} Segmenten markiert.',
