@@ -1,6 +1,8 @@
 """Inference client configuration for OpenAI-compatible APIs."""
 
+import base64
 import os
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -232,10 +234,139 @@ class InferencePipeline:
                 if the ``openai`` package is not installed, or if ``TEXT_MODEL``
                 is unset and no ``model`` argument is supplied.
         """
+        return self._chat(
+            user_content=prompt,
+            model=model,
+            temperature=temperature,
+            seed=seed,
+            stop=stop,
+            num_predict=num_predict,
+            top_p=top_p,
+            system_prompt=system_prompt,
+            include_system_prompt=include_system_prompt,
+            think=think,
+        )
+
+    def call_vision(
+        self,
+        prompt: str,
+        images: Sequence[bytes],
+        mime_type: str = "image/jpeg",
+        model: str | None = None,
+        temperature: float = 0.1,
+        seed: int = 42,
+        num_predict: int | None = None,
+        system_prompt: str | None = None,
+        include_system_prompt: bool = True,
+        think: bool | None = None,
+    ) -> str:
+        """Call the chat model with inline images plus a text instruction.
+
+        Sends each image as an ``image_url`` content part carrying a
+        ``data:<mime>;base64,...`` URI, then the instruction as a trailing
+        ``text`` part — the image-first ordering vision model clients use.
+        Everything else (system role, sampling, ``extra_body`` think handling)
+        matches :meth:`call_model`.
+
+        The configured chat model must be vision-capable. A text-only model
+        typically answers with a client error; callers that treat visual input
+        as an enhancement should catch it and degrade rather than fail the job.
+
+        Args:
+            prompt (str): The instruction sent alongside the images.
+            images (Sequence[bytes]): Raw encoded image payloads (JPEG unless
+                ``mime_type`` says otherwise). Must hold at least one item.
+            mime_type (str): MIME type describing every payload in ``images``.
+            model (str | None): The model to use. Defaults to ``TEXT_MODEL``.
+            temperature (float): Sampling temperature for response generation.
+            seed (int): Random seed for reproducibility.
+            num_predict (int | None): Maximum number of tokens to generate.
+            system_prompt (str | None): Override the default system prompt.
+            include_system_prompt (bool): When False, no ``system`` role is sent.
+            think (bool | None): Override the ``think`` field forwarded via
+                ``extra_body``; ``None`` falls back to ``OLLAMA_THINK``.
+
+        Returns:
+            str: The generated description, or ``""`` when the model returns
+                no textual content.
+
+        Raises:
+            ValueError: If ``images`` is empty.
+            RuntimeError: If the configured inference provider is not reachable,
+                if the ``openai`` package is not installed, or if ``TEXT_MODEL``
+                is unset and no ``model`` argument is supplied.
+        """
+        if not images:
+            raise ValueError("call_vision requires at least one image.")
+
+        content: list[dict[str, Any]] = [
+            {
+                "type": "image_url",
+                "image_url": {"url": f"data:{mime_type};base64,{base64.b64encode(payload).decode('ascii')}"},
+            }
+            for payload in images
+        ]
+        content.append({"type": "text", "text": prompt})
+
+        return self._chat(
+            user_content=content,
+            model=model,
+            temperature=temperature,
+            seed=seed,
+            stop=None,
+            num_predict=num_predict,
+            top_p=None,
+            system_prompt=system_prompt,
+            include_system_prompt=include_system_prompt,
+            think=think,
+        )
+
+    def _chat(
+        self,
+        user_content: str | list[dict[str, Any]],
+        *,
+        model: str | None,
+        temperature: float,
+        seed: int,
+        stop: list[str] | None,
+        num_predict: int | None,
+        top_p: float | None,
+        system_prompt: str | None,
+        include_system_prompt: bool,
+        think: bool | None,
+    ) -> str:
+        """Issue one chat-completions request and return its text content.
+
+        The shared core behind :meth:`call_model` (plain string content) and
+        :meth:`call_vision` (multimodal content parts): health gate, message
+        assembly, request kwargs, ``extra_body`` think handling, and response
+        unwrapping all live here so the two entry points cannot drift.
+
+        Args:
+            user_content (str | list[dict[str, Any]]): The user message body —
+                a plain string, or a list of OpenAI content parts.
+            model (str | None): The model to use. Defaults to ``TEXT_MODEL``.
+            temperature (float): Sampling temperature.
+            seed (int): Random seed for reproducibility.
+            stop (list[str] | None): Stop tokens, omitted when falsy.
+            num_predict (int | None): Maps to ``max_tokens`` when set.
+            top_p (float | None): Nucleus sampling parameter, omitted when None.
+            system_prompt (str | None): Override for the default system prompt.
+            include_system_prompt (bool): Whether to send a ``system`` role.
+            think (bool | None): Override for the ``think`` ``extra_body`` field.
+
+        Returns:
+            str: The stripped response content, or ``""`` when the model
+                returned non-textual content (e.g. a refusal-only reply).
+
+        Raises:
+            RuntimeError: If the provider is unreachable, the ``openai`` package
+                is missing, or no model can be resolved.
+        """
         if not self.get_health():
             raise RuntimeError("Inference provider is not reachable. Please check your configuration.")
 
-        messages: list[dict[str, str]] = []
+        messages: list[dict[str, Any]] = []
         if include_system_prompt:
             messages.append(
                 {
@@ -243,7 +374,7 @@ class InferencePipeline:
                     "content": self.sys_prompt if system_prompt is None else system_prompt,
                 }
             )
-        messages.append({"role": "user", "content": prompt})
+        messages.append({"role": "user", "content": user_content})
 
         request_kwargs: dict[str, Any] = {
             "model": model or self.default_model,
