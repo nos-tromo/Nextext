@@ -10,7 +10,7 @@ import av
 import pytest
 from PIL import Image, ImageStat
 
-from nextext.core.keyframes import extract_keyframes, subsample
+from nextext.core.keyframes import extract_keyframe_samples, extract_keyframes, subsample
 
 
 def test_subsample_evenly_picks_target() -> None:
@@ -187,3 +187,46 @@ def test_extract_keyframes_returns_partial_on_mid_decode_error(tmp_path: Path, m
     # selected keyframe decodes for real, the 2nd raises -> caught -> partial.
     assert len(frames) == 1  # exactly the frames gathered before the failure
     assert frames[0].startswith(b"\xff\xd8")  # a real JPEG, decoded for real
+
+
+def test_extract_keyframe_samples_carries_ascending_timestamps(tmp_path: Path) -> None:
+    """Samples carry each frame's presentation time, ascending across the clip.
+
+    The visual-summary stage labels every caption with the moment it was taken
+    from, so the sampler must report a real ``time_sec`` per frame — not just
+    the JPEG bytes. A 30-frame / 1 fps clip puts frame ``i`` at ``i`` seconds,
+    so the selected samples must span roughly the whole 30s ramp.
+    """
+    video = tmp_path / "ramp.mkv"
+    _make_mjpeg_ramp(video, n_frames=30, fps=1)
+
+    samples = extract_keyframe_samples(video, per_minute=60, max_frames=6)
+
+    assert 2 <= len(samples) <= 6
+    times = [s.time_sec for s in samples]
+    assert all(times[i] < times[i + 1] for i in range(len(times) - 1))
+    assert times[0] < 5.0  # starts near the head of the clip
+    assert times[-1] > 20.0  # and reaches its late portion
+    assert all(s.jpeg.startswith(b"\xff\xd8") for s in samples)
+
+
+def test_extract_keyframes_returns_sample_jpegs(tmp_path: Path) -> None:
+    """The bytes-only wrapper returns exactly the samples' JPEG payloads."""
+    video = tmp_path / "ramp.mkv"
+    _make_mjpeg_ramp(video, n_frames=30, fps=1)
+
+    samples = extract_keyframe_samples(video, per_minute=60, max_frames=6)
+    frames = extract_keyframes(video, per_minute=60, max_frames=6)
+
+    assert frames == [s.jpeg for s in samples]
+
+
+def test_extract_keyframe_samples_failsoft_on_audio_only(tmp_path: Path) -> None:
+    """A file with no video stream yields no samples rather than raising."""
+    wav = tmp_path / "silence.wav"
+    with wave.open(str(wav), "wb") as handle:
+        handle.setnchannels(1)
+        handle.setsampwidth(2)
+        handle.setframerate(8000)
+        handle.writeframes(b"\x00\x00" * 800)
+    assert extract_keyframe_samples(wav, per_minute=4, max_frames=5) == []
