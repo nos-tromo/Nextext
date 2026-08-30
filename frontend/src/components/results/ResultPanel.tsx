@@ -78,23 +78,23 @@ export function ResultPanel({ jobId, fileName }: ResultPanelProps) {
     return <p className="text-sm text-muted-foreground">{t('results.no_data')}</p>
   }
 
-  // A skipped job is not an error, but it IS the whole story of the run — a
-  // muted footnote let it read as an ordinary empty result. `skip_reason` is
-  // backend English prose; the localized code is what gets rendered.
-  if (result.skipped) {
-    return (
-      <Banner variant="danger">
-        <span className="flex items-start gap-2">
-          {/* Repeat the size classes: our className replaces the icon default. */}
-          <WarningIcon className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
-          <span>
-            <strong className="block font-medium">{t('results.skipped_title')}</strong>
-            {t(resultSkipMessageKey(result.skip_reason_code))}
-          </span>
+  // A skipped job is not an error, but it IS the headline of the run — a muted
+  // footnote let it read as an ordinary empty result. `skip_reason` is backend
+  // English prose; the localized code is what gets rendered. The banner sits
+  // above the tabs rather than replacing them: "skipped" means no transcript,
+  // and a silent video can still have keyframes and a summary of them.
+  const skippedBanner = result.skipped ? (
+    <Banner variant="danger">
+      <span className="flex items-start gap-2">
+        {/* Repeat the size classes: our className replaces the icon default. */}
+        <WarningIcon className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
+        <span>
+          <strong className="block font-medium">{t('results.skipped_title')}</strong>
+          {t(resultSkipMessageKey(result.skip_reason_code))}
         </span>
-      </Banner>
-    )
-  }
+      </span>
+    </Banner>
+  ) : null
 
   // Build the list of available tabs based on what the result contains.
   const availableTabs: TabSpec[] = []
@@ -103,8 +103,9 @@ export function ResultPanel({ jobId, fileName }: ResultPanelProps) {
     availableTabs.push({ id: 'transcript', label: t('results.tab_transcript') })
   }
   // Directly after the transcript: both are accounts of the source material
-  // itself, ahead of the analyses derived from it.
-  if (result.frame_captions && result.frame_captions.length > 0) {
+  // itself, ahead of the analyses derived from it. The frames alone earn the
+  // tab — the operator may have captioning switched off.
+  if ((result.frame_captions && result.frame_captions.length > 0) || result.keyframes_url) {
     availableTabs.push({ id: 'visual_context', label: t('results.tab_visual_context') })
   }
   if (result.summary) {
@@ -121,12 +122,19 @@ export function ResultPanel({ jobId, fileName }: ResultPanelProps) {
     availableTabs.push({ id: 'hate_speech', label: t('results.tab_hate_speech') })
   }
 
+  // A skipped job that produced nothing else: the banner is the whole result.
+  // (A completed job with an empty transcript keeps its own empty state below.)
+  if (availableTabs.length === 0 && skippedBanner) {
+    return skippedBanner
+  }
+
   // If the current active tab is no longer available, fall back to the first one.
   const resolvedTab =
     availableTabs.find((t) => t.id === activeTab)?.id ?? availableTabs[0]?.id ?? 'transcript'
 
   return (
     <div className="space-y-4">
+      {skippedBanner}
       {/* Header row: tab bar + archive download */}
       <div className="flex flex-wrap items-center justify-between gap-2">
         <nav className="flex flex-wrap gap-1" aria-label={t('results.tab_nav_label')}>

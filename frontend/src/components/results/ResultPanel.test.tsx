@@ -29,6 +29,7 @@ function makeSnapshot(overrides: Partial<JobSnapshot['result']> = {}): JobSnapsh
       words: false,
       summarization: false,
       hate_speech: false,
+  keyframes: false,
     },
     stage: null,
     stage_index: 3,
@@ -221,6 +222,54 @@ describe('ResultPanel', () => {
     await waitFor(() => expect(screen.getByRole('alert')).toBeInTheDocument())
     expect(screen.getByText(/No speech was detected in this file/)).toBeInTheDocument()
     expect(screen.queryByText('No speech detected in the audio.')).not.toBeInTheDocument()
+  })
+
+  it('keeps a skipped job\u2019s visual results under the banner', async () => {
+    // "Skipped" means no transcript, not an empty job: a silent video still
+    // has keyframes, their descriptions, and a summary written from them.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        new Response(
+          JSON.stringify(
+            makeSnapshot({
+              transcript: [],
+              skipped: true,
+              skip_reason_code: 'vad_no_speech',
+              frame_captions: [{ time_sec: 0, caption: 'An empty street' }],
+              keyframes_url: '/api/v1/jobs/j1/artifacts/keyframes.zip',
+              summary: 'A quiet street scene.',
+            }),
+          ),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        ),
+      ),
+    )
+
+    mountResultPanel('j1', 'clip.mp4')
+
+    await waitFor(() => expect(screen.getByRole('alert')).toBeInTheDocument())
+    expect(screen.getByRole('button', { name: 'Visual context' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Summary' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Transcript' })).not.toBeInTheDocument()
+  })
+
+  it('shows the Visual context tab for frames that were never described', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        new Response(
+          JSON.stringify(
+            makeSnapshot({ frame_captions: null, keyframes_url: '/api/v1/jobs/j1/artifacts/keyframes.zip' }),
+          ),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        ),
+      ),
+    )
+
+    mountResultPanel('j1', 'clip.mp4')
+
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Visual context' })).toBeInTheDocument())
   })
 
   it('falls back to the generic skipped message when no code is present', async () => {

@@ -1,6 +1,8 @@
 """Tests for keyframe wiring in ``_run_pipeline_blocking`` (nextext.api.jobs).
 
-Also covers surfacing the stashed URL as ``JobResult.keyframes_url`` via
+The keyframe step is its own opt-in stage: ``JobOptions.keyframes`` gates both
+sampling and captioning, independently of ``summarization``. Also covers
+surfacing the stashed URL as ``JobResult.keyframes_url`` via
 ``_serialize_result``.
 """
 
@@ -22,6 +24,9 @@ def test_pipeline_populates_keyframes(monkeypatch: pytest.MonkeyPatch, tmp_path:
     """The job result carries keyframes produced by ``extract_keyframes``."""
     media = tmp_path / "clip.mp4"
     media.write_bytes(b"video")
+    # Sampling only: the captioning half of the stage has its own tests below
+    # and would otherwise reach for the inference provider.
+    monkeypatch.setenv("NEXTEXT_VISUAL_SUMMARY", "off")
 
     # Stub the heavy stages so only keyframe wiring is exercised.
     df = pd.DataFrame({"start": [0.0], "end": [1.0], "speaker": [""], "text": ["hi"]})
@@ -43,7 +48,7 @@ def test_pipeline_populates_keyframes(monkeypatch: pytest.MonkeyPatch, tmp_path:
         file_name="clip.mp4",
         file_path=media,
         source_file_hash="sha256:x",
-        options=JobOptions.model_validate({"task": "transcribe"}),
+        options=JobOptions.model_validate({"task": "transcribe", "keyframes": True}),
         status=JobStatus.QUEUED,
     )
     result = _run_pipeline_blocking(state, lambda *a, **k: None)
@@ -61,6 +66,7 @@ def test_pipeline_empty_transcript_still_sets_keyframes(monkeypatch: pytest.Monk
     """
     media = tmp_path / "clip.mp4"
     media.write_bytes(b"video")
+    monkeypatch.setenv("NEXTEXT_VISUAL_SUMMARY", "off")
 
     # Empty transcript (has the ``text`` column but no rows) trips the
     # skip-branch; keyframe extraction is stubbed to a known payload.
@@ -84,7 +90,7 @@ def test_pipeline_empty_transcript_still_sets_keyframes(monkeypatch: pytest.Monk
         file_name="clip.mp4",
         file_path=media,
         source_file_hash="sha256:x",
-        options=JobOptions.model_validate({"task": "transcribe"}),
+        options=JobOptions.model_validate({"task": "transcribe", "keyframes": True}),
         status=JobStatus.QUEUED,
     )
     result = _run_pipeline_blocking(state, lambda *a, **k: None)
@@ -131,7 +137,7 @@ def test_serialize_result_omits_keyframes_url_when_keyframes_absent() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Visual context (keyframe captions feeding the summary)
+# The keyframe stage (sampling + captioning), and what the summary makes of it
 # ---------------------------------------------------------------------------
 
 
@@ -219,37 +225,82 @@ def test_pipeline_captions_keyframes_for_summary(monkeypatch: pytest.MonkeyPatch
 
     monkeypatch.setattr("nextext.pipeline.summarization_pipeline", _fake_summary)
 
-    result = _run_pipeline_blocking(_video_state("v1", _summarizable, summarization=True), lambda *a, **k: None)
+    result = _run_pipeline_blocking(
+        _video_state("v1", _summarizable, summarization=True, keyframes=True), lambda *a, **k: None
+    )
 
     assert result["summary"] == "the summary"
     assert seen["visual_context"] == "[00:00] frame at 0.0\n[00:09] frame at 9.0"
     assert [c.caption for c in result["frame_captions"]] == ["frame at 0.0", "frame at 9.0"]
 
 
-def test_pipeline_skips_captioning_when_summarization_not_requested(
-    monkeypatch: pytest.MonkeyPatch, _summarizable: Path
-) -> None:
-    """No summary means no captions — visual context is only a summary input.
+def test_pipeline_captions_keyframes_without_a_summary(monkeypatch: pytest.MonkeyPatch, _summarizable: Path) -> None:
+    """Keyframes stand on their own: captions are produced with no summary asked.
+
+    This is the whole point of the option — visual context is a result in its
+    own right, not merely an input the summarizer happens to consume.
 
     Args:
         monkeypatch (pytest.MonkeyPatch): Fixture for patching module attributes.
         _summarizable (Path): Stub media path with the heavy stages patched out.
     """
     monkeypatch.delenv("NEXTEXT_VISUAL_SUMMARY", raising=False)
-    calls: list[Any] = []
     monkeypatch.setattr(
         "nextext.core.visual_context.describe_keyframes",
-        lambda samples, pipeline, **kw: calls.append(samples) or [],
+        lambda samples, pipeline, **kw: [FrameCaption(time_sec=s.time_sec, caption="a room") for s in samples],
     )
 
-    result = _run_pipeline_blocking(_video_state("v2", _summarizable, summarization=False), lambda *a, **k: None)
+    result = _run_pipeline_blocking(
+        _video_state("v2", _summarizable, summarization=False, keyframes=True), lambda *a, **k: None
+    )
 
-    assert calls == []
+    assert [c.caption for c in result["frame_captions"]] == ["a room", "a room"]
+    assert result["keyframes"] == [b"\xff\xd8a", b"\xff\xd8b"]
+    assert result["summary"] is None
+
+
+def test_pipeline_samples_nothing_when_keyframes_not_requested(
+    monkeypatch: pytest.MonkeyPatch, _summarizable: Path
+) -> None:
+    """A summary alone samples no frames — the option gates decoding, not just captions.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Fixture for patching module attributes.
+        _summarizable (Path): Stub media path with the heavy stages patched out.
+    """
+    monkeypatch.delenv("NEXTEXT_VISUAL_SUMMARY", raising=False)
+    sampled: list[Any] = []
+    monkeypatch.setattr(
+        jobs_module,
+        "extract_keyframe_samples",
+        lambda path, **kw: sampled.append(path) or [],
+    )
+    captioned: list[Any] = []
+    monkeypatch.setattr(
+        "nextext.core.visual_context.describe_keyframes",
+        lambda samples, pipeline, **kw: captioned.append(samples) or [],
+    )
+    seen: dict[str, Any] = {}
+
+    def _fake_summary(text: str, inference_pipeline: Any, visual_context: str | None = None) -> str:
+        seen["visual_context"] = visual_context
+        return "audio only"
+
+    monkeypatch.setattr("nextext.pipeline.summarization_pipeline", _fake_summary)
+
+    result = _run_pipeline_blocking(
+        _video_state("v2b", _summarizable, summarization=True, keyframes=False), lambda *a, **k: None
+    )
+
+    assert sampled == []
+    assert captioned == []
+    assert seen["visual_context"] is None
+    assert result["keyframes"] == []
     assert result["frame_captions"] is None
 
 
 def test_pipeline_visual_context_disabled_by_env(monkeypatch: pytest.MonkeyPatch, _summarizable: Path) -> None:
-    """The operator kill-switch suppresses captioning but keeps the summary.
+    """The operator kill-switch suppresses captioning but keeps frames and summary.
 
     Args:
         monkeypatch (pytest.MonkeyPatch): Fixture for patching module attributes.
@@ -269,12 +320,17 @@ def test_pipeline_visual_context_disabled_by_env(monkeypatch: pytest.MonkeyPatch
 
     monkeypatch.setattr("nextext.pipeline.summarization_pipeline", _fake_summary)
 
-    result = _run_pipeline_blocking(_video_state("v3", _summarizable, summarization=True), lambda *a, **k: None)
+    result = _run_pipeline_blocking(
+        _video_state("v3", _summarizable, summarization=True, keyframes=True), lambda *a, **k: None
+    )
 
     assert calls == []
     assert result["summary"] == "audio only"
     assert seen["visual_context"] is None
     assert result["frame_captions"] is None
+    # The kill-switch stops captioning, not sampling: the frames are still
+    # downloadable as ``keyframes.zip``.
+    assert result["keyframes"] == [b"\xff\xd8a", b"\xff\xd8b"]
 
 
 def test_pipeline_audio_only_job_has_no_visual_context(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -318,7 +374,7 @@ def test_pipeline_audio_only_job_has_no_visual_context(monkeypatch: pytest.Monke
 
     monkeypatch.setattr("nextext.pipeline.summarization_pipeline", _fake_summary)
 
-    result = _run_pipeline_blocking(_video_state("v4", media, summarization=True), lambda *a, **k: None)
+    result = _run_pipeline_blocking(_video_state("v4", media, summarization=True, keyframes=True), lambda *a, **k: None)
 
     assert calls == []
     assert seen["visual_context"] is None
@@ -329,7 +385,7 @@ def test_pipeline_audio_only_job_has_no_visual_context(monkeypatch: pytest.Monke
 def test_pipeline_reports_caption_count_on_the_stage_event(
     monkeypatch: pytest.MonkeyPatch, _summarizable: Path
 ) -> None:
-    """The summarize stage's completion delta reports how many frames were read.
+    """The keyframe stage's completion delta reports frames sampled and described.
 
     Args:
         monkeypatch (pytest.MonkeyPatch): Fixture for patching module attributes.
@@ -344,12 +400,37 @@ def test_pipeline_reports_caption_count_on_the_stage_event(
     events: list[tuple[str, dict[str, Any]]] = []
 
     _run_pipeline_blocking(
-        _video_state("v5", _summarizable, summarization=True),
+        _video_state("v5", _summarizable, summarization=True, keyframes=True),
         lambda name, payload: events.append((name, payload)),
     )
 
-    completed = [p for name, p in events if name == "stage_completed" and p.get("stage") == "Summarizing"]
-    assert completed[0]["result_delta"]["frame_captions"] == 1
+    completed = [p for name, p in events if name == "stage_completed" and p.get("stage") == "Describing keyframes"]
+    assert completed[0]["result_delta"] == {"keyframes": 2, "frame_captions": 1}
+
+
+def test_pipeline_keyframe_stage_reports_skipped_when_not_requested(
+    monkeypatch: pytest.MonkeyPatch, _summarizable: Path
+) -> None:
+    """The stage still announces itself when the option is off, marked skipped.
+
+    Every stage emits a started/completed pair regardless of its option, so the
+    SSE progress fractions stay monotonic.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Fixture for patching module attributes.
+        _summarizable (Path): Stub media path with the heavy stages patched out.
+    """
+    events: list[tuple[str, dict[str, Any]]] = []
+
+    _run_pipeline_blocking(
+        _video_state("v5b", _summarizable, keyframes=False),
+        lambda name, payload: events.append((name, payload)),
+    )
+
+    stages = [p["stage"] for name, p in events if name == "stage_started"]
+    assert stages[1] == "Describing keyframes"
+    completed = [p for name, p in events if name == "stage_completed" and p.get("stage") == "Describing keyframes"]
+    assert completed[0]["result_delta"] == {"skipped": True}
 
 
 def test_pipeline_captioning_failure_does_not_fail_the_job(
@@ -372,10 +453,13 @@ def test_pipeline_captioning_failure_does_not_fail_the_job(
     monkeypatch.setattr("nextext.core.visual_context.describe_keyframes", _boom)
     monkeypatch.setattr("nextext.pipeline.summarization_pipeline", lambda *a, **kw: "still summarized")
 
-    result = _run_pipeline_blocking(_video_state("v6", _summarizable, summarization=True), lambda *a, **k: None)
+    result = _run_pipeline_blocking(
+        _video_state("v6", _summarizable, summarization=True, keyframes=True), lambda *a, **k: None
+    )
 
     assert result["summary"] == "still summarized"
     assert result["frame_captions"] is None
+    assert result["keyframes"] == [b"\xff\xd8a", b"\xff\xd8b"]
 
 
 def test_serialize_result_surfaces_frame_captions() -> None:
@@ -390,3 +474,141 @@ def test_serialize_result_omits_frame_captions_when_absent() -> None:
     """A job with no captions advertises none rather than an empty list."""
     assert _serialize_result({}).frame_captions is None
     assert _serialize_result({"frame_captions": []}).frame_captions is None
+
+
+def test_pipeline_captions_a_silent_video(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """A video with no speech still gets its frames sampled and described.
+
+    The job is still ``skipped`` — that flag means "no transcript" — but the
+    visual half of the run is unaffected by the missing audio.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Fixture for patching module attributes.
+        tmp_path (Path): Temporary directory fixture.
+    """
+    monkeypatch.delenv("NEXTEXT_VISUAL_SUMMARY", raising=False)
+    media = tmp_path / "clip.mp4"
+    media.write_bytes(b"video")
+    empty = pd.DataFrame({"start": [], "end": [], "speaker": [], "text": []})
+    monkeypatch.setattr(
+        "nextext.pipeline.transcription_pipeline",
+        lambda **kwargs: TranscriptionOutcome(transcript=empty, src_lang="en", skip_reason="vad_no_speech"),
+    )
+    monkeypatch.setattr(
+        jobs_module,
+        "extract_keyframe_samples",
+        lambda path, **kw: [Keyframe(time_sec=0.0, jpeg=b"\xff\xd8a")],
+    )
+
+    class _StubInference:
+        """Stand-in for ``InferencePipeline`` that is always healthy."""
+
+        def get_health(self) -> bool:
+            """Report the provider as reachable.
+
+            Returns:
+                bool: Always ``True``.
+            """
+            return True
+
+    monkeypatch.setattr("nextext.core.openai_cfg.InferencePipeline", _StubInference)
+    monkeypatch.setattr(
+        "nextext.core.visual_context.describe_keyframes",
+        lambda samples, pipeline, **kw: [FrameCaption(time_sec=0.0, caption="an empty street")],
+    )
+
+    result = _run_pipeline_blocking(_video_state("s1", media, keyframes=True), lambda *a, **k: None)
+
+    assert result["skipped"] is True
+    assert result["skip_reason_code"] == "vad_no_speech"
+    assert [c.caption for c in result["frame_captions"]] == ["an empty street"]
+    assert result["summary"] is None
+
+
+def test_pipeline_summarizes_a_silent_video_from_its_captions(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """No speech plus a requested summary yields one written from the visuals alone.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Fixture for patching module attributes.
+        tmp_path (Path): Temporary directory fixture.
+    """
+    monkeypatch.delenv("NEXTEXT_VISUAL_SUMMARY", raising=False)
+    media = tmp_path / "clip.mp4"
+    media.write_bytes(b"video")
+    empty = pd.DataFrame({"start": [], "end": [], "speaker": [], "text": []})
+    monkeypatch.setattr(
+        "nextext.pipeline.transcription_pipeline",
+        lambda **kwargs: TranscriptionOutcome(transcript=empty, src_lang="en", skip_reason="asr_empty_transcript"),
+    )
+    monkeypatch.setattr(
+        jobs_module,
+        "extract_keyframe_samples",
+        lambda path, **kw: [Keyframe(time_sec=3.0, jpeg=b"\xff\xd8a")],
+    )
+
+    class _StubInference:
+        """Stand-in for ``InferencePipeline`` that is always healthy."""
+
+        def get_health(self) -> bool:
+            """Report the provider as reachable.
+
+            Returns:
+                bool: Always ``True``.
+            """
+            return True
+
+    monkeypatch.setattr("nextext.core.openai_cfg.InferencePipeline", _StubInference)
+    monkeypatch.setattr(
+        "nextext.core.visual_context.describe_keyframes",
+        lambda samples, pipeline, **kw: [FrameCaption(time_sec=3.0, caption="a lit stage")],
+    )
+    seen: dict[str, Any] = {}
+
+    def _fake_summary(text: str, inference_pipeline: Any, visual_context: str | None = None) -> str:
+        seen["text"] = text
+        seen["visual_context"] = visual_context
+        return "a visual summary"
+
+    monkeypatch.setattr("nextext.pipeline.summarization_pipeline", _fake_summary)
+    events: list[tuple[str, dict[str, Any]]] = []
+
+    result = _run_pipeline_blocking(
+        _video_state("s2", media, keyframes=True, summarization=True),
+        lambda name, payload: events.append((name, payload)),
+    )
+
+    assert result["skipped"] is True
+    assert result["summary"] == "a visual summary"
+    assert seen["text"] == ""
+    assert seen["visual_context"] == "[00:03] a lit stage"
+    # The summarize stage is announced on this path too, so the progress bar
+    # does not stall silently at the keyframe stage.
+    assert [p["stage"] for name, p in events if name == "stage_started"][-1] == "Summarizing"
+
+
+def test_pipeline_silent_video_without_captions_has_no_summary(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """No transcript and no captions means no summary request is made at all.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Fixture for patching module attributes.
+        tmp_path (Path): Temporary directory fixture.
+    """
+    media = tmp_path / "clip.mp3"
+    media.write_bytes(b"audio")
+    empty = pd.DataFrame({"start": [], "end": [], "speaker": [], "text": []})
+    monkeypatch.setattr(
+        "nextext.pipeline.transcription_pipeline",
+        lambda **kwargs: TranscriptionOutcome(transcript=empty, src_lang="en", skip_reason="vad_no_speech"),
+    )
+    monkeypatch.setattr(jobs_module, "extract_keyframe_samples", lambda path, **kw: [])
+    calls: list[Any] = []
+    monkeypatch.setattr(
+        "nextext.pipeline.summarization_pipeline",
+        lambda *a, **kw: calls.append(a) or "unreachable",
+    )
+
+    result = _run_pipeline_blocking(_video_state("s3", media, keyframes=True, summarization=True), lambda *a, **k: None)
+
+    assert calls == []
+    assert result["summary"] is None
+    assert result["frame_captions"] is None

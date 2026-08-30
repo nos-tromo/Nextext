@@ -48,6 +48,7 @@ export const en = {
   'options.hate_speech': 'Hate speech',
   'options.detect_speakers': 'Detect speakers',
   'options.word_analysis': 'Word analysis',
+  'options.keyframes': 'Keyframes',
 
   // processing (terminal job states only; in-flight stage text is protocol —
   // sent verbatim by the backend as `stage` and never translated client-side)
@@ -101,7 +102,9 @@ export const en = {
   'player.unplayable': 'This file can’t be played in the browser. Download it to play it locally.',
   'results.no_summary': 'No summary produced for this job.',
   'results.no_visual_context': 'No visual context produced for this job.',
-  'results.visual_context_hint': 'What the video showed at each sampled moment. A summary of this job also draws on these descriptions.',
+  'results.visual_context_hint': 'What the video showed at each sampled moment. A summary of this job draws on these descriptions too, when one was requested.',
+  'results.keyframes_only': 'The keyframes were sampled but not described. Download them to see them.',
+  'artifacts.download_keyframes': 'Download the sampled keyframes as a ZIP archive',
   'results.col_time': 'Time',
   'results.col_description': 'What is shown',
   'results.no_hate_speech': 'No hate-speech findings for this job.',

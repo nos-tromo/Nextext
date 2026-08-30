@@ -9,7 +9,7 @@ const captions: FrameCaption[] = [
   { time_sec: 75, caption: 'A speaker at a lectern' },
 ]
 
-function makeResult(frame_captions: FrameCaption[] | null): JobResult {
+function makeResult(frame_captions: FrameCaption[] | null, keyframes_url: string | null = null): JobResult {
   return {
     transcript: [],
     transcript_language: 'en',
@@ -18,7 +18,7 @@ function makeResult(frame_captions: FrameCaption[] | null): JobResult {
     word_counts: null,
     named_entities: null,
     wordcloud_url: null,
-    keyframes_url: null,
+    keyframes_url,
     media_url: null,
     frame_captions,
     hate_speech_findings: null,
@@ -63,6 +63,23 @@ describe('VisualContextTab', () => {
   it('renders the empty state for an empty caption list too', () => {
     render(<VisualContextTab jobId="j1" result={makeResult([])} stem="clip" fileName="clip.mp4" mediaUrl={null} />)
     expect(screen.getByText('No visual context produced for this job.')).toBeInTheDocument()
+  })
+
+  it('offers the sampled frames as a ZIP beside the descriptions', () => {
+    const url = '/api/v1/jobs/j1/artifacts/keyframes.zip'
+    render(<VisualContextTab jobId="j1" result={makeResult(captions, url)} stem="clip" fileName="clip.mp4" mediaUrl={null} />)
+    expect(screen.getByRole('button', { name: 'Download TXT' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /keyframes/i })).toBeInTheDocument()
+  })
+
+  it('offers the ZIP alone when the frames were sampled but not described', () => {
+    // What an operator with captioning switched off sees: the job produced
+    // something, so the tab must not claim it produced nothing.
+    const url = '/api/v1/jobs/j1/artifacts/keyframes.zip'
+    render(<VisualContextTab jobId="j1" result={makeResult(null, url)} stem="clip" fileName="clip.mp4" mediaUrl={null} />)
+    expect(screen.getByText(/sampled but not described/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /keyframes/i })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Download TXT' })).not.toBeInTheDocument()
   })
 })
 

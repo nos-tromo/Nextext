@@ -124,9 +124,17 @@ by `load_sentence_restore_env`. Set `NEXTEXT_SENTENCE_RESTORE=off` to disable.
 
 ## Video keyframes
 
-Both keyframe knobs supply a **default** that applies only when a job-creation
+Keyframe extraction is a step of its own, requested per job
+(`JobOptions.keyframes`, the SPA's **Keyframes** checkbox, or the CLI's
+`-kf/--keyframes`) and **off by default**. When it is off no frames are
+sampled at all — there is no `keyframes.zip` and no visual context. It is
+independent of summarization in both directions: a summary no longer samples
+frames, and frames no longer need a summary to be described.
+
+Both knobs below supply a **default** that applies only when a job-creation
 request omits the corresponding field — an explicit per-request value always
-wins. Resolved by `load_keyframe_defaults` in `nextext/utils/env_cfg.py`.
+wins — and they bite only when the job asked for keyframes. Resolved by
+`load_keyframe_defaults` in `nextext/utils/env_cfg.py`; the CLI reads them too.
 
 - `KEYFRAMES_PER_MINUTE` (backend only) — Default keyframes sampled per minute
   of video, applied to `JobOptions.keyframes_per_minute` only when a
@@ -137,27 +145,29 @@ wins. Resolved by `load_keyframe_defaults` in `nextext/utils/env_cfg.py`.
   Clamped to `[0, 200]` (the schema's hard cap; larger values warn and clamp to
   `200`). Defaults to `20`.
 
-## Visual context (video summaries)
+## Visual context (keyframe descriptions)
 
-When a job requests a summary and the uploaded file has a video stream, the
-sampled keyframes are captioned by `TEXT_MODEL` and the timestamped captions
-are prepended to the transcript before summarization, so the summary covers
-what was shown as well as what was said. There is no job option or checkbox:
-it applies whenever those two conditions hold. Captions also surface on
-`GET /jobs/{id}` as `frame_captions` and as the `visual_context.txt` artifact.
+Within the keyframe step, each sampled frame is described by `TEXT_MODEL` and
+the timestamped captions become a result in their own right: they surface on
+`GET /jobs/{id}` as `frame_captions`, as the `visual_context.txt` artifact,
+and in the SPA's **Visual context** tab. A job that *also* asked for a summary
+has them folded into it, so the summary covers what was shown as well as what
+was said — and for a video whose audio held no speech, the captions are the
+summary's only source.
 
 This needs a **vision-capable** `TEXT_MODEL` (the shared `vllm-service` chat
 endpoint serves one). Captioning is fail-soft end to end: a per-frame outage
 costs that caption, and a model that rejects image input aborts after a single
-request, leaving the ordinary audio-only summary plus one warning. Each
-captioned frame costs one inference request, which is what the frame budget
-below bounds. Resolved by `load_visual_summary_env` in
-`nextext/utils/env_cfg.py`; `nextext-cli` honours the same settings and takes
-`--no-visual-context` for a one-off run.
+request, leaving an uncaptioned run plus one warning — the sampled frames are
+still downloadable as `keyframes.zip`. Each captioned frame costs one
+inference request, which is what the frame budget below bounds. Resolved by
+`load_visual_summary_env` in `nextext/utils/env_cfg.py`; `nextext-cli` honours
+the same settings.
 
-- `NEXTEXT_VISUAL_SUMMARY` (backend + CLI) — Master switch. Only an explicit
-  falsy token (`0`/`false`/`no`/`off`) disables captioning; unrecognised values
-  warn and keep the default. Defaults to on.
+- `NEXTEXT_VISUAL_SUMMARY` (backend + CLI) — Operator kill-switch for the
+  captioning half of the keyframe step; sampling is unaffected. Only an
+  explicit falsy token (`0`/`false`/`no`/`off`) disables captioning;
+  unrecognised values warn and keep the default. Defaults to on.
 - `VISUAL_SUMMARY_MAX_FRAMES` (backend + CLI) — Maximum frames captioned per
   job; a longer clip's frames are subsampled evenly so coverage still spans the
   whole file. Clamped to `200` (the keyframe ceiling); non-integer or

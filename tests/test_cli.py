@@ -29,9 +29,13 @@ class _SpyProcessor:
     def __init__(self) -> None:
         self.transcript_writes: list[pd.DataFrame] = []
         self.file_output_labels: list[str] = []
+        self.keyframe_writes: list[list[bytes]] = []
 
     def write_transcript_output(self, data: pd.DataFrame) -> None:
         self.transcript_writes.append(data)
+
+    def write_keyframes(self, frames: list[bytes]) -> None:
+        self.keyframe_writes.append(frames)
 
     def write_file_output(self, data: Any, label: str, target_language: str = "") -> Any:
         self.file_output_labels.append(label)
@@ -51,7 +55,7 @@ def _args(file_path: Path, **overrides: Any) -> argparse.Namespace:
         "hate_speech": False,
         "emit_docint_jsonl": None,
         "force_docint_jsonl": False,
-        "visual_context": True,
+        "keyframes": False,
     }
     base.update(overrides)
     return argparse.Namespace(**base)
@@ -202,7 +206,7 @@ def test_run_main_still_reports_docint_export_when_skipped(monkeypatch: pytest.M
 
 
 # ---------------------------------------------------------------------------
-# Visual context in CLI summaries
+# The CLI keyframe step (-kf/--keyframes)
 # ---------------------------------------------------------------------------
 
 
@@ -250,7 +254,7 @@ def _summarizable_cli(
 
 
 def test_cli_summary_includes_visual_context_for_video(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """A CLI video summary is fed the frame captions and writes them out.
+    """With both steps asked for, the captions are written and feed the summary.
 
     Args:
         monkeypatch (pytest.MonkeyPatch): Fixture for patching module attributes.
@@ -270,12 +274,13 @@ def test_cli_summary_includes_visual_context_for_video(monkeypatch: pytest.Monke
 
     monkeypatch.setattr(cli, "summarization_pipeline", _fake_summary)
 
-    cli._run_main(_args(tmp_path / "clip.mp4", summarize=True))
+    cli._run_main(_args(tmp_path / "clip.mp4", summarize=True, keyframes=True))
 
     (processor,) = created
     assert seen["visual_context"] == "[00:00] a hallway"
     assert "visual_context" in processor.file_output_labels
     assert "summary" in processor.file_output_labels
+    assert processor.keyframe_writes == [[b"\xff\xd8a"]]
 
 
 def test_cli_audio_only_summary_writes_no_visual_context(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -295,28 +300,29 @@ def test_cli_audio_only_summary_writes_no_visual_context(monkeypatch: pytest.Mon
 
     monkeypatch.setattr(cli, "summarization_pipeline", _fake_summary)
 
-    cli._run_main(_args(tmp_path / "clip.wav", summarize=True))
+    cli._run_main(_args(tmp_path / "clip.wav", summarize=True, keyframes=True))
 
     (processor,) = created
     assert seen["visual_context"] is None
     assert "visual_context" not in processor.file_output_labels
+    assert processor.keyframe_writes == []
 
 
-def test_cli_no_visual_context_flag_disables_captioning(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """``--no-visual-context`` suppresses captioning for a one-off run.
+def test_cli_summary_without_keyframes_samples_nothing(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """A summary alone no longer pulls in keyframes — the step is opt-in.
 
     Args:
         monkeypatch (pytest.MonkeyPatch): Fixture for patching module attributes.
         tmp_path (Path): Temporary directory fixture.
     """
     monkeypatch.delenv("NEXTEXT_VISUAL_SUMMARY", raising=False)
-    calls: list[Any] = []
     created = _summarizable_cli(
         monkeypatch,
         samples=[Keyframe(time_sec=0.0, jpeg=b"\xff\xd8a")],
         captions=[FrameCaption(time_sec=0.0, caption="a hallway")],
     )
-    monkeypatch.setattr(cli, "describe_keyframes", lambda s, p, **kw: calls.append(s) or [])
+    sampled: list[Any] = []
+    monkeypatch.setattr(cli, "extract_keyframe_samples", lambda path, **kw: sampled.append(path) or [])
     seen: dict[str, Any] = {}
 
     def _fake_summary(text: str, inference_pipeline: Any, visual_context: str | None = None) -> str:
@@ -325,16 +331,106 @@ def test_cli_no_visual_context_flag_disables_captioning(monkeypatch: pytest.Monk
 
     monkeypatch.setattr(cli, "summarization_pipeline", _fake_summary)
 
-    cli._run_main(_args(tmp_path / "clip.mp4", summarize=True, visual_context=False))
+    cli._run_main(_args(tmp_path / "clip.mp4", summarize=True, keyframes=False))
+
+    (processor,) = created
+    assert sampled == []
+    assert seen["visual_context"] is None
+    assert "visual_context" not in processor.file_output_labels
+    assert processor.keyframe_writes == []
+
+
+def test_cli_keyframes_without_a_summary(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """``-kf`` alone writes frames and descriptions and asks for no summary.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Fixture for patching module attributes.
+        tmp_path (Path): Temporary directory fixture.
+    """
+    monkeypatch.delenv("NEXTEXT_VISUAL_SUMMARY", raising=False)
+    created = _summarizable_cli(
+        monkeypatch,
+        samples=[Keyframe(time_sec=0.0, jpeg=b"\xff\xd8a")],
+        captions=[FrameCaption(time_sec=0.0, caption="a hallway")],
+    )
+    calls: list[Any] = []
+    monkeypatch.setattr(cli, "summarization_pipeline", lambda **kw: calls.append(kw) or "never")
+
+    assert cli._run_main(_args(tmp_path / "clip.mp4", keyframes=True)) == 0
 
     (processor,) = created
     assert calls == []
-    assert seen["visual_context"] is None
+    assert "visual_context" in processor.file_output_labels
+    assert "summary" not in processor.file_output_labels
+    assert processor.keyframe_writes == [[b"\xff\xd8a"]]
+
+
+def test_cli_keyframes_env_kill_switch_still_writes_the_frames(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """``NEXTEXT_VISUAL_SUMMARY=off`` stops captioning, not sampling.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Fixture for patching module attributes.
+        tmp_path (Path): Temporary directory fixture.
+    """
+    monkeypatch.setenv("NEXTEXT_VISUAL_SUMMARY", "off")
+    created = _summarizable_cli(
+        monkeypatch,
+        samples=[Keyframe(time_sec=0.0, jpeg=b"\xff\xd8a")],
+        captions=[FrameCaption(time_sec=0.0, caption="a hallway")],
+    )
+    captioned: list[Any] = []
+    monkeypatch.setattr(cli, "describe_keyframes", lambda s, p, **kw: captioned.append(s) or [])
+
+    cli._run_main(_args(tmp_path / "clip.mp4", keyframes=True))
+
+    (processor,) = created
+    assert captioned == []
     assert "visual_context" not in processor.file_output_labels
+    assert processor.keyframe_writes == [[b"\xff\xd8a"]]
 
 
-def test_cli_visual_context_flag_defaults_to_enabled() -> None:
-    """Parsing without the flag leaves visual context on, matching the env default."""
-    args = cli.parse_arguments(["-f", "clip.mp4", "-sum"])
-    assert args.visual_context is True
-    assert cli.parse_arguments(["-f", "clip.mp4", "-sum", "--no-visual-context"]).visual_context is False
+def test_cli_silent_video_summarizes_its_captions(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """No speech still yields keyframes, captions and a captions-only summary.
+
+    The run still reports exit code ``3`` — that code means "no transcript" —
+    but the visual half of the work is unaffected.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Fixture for patching module attributes.
+        tmp_path (Path): Temporary directory fixture.
+    """
+    monkeypatch.delenv("NEXTEXT_VISUAL_SUMMARY", raising=False)
+    created = _summarizable_cli(
+        monkeypatch,
+        samples=[Keyframe(time_sec=0.0, jpeg=b"\xff\xd8a")],
+        captions=[FrameCaption(time_sec=0.0, caption="a hallway")],
+    )
+    empty = pd.DataFrame({"start": [], "end": [], "text": []})
+    monkeypatch.setattr(
+        cli,
+        "transcription_pipeline",
+        lambda **kwargs: TranscriptionOutcome(transcript=empty, src_lang="en", skip_reason="vad_no_speech"),
+    )
+    seen: dict[str, Any] = {}
+
+    def _fake_summary(text: str, inference_pipeline: Any, visual_context: str | None = None) -> str:
+        seen["text"] = text
+        seen["visual_context"] = visual_context
+        return "a visual summary"
+
+    monkeypatch.setattr(cli, "summarization_pipeline", _fake_summary)
+
+    assert cli._run_main(_args(tmp_path / "clip.mp4", summarize=True, keyframes=True)) == 3
+
+    (processor,) = created
+    assert seen == {"text": "", "visual_context": "[00:00] a hallway"}
+    assert "summary" in processor.file_output_labels
+    assert processor.keyframe_writes == [[b"\xff\xd8a"]]
+
+
+def test_cli_keyframes_flag_defaults_to_off() -> None:
+    """The step is opt-in, and full analysis opts in on the caller's behalf."""
+    assert cli.parse_arguments(["-f", "clip.mp4", "-sum"]).keyframes is False
+    assert cli.parse_arguments(["-f", "clip.mp4", "-kf"]).keyframes is True
+    assert cli.parse_arguments(["-f", "clip.mp4", "--keyframes"]).keyframes is True
+    assert cli.parse_arguments(["-f", "clip.mp4", "-F"]).keyframes is True

@@ -31,12 +31,15 @@ function formatStamp(seconds: number): string {
 
 /**
  * Displays what the video showed, moment by moment: one model-written
- * description per sampled keyframe, stamped with its time in the clip, plus a
- * `visual_context.txt` download.
+ * description per sampled keyframe, stamped with its time in the clip, plus
+ * `visual_context.txt` and `keyframes.zip` downloads.
  *
- * These descriptions are also what the summary drew on for a video job, so the
- * tab sits next to the transcript — both are accounts of the source material
- * itself rather than analyses derived from it.
+ * The keyframe step stands on its own — a summary is not required for it, and
+ * takes these descriptions as one of its sources when both were asked for — so
+ * the tab sits next to the transcript: both are accounts of the source
+ * material itself rather than analyses derived from it. When the frames were
+ * sampled but the operator has captioning switched off, the tab is the ZIP
+ * download and says so.
  *
  * @param jobId - The job identifier, forwarded to {@link DownloadButtons}.
  * @param result - The completed job result containing the frame captions.
@@ -60,7 +63,28 @@ export function VisualContextTab({ jobId, result, stem, fileName, mediaUrl }: Vi
   }
   const activeRowRef = useFollowActiveRow(activeIndex)
 
+  const keyframesDownload = result.keyframes_url
+    ? [
+        {
+          name: 'keyframes.zip',
+          label: 'ZIP',
+          title: t('artifacts.download_keyframes'),
+          fileName: `${stem}_keyframes.zip`,
+        },
+      ]
+    : []
+
   if (captions.length === 0) {
+    // Frames but no captions: the ZIP is the whole result, so offer it rather
+    // than reporting an empty tab over a job that did produce something.
+    if (result.keyframes_url) {
+      return (
+        <div className="space-y-4">
+          <p className="text-sm text-muted-foreground">{t('results.keyframes_only')}</p>
+          <DownloadButtons jobId={jobId} items={keyframesDownload} />
+        </div>
+      )
+    }
     return <p className="text-sm text-muted-foreground">{t('results.no_visual_context')}</p>
   }
 
@@ -103,6 +127,7 @@ export function VisualContextTab({ jobId, result, stem, fileName, mediaUrl }: Vi
         jobId={jobId}
         items={[
           { name: 'visual_context.txt', label: 'TXT', fileName: `${stem}_visual_context.txt` },
+          ...keyframesDownload,
         ]}
       />
     </div>

@@ -55,6 +55,7 @@ _TERMINAL_EVENT_NAMES: frozenset[str] = frozenset({"job_completed", "job_failed"
 
 PIPELINE_STAGE_LABELS: tuple[str, ...] = (
     "Transcribing",
+    "Describing keyframes",
     "Translating",
     "Running word-level analysis",
     "Summarizing",
@@ -409,6 +410,7 @@ def _run_pipeline_blocking(state: JobState, push_event: PushEvent) -> dict[str, 
         "words": opts.words,
         "summarization": opts.summarization,
         "hate_speech": opts.hate_speech,
+        "keyframes": opts.keyframes,
     }
     total_stages = len(PIPELINE_STAGE_LABELS)
 
@@ -447,6 +449,31 @@ def _run_pipeline_blocking(state: JobState, push_event: PushEvent) -> dict[str, 
             },
         )
 
+    inference_pipeline: InferencePipeline | None = None
+
+    def _ensure_inference() -> InferencePipeline:
+        """Return the job's inference pipeline, creating it on first use.
+
+        The provider is health-checked once, when the pipeline is built: a
+        stage that needs inference on an unreachable provider fails the job
+        rather than silently producing nothing.
+
+        Returns:
+            InferencePipeline: The shared pipeline for this job.
+
+        Raises:
+            ConnectionError: If the configured provider is unreachable.
+        """
+        nonlocal inference_pipeline
+        if inference_pipeline is None:
+            candidate = InferencePipeline()
+            if not candidate.get_health():
+                raise ConnectionError(
+                    "The configured inference provider is not reachable. Please ensure it is running and accessible."
+                )
+            inference_pipeline = candidate
+        return inference_pipeline
+
     # Transcription -----------------------------------------------------------
     _notify(0)
     outcome = transcription_pipeline(
@@ -456,32 +483,85 @@ def _run_pipeline_blocking(state: JobState, push_event: PushEvent) -> dict[str, 
     )
     df = outcome.transcript
     file_opts["src_lang"] = outcome.src_lang
-
-    # Keyframes ---------------------------------------------------------------
-    keyframe_samples = extract_keyframe_samples(
-        state.file_path,
-        per_minute=opts.keyframes_per_minute,
-        max_frames=opts.keyframes_max,
-    )
-    keyframes = [sample.jpeg for sample in keyframe_samples]
-    # Pre-baked here (not in ``_serialize_result``) because ``state.job_id`` is
-    # in scope; mirrors the ``_wordcloud_url`` pattern below.
-    keyframes_url = f"/api/v1/jobs/{state.job_id}/artifacts/keyframes.zip"
-
+    # A file with no processable speech is a completed job, not a failure: the
+    # typed code is what the SPA localizes and what the operator alerts on;
+    # ``skip_reason`` is English fallback prose. The text stages below are
+    # skipped, but the keyframe stage is not — a silent video still has
+    # something to show.
+    reason_code = outcome.skip_reason
     if outcome.is_empty:
-        # Not a failure: the file was processed, it simply held no speech to
-        # transcribe. The typed code is what the SPA localizes and what the
-        # operator alerts on; ``skip_reason`` is English fallback prose.
-        reason_code = outcome.skip_reason
-        transcript_language = file_opts["trg_lang" if file_opts["task"] == "translate" else "src_lang"]
         logger.warning(
-            "Job {} skipped: {} (stages after transcription not run).",
+            "Job {} skipped: {} (text stages after transcription not run).",
             state.job_id,
             reason_code or "unknown",
         )
-        payload = {
+        _complete(0, {"transcript_segments": 0, "skipped": True, "skip_reason_code": reason_code})
+    else:
+        _complete(
+            0,
+            {
+                "transcript_segments": len(df),
+                "resolved_src_lang": file_opts["src_lang"],
+            },
+        )
+
+    # Keyframes ---------------------------------------------------------------
+    # Sampling and captioning are one opt-in step of their own: a summary no
+    # longer implies visual context, and visual context no longer implies a
+    # summary. Captioning within the step stays operator-gated by
+    # ``NEXTEXT_VISUAL_SUMMARY`` and fail-soft — a caption outage still leaves
+    # the sampled frames downloadable.
+    _notify(1)
+    keyframes: list[bytes] = []
+    captions: list[FrameCaption] = []
+    # Pre-baked here (not in ``_serialize_result``) because ``state.job_id`` is
+    # in scope; mirrors the ``_wordcloud_url`` pattern below.
+    keyframes_url = f"/api/v1/jobs/{state.job_id}/artifacts/keyframes.zip"
+    if file_opts["keyframes"]:
+        keyframe_samples = extract_keyframe_samples(
+            state.file_path,
+            per_minute=opts.keyframes_per_minute,
+            max_frames=opts.keyframes_max,
+        )
+        keyframes = [sample.jpeg for sample in keyframe_samples]
+        visual_cfg = load_visual_summary_env()
+        if visual_cfg.enabled and keyframe_samples:
+            # Resolved outside the fail-soft guard: an unreachable provider is
+            # a job failure like it is for every other stage, not a silently
+            # uncaptioned run.
+            caption_pipeline = _ensure_inference()
+            try:
+                captions = describe_keyframes(
+                    keyframe_samples,
+                    caption_pipeline,
+                    max_frames=visual_cfg.max_frames,
+                    max_side=visual_cfg.max_side,
+                )
+            except Exception as exc:
+                logger.warning("Job {} visual context unavailable: {}", state.job_id, exc)
+                captions = []
+        _complete(1, {"keyframes": len(keyframes), "frame_captions": len(captions)})
+    else:
+        _complete(1, {"skipped": True})
+
+    visual_context = format_visual_context(captions) if captions else None
+
+    if outcome.is_empty:
+        transcript_language = file_opts["trg_lang" if file_opts["task"] == "translate" else "src_lang"]
+        # A summary was still requested, and the captions are a summarizable
+        # source in their own right — so a silent video yields one.
+        visual_summary: str | None = None
+        if file_opts["summarization"] and visual_context:
+            _notify(4)
+            visual_summary = summarization_pipeline(
+                "",
+                inference_pipeline=_ensure_inference(),
+                visual_context=visual_context,
+            )
+            _complete(4, {"summary": bool(visual_summary)})
+        return {
             "transcript": df,
-            "summary": None,
+            "summary": visual_summary,
             "word_counts": None,
             "named_entities": None,
             "wordcloud": None,
@@ -494,42 +574,26 @@ def _run_pipeline_blocking(state: JobState, push_event: PushEvent) -> dict[str, 
             "task": file_opts["task"],
             "keyframes": keyframes,
             "_keyframes_url": keyframes_url,
-            "frame_captions": None,
+            "frame_captions": captions or None,
         }
-        _complete(0, {"transcript_segments": 0, "skipped": True, "skip_reason_code": reason_code})
-        return payload
-
-    _complete(
-        0,
-        {
-            "transcript_segments": len(df),
-            "resolved_src_lang": file_opts["src_lang"],
-        },
-    )
 
     # Translation -------------------------------------------------------------
     # Whisper only transcribes; the LLM performs every translation, directly
     # from the source language to the target. Engage it whenever a translate
     # task was requested and the resolved source differs from the target (so an
     # English target is translated too, and a same-language request is a no-op).
-    _notify(1)
-    inference_pipeline: InferencePipeline | None = None
+    _notify(2)
     needs_translation = should_translate(file_opts["task"], file_opts["src_lang"], file_opts["trg_lang"])
     if needs_translation:
-        inference_pipeline = InferencePipeline()
-        if not inference_pipeline.get_health():
-            raise ConnectionError(
-                "The configured inference provider is not reachable. Please ensure it is running and accessible."
-            )
         df = translation_pipeline(
             df,
             file_opts["trg_lang"],
             src_lang=file_opts["src_lang"],
-            inference_pipeline=inference_pipeline,
+            inference_pipeline=_ensure_inference(),
         )
-        _complete(1, {"translated": True})
+        _complete(2, {"translated": True})
     else:
-        _complete(1, {"translated": False})
+        _complete(2, {"translated": False})
 
     transcript_language = file_opts["trg_lang" if file_opts["task"] == "translate" else "src_lang"]
     result: dict[str, Any] = {
@@ -544,11 +608,11 @@ def _run_pipeline_blocking(state: JobState, push_event: PushEvent) -> dict[str, 
         "task": file_opts["task"],
         "keyframes": keyframes,
         "_keyframes_url": keyframes_url,
-        "frame_captions": None,
+        "frame_captions": captions or None,
     }
 
     # Word-level analysis -----------------------------------------------------
-    _notify(2)
+    _notify(3)
     if file_opts["words"]:
         wc, ner, cloud = wordlevel_pipeline(
             df,
@@ -559,7 +623,7 @@ def _run_pipeline_blocking(state: JobState, push_event: PushEvent) -> dict[str, 
         result["wordcloud"] = cloud
         result["_wordcloud_url"] = f"/api/v1/jobs/{state.job_id}/artifacts/wordcloud.png"
         _complete(
-            2,
+            3,
             {
                 "word_counts": len(wc) if wc is not None else 0,
                 "named_entities": len(ner) if ner is not None else 0,
@@ -567,67 +631,32 @@ def _run_pipeline_blocking(state: JobState, push_event: PushEvent) -> dict[str, 
             },
         )
     else:
-        _complete(2, {"skipped": True})
-
-    # Summarization -----------------------------------------------------------
-    _notify(3)
-    if file_opts["summarization"]:
-        if inference_pipeline is None:
-            inference_pipeline = InferencePipeline()
-            if not inference_pipeline.get_health():
-                raise ConnectionError(
-                    "The configured inference provider is not reachable. Please ensure it is running and accessible."
-                )
-        summary_text_column = effective_text_column(df)
-        # Visual context: for video, caption the sampled keyframes so the
-        # summary covers what was shown as well as what was said. Strictly an
-        # enhancement — any failure degrades to an audio-only summary.
-        visual_context: str | None = None
-        captions: list[FrameCaption] = []
-        visual_cfg = load_visual_summary_env()
-        if visual_cfg.enabled and keyframe_samples:
-            try:
-                captions = describe_keyframes(
-                    keyframe_samples,
-                    inference_pipeline,
-                    max_frames=visual_cfg.max_frames,
-                    max_side=visual_cfg.max_side,
-                )
-            except Exception as exc:
-                logger.warning("Job {} visual context unavailable: {}", state.job_id, exc)
-                captions = []
-            if captions:
-                result["frame_captions"] = captions
-                visual_context = format_visual_context(captions)
-        result["summary"] = summarization_pipeline(
-            " ".join(df[summary_text_column].astype(str).tolist()),
-            inference_pipeline=inference_pipeline,
-            visual_context=visual_context,
-        )
-        _complete(
-            3,
-            {
-                "summary": bool(result["summary"]),
-                "frame_captions": len(result["frame_captions"] or []),
-            },
-        )
-    else:
         _complete(3, {"skipped": True})
 
-    # Hate-speech detection ---------------------------------------------------
+    # Summarization -----------------------------------------------------------
+    # The summarizer takes whatever the job produced: the transcript (its
+    # translation when there is one) and the keyframe captions when the
+    # keyframe step ran, either alone or together.
     _notify(4)
-    if file_opts["hate_speech"]:
-        if inference_pipeline is None:
-            inference_pipeline = InferencePipeline()
-            if not inference_pipeline.get_health():
-                raise ConnectionError(
-                    "The configured inference provider is not reachable. Please ensure it is running and accessible."
-                )
-        findings = hate_speech_pipeline(df=df, inference_pipeline=inference_pipeline)
-        result["hate_speech_findings"] = findings
-        _complete(4, {"flagged": len(findings)})
+    if file_opts["summarization"]:
+        summary_text_column = effective_text_column(df)
+        result["summary"] = summarization_pipeline(
+            " ".join(df[summary_text_column].astype(str).tolist()),
+            inference_pipeline=_ensure_inference(),
+            visual_context=visual_context,
+        )
+        _complete(4, {"summary": bool(result["summary"])})
     else:
         _complete(4, {"skipped": True})
+
+    # Hate-speech detection ---------------------------------------------------
+    _notify(5)
+    if file_opts["hate_speech"]:
+        findings = hate_speech_pipeline(df=df, inference_pipeline=_ensure_inference())
+        result["hate_speech_findings"] = findings
+        _complete(5, {"flagged": len(findings)})
+    else:
+        _complete(5, {"skipped": True})
 
     return result
 

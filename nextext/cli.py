@@ -3,6 +3,7 @@
 import argparse
 import hashlib
 import os
+from collections.abc import Callable
 from pathlib import Path
 
 import pandas as pd
@@ -30,8 +31,7 @@ from nextext.pipeline import (
     wordlevel_pipeline,
 )
 from nextext.utils.env_cfg import (
-    DEFAULT_KEYFRAMES_MAX,
-    DEFAULT_KEYFRAMES_PER_MINUTE,
+    load_keyframe_defaults,
     load_visual_summary_env,
 )
 from nextext.utils.log_cfg import setup_logging
@@ -117,12 +117,14 @@ def parse_arguments(args_list: list[str] | None = None) -> argparse.Namespace:
         help="Additional transcript summarization (default: False).",
     )
     parser.add_argument(
-        "--no-visual-context",
-        dest="visual_context",
-        action="store_false",
+        "-kf",
+        "--keyframes",
+        dest="keyframes",
+        action="store_true",
         help=(
-            "Skip captioning video keyframes for the summary. Visual context is on by "
-            "default (see NEXTEXT_VISUAL_SUMMARY) and applies only with --summarize."
+            "Sample video keyframes and describe them (default: False). Independent "
+            "of --summarize: the descriptions are written on their own, and feed the "
+            "summary when one is requested. Captioning obeys NEXTEXT_VISUAL_SUMMARY."
         ),
     )
     parser.add_argument(
@@ -137,7 +139,7 @@ def parse_arguments(args_list: list[str] | None = None) -> argparse.Namespace:
         "--full-analysis",
         dest="full_analysis",
         action="store_true",
-        help="Enable full analysis, equivalent to using -w -sum (default: False).",
+        help="Enable full analysis, equivalent to using -w -sum -hs -kf (default: False).",
     )
     parser.add_argument(
         "-ed",
@@ -168,6 +170,7 @@ def parse_arguments(args_list: list[str] | None = None) -> argparse.Namespace:
         args.words = True
         args.summarize = True
         args.hate_speech = True
+        args.keyframes = True
 
     return args
 
@@ -302,6 +305,58 @@ def main() -> None:
     raise SystemExit(_run_main(args))
 
 
+def _keyframe_step(
+    args: argparse.Namespace,
+    file_processor: FileProcessor,
+    ensure_inference: Callable[[], InferencePipeline],
+) -> str | None:
+    """Sample and describe video keyframes when ``--keyframes`` was given.
+
+    The step is independent of ``--summarize``: the sampled JPEGs and the
+    timestamped descriptions are written as outputs in their own right, and
+    the returned block feeds the summary only when one was also requested.
+    Captioning within the step obeys ``NEXTEXT_VISUAL_SUMMARY`` and is
+    fail-soft — a caption outage still leaves the frames on disk.
+
+    Args:
+        args (argparse.Namespace): Parsed CLI arguments.
+        file_processor (FileProcessor): Writer for this run's output files.
+        ensure_inference (Callable[[], InferencePipeline]): Accessor for the
+            run's inference pipeline, created on first use.
+
+    Returns:
+        str | None: The formatted visual-context block, or ``None`` when the
+            step was off, the file has no frames, or nothing was captioned.
+    """
+    if not args.keyframes:
+        return None
+    rates = load_keyframe_defaults()
+    samples = extract_keyframe_samples(
+        args.file_path,
+        per_minute=rates.per_minute,
+        max_frames=rates.max_frames,
+    )
+    if not samples:
+        logger.info("No keyframes sampled from '{}' (no video stream, or sampling is off).", args.file_path)
+        return None
+    file_processor.write_keyframes([sample.jpeg for sample in samples])
+
+    visual_cfg = load_visual_summary_env()
+    if not visual_cfg.enabled:
+        return None
+    captions = describe_keyframes(
+        samples,
+        ensure_inference(),
+        max_frames=visual_cfg.max_frames,
+        max_side=visual_cfg.max_side,
+    )
+    if not captions:
+        return None
+    visual_context = format_visual_context(captions)
+    file_processor.write_file_output(visual_context, "visual_context")
+    return visual_context
+
+
 def _run_main(args: argparse.Namespace) -> int:
     """Execute the main Nextext pipeline on the parsed CLI arguments.
 
@@ -322,6 +377,32 @@ def _run_main(args: argparse.Namespace) -> int:
     # Set up input/output directories and file paths
     file_processor = FileProcessor(args.file_path)
 
+    inference_pipeline: InferencePipeline | None = None
+
+    def ensure_inference() -> InferencePipeline:
+        """Return the run's inference pipeline, creating it on first use.
+
+        The provider is health-checked once, when the pipeline is built, so a
+        step that needs inference on an unreachable provider stops the run
+        instead of quietly producing nothing.
+
+        Returns:
+            InferencePipeline: The shared pipeline for this run.
+
+        Raises:
+            ConnectionError: If the configured provider is unreachable.
+        """
+        nonlocal inference_pipeline
+        if inference_pipeline is None:
+            candidate = InferencePipeline()
+            if not candidate.get_health():
+                logger.error("The configured inference provider is not reachable.")
+                raise ConnectionError(
+                    "The configured inference provider is not reachable. Please ensure it is running and accessible."
+                )
+            inference_pipeline = candidate
+        return inference_pipeline
+
     # Transcribe and diarize the audio file
     if args.task in ["transcribe", "translate"]:
         outcome = transcription_pipeline(
@@ -332,6 +413,11 @@ def _run_main(args: argparse.Namespace) -> int:
         transcript_df = outcome.transcript
         args.src_lang = outcome.src_lang  # Update source language if detected
 
+        # Keyframes: an opt-in step of its own. It runs ahead of the no-speech
+        # guard below, so a silent video still yields what could be seen — and
+        # its captions feed the summary when one was also requested.
+        visual_context = _keyframe_step(args, file_processor, ensure_inference)
+
         # Guard: stop early when the transcript contains no speech
         if outcome.is_empty:
             logger.warning(
@@ -341,6 +427,16 @@ def _run_main(args: argparse.Namespace) -> int:
                 skip_reason_text(outcome.skip_reason),
             )
             file_processor.write_transcript_output(transcript_df)
+            # The captions are a summarizable source in their own right, so a
+            # requested summary is still written — from the visuals alone.
+            if args.summarize and visual_context:
+                visual_summary = summarization_pipeline(
+                    text="",
+                    inference_pipeline=ensure_inference(),
+                    visual_context=visual_context,
+                )
+                if visual_summary:
+                    file_processor.write_file_output(visual_summary, "summary")
             # Honour an explicit export request even here: the helper warns
             # that there are no segments rather than leaving the caller to
             # wonder why its target file never appeared.
@@ -361,19 +457,12 @@ def _run_main(args: argparse.Namespace) -> int:
     # performs every translation, directly from source to target. Engage it
     # whenever a translate task was requested and the resolved source differs
     # from the target (so an English target is translated too).
-    inference_pipeline = None
     if should_translate(args.task, args.src_lang, args.trg_lang):
-        inference_pipeline = InferencePipeline()
-        if not inference_pipeline.get_health():
-            logger.error("The configured inference provider is not reachable.")
-            raise ConnectionError(
-                "The configured inference provider is not reachable. Please ensure it is running and accessible."
-            )
         transcript_df = translation_pipeline(
             df=transcript_df,
             trg_lang=args.trg_lang,
             src_lang=args.src_lang,
-            inference_pipeline=inference_pipeline,
+            inference_pipeline=ensure_inference(),
         )
 
     # Streamline language for further processing
@@ -412,41 +501,12 @@ def _run_main(args: argparse.Namespace) -> int:
                 file_processor.write_file_output(export, name)
 
     if args.summarize:
-        if inference_pipeline is None:
-            inference_pipeline = InferencePipeline()
-        if not inference_pipeline.get_health():
-            logger.error("The configured inference provider is not reachable.")
-            raise ConnectionError(
-                "The configured inference provider is not reachable. Please ensure it is running and accessible."
-            )
-
-        # Visual context: for video, describe sampled keyframes so the summary
-        # covers what was shown as well as what was said. Strictly an
-        # enhancement — any failure degrades to an audio-only summary.
-        visual_context: str | None = None
-        visual_cfg = load_visual_summary_env()
-        if args.visual_context and visual_cfg.enabled:
-            samples = extract_keyframe_samples(
-                args.file_path,
-                per_minute=DEFAULT_KEYFRAMES_PER_MINUTE,
-                max_frames=DEFAULT_KEYFRAMES_MAX,
-            )
-            if samples:
-                captions = describe_keyframes(
-                    samples,
-                    inference_pipeline,
-                    max_frames=visual_cfg.max_frames,
-                    max_side=visual_cfg.max_side,
-                )
-                if captions:
-                    visual_context = format_visual_context(captions)
-                    file_processor.write_file_output(visual_context, "visual_context")
-
-        # Summarize the transcribed text (translated text when available)
+        # Summarize the transcribed text (translated text when available),
+        # together with the keyframe captions when the keyframe step ran.
         summary_text_column = effective_text_column(transcript_df)
         transcript_summary = summarization_pipeline(
             text=" ".join(transcript_df[summary_text_column].astype(str).tolist()),
-            inference_pipeline=inference_pipeline,
+            inference_pipeline=ensure_inference(),
             visual_context=visual_context,
         )
         if transcript_summary:
@@ -454,16 +514,9 @@ def _run_main(args: argparse.Namespace) -> int:
 
     # Hate speech detection
     if args.hate_speech:
-        if inference_pipeline is None:
-            inference_pipeline = InferencePipeline()
-        if not inference_pipeline.get_health():
-            logger.error("The configured inference provider is not reachable.")
-            raise ConnectionError(
-                "The configured inference provider is not reachable. Please ensure it is running and accessible."
-            )
         hate_speech_findings = hate_speech_pipeline(
             df=transcript_df,
-            inference_pipeline=inference_pipeline,
+            inference_pipeline=ensure_inference(),
         )
         if hate_speech_findings:
             file_processor.write_file_output(pd.DataFrame(hate_speech_findings), "hate_speech")

@@ -201,13 +201,17 @@ class SentenceRestoreConfig:
 
 @dataclass(frozen=True)
 class VisualSummaryConfig:
-    """Dataclass for visual context added to summaries of video files.
+    """Dataclass for captioning the keyframes sampled from a video file.
 
-    When enabled and the job requests a summary, sampled video keyframes are
-    captioned by ``TEXT_MODEL`` and the timestamped captions are prepended to
-    the transcript, so the summary covers what was shown as well as what was
-    said. Requires a vision-capable chat model; captioning is fail-soft, so a
-    text-only model simply yields an audio-only summary.
+    This is the operator kill-switch for the captioning half of the keyframe
+    step, which the job itself opts into (``JobOptions.keyframes`` / the CLI's
+    ``--keyframes``). When enabled, sampled keyframes are captioned by
+    ``TEXT_MODEL`` and the timestamped captions become a result in their own
+    right; a requested summary is additionally fed them, so it covers what was
+    shown as well as what was said. When disabled, the frames are still sampled
+    and downloadable — only the descriptions are skipped. Captioning requires a
+    vision-capable chat model and is fail-soft, so a text-only model simply
+    yields no captions.
 
     Attributes:
         enabled: Whether captioning may run (``NEXTEXT_VISUAL_SUMMARY``,
@@ -489,6 +493,9 @@ def _load_positive_int(name: str, default: int, *, ceiling: int | None = None) -
 
 def load_visual_summary_env() -> VisualSummaryConfig:
     """Loads the visual-context (keyframe captioning) configuration.
+
+    Read only when a job asked for keyframes; it gates the captioning half of
+    that step, never the sampling.
 
     Returns:
         VisualSummaryConfig: the resolved settings.

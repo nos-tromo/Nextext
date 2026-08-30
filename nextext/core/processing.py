@@ -132,6 +132,29 @@ class FileProcessor:
 
         return data
 
+    def write_keyframes(self, frames: list[bytes]) -> Path | None:
+        """Write sampled video keyframes as JPEG files in their own directory.
+
+        The frames land in ``{filename}_keyframes/frame_NNN.jpg``, mirroring
+        the layout the API's ``keyframes.zip`` artifact uses, so a CLI run and
+        a downloaded archive are laid out the same way.
+
+        Args:
+            frames (list[bytes]): JPEG payloads in sampling order.
+
+        Returns:
+            Path | None: The directory written, or ``None`` when there were no
+                frames to write.
+        """
+        if not frames:
+            return None
+        frames_dir = self.output_path / f"{self.filename}_keyframes"
+        frames_dir.mkdir(parents=True, exist_ok=True)
+        for index, payload in enumerate(frames):
+            (frames_dir / f"frame_{index:03d}.jpg").write_bytes(payload)
+        logger.info("Saved {} keyframe(s): {}", len(frames), frames_dir)
+        return frames_dir
+
     def write_transcript_output(self, data: pd.DataFrame) -> None:
         """Write the transcript as combined CSV/XLSX plus split tab-delimited TXT.
 

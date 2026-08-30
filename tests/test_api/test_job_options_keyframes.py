@@ -17,6 +17,18 @@ def _clear_keyframe_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("KEYFRAMES_MAX", raising=False)
 
 
+def test_job_options_keyframes_defaults_off_and_round_trips() -> None:
+    """Keyframes are opt-in, and the flag is independent of summarization.
+
+    The two are separate switches now: a summary no longer samples frames, and
+    frames no longer need a summary to be described.
+    """
+    assert JobOptions.model_validate({}).keyframes is False
+    assert JobOptions.model_validate({"keyframes": True}).keyframes is True
+    frames_only = JobOptions.model_validate({"keyframes": True, "summarization": False})
+    assert (frames_only.keyframes, frames_only.summarization) == (True, False)
+
+
 def test_job_options_accepts_keyframe_fields() -> None:
     """Explicit keyframe fields round-trip onto the parsed options."""
     opts = JobOptions.model_validate({"keyframes_per_minute": 6, "keyframes_max": 30})

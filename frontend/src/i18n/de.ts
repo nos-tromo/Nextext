@@ -50,6 +50,7 @@ export const de: Strings = {
   'options.hate_speech': 'Hatespeech',
   'options.detect_speakers': 'Sprechererkennung',
   'options.word_analysis': 'Wortanalyse',
+  'options.keyframes': 'Keyframes',
 
   // processing (terminal job states only; in-flight stage text is protocol —
   // sent verbatim by the backend as `stage` and never translated client-side)
@@ -102,7 +103,9 @@ export const de: Strings = {
   'player.unplayable': 'Diese Datei kann im Browser nicht abgespielt werden. Lade sie herunter, um sie lokal abzuspielen.',
   'results.no_summary': 'Keine Zusammenfassung für diesen Auftrag erstellt.',
   'results.no_visual_context': 'Kein visueller Kontext für diesen Auftrag erstellt.',
-  'results.visual_context_hint': 'Was das Video zu den jeweils ausgewerteten Zeitpunkten zeigte. Eine Zusammenfassung dieses Auftrags berücksichtigt diese Beschreibungen ebenfalls.',
+  'results.visual_context_hint': 'Was das Video zu den jeweils ausgewerteten Zeitpunkten zeigte. Eine Zusammenfassung dieses Auftrags berücksichtigt diese Beschreibungen ebenfalls, sofern eine angefordert wurde.',
+  'results.keyframes_only': 'Die Keyframes wurden extrahiert, aber nicht beschrieben. Lade sie herunter, um sie anzusehen.',
+  'artifacts.download_keyframes': 'Die extrahierten Keyframes als ZIP-Archiv herunterladen',
   'results.col_time': 'Zeit',
   'results.col_description': 'Zu sehen',
   'results.no_hate_speech': 'Keine Hatespeech-Befunde für diesen Auftrag.',

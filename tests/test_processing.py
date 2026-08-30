@@ -117,3 +117,34 @@ def test_write_transcript_output_empty_transcript_writes_empty_txt(tmp_path: Pat
     assert txt.exists()
     assert txt.read_text(encoding="utf-8") == ""
     assert not (out / "clip_translation.txt").exists()
+
+
+def test_write_keyframes_lays_frames_out_like_the_archive(tmp_path: Path) -> None:
+    """Frames land in ``{stem}_keyframes/frame_NNN.jpg``, as in ``keyframes.zip``.
+
+    A CLI run and a downloaded archive should be laid out the same way, so a
+    reader who has seen one recognizes the other.
+
+    Args:
+        tmp_path (Path): Temporary directory fixture.
+    """
+    processor = FileProcessor(file_path=Path("clip.mp4"), output_dir=tmp_path)
+
+    written = processor.write_keyframes([b"\xff\xd8a", b"\xff\xd8b"])
+
+    assert written is not None
+    assert written == processor.output_path / "clip_keyframes"
+    assert sorted(p.name for p in written.iterdir()) == ["frame_000.jpg", "frame_001.jpg"]
+    assert (written / "frame_001.jpg").read_bytes() == b"\xff\xd8b"
+
+
+def test_write_keyframes_writes_nothing_for_an_audio_file(tmp_path: Path) -> None:
+    """No frames means no directory — an empty folder would read as a failure.
+
+    Args:
+        tmp_path (Path): Temporary directory fixture.
+    """
+    processor = FileProcessor(file_path=Path("clip.wav"), output_dir=tmp_path)
+
+    assert processor.write_keyframes([]) is None
+    assert not (processor.output_path / "clip_keyframes").exists()

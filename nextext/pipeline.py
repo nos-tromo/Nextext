@@ -539,8 +539,13 @@ def summarization_pipeline(
     budgeted and chunked like any other text rather than exempted from the
     context window.
 
+    Either source may stand alone. Captions with no transcript (a video whose
+    audio held no speech, or a keyframes-only job) summarize the visual block
+    by itself; only a request with neither text nor captions is an error.
+
     Args:
-        text (str): The text to summarize.
+        text (str): The text to summarize. May be empty when
+            ``visual_context`` carries the whole payload.
         inference_pipeline (InferencePipeline): An inference pipeline for language model interactions.
         visual_context (str | None): Optional timestamped descriptions of video
             frames, prepended to ``text``. Blank or ``None`` leaves the payload
@@ -552,12 +557,16 @@ def summarization_pipeline(
             transiently (fail-soft degrades, logged as warnings).
 
     Raises:
-        ValueError: If the input text is empty.
+        ValueError: If both the input text and the visual context are empty.
     """
-    if not text:
+    visual_block = visual_context.strip() if visual_context else ""
+    if not text and not visual_block:
         raise ValueError("Text cannot be empty.")
-    if visual_context and visual_context.strip():
-        text = f"Visual context (frames sampled from the video):\n{visual_context.strip()}\n\nTranscript:\n{text}"
+    if visual_block:
+        header = f"Visual context (frames sampled from the video):\n{visual_block}"
+        # Label the transcript only when there is one: a bare "Transcript:"
+        # heading over nothing invites the model to remark on its absence.
+        text = f"{header}\n\nTranscript:\n{text}" if text else header
     char_budget = int(load_summary_env().max_input_tokens * _CHARS_PER_TOKEN)
     for attempt in range(_MAX_OVERFLOW_RETRIES + 1):
         try:

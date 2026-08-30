@@ -22,10 +22,25 @@ Running `uv run nextext-cli [ARGS]` from the command line supports the following
 -w, --words           Show most frequently used words (default: False).
 -sum, --summarize     Additional transcript summarization (default: False).
 -hs, --hate-speech    Detect hate speech in transcript segments via LLM (default: False).
--F, --full-analysis   Enable full analysis, equivalent to using -w -sum (default: False).
+-kf, --keyframes      Sample video keyframes and describe them (default: False).
+-F, --full-analysis   Enable full analysis, equivalent to using -w -sum -hs -kf (default: False).
 -ed, --emit-docint-jsonl   Write a docint-compatible JSONL transcript to this path.
 -fd, --force-docint-jsonl  Overwrite the --emit-docint-jsonl target if it exists (default: False).
 ```
+
+## Outputs
+
+Every run writes into an output directory named after the source file. The
+transcript always lands there (`{stem}_transcript.txt`/`.csv`/`.xlsx`, plus
+`{stem}_translation.txt` for a translate task); the optional steps add their
+own files (`{stem}_summary.txt`, `{stem}_words.*`, `{stem}_entities.*`,
+`{stem}_wordcloud.png`, `{stem}_hate_speech.*`).
+
+`-kf/--keyframes` adds two: the sampled frames as
+`{stem}_keyframes/frame_NNN.jpg` — the same layout the API's `keyframes.zip`
+artifact uses — and their descriptions as `{stem}_visual_context.txt`. The
+descriptions are written whether or not a summary was asked for; with `-sum`
+they also feed the summary.
 
 ## Exit codes
 
@@ -34,7 +49,7 @@ Running `uv run nextext-cli [ARGS]` from the command line supports the following
 | `0`  | The run produced a transcript. |
 | `1`  | The run failed (unhandled error, e.g. an undecodable file or an unreachable endpoint). |
 | `2`  | Command-line usage error — argparse's own code (unknown flag, missing `-f`). Not a pipeline outcome. |
-| `3`  | The file held no processable speech: nothing was transcribed and the analysis stages were skipped. An empty transcript is still written, and the warning names which of the three causes fired (`vad_no_speech`, `asr_empty_transcript`, `asr_all_segments_filtered`). |
+| `3`  | The file held no processable speech: nothing was transcribed and the text analysis stages were skipped. An empty transcript is still written, and the warning names which of the three causes fired (`vad_no_speech`, `asr_empty_transcript`, `asr_all_segments_filtered`). `-kf` still runs, so a silent video still yields its keyframes, their descriptions, and — with `-sum` — a summary written from them. |
 
 Exit `3` is what lets a batch loop tell "nothing to transcribe" apart from a
 successful run — kept distinct from argparse's `2` so a mistyped flag is never
