@@ -88,12 +88,17 @@ describe('TranscriptTab playback', () => {
     render(
       <TranscriptTab jobId="j1" segments={playable} stem="clip" fileName="clip.mp4" mediaUrl={MEDIA_URL} />,
     )
-    const spy = vi.spyOn(screen.getByText('Second line').closest('tr')!, 'scrollIntoView')
+    const row = screen.getByText('Second line').closest('tr')!
+    // happy-dom lays nothing out; put the row below the fold so the hook has
+    // a reason to scroll it in.
+    row.getBoundingClientRect = () =>
+      ({ top: 2000, bottom: 2040, left: 0, right: 100, width: 100, height: 40, x: 0, y: 2000, toJSON: () => ({}) }) as DOMRect
+    const spy = vi.spyOn(row, 'scrollIntoView')
     act(() => {
       useMediaPlayerStore.getState().open({ jobId: 'j1', fileName: 'clip.mp4', mediaUrl: MEDIA_URL })
       useMediaPlayerStore.getState().setCurrentTime(6)
     })
-    expect(spy).toHaveBeenCalled()
+    expect(spy).toHaveBeenCalledWith(expect.objectContaining({ block: 'center' }))
     spy.mockRestore()
   })
 
