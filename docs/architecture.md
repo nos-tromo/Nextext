@@ -60,10 +60,17 @@ logs.
 
 In the SPA, the transcript row (or frame caption) under the playhead is
 highlighted and scrolled into view as playback advances, so the highlight
-stays on screen without the reader chasing it. Auto-scrolling stops as soon as
-the reader scrolls by hand — a wheel, touch drag, or scroll keypress — and
-resumes on the next deliberate jump, so reading back over an earlier passage is
-never interrupted.
+stays on screen without the reader chasing it. It scrolls only once the row has
+left the viewport, and centres it, so the page moves a screenful at a time
+rather than a row at a time.
+
+Auto-scrolling pauses as soon as the reader scrolls the page by hand — a wheel
+or touch drag over the page, or a scroll keypress that no control is consuming
+— so reading back over an earlier passage is never interrupted. It resumes on
+either of two signals: a timestamp click, or the playhead's row coming back
+into view. The second matters as much as the first; without it a single
+trackpad flick left following switched off for the rest of the session, which
+read as the feature simply not working.
 
 The frontend's nginx gives the route its own location with `proxy_buffering
 off` — the default would spill a multi-GB body into the container's 16 MB
