@@ -428,9 +428,10 @@ def render_artifact(state: JobState, name: str) -> tuple[bytes, str] | None:
             return None
         return payload, _APP_NDJSON
     if name == "archive.zip":
-        # A skipped job renders no members, and an archive holding nothing is
-        # worse than no archive: every sibling artifact 404s, so this does too
-        # rather than handing back an empty ZIP that looks like a real result.
+        # An archive holding nothing is worse than no archive: every sibling
+        # artifact 404s, so this does too rather than handing back an empty ZIP
+        # that looks like a real result. A skipped job is not automatically
+        # empty — a silent video still has keyframes and their descriptions.
         if not _render_archive_members(state):
             return None
         return build_archive_for_job(state), _APP_ZIP
