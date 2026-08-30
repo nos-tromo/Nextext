@@ -67,7 +67,28 @@ describe('JobCard progress', () => {
 
   it('falls back to the list snapshot status when the stream has no entry yet', () => {
     renderCard(<JobCard job={mkJob('j2', 'completed')} />)
-    expect(screen.getByText('Complete')).toBeInTheDocument()
+    // The status is a marker, not a word — the wording survives as its
+    // accessible name so it is still announced and still shown on hover.
+    expect(screen.getByRole('img', { name: 'Complete' })).toBeInTheDocument()
+  })
+})
+
+describe('JobCard results disclosure', () => {
+  it('reports its state and swaps the label when toggled', () => {
+    renderCard(<JobCard job={mkJob('j1', 'completed')} />)
+    const toggle = screen.getByRole('button', { name: 'Show results' })
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+
+    fireEvent.click(toggle)
+    const open = screen.getByRole('button', { name: 'Hide results' })
+    expect(open).toHaveAttribute('aria-expanded', 'true')
+    // The button points at the panel it just revealed.
+    expect(open.getAttribute('aria-controls')).toBeTruthy()
+  })
+
+  it('offers no disclosure until the job has results to show', () => {
+    renderCard(<JobCard job={mkJob('j1', 'running')} />)
+    expect(screen.queryByRole('button', { name: 'Show results' })).toBeNull()
   })
 })
 

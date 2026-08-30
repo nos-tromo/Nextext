@@ -18,7 +18,7 @@
   },
   "dependencies": {
     "@fontsource/inter": "^5.1.0",
-    "@infra/ui": "https://codeload.github.com/nos-tromo/infra-ui/tar.gz/b246529bf9afec59ed7bb77b4543eb19abe79a23",
+    "@infra/ui": "https://codeload.github.com/nos-tromo/infra-ui/tar.gz/ea7c8c0f17b7316e4860f855dd30899626337cc0",
     "@tanstack/react-query": "^5.100.14",
     "@tanstack/react-table": "^8.20.5",
     "@tanstack/react-virtual": "^3.13.25",

@@ -41,6 +41,41 @@ without one keeps today's audio-only summaries. Operators bound the cost with
 `VISUAL_SUMMARY_MAX_FRAMES` — see
 [configuration.md](configuration.md#visual-context-video-summaries).
 
+## Playback
+
+The original upload outlives the pipeline — it is removed only when the owner
+deletes the job or the backend restarts — so a finished job can still be played
+back. `GET /jobs/{id}/media` streams it through Starlette's `FileResponse`,
+which answers `Range` requests with `206`; that is what lets the player jump to
+a timestamp without re-fetching the whole recording.
+
+The route is authorized by a per-job capability token in the URL rather than by
+the request principal. A `<video>`/`<audio>` element cannot attach the trusted
+identity header, and the blob-URL workaround used for the word cloud would
+buffer the entire recording in memory and forfeit seeking. The token is minted
+at job creation, handed out only on the owner-scoped snapshot, never listed,
+and dies with the job; every failure answers `404`, so a wrong token cannot be
+used to probe which jobs exist. Its one cost is that it appears in proxy access
+logs.
+
+In the SPA, the transcript row (or frame caption) under the playhead is
+highlighted and scrolled into view as playback advances, so the highlight
+stays on screen without the reader chasing it. It scrolls only once the row has
+left the viewport, and centres it, so the page moves a screenful at a time
+rather than a row at a time.
+
+Auto-scrolling pauses as soon as the reader scrolls the page by hand — a wheel
+or touch drag over the page, or a scroll keypress that no control is consuming
+— so reading back over an earlier passage is never interrupted. It resumes on
+either of two signals: a timestamp click, or the playhead's row coming back
+into view. The second matters as much as the first; without it a single
+trackpad flick left following switched off for the rest of the session, which
+read as the feature simply not working.
+
+The frontend's nginx gives the route its own location with `proxy_buffering
+off` — the default would spill a multi-GB body into the container's 16 MB
+tmpfs and withhold bytes the player wants immediately.
+
 ## Jobs and identity
 
 Jobs live only in memory — there is no durable storage and no TTL, so a long-running job is never cut off and is retained until you delete it or the backend restarts. Identity is anonymous: the frontend mints a per-browser id and stamps it into the URL (`?owner=<id>`) on first visit, sending it to the backend as the trusted identity header (`X-Auth-User` by default) to scope your jobs. Because that id survives a refresh, reloading the page mid-run re-discovers your jobs and resumes the live progress view; closing the tab and reopening the bare host starts a fresh identity. Developers calling the API directly can skip the header and set `NEXTEXT_DEFAULT_IDENTITY` instead. There is no authentication — the backend trusts whoever can reach `inference-net`.

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import mimetypes
 import os
 import re
 import urllib.parse
@@ -21,12 +22,13 @@ from fastapi import (
     File,
     Form,
     HTTPException,
+    Query,
     Request,
     Response,
     UploadFile,
     status,
 )
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from loguru import logger
 from pydantic import ValidationError
 from starlette.concurrency import run_in_threadpool
@@ -461,6 +463,81 @@ async def stream_job_events(
         manager.subscribe(state),
         media_type="text/event-stream",
         headers=headers,
+    )
+
+
+# Containers the upload dropzone accepts that stdlib ``mimetypes`` does not
+# know (or maps to a non-media type). The browser picks <video> vs <audio> from
+# this header, so a wrong guess renders an unplayable element.
+_MEDIA_TYPE_OVERRIDES: dict[str, str] = {
+    ".mkv": "video/x-matroska",
+    ".webm": "video/webm",
+    ".m4a": "audio/mp4",
+    ".ogg": "audio/ogg",
+}
+
+
+def _media_type_for(file_name: str) -> str:
+    """Guess the media type to serve a job's upload under.
+
+    Args:
+        file_name (str): Original upload filename.
+
+    Returns:
+        str: A MIME type; ``application/octet-stream`` when unguessable.
+    """
+    suffix = Path(file_name).suffix.lower()
+    if suffix in _MEDIA_TYPE_OVERRIDES:
+        return _MEDIA_TYPE_OVERRIDES[suffix]
+    guessed, _ = mimetypes.guess_type(file_name)
+    return guessed or "application/octet-stream"
+
+
+@router.get("/{job_id}/media")
+async def stream_media(
+    job_id: str,
+    token: str = Query(..., description="Per-job media capability token."),
+    manager: JobManager = Depends(get_job_manager),  # noqa: B008 — FastAPI dependency marker
+) -> FileResponse:
+    """Stream a job's original upload for in-browser playback.
+
+    Deliberately **not** principal-scoped: a ``<video>`` / ``<audio>`` element
+    cannot attach the trusted identity header, so the unguessable ``token`` in
+    the URL is the authorization instead. The URL is handed out only on the
+    owner-scoped job snapshot, grants read of media that owner already
+    uploaded, and dies with the job.
+
+    Trade-off, accepted deliberately: the token rides in the query string and
+    therefore reaches proxy access logs. It is per-job, unguessable, and
+    revoked by ``DELETE /jobs/{id}``.
+
+    Served via ``FileResponse``, which answers ``Range`` requests with ``206``
+    — that is what lets the player seek without re-fetching the whole
+    recording.
+
+    Args:
+        job_id (str): Job identifier from the path.
+        token (str): Capability token minted for this job.
+        manager (JobManager): Injected job manager.
+
+    Returns:
+        FileResponse: The upload bytes, ranged on request.
+
+    Raises:
+        HTTPException: 404 for an unknown job, a wrong token, or an upload
+            that is no longer on disk — never 403, so a bad token cannot be
+            used to probe which jobs exist.
+    """
+    state = await manager.get_by_media_token(job_id, token)
+    if state is None or not state.file_path.exists():
+        raise HTTPException(status_code=404, detail="Media unavailable.")
+    return FileResponse(
+        state.file_path,
+        media_type=_media_type_for(state.file_name),
+        # No `attachment` disposition: this is played in place, not saved.
+        # `private` keeps shared caches out of it while letting the browser
+        # reuse ranges it already fetched during a seek.
+        headers={"Cache-Control": "private, max-age=0"},
     )
 
 

@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { act, render, screen } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { Shell } from './Shell'
 import { useJobProgressStore } from '../../lib/jobProgressStore'
+import { useMediaPlayerStore } from '../../lib/mediaPlayerStore'
 import type { JobListItem } from '../../api/types'
 
 // The Shell mounts the single owner-multiplexed SSE stream; mock it so the
@@ -58,6 +59,7 @@ function mountShell() {
 
 beforeEach(() => {
   useJobProgressStore.getState().clear()
+  useMediaPlayerStore.getState().clear()
   streamSseMock.mockReset()
   // Default: an owner stream that opens and stays open. It yields one inert
   // (non-job) frame the hook ignores, then blocks — modelling a live SSE
@@ -128,5 +130,36 @@ describe('Shell', () => {
     expect(canvas).toHaveClass('min-h-full', 'p-8')
     expect(canvas).not.toHaveClass('h-full')
     expect(canvas).not.toHaveClass('min-h-0')
+  })
+})
+
+describe('Shell media player', () => {
+  it('mounts the player panel for the whole session', () => {
+    // One player for the app: a transcript row in any job card opens it
+    // without that card owning player state.
+    stubJobs([])
+    const { container } = mountShell()
+    expect(container.querySelector('aside[role="complementary"]')).not.toBeNull()
+  })
+
+  it('leaves the canvas full width while the player is closed', () => {
+    stubJobs([])
+    const { container } = mountShell()
+    const canvas = container.querySelector('[data-testid="shell-canvas"]')
+    expect(canvas?.className).not.toContain('md:pr-')
+  })
+
+  it('reserves room for the player instead of covering the page', () => {
+    // The point of the side panel is that the app stays usable, so content
+    // reflows beside it rather than hiding underneath it.
+    stubJobs([])
+    const { container } = mountShell()
+    act(() =>
+      useMediaPlayerStore
+        .getState()
+        .open({ jobId: 'j1', fileName: 'clip.mp4', mediaUrl: '/m' }),
+    )
+    const canvas = container.querySelector('[data-testid="shell-canvas"]')
+    expect(canvas?.className).toContain('md:pr-')
   })
 })
