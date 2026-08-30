@@ -35,6 +35,10 @@ class JobOptions(BaseModel):
     words: bool = False
     summarization: bool = False
     hate_speech: bool = False
+    # Sampling *and* captioning of video keyframes, independent of every other
+    # option: a summary no longer implies visual context, and visual context no
+    # longer implies a summary. The two rates below only bite when this is on.
+    keyframes: bool = False
     keyframes_per_minute: int = Field(default_factory=lambda: load_keyframe_defaults().per_minute, ge=0)
     keyframes_max: int = Field(default_factory=lambda: load_keyframe_defaults().max_frames, ge=0, le=200)
 
