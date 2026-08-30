@@ -411,6 +411,7 @@ def _run_pipeline_blocking(state: JobState, push_event: PushEvent) -> dict[str, 
         "summarization": opts.summarization,
         "hate_speech": opts.hate_speech,
         "keyframes": opts.keyframes,
+        "visual_context": opts.visual_context,
     }
     total_stages = len(PIPELINE_STAGE_LABELS)
 
@@ -508,9 +509,11 @@ def _run_pipeline_blocking(state: JobState, push_event: PushEvent) -> dict[str, 
     # Keyframes ---------------------------------------------------------------
     # Sampling and captioning are one opt-in step of their own: a summary no
     # longer implies visual context, and visual context no longer implies a
-    # summary. Captioning within the step stays operator-gated by
-    # ``NEXTEXT_VISUAL_SUMMARY`` and fail-soft — a caption outage still leaves
-    # the sampled frames downloadable.
+    # summary. Captioning is the expensive half — one vision request per frame —
+    # and carries two gates of its own: the per-job ``visual_context`` (for a
+    # client that wants the frames but not the words) and the operator-level
+    # ``NEXTEXT_VISUAL_SUMMARY``. Either one off leaves the sampled frames
+    # sampled and downloadable, and skips the provider entirely.
     _notify(1)
     keyframes: list[bytes] = []
     captions: list[FrameCaption] = []
@@ -525,10 +528,13 @@ def _run_pipeline_blocking(state: JobState, push_event: PushEvent) -> dict[str, 
         )
         keyframes = [sample.jpeg for sample in keyframe_samples]
         visual_cfg = load_visual_summary_env()
-        if visual_cfg.enabled and keyframe_samples:
+        if visual_cfg.enabled and file_opts["visual_context"] and keyframe_samples:
             # Resolved outside the fail-soft guard: an unreachable provider is
             # a job failure like it is for every other stage, not a silently
-            # uncaptioned run.
+            # uncaptioned run. Which is also why the per-job gate above matters
+            # beyond cost: this stage runs first, so a caller that opts out of
+            # captioning — and asks for no other model-backed stage — never
+            # touches the chat provider and cannot lose its transcript to one.
             caption_pipeline = _ensure_inference()
             try:
                 captions = describe_keyframes(

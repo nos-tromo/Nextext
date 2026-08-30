@@ -612,3 +612,83 @@ def test_pipeline_silent_video_without_captions_has_no_summary(monkeypatch: pyte
     assert calls == []
     assert result["summary"] is None
     assert result["frame_captions"] is None
+
+
+def test_visual_context_off_samples_frames_without_describing_them(
+    monkeypatch: pytest.MonkeyPatch, _summarizable: Path
+) -> None:
+    """``visual_context=False`` keeps the frames and skips the vision calls.
+
+    This is the split the option exists for: a client can want the JPEGs
+    without the words. docint samples keyframes to run its own image pipeline
+    over them and never reads ``frame_captions``, so describing them was a
+    vision request per frame spent on an answer nobody collected.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Fixture for patching module attributes.
+        _summarizable (Path): Stub media path with the heavy stages patched out.
+    """
+    monkeypatch.delenv("NEXTEXT_VISUAL_SUMMARY", raising=False)
+
+    def _must_not_caption(*args: Any, **kwargs: Any) -> list[FrameCaption]:
+        raise AssertionError("describe_keyframes must not run when visual_context is off")
+
+    monkeypatch.setattr("nextext.core.visual_context.describe_keyframes", _must_not_caption)
+
+    result = _run_pipeline_blocking(
+        _video_state("v1", _summarizable, keyframes=True, visual_context=False), lambda *a, **k: None
+    )
+
+    assert result["keyframes"] == [b"\xff\xd8a", b"\xff\xd8b"]
+    assert result["_keyframes_url"] == "/api/v1/jobs/v1/artifacts/keyframes.zip"
+    assert result["frame_captions"] is None
+
+
+def test_visual_context_off_keeps_the_transcript_when_the_provider_is_down(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A frames-only job survives an unreachable chat provider.
+
+    ``_ensure_inference`` sits outside the captioning fail-soft guard on
+    purpose, and the keyframe stage runs first — so before this option existed,
+    a caller that asked for keyframes and no model-backed stage still had its
+    job failed, and its transcript discarded, by an unhealthy chat router it
+    never meant to use.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Fixture for patching module attributes.
+        tmp_path (Path): Temporary directory fixture.
+    """
+    media = tmp_path / "clip.mp4"
+    media.write_bytes(b"video")
+    monkeypatch.delenv("NEXTEXT_VISUAL_SUMMARY", raising=False)
+    df = pd.DataFrame({"start": [0.0], "end": [1.0], "speaker": [""], "text": ["hello"]})
+    monkeypatch.setattr(
+        "nextext.pipeline.transcription_pipeline", lambda **kwargs: TranscriptionOutcome(transcript=df, src_lang="en")
+    )
+    monkeypatch.setattr(
+        jobs_module,
+        "extract_keyframe_samples",
+        lambda path, **kw: [Keyframe(time_sec=0.0, jpeg=b"\xff\xd8a")],
+    )
+
+    class _DeadInference:
+        """Stand-in provider that is reachable-but-unhealthy."""
+
+        def get_health(self) -> bool:
+            """Report the provider as unreachable.
+
+            Returns:
+                bool: Always ``False``.
+            """
+            return False
+
+    monkeypatch.setattr("nextext.core.openai_cfg.InferencePipeline", _DeadInference)
+
+    result = _run_pipeline_blocking(
+        _video_state("v2", media, keyframes=True, visual_context=False), lambda *a, **k: None
+    )
+
+    assert result["keyframes"] == [b"\xff\xd8a"]
+    assert result["frame_captions"] is None
+    assert not result["transcript"].empty
