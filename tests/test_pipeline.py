@@ -1845,10 +1845,12 @@ def test_summarization_without_visual_context_is_unchanged(monkeypatch: pytest.M
     assert recorder.calls[0]["prompt"] == "Summarize: a short transcript"
 
 
-def test_summarization_with_visual_context_still_rejects_empty_text(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Captions alone are not a transcript; an empty transcript still raises.
+def test_summarization_from_visual_context_alone(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Captions with no transcript summarize on their own.
+
+    A keyframes-only job — or a video whose audio held no speech — still has a
+    summarizable source. The payload then carries no ``Transcript`` heading,
+    which would otherwise invite the model to remark on the missing half.
 
     Args:
         monkeypatch (pytest.MonkeyPatch): Fixture for patching environment variables.
@@ -1856,8 +1858,29 @@ def test_summarization_with_visual_context_still_rejects_empty_text(
     monkeypatch.delenv("SUMMARY_MAX_INPUT_TOKENS", raising=False)
     recorder = _RecordingPipeline(reply="s")
 
+    assert pipeline.summarization_pipeline("", recorder, visual_context="[00:00] a room") == "s"
+
+    prompt = recorder.calls[0]["prompt"]
+    assert "[00:00] a room" in prompt
+    assert "Visual context" in prompt
+    assert "Transcript" not in prompt
+
+
+@pytest.mark.parametrize("empty", [None, "", "   "])
+def test_summarization_rejects_empty_text_and_empty_visual_context(
+    monkeypatch: pytest.MonkeyPatch, empty: str | None
+) -> None:
+    """With neither a transcript nor captions there is nothing to summarize.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Fixture for patching environment variables.
+        empty (str | None): A falsy visual-context value.
+    """
+    monkeypatch.delenv("SUMMARY_MAX_INPUT_TOKENS", raising=False)
+    recorder = _RecordingPipeline(reply="s")
+
     with pytest.raises(ValueError):
-        pipeline.summarization_pipeline("", recorder, visual_context="[00:00] a room")
+        pipeline.summarization_pipeline("", recorder, visual_context=empty)
 
 
 def test_summarization_with_visual_context_still_chunks_long_input(
