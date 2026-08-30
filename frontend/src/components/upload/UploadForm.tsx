@@ -110,22 +110,26 @@ export function UploadForm({ pending, onRun }: UploadFormProps) {
           which stages a run includes is read as a row of lit panels rather
           than hunted for in five small boxes. `flex-1` shares the span
           evenly; the minimum width is what makes them wrap instead of crush
-          on a narrow screen or in a long-worded locale. */}
+          on a narrow screen or in a long-worded locale.
+
+          They read in the order the pipeline works: what was heard, then what
+          was seen, then the analyses over that material, and last the summary
+          — which draws on everything before it. */}
       <div className="flex flex-wrap gap-2">
         <ToggleButton className="min-w-32 flex-1" pressed={diarize} onClick={() => setDiarize((v) => !v)}>
           {t('options.detect_speakers')}
         </ToggleButton>
+        <ToggleButton className="min-w-32 flex-1" pressed={keyframes} onClick={() => setKeyframes((v) => !v)}>
+          {t('options.keyframes')}
+        </ToggleButton>
         <ToggleButton className="min-w-32 flex-1" pressed={words} onClick={() => setWords((v) => !v)}>
           {t('options.word_analysis')}
-        </ToggleButton>
-        <ToggleButton className="min-w-32 flex-1" pressed={summarization} onClick={() => setSummarization((v) => !v)}>
-          {t('options.summary')}
         </ToggleButton>
         <ToggleButton className="min-w-32 flex-1" pressed={hateSpeech} onClick={() => setHateSpeech((v) => !v)}>
           {t('options.hate_speech')}
         </ToggleButton>
-        <ToggleButton className="min-w-32 flex-1" pressed={keyframes} onClick={() => setKeyframes((v) => !v)}>
-          {t('options.keyframes')}
+        <ToggleButton className="min-w-32 flex-1" pressed={summarization} onClick={() => setSummarization((v) => !v)}>
+          {t('options.summary')}
         </ToggleButton>
       </div>
 

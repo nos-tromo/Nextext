@@ -85,6 +85,33 @@ describe('UploadForm file list', () => {
   })
 })
 
+describe('UploadForm option order', () => {
+  it('reads in the order the pipeline works', () => {
+    // What was heard, then what was seen, then the analyses over that
+    // material, and last the summary — which draws on everything before it.
+    // Asserted because the order is a decision, not an accident of editing.
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(
+      <QueryClientProvider client={qc}>
+        <UploadForm pending={false} onRun={vi.fn()} />
+      </QueryClientProvider>,
+    )
+
+    const labels = screen
+      .getAllByRole('button')
+      .filter((b) => b.hasAttribute('aria-pressed'))
+      .map((b) => b.textContent)
+
+    expect(labels).toEqual([
+      'Detect speakers',
+      'Keyframes',
+      'Word analysis',
+      'Hate speech',
+      'Summary',
+    ])
+  })
+})
+
 describe('UploadForm keyframes toggle', () => {
   it('submits keyframes=false by default and true when ticked', () => {
     // Opt-in, like Summary: sampling and describing frames costs one vision
