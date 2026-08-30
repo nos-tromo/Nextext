@@ -58,6 +58,13 @@ and dies with the job; every failure answers `404`, so a wrong token cannot be
 used to probe which jobs exist. Its one cost is that it appears in proxy access
 logs.
 
+In the SPA, the transcript row (or frame caption) under the playhead is
+highlighted and scrolled into view as playback advances, so the highlight
+stays on screen without the reader chasing it. Auto-scrolling stops as soon as
+the reader scrolls by hand — a wheel, touch drag, or scroll keypress — and
+resumes on the next deliberate jump, so reading back over an earlier passage is
+never interrupted.
+
 The frontend's nginx gives the route its own location with `proxy_buffering
 off` — the default would spill a multi-GB body into the container's 16 MB
 tmpfs and withhold bytes the player wants immediately.
