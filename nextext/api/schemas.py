@@ -35,10 +35,18 @@ class JobOptions(BaseModel):
     words: bool = False
     summarization: bool = False
     hate_speech: bool = False
-    # Sampling *and* captioning of video keyframes, independent of every other
-    # option: a summary no longer implies visual context, and visual context no
-    # longer implies a summary. The two rates below only bite when this is on.
+    # Sampling of video keyframes, independent of every other option: a summary
+    # no longer implies visual context, and visual context no longer implies a
+    # summary. The two rates below only bite when this is on.
     keyframes: bool = False
+    # Captioning of those frames, which is the expensive half — one vision
+    # request per frame. Split out because a client can want the frames without
+    # the words: docint samples keyframes to run its own image pipeline over
+    # them and never reads ``frame_captions``, so it was paying for a
+    # description per frame that it discarded. Defaults true, so the SPA and
+    # every existing client keep today's behaviour by omitting the field
+    # (``extra="forbid"`` means they cannot send it).
+    visual_context: bool = True
     keyframes_per_minute: int = Field(default_factory=lambda: load_keyframe_defaults().per_minute, ge=0)
     keyframes_max: int = Field(default_factory=lambda: load_keyframe_defaults().max_frames, ge=0, le=200)
 

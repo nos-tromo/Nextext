@@ -131,6 +131,12 @@ sampled at all — there is no `keyframes.zip` and no visual context. It is
 independent of summarization in both directions: a summary no longer samples
 frames, and frames no longer need a summary to be described.
 
+Describing those frames is a second, separate request-level switch,
+`JobOptions.visual_context` (**on by default**, API-only — the SPA has no
+control for it). Turning it off keeps the sampling and skips the captions, for
+a client that wants the JPEGs and not the words; see
+[Visual context](#visual-context-keyframe-descriptions) below.
+
 Both knobs below supply a **default** that applies only when a job-creation
 request omits the corresponding field — an explicit per-request value always
 wins — and they bite only when the job asked for keyframes. Resolved by
@@ -167,7 +173,13 @@ the same settings.
 - `NEXTEXT_VISUAL_SUMMARY` (backend + CLI) — Operator kill-switch for the
   captioning half of the keyframe step; sampling is unaffected. Only an
   explicit falsy token (`0`/`false`/`no`/`off`) disables captioning;
-  unrecognised values warn and keep the default. Defaults to on.
+  unrecognised values warn and keep the default. Defaults to on. It is the
+  operator half of a two-part gate: a job may also opt out on its own with
+  `visual_context: false`, which is how an API client asks for the frames
+  without the words (docint runs its own image pipeline over them and never
+  reads the captions). Either gate off skips the provider entirely — which
+  also means such a job cannot be failed by an unreachable chat model, since
+  the keyframe stage runs first and is otherwise the one that resolves it.
 - `VISUAL_SUMMARY_MAX_FRAMES` (backend + CLI) — Maximum frames captioned per
   job; a longer clip's frames are subsampled evenly so coverage still spans the
   whole file. Clamped to `200` (the keyframe ceiling); non-integer or

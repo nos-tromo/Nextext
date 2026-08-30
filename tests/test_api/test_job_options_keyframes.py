@@ -128,3 +128,22 @@ def test_job_options_diarize_defaults_on_and_rejects_removed_speakers() -> None:
     assert JobOptions().diarize is True
     with pytest.raises(ValidationError):
         JobOptions(speakers=2)  # type: ignore[unexpected-keyword]
+
+
+def test_job_options_visual_context_defaults_on_and_round_trips() -> None:
+    """Captioning stays on unless a client asks otherwise.
+
+    The default has to be ``True``: ``extra="forbid"`` means an existing client
+    cannot send the field at all, so anything else would silently change what
+    the SPA and every other caller already get.
+    """
+    assert JobOptions.model_validate({}).visual_context is True
+    assert JobOptions.model_validate({"keyframes": True}).visual_context is True
+    frames_only = JobOptions.model_validate({"keyframes": True, "visual_context": False})
+    assert (frames_only.keyframes, frames_only.visual_context) == (True, False)
+
+
+def test_job_options_still_rejects_unknown_fields() -> None:
+    """The new field does not loosen the schema: unknown keys remain a 422."""
+    with pytest.raises(ValidationError):
+        JobOptions.model_validate({"keyframes": True, "visual_contxt": False})
