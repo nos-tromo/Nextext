@@ -135,3 +135,38 @@ describe('MediaPanel', () => {
     expect(screen.queryByText(/can’t be played|cannot be played/i)).not.toBeInTheDocument()
   })
 })
+
+describe('MediaPanel chrome', () => {
+  it('gives the header band the app chrome colour and height', () => {
+    // The panel's header sits beside the AppShell header (`h-12`, on
+    // `bg-chrome`); a different colour or height there reads as a stray
+    // block in the top-right corner rather than one continuous bar.
+    const { container } = render(<MediaPanel />)
+    dispatch(() => useMediaPlayerStore.getState().open(video))
+    const band = container.querySelector('aside > div') as HTMLElement
+    expect(band.className).toContain('h-12')
+    expect(band.className).toContain('bg-chrome')
+  })
+
+  it('rules the body rather than the band, so the seam lines up', () => {
+    // `border-box` sizing draws a `border-b` *inside* the band's 48px, one
+    // pixel above the AppShell's own rule (a borderless h-12 header over a
+    // `border-t` main). Carrying it on the body keeps the line continuous.
+    const { container } = render(<MediaPanel />)
+    dispatch(() => useMediaPlayerStore.getState().open(video))
+    const [band, body] = Array.from(
+      (container.querySelector('aside') as HTMLElement).children,
+    ) as HTMLElement[]
+    expect(band.className).not.toContain('border-b')
+    expect(body.className).toContain('border-t')
+  })
+
+  it('separates the panel by its shadow, not a hard left border', () => {
+    // `border-l` drew a grey line the full height of the viewport, cutting
+    // the header bar in two; the shadow gives a smoother transition.
+    const { container } = render(<MediaPanel />)
+    const panel = container.querySelector('aside') as HTMLElement
+    expect(panel.className).not.toContain('border-l')
+    expect(panel.className).toContain('shadow-lg')
+  })
+})

@@ -28,6 +28,11 @@ function isVideoFile(fileName: string): boolean {
  * transcript row or frame caption can start playback at its own timestamp
  * without owning player state.
  *
+ * Its header band repeats the AppShell chrome — same colour, same height,
+ * same borderless band over a ruled body — so it continues the app header
+ * rather than sitting beside it as a separate block; the panel is set off by
+ * its shadow alone, with no left border to cut that bar in two.
+ *
  * Deliberately **not** a dialog: no backdrop and no `aria-modal`, because the
  * point is that the jobs list and the result tabs stay usable while a
  * recording plays. It keeps only the parts of the overlay contract that still
@@ -99,20 +104,25 @@ export function MediaPanel() {
       inert={open ? undefined : true}
       tabIndex={-1}
       className={[
-        'fixed inset-y-0 right-0 z-40 flex w-full flex-col border-l border-border',
+        'fixed inset-y-0 right-0 z-40 flex w-full flex-col',
         'bg-background shadow-lg outline-none md:w-[28rem]',
         'transition-transform duration-200 motion-reduce:transition-none',
         open ? 'translate-x-0' : 'translate-x-full',
       ].join(' ')}
     >
-      <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-2">
+      {/* Mirrors the AppShell chrome beside it: a borderless `h-12` band on
+          `bg-chrome`, with the rule carried by the region below (see the
+          body's `border-t`). Putting the rule here instead would land it a
+          pixel high — `border-box` sizing draws it *inside* the 48px — and
+          the seam would visibly step at the panel edge. */}
+      <div className="flex h-12 shrink-0 items-center justify-between gap-3 bg-chrome px-4">
         <h2 className="truncate text-sm font-medium">{session?.fileName ?? ''}</h2>
         {/* The base IconButton, not RemoveButton: closing the player takes
             nothing away, so it must not warn in red. */}
         <IconButton icon={<XIcon />} label={t('player.close')} onClick={close} />
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto p-4">
+      <div className="min-h-0 flex-1 overflow-y-auto border-t border-border p-4">
         {session &&
           (failed ? (
             <p className="text-sm text-muted-foreground">{t('player.unplayable')}</p>
