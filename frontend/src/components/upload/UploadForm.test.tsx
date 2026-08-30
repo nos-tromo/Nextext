@@ -85,6 +85,33 @@ describe('UploadForm file list', () => {
   })
 })
 
+describe('UploadForm option order', () => {
+  it('reads in the order the pipeline works', () => {
+    // What was heard, then what was seen, then the analyses over that
+    // material, and last the summary — which draws on everything before it.
+    // Asserted because the order is a decision, not an accident of editing.
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(
+      <QueryClientProvider client={qc}>
+        <UploadForm pending={false} onRun={vi.fn()} />
+      </QueryClientProvider>,
+    )
+
+    const labels = screen
+      .getAllByRole('button')
+      .filter((b) => b.hasAttribute('aria-pressed'))
+      .map((b) => b.textContent)
+
+    expect(labels).toEqual([
+      'Detect speakers',
+      'Keyframes',
+      'Word analysis',
+      'Hate speech',
+      'Summary',
+    ])
+  })
+})
+
 describe('UploadForm keyframes toggle', () => {
   it('submits keyframes=false by default and true when ticked', () => {
     // Opt-in, like Summary: sampling and describing frames costs one vision
@@ -98,13 +125,14 @@ describe('UploadForm keyframes toggle', () => {
     )
     addFiles(container, [audio('a.mp3')])
 
-    const toggle = screen.getByLabelText('Keyframes') as HTMLInputElement
-    expect(toggle.checked).toBe(false)
+    const toggle = screen.getByRole('button', { name: 'Keyframes' })
+    expect(toggle).toHaveAttribute('aria-pressed', 'false')
 
     fireEvent.click(screen.getByRole('button', { name: /Run/ }))
     expect(onRun.mock.calls[0][1]).toMatchObject({ keyframes: false, summarization: false })
 
     fireEvent.click(toggle)
+    expect(toggle).toHaveAttribute('aria-pressed', 'true')
     fireEvent.click(screen.getByRole('button', { name: /Run/ }))
     // Independent of the summary: ticking one must not tick the other.
     expect(onRun.mock.calls[1][1]).toMatchObject({ keyframes: true, summarization: false })
@@ -122,13 +150,14 @@ describe('UploadForm diarize toggle', () => {
     )
     addFiles(container, [audio('a.mp3')])
 
-    const toggle = screen.getByLabelText('Detect speakers') as HTMLInputElement
-    expect(toggle.checked).toBe(true)
+    const toggle = screen.getByRole('button', { name: 'Detect speakers' })
+    expect(toggle).toHaveAttribute('aria-pressed', 'true')
 
     fireEvent.click(screen.getByRole('button', { name: /Run/ }))
     expect(onRun.mock.calls[0][1]).toMatchObject({ diarize: true })
 
     fireEvent.click(toggle)
+    expect(toggle).toHaveAttribute('aria-pressed', 'false')
     fireEvent.click(screen.getByRole('button', { name: /Run/ }))
     expect(onRun.mock.calls[1][1]).toMatchObject({ diarize: false })
   })
