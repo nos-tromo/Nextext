@@ -87,15 +87,16 @@ Several modules call `load_dotenv()` at import time (`nextext/utils/env_cfg.py`,
 **Pipeline flow (server-side):**
 
 1. **Transcription** (always-on) → every upload is re-encoded to 16 kHz mono FLAC (`nextext/core/audio.py`, PyAV) so libsndfile-only Whisper servers can decode it → external Whisper API (`/v1/audio/transcriptions`, always in the source language) behind an external `/vad` speech guard (defaults to the central endpoint; `VAD_API_BASE=off` skips it), + speaker diarization via the out-of-process `/diarize` HTTP service — on by default and auto-detecting the speaker count (no speaker bounds sent), bypassable per job (`diarize=false` / CLI `--no-diarize`); VAD-gating of the turns (cropping to the Silero speech timeline, dropping music/noise the diarizer over-detects as speech) happens server-side in the diarize backend (`DIARIZE_VAD_URL`, on by default in the full vllm-service stack), so turns arrive pre-gated; they are then aligned onto the transcript at the word level (falling back to segment-level overlap when the endpoint returns no word timestamps), with segments overlapping no turn inheriting the temporally nearest turn's speaker instead of rendering as `Unknown`, and finally renumbered to contiguous `Speaker N` by first appearance **in the assembled transcript**, so labels always read in order (Speaker 1, 2, 3 … top to bottom); the speaker column is omitted entirely when ≤1 distinct speaker is detected; low-punctuation transcripts (e.g. Arabic) are re-segmented into one sentence per row via `TEXT_MODEL` before merge/translate (`NEXTEXT_SENTENCE_RESTORE`, default on) → `pd.DataFrame`
-2. **Translation** (optional) → LLM-based segment translation, directly source → target for any target language, via `InferencePipeline`. Whisper's audio-translate task is not used.
-3. **Word-level analysis** (optional) → word counts, named entities via the out-of-process `/gliner` HTTP service, word clouds
-4. **Summarization** (optional) → LLM summary via `InferencePipeline`. For a video file, the keyframes sampled in step 1 are first captioned one request at a time via `TEXT_MODEL`'s vision path (`call_vision`), and the timestamped captions are prepended to the transcript as a "Visual context" block, so the summary covers what was shown as well as what was said (`NEXTEXT_VISUAL_SUMMARY`, default on; needs a vision-capable `TEXT_MODEL`). No job option gates it — it applies whenever a summary was requested and the file actually has frames. Fail-soft: a text-only model aborts captioning after one request and the job falls back to an audio-only summary
-5. **Hate-speech detection** (optional) → per-segment LLM classification
-6. **Artifacts** → backend renders `.txt`, `.csv`, `.xlsx`, `.png`, `.jsonl`, ZIP on demand at `/api/v1/jobs/{id}/artifacts/{name}`
+2. **Keyframes / visual context** (optional, `keyframes=false` by default) → samples video keyframes across the whole clip (`nextext/core/keyframes.py`, PyAV) and captions each one request at a time via `TEXT_MODEL`'s vision path (`call_vision`), producing `keyframes.zip`, `JobResult.frame_captions` and the `visual_context.txt` block. It is a stage of its own and **independent of summarization in both directions**: a summary no longer samples frames, and frames no longer need a summary. With the option off nothing is sampled and no video is decoded. Runs **before** the no-speech short-circuit, so a silent video still yields its visuals. `NEXTEXT_VISUAL_SUMMARY` (default on) is the operator kill-switch for the captioning half only — sampling continues. Needs a vision-capable `TEXT_MODEL`; fail-soft: a text-only model aborts captioning after one request and the frames stay downloadable
+3. **Translation** (optional) → LLM-based segment translation, directly source → target for any target language, via `InferencePipeline`. Whisper's audio-translate task is not used.
+4. **Word-level analysis** (optional) → word counts, named entities via the out-of-process `/gliner` HTTP service, word clouds
+5. **Summarization** (optional) → LLM summary via `InferencePipeline`, over whatever the job produced: the transcript (its translation when there is one) and/or the keyframe captions prepended as a "Visual context" block, so the summary covers what was shown as well as what was said. Captions alone are a valid input — a video whose audio held no speech is summarized from its visuals — and only a request with neither text nor captions raises
+6. **Hate-speech detection** (optional) → per-segment LLM classification
+7. **Artifacts** → backend renders `.txt`, `.csv`, `.xlsx`, `.png`, `.jsonl`, ZIP on demand at `/api/v1/jobs/{id}/artifacts/{name}`
 
 **HTTP API (`/api/v1`):**
 
-- `POST /jobs` (multipart: `file` + JSON `options`) — queue a new job; returns `{job_id}`.
+- `POST /jobs` (multipart: `file` + JSON `options`) — queue a new job; returns `{job_id}`. `options` is `JobOptions` (`extra="forbid"`): `src_lang`, `trg_lang`, `task`, `diarize` (default on), `words`, `summarization`, `hate_speech`, `keyframes` (all default off), plus the `keyframes_per_minute` / `keyframes_max` sampling rates.
 - `GET /jobs` — list the caller's in-memory jobs, newest first. The frontend calls this on load to re-discover and resume its jobs after a browser reload.
 - `GET /jobs/{id}` — point-in-time snapshot (owner-scoped).
 - `GET /jobs/{id}/events` — SSE stream of stage transitions (owner-scoped); replays event history on connect so a reattached client resumes mid-run.
@@ -105,7 +106,7 @@ Several modules call `load_dotenv()` at import time (`nextext/utils/env_cfg.py`,
 - `GET /health`, `GET /languages` — meta endpoints.
 - `GET /metrics` — Prometheus exposition (aggregate request/latency counters plus the job-outcome counters below; no transcript or user data); unauthenticated, scraped by obs-plane over `inference-net`.
 
-**Empty / not-processed outcomes.** A file with no processable speech is not a failure: the job **completes**, and `skipped: true` plus a typed `skip_reason_code` say why. The vocabulary lives in `nextext/core/outcomes.py`: `vad_no_speech` (the `/vad` guard rejected the file), `asr_empty_transcript` (Whisper returned nothing), `asr_all_segments_filtered` (every segment failed the `no_speech_prob` filter). Failures carry a typed `error_code` — `undecodable_media` or `internal` — while `error` stays the static `"Job failed."` so no detail leaks. Both codes appear on `GET /jobs/{id}`, on `GET /jobs` list items (the SPA's only source after a browser reload), and on the terminal `job_completed` / `job_failed` SSE frames; the frontend localizes them (`frontend/src/lib/outcomeMessages.ts`) and never renders the backend's own English prose. The worker logs one job-scoped warning per skipped or failed job and increments `nextext_jobs_total{outcome}`, `nextext_jobs_skipped_total{reason}`, `nextext_jobs_failed_total{code}` (`nextext/api/metrics.py`). A skipped job renders no artifacts at all — `archive.zip` 404s like its siblings rather than returning an empty ZIP. `nextext-cli` reports the same outcome as **exit code 3** (not `2`, which argparse uses for usage errors).
+**Empty / not-processed outcomes.** A file with no processable speech is not a failure: the job **completes**, and `skipped: true` plus a typed `skip_reason_code` say why. The vocabulary lives in `nextext/core/outcomes.py`: `vad_no_speech` (the `/vad` guard rejected the file), `asr_empty_transcript` (Whisper returned nothing), `asr_all_segments_filtered` (every segment failed the `no_speech_prob` filter). Failures carry a typed `error_code` — `undecodable_media` or `internal` — while `error` stays the static `"Job failed."` so no detail leaks. Both codes appear on `GET /jobs/{id}`, on `GET /jobs` list items (the SPA's only source after a browser reload), and on the terminal `job_completed` / `job_failed` SSE frames; the frontend localizes them (`frontend/src/lib/outcomeMessages.ts`) and never renders the backend's own English prose. The worker logs one job-scoped warning per skipped or failed job and increments `nextext_jobs_total{outcome}`, `nextext_jobs_skipped_total{reason}`, `nextext_jobs_failed_total{code}` (`nextext/api/metrics.py`). A skipped job renders no *transcript-derived* artifacts — `archive.zip` 404s like its siblings rather than returning an empty ZIP — but the flag means "no transcript", not "no result": a silent video that asked for keyframes still carries its frames, their descriptions, and a summary written from them, and the SPA shows the banner above those tabs rather than instead of them. `nextext-cli` reports the same outcome as **exit code 3** (not `2`, which argparse uses for usage errors).
 
 Identity is resolved per request by `resolve_principal`: the trusted header (`NEXTEXT_AUTH_HEADER`, default `X-Auth-User`) if present, else `NEXTEXT_DEFAULT_IDENTITY` (the dev / header-less fallback), else `401`. The value scopes the caller's in-memory jobs; cross-owner reads return `404` so existence never leaks. The React frontend mints a per-browser id and carries it in its URL (`?owner=<id>`) on first visit, reading it back on every reload so the identity survives browser refreshes. There is no authentication — the backend trusts whoever can reach `inference-net` — and no durable storage: jobs live only in memory.
 
@@ -120,7 +121,7 @@ Identity is resolved per request by `resolve_principal`: the trusted header (`NE
 - `nextext/api/schemas.py` — Pydantic request/response models for jobs, snapshots, and the SSE event payloads.
 - `nextext/api/metrics.py` — job-outcome Prometheus counters (`nextext_jobs_total`, `nextext_jobs_skipped_total`, `nextext_jobs_failed_total`), registered on the default registry the instrumentator exposes. Typed-code labels only.
 - `nextext/core/outcomes.py` — the typed `SkipReason` / `FailureCode` vocabulary shared by the pipeline, API, and CLI, plus the English fallback prose for non-UI consumers.
-- `nextext/cli.py` — CLI entry point (argparse), single-file processing in-process.
+- `nextext/cli.py` — CLI entry point (argparse), single-file processing in-process. `_keyframe_step` runs the opt-in keyframe/captioning step (`-kf/--keyframes`) ahead of the no-speech guard, writing `{stem}_keyframes/frame_NNN.jpg` and `{stem}_visual_context.txt`.
 - `nextext/pipeline.py` — Shared pipeline functions connecting all agents. `transcription_pipeline` returns a `TranscriptionOutcome` (transcript, resolved source language, `skip_reason`); its `is_empty` property is the single definition of "no usable text" that the API worker and CLI both branch on.
 - `nextext/core/transcription.py` — `ExternalWhisperTranscriber` (OpenAI-compatible audio API); the pre-upload speech guard is delegated to the external `/vad` service via `core/vad.py`. Records `skip_reason` when a run yields no segments, so the three causes stay distinguishable downstream.
 - `nextext/core/audio.py` — audio-normalization agent: re-encodes any upload to 16 kHz mono FLAC via PyAV (bundled ffmpeg) before the Whisper call; fail-closed (`AudioDecodeError`) on undecodable input.
@@ -129,8 +130,8 @@ Identity is resolved per request by `resolve_principal`: the trusted header (`NE
 - `nextext/core/visual_context.py` — visual-context agent: captions sampled
   video keyframes via `InferencePipeline.call_vision` (`describe_keyframes`,
   one request per frame), downscales each frame first (`prepare_frame`), and
-  renders the `[mm:ss] caption` block the summarizer receives
-  (`format_visual_context`). Fail-soft throughout — a per-frame outage skips
+  renders the `[mm:ss] caption` block that is both an artifact of its own and
+  an optional summarizer input (`format_visual_context`). Fail-soft throughout — a per-frame outage skips
   that caption, and a client rejection on the first frame (a text-only
   `TEXT_MODEL`) aborts the run after one round-trip.
 - `nextext/core/keyframes.py` — keyframe sampler: `extract_keyframe_samples`
@@ -177,16 +178,18 @@ Key env vars (see `.env.example`):
   `!`, else `.`. Fail-soft: a model outage degrades to today's behavior. Resolved
   by `load_sentence_restore_env`. Set `NEXTEXT_SENTENCE_RESTORE=off` to disable.
 - `NEXTEXT_VISUAL_SUMMARY` / `VISUAL_SUMMARY_MAX_FRAMES` / `VISUAL_SUMMARY_IMAGE_MAX_SIDE` (backend + CLI) —
-  Visual context for video summaries. When on (default) and a summary is
-  requested for a file with a video stream, the sampled keyframes are captioned
-  by `TEXT_MODEL` and folded into the summary; captions also surface as
-  `JobResult.frame_captions` and the `visual_context.txt` artifact. Requires a
-  vision-capable `TEXT_MODEL` — a text-only one degrades to today's audio-only
-  summary with one warning. `VISUAL_SUMMARY_MAX_FRAMES` (default `12`, clamped
-  to `200`) bounds the per-job cost at one inference request per frame;
+  The captioning half of the keyframe step, which the job itself opts into
+  (`keyframes=true` / `nextext-cli -kf`). When on (default), each sampled frame
+  is captioned by `TEXT_MODEL`; the captions surface as
+  `JobResult.frame_captions`, the `visual_context.txt` artifact, and — when a
+  summary was also requested — one of its sources. Setting
+  `NEXTEXT_VISUAL_SUMMARY=off` skips captioning only: the frames are still
+  sampled and downloadable as `keyframes.zip`. Requires a vision-capable
+  `TEXT_MODEL` — a text-only one degrades to an uncaptioned run with one
+  warning. `VISUAL_SUMMARY_MAX_FRAMES` (default `12`, clamped to `200`) bounds
+  the per-job cost at one inference request per frame;
   `VISUAL_SUMMARY_IMAGE_MAX_SIDE` (default `1024`) bounds each frame's upload
-  size. Resolved by `load_visual_summary_env`. Set `NEXTEXT_VISUAL_SUMMARY=off`
-  to disable; `nextext-cli` also takes `--no-visual-context`.
+  size. Resolved by `load_visual_summary_env`.
 - `NEXTEXT_OFFLINE=1` (default) — gates the spaCy/NLTK downloads (`is_offline()`); the only local downloads left. Offline + uncached spaCy model raises an actionable error.
 - `NEXTEXT_HOST_PORT` (frontend, dev/override only) — host port published by `make up-dev` for the nginx frontend container. Defaults to `8501`; maps to nginx port `8080` (the unprivileged nginx image listens there — see Container hardening below).
 - `NEXTEXT_CLIENT_MAX_BODY_SIZE` (frontend) — nginx `client_max_body_size` for the `/api/v1` upload proxy. Defaults to `8192m`.
@@ -194,8 +197,8 @@ Key env vars (see `.env.example`):
 - `NEXTEXT_DEFAULT_TARGET_LANG` (backend only) — Initial translation target language code surfaced by `GET /languages` as `default_target` and used to seed the frontend's "Target language" dropdown on a fresh browser. Must be a supported target code; an unsupported (or unset) value falls back to English (`en`). The frontend persists the user's own selection per-browser (localStorage), so it survives reloads and takes precedence over this default. Defaults to `en`.
 - `NEXTEXT_MAX_UPLOAD_MB` (backend only) — Hard cap on per-file upload bytes. The backend streams the upload to disk in 1 MiB chunks (`_stream_upload_to_disk` in `nextext/api/routes/jobs.py`) and returns `413` once the cap is exceeded; unparseable values fall back to the default and `<1` clamps to `1`. The React frontend mirrors the *default* as an advisory client-side check only (`DEFAULT_MAX_FILE_MB` in `frontend/src/lib/uploadGuard.ts`) — it does not read the env var, and the backend is the enforcement point. The separate nginx body limit is `NEXTEXT_CLIENT_MAX_BODY_SIZE`. Defaults to `8192`.
 - `NEXTEXT_JOB_CONCURRENCY` (backend only) — Max jobs the in-memory `JobManager` runs concurrently (`asyncio.Semaphore`). Defaults to `1` (serial, one in-flight job — the historical behavior); raise it to overlap jobs, bounded by container CPU (PyAV decode per job) and the external inference services' capacity. Unparseable/`<1` values clamp to `1`. Resolved by `load_job_concurrency` in `nextext/utils/env_cfg.py`.
-- `KEYFRAMES_PER_MINUTE` (backend only) — Default keyframes sampled per minute of video, applied to `JobOptions.keyframes_per_minute` only when a job-creation request omits the field (an explicit per-request value always wins). Invalid values warn and fall back; negatives clamp to `0`. Resolved by `load_keyframe_defaults` in `nextext/utils/env_cfg.py`. Defaults to `4`.
-- `KEYFRAMES_MAX` (backend only) — Default hard ceiling on keyframes returned per clip, applied to `JobOptions.keyframes_max` only when a request omits it. Clamped to `[0, 200]` (the schema's hard cap; larger values warn and clamp to `200`); an explicit per-request value still overrides. Defaults to `20`.
+- `KEYFRAMES_PER_MINUTE` (backend + CLI) — Default keyframes sampled per minute of video, applied to `JobOptions.keyframes_per_minute` only when a job-creation request omits the field (an explicit per-request value always wins), and used directly by `nextext-cli -kf`. Invalid values warn and fall back; negatives clamp to `0`. Resolved by `load_keyframe_defaults` in `nextext/utils/env_cfg.py`. Defaults to `4`. Both rates apply only to a job that asked for keyframes.
+- `KEYFRAMES_MAX` (backend + CLI) — Default hard ceiling on keyframes returned per clip, applied to `JobOptions.keyframes_max` only when a request omits it. Clamped to `[0, 200]` (the schema's hard cap; larger values warn and clamp to `200`); an explicit per-request value still overrides. Defaults to `20`.
 - There is no combined-batch size cap. The old `NEXTEXT_MAX_BATCH_MB` existed for Streamlit's `file_uploader`, which held a whole multi-file selection in the frontend process's memory; the React SPA streams each file through nginx instead, so only the **per-file** guard above applies. Large local batches still belong in `nextext-cli`, which reads from disk and never buffers whole files.
 - `NEXTEXT_AUTH_HEADER` (backend + frontend) — Name of the trusted identity header. Defaults to `X-Auth-User`. Both sides read the same variable so they agree on the header.
 - `NEXTEXT_DEFAULT_IDENTITY` (backend only) — Fallback identity for header-less / developer callers. Unset by default, so a request without the trusted header gets `401`.

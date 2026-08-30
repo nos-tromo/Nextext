@@ -23,23 +23,36 @@ port 8080.
 directly and runs end-to-end in-process, without a backend. It ships inside the
 backend image alongside the API — see [cli.md](cli.md).
 
-## Visual context in summaries
+## Keyframes and visual context
 
-For video, transcription only hears the file. When a job asks for a summary and
-the upload has a video stream, the keyframes already sampled for the
-`keyframes.zip` artifact are also described by `TEXT_MODEL`'s vision path — one
-request per frame — and the resulting `[mm:ss] caption` block is prepended to
-the transcript before the ordinary map-reduce summarizer runs. The summary then
-covers slides, scenes and legible on-screen text alongside what was said.
+For video, transcription only hears the file. **Describing keyframes** is the
+pipeline's second stage, between Transcribing and Translating: it samples
+frames across the whole clip and describes each through `TEXT_MODEL`'s vision
+path — one request per frame — producing the `keyframes.zip` archive, the
+`[mm:ss] caption` block behind `visual_context.txt`, and the SPA's Visual
+context tab.
 
-Nothing about this is a new pipeline stage: it happens inside the existing
-**Summarizing** stage, so the stage list and every SSE progress fraction are
-unchanged, and there is no job option to set — a summary plus a video stream is
-the whole trigger. It needs a vision-capable `TEXT_MODEL`; because captioning
-is fail-soft (a text-only model aborts it after one request), a deployment
-without one keeps today's audio-only summaries. Operators bound the cost with
-`VISUAL_SUMMARY_MAX_FRAMES` — see
-[configuration.md](configuration.md#visual-context-video-summaries).
+It is asked for per job (`JobOptions.keyframes`, the **Keyframes** checkbox,
+`nextext-cli -kf`) and is **off by default**: with the option off, nothing is
+sampled and no video is decoded. It is independent of summarization in both
+directions — a summary no longer pulls frames in behind your back, and frames
+no longer need a summary to be worth producing. When both were asked for, the
+caption block is prepended to the transcript inside the summarizer's own
+budgeted payload, so the summary covers slides, scenes and legible on-screen
+text alongside what was said.
+
+Because the stage runs before the no-speech short-circuit, a video whose audio
+held nothing still yields its frames and their descriptions — and, if a summary
+was requested, one written from those descriptions alone. Such a job is still
+reported as `skipped` with its typed code: that flag means "no transcript",
+not "no result".
+
+Captioning needs a vision-capable `TEXT_MODEL` and is fail-soft — a text-only
+model aborts it after one request, leaving the sampled frames downloadable and
+one warning behind. `NEXTEXT_VISUAL_SUMMARY` is the operator kill-switch for
+captioning alone (sampling continues), and `VISUAL_SUMMARY_MAX_FRAMES` bounds
+the cost — see
+[configuration.md](configuration.md#visual-context-keyframe-descriptions).
 
 ## Playback
 
