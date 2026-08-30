@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { act, fireEvent, render, screen } from '@testing-library/react'
 import { TranscriptTab } from './TranscriptTab'
 import type { TranscriptSegment } from '../../api/types'
@@ -81,6 +81,20 @@ describe('TranscriptTab playback', () => {
     })
     expect(screen.getByText('Second line').closest('tr')).toHaveAttribute('aria-current', 'true')
     expect(screen.getByText('First line').closest('tr')).not.toHaveAttribute('aria-current')
+  })
+
+  it('scrolls the row under the playhead into view', () => {
+    // The highlight is useless once it has scrolled past the fold.
+    render(
+      <TranscriptTab jobId="j1" segments={playable} stem="clip" fileName="clip.mp4" mediaUrl={MEDIA_URL} />,
+    )
+    const spy = vi.spyOn(screen.getByText('Second line').closest('tr')!, 'scrollIntoView')
+    act(() => {
+      useMediaPlayerStore.getState().open({ jobId: 'j1', fileName: 'clip.mp4', mediaUrl: MEDIA_URL })
+      useMediaPlayerStore.getState().setCurrentTime(6)
+    })
+    expect(spy).toHaveBeenCalled()
+    spy.mockRestore()
   })
 
   it('never marks a row while another job is playing', () => {

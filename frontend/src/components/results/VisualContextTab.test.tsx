@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { act, fireEvent, render, screen } from '@testing-library/react'
 import { VisualContextTab } from './VisualContextTab'
 import type { FrameCaption, JobResult } from '../../api/types'
@@ -105,6 +105,25 @@ describe('VisualContextTab playback', () => {
     )
     fireEvent.click(screen.getByRole('button', { name: 'Play from 01:15' }))
     expect(useMediaPlayerStore.getState().seekRequest?.seconds).toBe(75)
+  })
+
+  it('scrolls the reached frame into view', () => {
+    render(
+      <VisualContextTab
+        jobId="j1"
+        result={makeResult(captions)}
+        stem="clip"
+        fileName="clip.mp4"
+        mediaUrl={VC_MEDIA_URL}
+      />,
+    )
+    const spy = vi.spyOn(screen.getByText('A speaker at a lectern').closest('tr')!, 'scrollIntoView')
+    act(() => {
+      useMediaPlayerStore.getState().open({ jobId: 'j1', fileName: 'clip.mp4', mediaUrl: VC_MEDIA_URL })
+      useMediaPlayerStore.getState().setCurrentTime(80)
+    })
+    expect(spy).toHaveBeenCalled()
+    spy.mockRestore()
   })
 
   it('marks the frame the playhead has reached', () => {

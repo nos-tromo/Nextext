@@ -2,6 +2,7 @@ import { DownloadButtons } from './DownloadButtons'
 import { transcriptHasSpeaker, transcriptHasTranslation } from '../../lib/transcriptTable'
 import { useT } from '../../i18n/LanguageContext'
 import { useMediaPlayerStore } from '../../lib/mediaPlayerStore'
+import { useFollowActiveRow } from '../../hooks/useFollowActiveRow'
 import { TimeCell } from './TimeCell'
 import { cn } from '../../lib/cn'
 import type { TranscriptSegment } from '../../api/types'
@@ -46,6 +47,7 @@ export function TranscriptTab({ jobId, segments, stem, fileName, mediaUrl }: Tra
           currentTime < (seg.end_seconds ?? segments[i + 1]?.start_seconds ?? Infinity),
       )
     : -1
+  const activeRowRef = useFollowActiveRow(activeIndex)
 
   const txtItems = hasTranslation
     ? [
@@ -73,6 +75,7 @@ export function TranscriptTab({ jobId, segments, stem, fileName, mediaUrl }: Tra
             {segments.map((seg, i) => (
               <tr
                 key={i}
+                ref={i === activeIndex ? activeRowRef : undefined}
                 aria-current={i === activeIndex ? 'true' : undefined}
                 className={cn(
                   'border-b border-border last:border-0 hover:bg-accent/40',

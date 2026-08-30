@@ -1,6 +1,7 @@
 import { DownloadButtons } from './DownloadButtons'
 import { useT } from '../../i18n/LanguageContext'
 import { useMediaPlayerStore } from '../../lib/mediaPlayerStore'
+import { useFollowActiveRow } from '../../hooks/useFollowActiveRow'
 import { TimeCell } from './TimeCell'
 import { cn } from '../../lib/cn'
 import type { JobResult } from '../../api/types'
@@ -57,6 +58,7 @@ export function VisualContextTab({ jobId, result, stem, fileName, mediaUrl }: Vi
       if (caption.time_sec <= currentTime) activeIndex = i
     })
   }
+  const activeRowRef = useFollowActiveRow(activeIndex)
 
   if (captions.length === 0) {
     return <p className="text-sm text-muted-foreground">{t('results.no_visual_context')}</p>
@@ -77,6 +79,7 @@ export function VisualContextTab({ jobId, result, stem, fileName, mediaUrl }: Vi
             {captions.map((caption, i) => (
               <tr
                 key={i}
+                ref={i === activeIndex ? activeRowRef : undefined}
                 aria-current={i === activeIndex ? 'true' : undefined}
                 className={cn(
                   'border-b border-border last:border-0 hover:bg-accent/40',
