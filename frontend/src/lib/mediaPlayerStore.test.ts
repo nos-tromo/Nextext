@@ -83,4 +83,38 @@ describe('mediaPlayerStore', () => {
     store().seek(10)
     expect(store().seekRequest).toBeNull()
   })
+
+  it('starts with a zero follow counter', () => {
+    expect(store().followSeq).toBe(0)
+  })
+
+  it('bumps the follow counter when a session is opened', () => {
+    // Opening the player is a deliberate act, so it re-engages following
+    // even if the reader had scrolled away during an earlier session.
+    store().open(clip, 42)
+    expect(store().followSeq).toBe(1)
+  })
+
+  it('bumps the follow counter on every seek', () => {
+    store().open(clip)
+    store().seek(42)
+    store().seek(42)
+    expect(store().followSeq).toBe(3)
+  })
+
+  it('leaves the follow counter alone as the playhead advances', () => {
+    // Only an explicit jump resumes following; ordinary playback must not
+    // yank a reader who has scrolled off to read something else.
+    store().open(clip)
+    const seq = store().followSeq
+    store().setCurrentTime(12)
+    store().setCurrentTime(13)
+    expect(store().followSeq).toBe(seq)
+  })
+
+  it('resets the follow counter on clear', () => {
+    store().open(clip, 1)
+    store().clear()
+    expect(store().followSeq).toBe(0)
+  })
 })

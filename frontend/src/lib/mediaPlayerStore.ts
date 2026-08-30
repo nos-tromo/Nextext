@@ -28,6 +28,14 @@ export interface MediaPlayerState {
   seekRequest: SeekRequest | null
   /** Latest playhead position in seconds; drives row highlighting. */
   currentTime: number
+  /**
+   * Counter bumped by every deliberate jump (`open`, `seek`).
+   *
+   * Views that scroll the active row into view stop following once the
+   * reader scrolls by hand; a change here is the signal to resume, so a
+   * timestamp click always brings the reader back to the playhead.
+   */
+  followSeq: number
   /** Load a recording, optionally jumping straight to a timestamp. */
   open: (session: MediaSession, seekSeconds?: number) => void
   /** Move the playhead of the already-open recording. No-op when closed. */
@@ -61,6 +69,7 @@ export const useMediaPlayerStore = create<MediaPlayerState>((set, get) => ({
   session: null,
   seekRequest: null,
   currentTime: 0,
+  followSeq: 0,
   open: (session, seekSeconds) =>
     set((state) => {
       // Switching recordings restarts the playhead; re-opening the same one
@@ -70,13 +79,14 @@ export const useMediaPlayerStore = create<MediaPlayerState>((set, get) => ({
         session,
         seekRequest: seekSeconds === undefined ? null : seekRequestFor(seekSeconds),
         currentTime: sameJob ? state.currentTime : 0,
+        followSeq: state.followSeq + 1,
       }
     }),
   seek: (seconds) => {
     if (!get().session) return
-    set({ seekRequest: seekRequestFor(seconds) })
+    set((state) => ({ seekRequest: seekRequestFor(seconds), followSeq: state.followSeq + 1 }))
   },
   close: () => set({ session: null, seekRequest: null, currentTime: 0 }),
   setCurrentTime: (seconds) => set({ currentTime: seconds }),
-  clear: () => set({ session: null, seekRequest: null, currentTime: 0 }),
+  clear: () => set({ session: null, seekRequest: null, currentTime: 0, followSeq: 0 }),
 }))
