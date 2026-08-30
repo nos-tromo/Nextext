@@ -98,13 +98,14 @@ describe('UploadForm keyframes toggle', () => {
     )
     addFiles(container, [audio('a.mp3')])
 
-    const toggle = screen.getByLabelText('Keyframes') as HTMLInputElement
-    expect(toggle.checked).toBe(false)
+    const toggle = screen.getByRole('button', { name: 'Keyframes' })
+    expect(toggle).toHaveAttribute('aria-pressed', 'false')
 
     fireEvent.click(screen.getByRole('button', { name: /Run/ }))
     expect(onRun.mock.calls[0][1]).toMatchObject({ keyframes: false, summarization: false })
 
     fireEvent.click(toggle)
+    expect(toggle).toHaveAttribute('aria-pressed', 'true')
     fireEvent.click(screen.getByRole('button', { name: /Run/ }))
     // Independent of the summary: ticking one must not tick the other.
     expect(onRun.mock.calls[1][1]).toMatchObject({ keyframes: true, summarization: false })
@@ -122,13 +123,14 @@ describe('UploadForm diarize toggle', () => {
     )
     addFiles(container, [audio('a.mp3')])
 
-    const toggle = screen.getByLabelText('Detect speakers') as HTMLInputElement
-    expect(toggle.checked).toBe(true)
+    const toggle = screen.getByRole('button', { name: 'Detect speakers' })
+    expect(toggle).toHaveAttribute('aria-pressed', 'true')
 
     fireEvent.click(screen.getByRole('button', { name: /Run/ }))
     expect(onRun.mock.calls[0][1]).toMatchObject({ diarize: true })
 
     fireEvent.click(toggle)
+    expect(toggle).toHaveAttribute('aria-pressed', 'false')
     fireEvent.click(screen.getByRole('button', { name: /Run/ }))
     expect(onRun.mock.calls[1][1]).toMatchObject({ diarize: false })
   })
