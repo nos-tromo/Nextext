@@ -1,5 +1,12 @@
-import { useState } from 'react'
-import { Button, Card, DeleteButton, WarningIcon } from '@infra/ui'
+import { useId, useState } from 'react'
+import {
+  Card,
+  DeleteButton,
+  DisclosureButton,
+  StatusIcon,
+  WarningIcon,
+  type StatusIconStatus,
+} from '@infra/ui'
 import { useDeleteJob } from '../../hooks/useJobs'
 import { ResultPanel } from '../results/ResultPanel'
 import { useJobProgressStore } from '../../lib/jobProgressStore'
@@ -17,6 +24,18 @@ const LABEL_KEY: Record<JobProgressStatus, keyof Strings> = {
   completed: 'processing.complete',
   failed: 'processing.failed',
   cancelled: 'processing.cancelled',
+}
+
+/**
+ * Our status names mapped onto the design system's five markers. The wording
+ * above is not lost — it becomes the marker's accessible name and tooltip.
+ */
+const STATUS_MARKER: Record<JobProgressStatus, StatusIconStatus> = {
+  queued: 'idle',
+  running: 'running',
+  completed: 'done',
+  failed: 'failed',
+  cancelled: 'cancelled',
 }
 
 /**
@@ -65,6 +84,9 @@ export function JobCard({ job }: { job: JobListItem }) {
     })
   const pct = Math.round(p.progress * 100)
   const [showResults, setShowResults] = useState(false)
+  // Wires the disclosure to the panel it reveals, so assistive tech can follow
+  // the button to what it opened.
+  const resultsId = useId()
   const del = useDeleteJob()
 
   return (
@@ -73,11 +95,18 @@ export function JobCard({ job }: { job: JobListItem }) {
         <span className="text-foreground">{job.file_name}</span>
         <div className="flex items-center gap-3">
           {p.status === 'completed' && (
-            <Button variant="ghost" size="sm" type="button" onClick={() => setShowResults((v) => !v)}>
-              {showResults ? t('jobs.hide_results') : t('jobs.show_results')}
-            </Button>
+            <DisclosureButton
+              expanded={showResults}
+              controls={resultsId}
+              label={showResults ? t('jobs.hide_results') : t('jobs.show_results')}
+              onClick={() => setShowResults((v) => !v)}
+            />
           )}
-          <span className="text-sm text-muted-foreground">{t(LABEL_KEY[p.status])}</span>
+          {/* Drawn, not spelled out: a column of these is read at a glance, and
+              the status word is what shifts the controls beside it as its
+              length changes per language. The wording lives on as the marker's
+              accessible name and tooltip. */}
+          <StatusIcon status={STATUS_MARKER[p.status]} label={t(LABEL_KEY[p.status])} />
           {/* Trash, not ×: this deletes the job and its artifacts on the
               server. `busy` also blocks the second click that would delete an
               already-deleted job. */}
@@ -123,7 +152,7 @@ export function JobCard({ job }: { job: JobListItem }) {
         </p>
       )}
       {p.status === 'completed' && showResults && (
-        <div className="mt-4">
+        <div id={resultsId} className="mt-4">
           <ResultPanel jobId={job.job_id} fileName={job.file_name} />
         </div>
       )}

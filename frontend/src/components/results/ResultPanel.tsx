@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useJobResult } from '../../hooks/useJobResult'
-import { Banner, Button, Spinner, WarningIcon } from '@infra/ui'
+import { Banner, PlayButton, Spinner, WarningIcon } from '@infra/ui'
 import { useT } from '../../i18n/LanguageContext'
 import { describeError } from '../../api/errorMessage'
 import { resultSkipMessageKey } from '../../lib/outcomeMessages'
@@ -151,16 +151,12 @@ export function ResultPanel({ jobId, fileName }: ResultPanelProps) {
               the tabs below are the seek controls. Hidden when the upload is
               gone, since the player would only 404. */}
           {result.media_url && (
-            <Button
-              variant="ghost"
-              size="sm"
-              type="button"
+            <PlayButton
+              label={t('player.open')}
               onClick={() =>
                 openPlayer({ jobId, fileName, mediaUrl: result.media_url as string })
               }
-            >
-              {t('player.open')}
-            </Button>
+            />
           )}
           <DownloadButtons
             jobId={jobId}
