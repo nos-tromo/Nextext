@@ -28,6 +28,11 @@ function isVideoFile(fileName: string): boolean {
  * transcript row or frame caption can start playback at its own timestamp
  * without owning player state.
  *
+ * Its header band carries the app chrome's own colour and height, so it
+ * continues the AppShell header rather than sitting beside it as a separate
+ * block; the panel is set off by its shadow alone, with no left border to cut
+ * that bar in two.
+ *
  * Deliberately **not** a dialog: no backdrop and no `aria-modal`, because the
  * point is that the jobs list and the result tabs stay usable while a
  * recording plays. It keeps only the parts of the overlay contract that still
@@ -99,13 +104,16 @@ export function MediaPanel() {
       inert={open ? undefined : true}
       tabIndex={-1}
       className={[
-        'fixed inset-y-0 right-0 z-40 flex w-full flex-col border-l border-border',
+        'fixed inset-y-0 right-0 z-40 flex w-full flex-col',
         'bg-background shadow-lg outline-none md:w-[28rem]',
         'transition-transform duration-200 motion-reduce:transition-none',
         open ? 'translate-x-0' : 'translate-x-full',
       ].join(' ')}
     >
-      <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-2">
+      {/* Matches the AppShell header beside it — same `h-12`, same
+          `bg-chrome` — so the two read as one bar and the bottom borders
+          meet as a single line across the viewport. */}
+      <div className="flex h-12 shrink-0 items-center justify-between gap-3 border-b border-border bg-chrome px-4">
         <h2 className="truncate text-sm font-medium">{session?.fileName ?? ''}</h2>
         {/* The base IconButton, not RemoveButton: closing the player takes
             nothing away, so it must not warn in red. */}
