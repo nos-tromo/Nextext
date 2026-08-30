@@ -1,16 +1,19 @@
-"""Visual-context agent: caption sampled video keyframes for the summary.
+"""Visual-context agent: caption the keyframes sampled from a video.
 
 Transcription only hears a file; for video, what is on screen (slides, scenes,
 legible on-screen text) carries meaning the audio never states. This agent
-turns the keyframes already sampled by :mod:`nextext.core.keyframes` into
-short, timestamped captions via ``TEXT_MODEL``'s vision path
-(:meth:`nextext.core.openai_cfg.InferencePipeline.call_vision`), which
-:func:`nextext.pipeline.summarization_pipeline` prepends to the transcript.
+turns the keyframes sampled by :mod:`nextext.core.keyframes` into short,
+timestamped captions via ``TEXT_MODEL``'s vision path
+(:meth:`nextext.core.openai_cfg.InferencePipeline.call_vision`). The captions
+are an output in their own right — the ``visual_context.txt`` artifact and the
+SPA's Visual context tab — and :func:`nextext.pipeline.summarization_pipeline`
+additionally takes them as a source when a summary was requested, alongside
+the transcript or in place of one.
 
 Everything here is fail-soft: captioning is an enhancement, never a
 precondition. A per-frame outage costs that one caption, and a model that
 rejects images outright (a text-only ``TEXT_MODEL``) aborts the run after a
-single request so the job simply falls back to an audio-only summary.
+single request, leaving the sampled frames themselves untouched.
 """
 
 from __future__ import annotations
