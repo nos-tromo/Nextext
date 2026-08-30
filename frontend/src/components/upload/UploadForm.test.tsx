@@ -85,6 +85,32 @@ describe('UploadForm file list', () => {
   })
 })
 
+describe('UploadForm keyframes toggle', () => {
+  it('submits keyframes=false by default and true when ticked', () => {
+    // Opt-in, like Summary: sampling and describing frames costs one vision
+    // request per frame, so it is never spent unasked.
+    const onRun = vi.fn()
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const { container } = render(
+      <QueryClientProvider client={qc}>
+        <UploadForm pending={false} onRun={onRun} />
+      </QueryClientProvider>,
+    )
+    addFiles(container, [audio('a.mp3')])
+
+    const toggle = screen.getByLabelText('Keyframes') as HTMLInputElement
+    expect(toggle.checked).toBe(false)
+
+    fireEvent.click(screen.getByRole('button', { name: /Run/ }))
+    expect(onRun.mock.calls[0][1]).toMatchObject({ keyframes: false, summarization: false })
+
+    fireEvent.click(toggle)
+    fireEvent.click(screen.getByRole('button', { name: /Run/ }))
+    // Independent of the summary: ticking one must not tick the other.
+    expect(onRun.mock.calls[1][1]).toMatchObject({ keyframes: true, summarization: false })
+  })
+})
+
 describe('UploadForm diarize toggle', () => {
   it('submits diarize=true by default and false when unchecked', () => {
     const onRun = vi.fn()

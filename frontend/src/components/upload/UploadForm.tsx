@@ -26,6 +26,7 @@ export function UploadForm({ pending, onRun }: UploadFormProps) {
   const [words, setWords] = useState(false)
   const [summarization, setSummarization] = useState(false)
   const [hateSpeech, setHateSpeech] = useState(false)
+  const [keyframes, setKeyframes] = useState(false)
 
   const sizeError = checkUploadAcceptable(files, undefined, (vars) =>
     t('upload.file_too_large', { name: vars.name, sizeGb: vars.sizeGb, limitGb: vars.limitGb }),
@@ -42,6 +43,7 @@ export function UploadForm({ pending, onRun }: UploadFormProps) {
       words,
       summarization,
       hate_speech: hateSpeech,
+      keyframes,
     })
   }
 
@@ -104,11 +106,12 @@ export function UploadForm({ pending, onRun }: UploadFormProps) {
         </label>
       </div>
 
-      <div className="flex gap-4 text-sm">
+      <div className="flex flex-wrap gap-x-4 gap-y-2 text-sm">
         <label className="flex items-center gap-2"><input type="checkbox" checked={diarize} onChange={(e) => setDiarize(e.target.checked)} /> {t('options.detect_speakers')}</label>
         <label className="flex items-center gap-2"><input type="checkbox" checked={words} onChange={(e) => setWords(e.target.checked)} /> {t('options.word_analysis')}</label>
         <label className="flex items-center gap-2"><input type="checkbox" checked={summarization} onChange={(e) => setSummarization(e.target.checked)} /> {t('options.summary')}</label>
         <label className="flex items-center gap-2"><input type="checkbox" checked={hateSpeech} onChange={(e) => setHateSpeech(e.target.checked)} /> {t('options.hate_speech')}</label>
+        <label className="flex items-center gap-2"><input type="checkbox" checked={keyframes} onChange={(e) => setKeyframes(e.target.checked)} /> {t('options.keyframes')}</label>
       </div>
 
       <Button type="button" className="w-full" disabled={!canRun} onClick={run}>

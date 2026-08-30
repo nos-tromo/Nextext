@@ -18,6 +18,8 @@ export interface JobOptions {
   words: boolean
   summarization: boolean
   hate_speech: boolean
+  /** Sample video keyframes and describe them. Independent of `summarization`. */
+  keyframes: boolean
 }
 
 export interface JobCreateResponse {
@@ -82,7 +84,7 @@ export interface JobResult {
   keyframes_url: string | null
   /** Capability URL for playing the original upload; null once it is gone. */
   media_url: string | null
-  /** Frame captions folded into the summary; null for audio-only jobs. */
+  /** Descriptions of the sampled keyframes; null unless the job asked for them. */
   frame_captions: FrameCaption[] | null
   hate_speech_findings: HateSpeechFinding[] | null
   skipped: boolean

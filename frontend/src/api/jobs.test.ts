@@ -11,6 +11,7 @@ const OPTS: JobOptions = {
   words: false,
   summarization: false,
   hate_speech: false,
+  keyframes: false,
 }
 
 afterEach(() => {
