@@ -37,8 +37,9 @@ own files (`{stem}_summary.txt`, `{stem}_words.*`, `{stem}_entities.*`,
 `{stem}_wordcloud.png`, `{stem}_hate_speech.*`).
 
 `-kf/--keyframes` adds two: the sampled frames as
-`{stem}_keyframes/frame_NNN.jpg` — the same layout the API's `keyframes.zip`
-artifact uses — and their descriptions as `{stem}_visual_context.txt`. The
+`{stem}_keyframes/frame_NNN.jpg` plus a `manifest.json` of their sampling times
+— the same layout the API's `keyframes.zip` artifact uses — and their
+descriptions as `{stem}_visual_context.txt`. The
 descriptions are written whether or not a summary was asked for; with `-sum`
 they also feed the summary.
 

@@ -32,6 +32,10 @@ path — one request per frame — producing the `keyframes.zip` archive, the
 `[mm:ss] caption` block behind `visual_context.txt`, and the SPA's Visual
 context tab.
 
+The archive carries a `manifest.json` naming each frame's `file`, `index` and
+`time_sec`, so a consumer can place a frame in the clip without downloading the
+captions. It is omitted when the sampling times are unknown, never guessed.
+
 It is asked for per job (`JobOptions.keyframes`, the **Keyframes** checkbox,
 `nextext-cli -kf`) and is **off by default**: with the option off, nothing is
 sampled and no video is decoded. It is independent of summarization in both

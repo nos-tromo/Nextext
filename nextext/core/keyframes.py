@@ -13,6 +13,8 @@ the job.
 from __future__ import annotations
 
 import io
+import json
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -20,7 +22,7 @@ import av
 from av.error import FFmpegError
 from loguru import logger
 
-__all__ = ["Keyframe", "extract_keyframe_samples", "extract_keyframes", "subsample"]
+__all__ = ["Keyframe", "extract_keyframe_samples", "extract_keyframes", "keyframe_manifest", "subsample"]
 
 
 @dataclass(frozen=True)
@@ -150,3 +152,25 @@ def extract_keyframes(file_path: Path, *, per_minute: int = 4, max_frames: int =
             conditions as :func:`extract_keyframe_samples`.
     """
     return [sample.jpeg for sample in extract_keyframe_samples(file_path, per_minute=per_minute, max_frames=max_frames)]
+
+
+def keyframe_manifest(times: Sequence[float] | None, count: int) -> bytes | None:
+    """Render the frame/time index that accompanies a set of keyframes.
+
+    Args:
+        times: Sampling time of each frame, in the frames' own order.
+        count: Number of frames the manifest must describe.
+
+    Returns:
+        bytes | None: UTF-8 JSON naming each frame's file, index and
+            ``time_sec``; ``None`` when no times are available or they do not
+            pair with the frames, since a manifest that mislabels a frame is
+            worse than none.
+    """
+    if not times or count <= 0 or len(times) != count:
+        return None
+    frames = [
+        {"file": f"frame_{index:03d}.jpg", "index": index, "time_sec": float(time_sec)}
+        for index, time_sec in enumerate(times)
+    ]
+    return json.dumps({"frames": frames}, ensure_ascii=False).encode("utf-8")
