@@ -24,7 +24,7 @@ For any non-trivial change (>1 file or any root-cause fix), present a plan and w
 
 ## Project Overview
 
-Nextext is a modular audio analysis toolkit that transcribes, translates, and analyzes natural language from audio/video files. All model inference runs on external endpoints: Whisper transcription via an OpenAI-compatible audio API, voice-activity detection (`/vad`), speaker diarization (`/diarize`), and GLiNER NER (`/gliner`) via dedicated out-of-process HTTP services, and LLMs (Ollama, vLLM, or OpenAI-compatible endpoints) for translation, summarization, and hate-speech detection. Only spaCy/NLTK word-level NLP runs in-process; every upload is re-encoded to 16 kHz mono FLAC via the PyAV wheel (bundled ffmpeg) before transcription. The backend ships no model weights and needs no GPU — PyAV is the only local media dependency, and no apt audio tooling is installed.
+Nextext is a modular audio analysis toolkit that transcribes, translates, and analyzes natural language from audio/video files. All model inference runs on external endpoints: Whisper transcription via an OpenAI-compatible audio API, voice-activity detection (`/vad`), speaker diarization (`/diarize`), and GLiNER NER (`/gliner`) via dedicated out-of-process HTTP services, and LLMs (Ollama, vLLM, or OpenAI-compatible endpoints) for translation, summarization, and hate-speech detection. Only spaCy word-level NLP runs in-process; every upload is re-encoded to 16 kHz mono FLAC via the PyAV wheel (bundled ffmpeg) before transcription. The backend ships no model weights and needs no GPU — PyAV is the only local media dependency, and no apt audio tooling is installed.
 
 ## Project Context
 
@@ -46,7 +46,7 @@ uv run nextext-cli -f <file> [args]  # CLI mode (in-process, no backend required
 make build && make up-dev  # Docker: build images, then run detached; publishes on NEXTEXT_HOST_PORT (or: make dev)
 # cd frontend && pnpm dev  # local Vite dev server (proxies /api/v1 to localhost:8000)
 
-# Preload spaCy/NLTK language resources (the only local downloads)
+# Preload spaCy language resources (the only local downloads)
 NEXTEXT_OFFLINE=0 uv run load-models
 
 # Tests
@@ -206,7 +206,7 @@ Key env vars (see `.env.example`):
   the per-job cost at one inference request per frame;
   `VISUAL_SUMMARY_IMAGE_MAX_SIDE` (default `1024`) bounds each frame's upload
   size. Resolved by `load_visual_summary_env`.
-- `NEXTEXT_OFFLINE=1` (default) — gates the spaCy/NLTK downloads (`is_offline()`); the only local downloads left. Offline + uncached spaCy model raises an actionable error.
+- `NEXTEXT_OFFLINE=1` (default) — gates the spaCy downloads (`is_offline()`); the only local downloads left. Offline + uncached spaCy model raises an actionable error.
 - `NEXTEXT_HOST_PORT` (frontend, dev/override only) — host port published by `make up-dev` for the nginx frontend container. Defaults to `8501`; maps to nginx port `8080` (the unprivileged nginx image listens there — see Container hardening below).
 - `NEXTEXT_CLIENT_MAX_BODY_SIZE` (frontend) — nginx `client_max_body_size` for the `/api/v1` upload proxy. Defaults to `8192m`.
 - `NEXTEXT_API_HOST` / `NEXTEXT_API_PORT` (backend only) — uvicorn bind address. Defaults to `0.0.0.0:8000`.
@@ -226,21 +226,24 @@ Docker assets live under `docker/`. `docker/compose.yaml` defines two services �
 - `backend` — built from `docker/Dockerfile.backend`, multi-stage `uv` build (no extras; runtime apt is `curl` only — all inference, including the VAD guard, is external; audio normalization uses the PyAV wheel, so no apt audio tooling is added). Runs `uvicorn nextext.api.main:app` with a `HEALTHCHECK` against `/api/v1/health`. Reachable only on the `nextext-net` network by default; no host port is published.
 - `frontend` — React SPA compiled and served by nginx. Built from `docker/Dockerfile.frontend` (node build → nginx image). The nginx config proxies `/api/v1` same-origin to the backend, so browser uploads stream through nginx without buffering whole files in any Python process. The base `docker/compose.yaml` is the production shape and publishes no host ports; `docker/compose.override.yaml` (layered by `make up-dev`) publishes nginx on `${NEXTEXT_HOST_PORT:-8501}`.
 
-The stack shares `inference-net` with the inference provider (vllm-service / Ollama). The `Makefile` is the entry point — it points Compose at `docker/compose.yaml`, since a bare `docker compose` from the repo root no longer finds it. Run `make volumes` (one-time, creates the external `nltk-cache`/`spacy-cache` volumes), then `make build && make up` for production shape, or `make build && make up-dev` (or just `make dev`) to publish the frontend on the host. `make up`/`make up-dev` are detached and never build (`--no-build`), so build the images first (in prod, load or pull them). `make bundle` writes an image tarball built from the latest annotated release tag (production); `make bundle-dev` bundles the current working tree instead (dev/soak).
+The stack shares `inference-net` with the inference provider (vllm-service / Ollama). The `Makefile` is the entry point — it points Compose at `docker/compose.yaml`, since a bare `docker compose` from the repo root no longer finds it. Run `make volumes` (one-time, creates the external `spacy-cache` volume), then `make build && make up` for production shape, or `make build && make up-dev` (or just `make dev`) to publish the frontend on the host. `make up`/`make up-dev` are detached and never build (`--no-build`), so build the images first (in prod, load or pull them). `make bundle` writes an image tarball built from the latest annotated release tag (production); `make bundle-dev` bundles the current working tree instead (dev/soak).
 
 The React SPA source lives in `frontend/`; run `cd frontend && pnpm {dev,build,test,lint,typecheck}` for local development without Docker.
 
 **Container hardening (deploy ADR 0001):** both containers run non-root with
 read-only root filesystems — the backend as uid `10001` (`app`,
-`HOME=/home/app`; `NLTK_DATA`/`SPACY_MODEL_DIR` point at the cache volumes
+`HOME=/home/app`; `SPACY_MODEL_DIR` points at the cache volume
 under `/home/app`, `/tmp` is a disk-backed scratch volume sized for multi-GB
 job media, and `MPLCONFIGDIR=/tmp/matplotlib` keeps matplotlib's import-time
 config/font cache off the read-only `$HOME/.config`), the frontend on
 `nginxinc/nginx-unprivileged` as uid `101`
 listening on **:8080** (the edge gateway's `nextext-frontend` upstream must
 match). Compose applies `no-new-privileges` + `cap_drop: ALL` via the
-`x-hardened` anchor. On existing hosts the `nltk-cache`/`spacy-cache` volumes
-need a one-time `chown -R 10001:10001` (runbook in the `deploy` repo).
+`x-hardened` anchor. On existing hosts the `spacy-cache` volume needs a
+one-time `chown -R 10001:10001` (runbook in the `deploy` repo). The
+`nltk-cache` volume is no longer mounted or declared; it stays on hosts that
+already have it until an operator removes it (`docker volume rm nltk-cache`),
+since compose cannot drop external volume state it does not own.
 
 ## Persistence model
 

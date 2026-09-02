@@ -1,10 +1,10 @@
-"""Utilities for preloading Nextext's spaCy and NLTK language resources.
+"""Utilities for preloading Nextext's spaCy language resources.
 
 All model inference runs on external endpoints, so the only assets worth
-preloading are the spaCy model packages (word-level analysis) and the NLTK
-corpora. Downloads are gated by ``NEXTEXT_OFFLINE`` (offline by default —
-see :func:`nextext.utils.env_cfg.is_offline`): airgapped hosts ship the
-caches instead of downloading.
+preloading are the spaCy model packages (word-level analysis). Downloads are
+gated by ``NEXTEXT_OFFLINE`` (offline by default — see
+:func:`nextext.utils.env_cfg.is_offline`): airgapped hosts ship the caches
+instead of downloading.
 """
 
 # Re-exported for tests that monkeypatch through this module.
@@ -17,7 +17,6 @@ from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as package_version
 from pathlib import Path
 
-import nltk as nltk
 from dotenv import load_dotenv
 from loguru import logger
 
@@ -31,7 +30,6 @@ SPACY_MODEL_DOWNLOAD_BASE_URL = "SPACY_MODEL_DOWNLOAD_BASE_URL"
 SPACY_MODEL_PACKAGE_VERSION = "SPACY_MODEL_PACKAGE_VERSION"
 DEFAULT_SPACY_MODEL_DIR = Path.home() / ".cache" / "spacy"
 DEFAULT_SPACY_MODEL_DOWNLOAD_BASE_URL = "https://github.com/explosion/spacy-models/releases/download"
-NLTK_RESOURCES = ("punkt_tab", "stopwords")
 
 
 def get_spacy_model_dir() -> Path:
@@ -143,27 +141,6 @@ def get_spacy_model_ids(
     return sorted(set(spacy_models.values()))
 
 
-def ensure_nltk_resources(resources: Iterable[str] = NLTK_RESOURCES) -> None:
-    """Download the NLTK resources required by Nextext.
-
-    In offline mode (``NEXTEXT_OFFLINE``, active by default) downloads are
-    skipped; resources already on disk keep working.
-
-    Args:
-        resources (Iterable[str]): Resource names to fetch.
-    """
-    resolved_resources = list(resources)
-    if is_offline():
-        logger.info(
-            "Offline mode: skipping NLTK resource downloads ({}).",
-            ", ".join(resolved_resources),
-        )
-        return
-    for resource in resolved_resources:
-        nltk.download(resource, quiet=True)
-        logger.info("Loaded NLTK resource '{}'.", resource)
-
-
 def download_spacy_model(model_id: str) -> None:
     """Download a spaCy model into the persistent cache directory.
 
@@ -217,18 +194,13 @@ def preload_spacy_models(model_ids: Iterable[str] | None = None) -> None:
 
 
 def main() -> None:
-    """Preload Nextext's spaCy and NLTK language resources.
+    """Preload Nextext's spaCy language resources.
 
     Raises:
         RuntimeError: If any preload operation fails.
     """
     failures: list[str] = []
     logger.info("Preloading Nextext language resources (offline={}).", is_offline())
-
-    try:
-        ensure_nltk_resources()
-    except Exception as exc:
-        failures.append(f"nltk resources ({exc})")
 
     for model_id in get_spacy_model_ids():
         try:

@@ -3,8 +3,8 @@
 Pins the cache-directory env vars the read-only-rootfs hardening (deploy
 ADR 0001) depends on. The backend container runs as uid 10001 with a
 read-only root filesystem, so every library that writes a cache at import
-time must be pointed at one of the writable mounts (`/home/app/nltk_data`,
-`/home/app/.cache/spacy`, `/tmp`). matplotlib was the one missed in the
+time must be pointed at one of the writable mounts
+(`/home/app/.cache/spacy`, `/tmp`). matplotlib was the one missed in the
 original sweep: without ``MPLCONFIGDIR`` it tries
 ``$HOME/.config/matplotlib``, fails with ``[Errno 30] Read-only file
 system`` at app import, and falls back to a throwaway per-process
@@ -19,11 +19,10 @@ from pathlib import Path
 _COMPOSE = Path(__file__).resolve().parents[1] / "docker" / "compose.yaml"
 
 # Writable mountpoints inside the backend container (the compose volume list).
-_WRITABLE_ROOTS = ("/home/app/nltk_data", "/home/app/.cache/spacy", "/tmp")
+_WRITABLE_ROOTS = ("/home/app/.cache/spacy", "/tmp")
 
 # Env var -> exact path the backend service must set it to.
 _CACHE_ENV_VARS = {
-    "NLTK_DATA": "/home/app/nltk_data",
     "SPACY_MODEL_DIR": "/home/app/.cache/spacy",
     "MPLCONFIGDIR": "/tmp/matplotlib",
 }

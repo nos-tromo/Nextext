@@ -155,18 +155,13 @@ def test_get_spacy_model_download_url_uses_override_base_url(
 def test_main_preloads_expected_model_groups(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Test that the main preload routine covers exactly NLTK and spaCy.
+    """Test that the main preload routine covers exactly the spaCy models.
 
     Args:
         monkeypatch (pytest.MonkeyPatch): The pytest fixture for modifying environment variables and functions.
     """
     calls: list[tuple[str, str]] = []
 
-    monkeypatch.setattr(
-        model_loader,
-        "ensure_nltk_resources",
-        lambda: calls.append(("nltk", "all")),
-    )
     monkeypatch.setattr(
         model_loader,
         "get_spacy_model_ids",
@@ -180,10 +175,7 @@ def test_main_preloads_expected_model_groups(
 
     model_loader.main()
 
-    assert calls == [
-        ("nltk", "all"),
-        ("spacy", "en_core_web_sm"),
-    ]
+    assert calls == [("spacy", "en_core_web_sm")]
 
 
 def test_download_spacy_model_offline_uncached_raises(
@@ -230,48 +222,3 @@ def test_download_spacy_model_offline_cached_is_noop(
     monkeypatch.setenv("NEXTEXT_OFFLINE", "1")
 
     model_loader.download_spacy_model("en_core_web_sm")
-
-
-def test_ensure_nltk_resources_offline_skips_downloads(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Offline mode skips every NLTK download.
-
-    Args:
-        monkeypatch (pytest.MonkeyPatch): The pytest fixture for modifying environment variables and functions.
-    """
-    monkeypatch.setenv("NEXTEXT_OFFLINE", "1")
-
-    def fail_download(*args: object, **kwargs: object) -> None:
-        """Fail if nltk.download is called — offline mode must not download.
-
-        Raises:
-            AssertionError: Always raised — no download may happen offline.
-        """
-        raise AssertionError("nltk.download must not be called in offline mode")
-
-    monkeypatch.setattr(model_loader.nltk, "download", fail_download)
-
-    model_loader.ensure_nltk_resources()
-
-
-def test_ensure_nltk_resources_online_downloads_each_resource(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Online mode downloads every configured NLTK resource.
-
-    Args:
-        monkeypatch (pytest.MonkeyPatch): The pytest fixture for modifying environment variables and functions.
-    """
-    monkeypatch.setenv("NEXTEXT_OFFLINE", "0")
-    downloaded: list[str] = []
-
-    monkeypatch.setattr(
-        model_loader.nltk,
-        "download",
-        lambda resource, quiet: downloaded.append(resource),
-    )
-
-    model_loader.ensure_nltk_resources()
-
-    assert downloaded == list(model_loader.NLTK_RESOURCES)
