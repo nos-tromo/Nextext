@@ -1,4 +1,4 @@
-"""Word-level analysis: counts and word clouds via spaCy + NLTK."""
+"""Word-level analysis: counts and word clouds via spaCy."""
 
 from collections import Counter
 

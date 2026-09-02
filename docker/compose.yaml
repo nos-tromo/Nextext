@@ -56,10 +56,9 @@ services:
       - /bin/sh
       - -c
       - >-
-        find /home/app/nltk_data /home/app/.cache/spacy /tmp
+        find /home/app/.cache/spacy /tmp
         -xdev ! -user 10001 -exec chown -h 10001:10001 {} +
     volumes:
-      - nltk-cache:/home/app/nltk_data
       - spacy-cache:/home/app/.cache/spacy
       - tmp-jobs:/tmp
     restart: "no"
@@ -104,7 +103,6 @@ services:
       WHISPER_MODEL: ${WHISPER_MODEL:-}
       # Explicit (match the volume mounts) rather than derived from $HOME
       # (deploy ADR 0001 — the non-root user's rootfs is read-only).
-      NLTK_DATA: /home/app/nltk_data
       SPACY_MODEL_DIR: /home/app/.cache/spacy
       # matplotlib config/font-cache dir; the default $HOME/.config/matplotlib
       # is on the read-only rootfs. /tmp is the writable disk-backed scratch
@@ -112,7 +110,6 @@ services:
       MPLCONFIGDIR: /tmp/matplotlib
     env_file: *env-file
     volumes:
-      - nltk-cache:/home/app/nltk_data
       - spacy-cache:/home/app/.cache/spacy
       - tmp-jobs:/tmp
     networks:
@@ -161,12 +158,10 @@ services:
         condition: service_healthy
 
 ##########################################################
-# Volumes — spaCy/NLTK language-resource caches only;
+# Volumes — the spaCy language-resource cache only;
 # model inference happens on external endpoints.
 ##########################################################
 volumes:
-  nltk-cache:
-    external: true
   spacy-cache:
     external: true
   # Disk-backed /tmp job workspace (scratch by nature, not external).

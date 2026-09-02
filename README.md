@@ -20,7 +20,7 @@ The recommended way to run Nextext is via Docker:
 
 ```bash
 make network    # create the external inference-net + edge-net (one-time per host)
-make volumes    # create the external nltk-cache + spacy-cache volumes (one-time per host)
+make volumes    # create the external spacy-cache volume (one-time per host)
 make build      # build the backend + frontend images
 make up-dev     # start both; frontend published on http://localhost:${NEXTEXT_HOST_PORT:-8501}/
 ```
@@ -56,7 +56,7 @@ uv sync
 ## Model resources
 
 The backend itself downloads no model weights — inference models live on the
-external endpoints. Only the spaCy / NLTK language resources are fetched
+external endpoints. Only the spaCy language resources are fetched
 locally, and `NEXTEXT_OFFLINE=1` (the default) skips even those:
 
 ```bash

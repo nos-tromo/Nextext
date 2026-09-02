@@ -2,12 +2,12 @@
 
 Nextext is built to ship to hosts with no internet access. Nothing is fetched
 at runtime: all model inference is an HTTP call to an endpoint you already
-operate, and the only assets downloaded locally are the spaCy / NLTK language
-resources, which are preloaded ahead of time and shipped as Docker volumes.
+operate, and the only assets downloaded locally are the spaCy language
+resources, which are preloaded ahead of time and shipped as a Docker volume.
 
 ## Offline usage
 
-`NEXTEXT_OFFLINE=1` is the default: spaCy / NLTK downloads are skipped and an
+`NEXTEXT_OFFLINE=1` is the default: spaCy downloads are skipped and an
 uncached spaCy model raises an actionable error instead of attempting a
 doomed download. Preload the caches on a connected host:
 
@@ -15,13 +15,12 @@ doomed download. Preload the caches on a connected host:
 NEXTEXT_OFFLINE=0 uv run load-models
 ```
 
-`load-models` preloads Nextext's NLTK resources and the configured spaCy
-packages — the only assets fetched locally; all model inference is remote.
+`load-models` preloads the configured spaCy packages — the only assets
+fetched locally; all model inference is remote.
 The legacy alias `uv run load-spacy-models` still works.
 
-Alternatively, ship the `nltk-cache` / `spacy-cache` volumes alongside the
-image bundle. Both are external Docker volumes created once per host with
-`make volumes`.
+Alternatively, ship the `spacy-cache` volume alongside the image bundle. It
+is an external Docker volume created once per host with `make volumes`.
 
 ## Bundling the images
 

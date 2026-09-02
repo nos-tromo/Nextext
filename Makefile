@@ -12,7 +12,7 @@
 
 REPO     := nextext
 NETWORKS := inference-net edge-net
-VOLUMES  := nltk-cache spacy-cache
+VOLUMES  := spacy-cache
 include make/common.mk
 
 .PHONY: help

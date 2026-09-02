@@ -13,7 +13,7 @@ load_dotenv()
 def is_offline() -> bool:
     """Report whether Nextext runs in offline mode (``NEXTEXT_OFFLINE``).
 
-    Offline mode gates the spaCy / NLTK resource downloads — the only
+    Offline mode gates the spaCy resource downloads — the only
     runtime downloads Nextext still performs; all model inference happens on
     external endpoints. Defaults to offline (``"1"``) so airgapped
     deployments are safe out of the box.
