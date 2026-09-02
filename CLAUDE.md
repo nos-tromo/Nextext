@@ -18,6 +18,10 @@ absolute paths or home directories such as `/Users/<name>/...`,
 permitted paths are relative project paths starting from the project's
 root (e.g. `docker/compose.yaml`).
 
+## Planning
+
+For any non-trivial change (>1 file or any root-cause fix), present a plan and wait for approval BEFORE editing code. Do not start with Edit/Write on a fresh investigation.
+
 ## Project Overview
 
 Nextext is a modular audio analysis toolkit that transcribes, translates, and analyzes natural language from audio/video files. All model inference runs on external endpoints: Whisper transcription via an OpenAI-compatible audio API, voice-activity detection (`/vad`), speaker diarization (`/diarize`), and GLiNER NER (`/gliner`) via dedicated out-of-process HTTP services, and LLMs (Ollama, vLLM, or OpenAI-compatible endpoints) for translation, summarization, and hate-speech detection. Only spaCy/NLTK word-level NLP runs in-process; every upload is re-encoded to 16 kHz mono FLAC via the PyAV wheel (bundled ffmpeg) before transcription. The backend ships no model weights and needs no GPU — PyAV is the only local media dependency, and no apt audio tooling is installed.
@@ -65,6 +69,8 @@ uv run pyrefly check
 Tests are in `tests/` using pytest with monkeypatch fixtures and `respx` for mocking the HTTP inference clients (Whisper, NER, diarization). Tests simulate Docker detection and environment configuration. No GPU, no network, and no model downloads required for tests.
 
 Several modules call `load_dotenv()` at import time (`nextext/utils/env_cfg.py`, `nextext/core/openai_cfg.py`, `nextext/core/words.py`, `nextext/utils/model_loader.py`), which copies a local, uncommitted `.env`'s values straight into the real process environment the first time one of those modules is imported — not into a test-scoped sandbox, and not reverted by `monkeypatch`. A developer `.env` with e.g. `RESPONSE_LANGUAGE=de` (a normal local-dev setup, see `.env.example`) then silently outranks any test asserting "unset" default behavior, for the rest of that pytest session. `tests/conftest.py` carries an autouse fixture that clears `RESPONSE_LANGUAGE`/`NEXTEXT_RESPONSE_LANGUAGE` before every test so the suite is hermetic against ambient `.env` state; add the same pattern there for any other env var a test needs to assume is unset by default.
+
+Before claiming a check is green, run the actual command and paste the output. `git ls-files` does not cover untracked files — use `pre-commit run --all-files`. After opening a PR, confirm CI actually triggered on the latest push before declaring done.
 
 ## Docstrings & Style
 
@@ -263,7 +269,15 @@ principal seam (`nextext/api/identity.py`) — production leaves
 `NEXTEXT_DEFAULT_IDENTITY` unset so requests without that header are rejected
 as unauthenticated; any dev-only fallback stays dev-only.
 
-## Commits
+## Git & PR Workflow
 
 - Prefer multiple small topical commits over a single catch-all commit.
 - Each commit message should describe a single logical change (refactor, fix, feat, docs, test).
+- Never commit directly to `main`; always branch (`feat/`, `fix/`) and open a PR.
+- Never create a NEW PR when an existing PR for the work is open — push additional commits to that branch.
+- Release order is strict: bump VERSION file -> commit -> tag. Never tag before the VERSION bump.
+- Use single, non-compound shell commands for `gh` operations (no `&&` chains); if `gh pr merge` is blocked, fall back to the GitHub MCP merge tool.
+
+## Communication Style
+
+Keep changes minimal and scoped. Do not add explanatory code comments for trivial or self-evident changes. Do not overwrite existing test files with Write — use Edit to append or modify tests.
