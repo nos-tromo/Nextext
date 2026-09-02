@@ -3,7 +3,7 @@ import { useLanguages } from '../../hooks/useLanguages'
 import { checkUploadAcceptable } from '../../lib/uploadGuard'
 import { readStoredTargetLang, writeStoredTargetLang } from '../../lib/targetLang'
 import { Dropzone } from './Dropzone'
-import { Banner, Button, FileList, Select, ToggleButton, mergeFiles } from '@infra/ui'
+import { Banner, Button, FileList, SelectMenu, ToggleButton, mergeFiles } from '@infra/ui'
 import { useT } from '../../i18n/LanguageContext'
 import type { JobOptions, Task } from '../../api/types'
 
@@ -79,31 +79,50 @@ export function UploadForm({ pending, onRun }: UploadFormProps) {
 
       {sizeError && <Banner variant="danger">{sizeError}</Banner>}
 
+      {/* The captions are spans, not labels: a picker's trigger is a button,
+          which a <label> cannot be tied to, and its text is the chosen value
+          rather than the name of the field. */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <label className="space-y-1">
-          <span className="text-sm text-muted-foreground">{t('options.task')}</span>
-          <Select className="w-full" value={task} onChange={(e) => setTask(e.target.value as Task)}>
-            <option value="transcribe">{t('options.task_transcribe')}</option>
-            <option value="translate">{t('options.task_translate')}</option>
-          </Select>
-        </label>
-        <label className="space-y-1">
-          <span className="text-sm text-muted-foreground">{t('options.source_language')}</span>
-          <Select className="w-full" value={srcLang} onChange={(e) => setSrcLang(e.target.value)}>
-            <option value="">{t('options.auto_detect')}</option>
-            {whisper.map((l) => (
-              <option key={l.code} value={l.code}>{l.name}</option>
-            ))}
-          </Select>
-        </label>
-        <label className="space-y-1">
-          <span className="text-sm text-muted-foreground">{t('options.target_language_translate')}</span>
-          <Select className="w-full" value={effectiveTrgLang} onChange={(e) => selectTrgLang(e.target.value)}>
-            {target.map((l) => (
-              <option key={l.code} value={l.code}>{l.name}</option>
-            ))}
-          </Select>
-        </label>
+        <div className="space-y-1">
+          <span className="block text-sm text-muted-foreground">{t('options.task')}</span>
+          <SelectMenu
+            variant="field"
+            label={t('options.task')}
+            options={[
+              { value: 'transcribe', label: t('options.task_transcribe') },
+              { value: 'translate', label: t('options.task_translate') },
+            ]}
+            value={task}
+            onChange={(value) => setTask(value as Task)}
+          />
+        </div>
+        <div className="space-y-1">
+          <span className="block text-sm text-muted-foreground">{t('options.source_language')}</span>
+          <SelectMenu
+            variant="field"
+            label={t('options.source_language')}
+            // Auto-detect stays a real option rather than a placeholder: there
+            // is no un-choosing here, so a run must be able to come back to it.
+            options={[
+              { value: '', label: t('options.auto_detect') },
+              ...whisper.map((l) => ({ value: l.code, label: l.name })),
+            ]}
+            value={srcLang}
+            onChange={setSrcLang}
+          />
+        </div>
+        <div className="space-y-1">
+          <span className="block text-sm text-muted-foreground">
+            {t('options.target_language_translate')}
+          </span>
+          <SelectMenu
+            variant="field"
+            label={t('options.target_language_translate')}
+            options={target.map((l) => ({ value: l.code, label: l.name }))}
+            value={effectiveTrgLang}
+            onChange={selectTrgLang}
+          />
+        </div>
       </div>
 
       {/* The options fill the form's width like the Run button under them, so

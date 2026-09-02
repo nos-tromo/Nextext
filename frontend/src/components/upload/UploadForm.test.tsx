@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { render, screen, waitFor, fireEvent } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import type { LanguagesResponse } from '../../api/types'
 import { TARGET_LANG_STORAGE_KEY } from '../../lib/targetLang'
@@ -28,8 +29,8 @@ function mountForm() {
   )
 }
 
-function targetSelect(): HTMLSelectElement {
-  return screen.getByText('Target language (translate)').parentElement!.querySelector('select')!
+function targetPicker(): HTMLElement {
+  return screen.getByRole('combobox', { name: 'Target language (translate)' })
 }
 
 afterEach(() => {
@@ -38,15 +39,27 @@ afterEach(() => {
 })
 
 describe('UploadForm target language', () => {
+  it('changes the target language and remembers it', async () => {
+    const user = userEvent.setup()
+    mountForm()
+    await waitFor(() => expect(targetPicker()).toHaveTextContent('English'))
+    await user.click(targetPicker())
+    await user.click(screen.getByRole('option', { name: 'German' }))
+    expect(targetPicker()).toHaveTextContent('German')
+    expect(localStorage.getItem(TARGET_LANG_STORAGE_KEY)).toBe('de')
+  })
+
   it('defaults to the backend default_target on a fresh browser', async () => {
     mountForm()
-    await waitFor(() => expect(targetSelect().value).toBe('en'))
+    // The trigger shows the language, not its code: reading it is reading
+    // what the operator actually sees the run being set to.
+    await waitFor(() => expect(targetPicker()).toHaveTextContent('English'))
   })
 
   it('restores the persisted selection across reloads', async () => {
     localStorage.setItem(TARGET_LANG_STORAGE_KEY, 'de')
     mountForm()
-    await waitFor(() => expect(targetSelect().value).toBe('de'))
+    await waitFor(() => expect(targetPicker()).toHaveTextContent('German'))
   })
 })
 
