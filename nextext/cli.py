@@ -339,7 +339,7 @@ def _keyframe_step(
     if not samples:
         logger.info("No keyframes sampled from '{}' (no video stream, or sampling is off).", args.file_path)
         return None
-    file_processor.write_keyframes([sample.jpeg for sample in samples])
+    file_processor.write_keyframes([sample.jpeg for sample in samples], [sample.time_sec for sample in samples])
 
     visual_cfg = load_visual_summary_env()
     if not visual_cfg.enabled:

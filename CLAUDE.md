@@ -101,7 +101,7 @@ Several modules call `load_dotenv()` at import time (`nextext/utils/env_cfg.py`,
 - `GET /jobs/{id}` — point-in-time snapshot (owner-scoped).
 - `GET /jobs/{id}/events` — SSE stream of stage transitions (owner-scoped); replays event history on connect so a reattached client resumes mid-run.
 - `GET /jobs/{id}/media?token=…` — the original upload, streamed for in-browser playback with HTTP Range (`206`) so the player can seek. Authorized by a per-job capability token, **not** by the principal: a `<video>`/`<audio>` element cannot attach the trusted header. The token is minted at job creation, handed out only on the owner-scoped snapshot (`JobResult.media_url`), kept off `GET /jobs`, and revoked by `DELETE`. Every failure is a `404` so a wrong token cannot probe which jobs exist.
-- `GET /jobs/{id}/artifacts/{name}` — binary download (transcript.csv/xlsx/txt, translation.txt, summary.txt, visual_context.txt, wordcounts.csv/xlsx, entities.csv/xlsx, wordcloud.png, keyframes.zip, hate_speech.csv/xlsx, docint.jsonl, archive.zip). Owner-scoped.
+- `GET /jobs/{id}/artifacts/{name}` — binary download (transcript.csv/xlsx/txt, translation.txt, summary.txt, visual_context.txt, wordcounts.csv/xlsx, entities.csv/xlsx, wordcloud.png, keyframes.zip, hate_speech.csv/xlsx, docint.jsonl, archive.zip). Owner-scoped. `keyframes.zip` also carries a `manifest.json` (`file`/`index`/`time_sec` per frame; `keyframes/manifest.json` inside `archive.zip`) so a consumer that reads frames without captions can still place each one in the clip — omitted rather than guessed when the times do not pair with the frames.
 - `DELETE /jobs/{id}` — cleanup (owner-scoped).
 - `GET /health`, `GET /languages` — meta endpoints.
 - `GET /metrics` — Prometheus exposition (aggregate request/latency counters plus the job-outcome counters below; no transcript or user data); unauthenticated, scraped by obs-plane over `inference-net`.
@@ -137,7 +137,8 @@ Identity is resolved per request by `resolve_principal`: the trusted header (`NE
 - `nextext/core/keyframes.py` — keyframe sampler: `extract_keyframe_samples`
   returns timestamped `Keyframe` objects spanning the clip's full duration;
   `extract_keyframes` is the bytes-only wrapper the `keyframes.zip` artifact
-  uses.
+  uses, and `keyframe_manifest` renders the frame/time index both the artifact
+  and the CLI write.
 - `nextext/core/sentence_segmentation.py` — sentence-restoration agent: for
   low-punctuation transcripts (e.g. Arabic), re-segments the word stream into
   one segment per sentence via `TEXT_MODEL` (`restore_sentence_segments`), which

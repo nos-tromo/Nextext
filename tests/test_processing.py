@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pandas as pd
@@ -136,6 +137,38 @@ def test_write_keyframes_lays_frames_out_like_the_archive(tmp_path: Path) -> Non
     assert written == processor.output_path / "clip_keyframes"
     assert sorted(p.name for p in written.iterdir()) == ["frame_000.jpg", "frame_001.jpg"]
     assert (written / "frame_001.jpg").read_bytes() == b"\xff\xd8b"
+
+
+def test_write_keyframes_writes_a_manifest_of_frame_times(tmp_path: Path) -> None:
+    """The frames directory names each frame's sampling time, as the zip does.
+
+    Args:
+        tmp_path (Path): Temporary directory fixture.
+    """
+    processor = FileProcessor(file_path=Path("clip.mp4"), output_dir=tmp_path)
+
+    written = processor.write_keyframes([b"\xff\xd8a", b"\xff\xd8b"], times=[0.0, 4.5])
+
+    assert written is not None
+    manifest = json.loads((written / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["frames"] == [
+        {"file": "frame_000.jpg", "index": 0, "time_sec": 0.0},
+        {"file": "frame_001.jpg", "index": 1, "time_sec": 4.5},
+    ]
+
+
+def test_write_keyframes_without_times_writes_no_manifest(tmp_path: Path) -> None:
+    """Frames sampled without times get no manifest rather than an empty one.
+
+    Args:
+        tmp_path (Path): Temporary directory fixture.
+    """
+    processor = FileProcessor(file_path=Path("clip.mp4"), output_dir=tmp_path)
+
+    written = processor.write_keyframes([b"\xff\xd8a"])
+
+    assert written is not None
+    assert not (written / "manifest.json").exists()
 
 
 def test_write_keyframes_writes_nothing_for_an_audio_file(tmp_path: Path) -> None:

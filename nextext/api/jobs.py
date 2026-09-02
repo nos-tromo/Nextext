@@ -516,6 +516,7 @@ def _run_pipeline_blocking(state: JobState, push_event: PushEvent) -> dict[str, 
     # sampled and downloadable, and skips the provider entirely.
     _notify(1)
     keyframes: list[bytes] = []
+    keyframe_times: list[float] = []
     captions: list[FrameCaption] = []
     # Pre-baked here (not in ``_serialize_result``) because ``state.job_id`` is
     # in scope; mirrors the ``_wordcloud_url`` pattern below.
@@ -527,6 +528,7 @@ def _run_pipeline_blocking(state: JobState, push_event: PushEvent) -> dict[str, 
             max_frames=opts.keyframes_max,
         )
         keyframes = [sample.jpeg for sample in keyframe_samples]
+        keyframe_times = [sample.time_sec for sample in keyframe_samples]
         visual_cfg = load_visual_summary_env()
         if visual_cfg.enabled and file_opts["visual_context"] and keyframe_samples:
             # Resolved outside the fail-soft guard: an unreachable provider is
@@ -579,6 +581,7 @@ def _run_pipeline_blocking(state: JobState, push_event: PushEvent) -> dict[str, 
             "skip_reason_code": reason_code,
             "task": file_opts["task"],
             "keyframes": keyframes,
+            "keyframe_times": keyframe_times,
             "_keyframes_url": keyframes_url,
             "frame_captions": captions or None,
         }
@@ -613,6 +616,7 @@ def _run_pipeline_blocking(state: JobState, push_event: PushEvent) -> dict[str, 
         "transcript_language": transcript_language,
         "task": file_opts["task"],
         "keyframes": keyframes,
+        "keyframe_times": keyframe_times,
         "_keyframes_url": keyframes_url,
         "frame_captions": captions or None,
     }

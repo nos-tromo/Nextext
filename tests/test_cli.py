@@ -9,6 +9,7 @@ and the final write — route through ``FileProcessor.write_transcript_output``
 from __future__ import annotations
 
 import argparse
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -30,12 +31,14 @@ class _SpyProcessor:
         self.transcript_writes: list[pd.DataFrame] = []
         self.file_output_labels: list[str] = []
         self.keyframe_writes: list[list[bytes]] = []
+        self.keyframe_time_writes: list[Sequence[float] | None] = []
 
     def write_transcript_output(self, data: pd.DataFrame) -> None:
         self.transcript_writes.append(data)
 
-    def write_keyframes(self, frames: list[bytes]) -> None:
+    def write_keyframes(self, frames: list[bytes], times: Sequence[float] | None = None) -> None:
         self.keyframe_writes.append(frames)
+        self.keyframe_time_writes.append(times)
 
     def write_file_output(self, data: Any, label: str, target_language: str = "") -> Any:
         self.file_output_labels.append(label)
@@ -281,6 +284,7 @@ def test_cli_summary_includes_visual_context_for_video(monkeypatch: pytest.Monke
     assert "visual_context" in processor.file_output_labels
     assert "summary" in processor.file_output_labels
     assert processor.keyframe_writes == [[b"\xff\xd8a"]]
+    assert processor.keyframe_time_writes == [[0.0]]
 
 
 def test_cli_audio_only_summary_writes_no_visual_context(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

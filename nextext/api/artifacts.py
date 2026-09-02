@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import io
 import zipfile
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, cast
 
@@ -19,6 +20,7 @@ from nextext.core.docint_transcript import (
     build_docint_jsonl,
     transcript_segments_from_df,
 )
+from nextext.core.keyframes import keyframe_manifest
 from nextext.core.visual_context import format_visual_context
 from nextext.pipeline import normalize_language_code, transcript_txt_exports
 
@@ -103,6 +105,12 @@ def _visual_context_text(result: dict[str, Any]) -> str:
     return format_visual_context(captions)
 
 
+def _keyframe_times(result: dict[str, Any]) -> Sequence[float] | None:
+    """Return the per-frame sampling times a job result carries, if any."""
+    times = result.get("keyframe_times")
+    return times if isinstance(times, Sequence) and not isinstance(times, str | bytes) else None
+
+
 def _render_archive_members(state: JobState) -> dict[str, bytes]:
     """Render every produced output for a job as ``name -> bytes`` members.
 
@@ -172,6 +180,9 @@ def _render_archive_members(state: JobState) -> dict[str, bytes]:
     if frames:
         for index, payload in enumerate(frames):
             members[f"keyframes/frame_{index:03d}.jpg"] = payload
+        manifest = keyframe_manifest(_keyframe_times(result), len(frames))
+        if manifest is not None:
+            members["keyframes/manifest.json"] = manifest
 
     state.archive_members_cache = members
     return members
@@ -440,6 +451,9 @@ def render_artifact(state: JobState, name: str) -> tuple[bytes, str] | None:
         if not frames:
             return None
         members = [(f"frame_{index:03d}.jpg", payload) for index, payload in enumerate(frames)]
+        manifest = keyframe_manifest(_keyframe_times(result), len(frames))
+        if manifest is not None:
+            members.append(("manifest.json", manifest))
         return _zip_members(members), _APP_ZIP
     return None
 

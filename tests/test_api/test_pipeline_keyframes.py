@@ -54,6 +54,7 @@ def test_pipeline_populates_keyframes(monkeypatch: pytest.MonkeyPatch, tmp_path:
     result = _run_pipeline_blocking(state, lambda *a, **k: None)
     assert result["keyframes"] == [b"\xff\xd8\xff0", b"\xff\xd8\xff1"]
     assert result["_keyframes_url"] == f"/api/v1/jobs/{state.job_id}/artifacts/keyframes.zip"
+    assert result["keyframe_times"] == [0.0, 5.0]
 
 
 def test_pipeline_empty_transcript_still_sets_keyframes(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

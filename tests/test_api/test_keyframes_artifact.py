@@ -5,6 +5,7 @@ subfolder that ``archive.zip`` nests frames under.
 """
 
 import io
+import json
 import zipfile
 from pathlib import Path
 
@@ -16,7 +17,10 @@ from nextext.api.schemas import JobOptions, JobStatus
 from nextext.core.visual_context import FrameCaption
 
 
-def _job_with_keyframes(frames: list[bytes]) -> JobState:
+def _job_with_keyframes(frames: list[bytes], times: list[float] | None = None) -> JobState:
+    result: dict[str, object] = {"keyframes": frames}
+    if times is not None:
+        result["keyframe_times"] = times
     return JobState(
         job_id="j1",
         owner_id="o",
@@ -25,7 +29,7 @@ def _job_with_keyframes(frames: list[bytes]) -> JobState:
         source_file_hash="sha256:x",
         options=JobOptions.model_validate({}),
         status=JobStatus.COMPLETED,
-        result={"keyframes": frames},
+        result=result,
     )
 
 
@@ -104,6 +108,55 @@ def test_archive_zip_absent_when_job_produced_nothing() -> None:
     reads as a real but empty result.
     """
     assert artifacts.render_artifact(_job_with_keyframes([]), "archive.zip") is None
+
+
+# ---------------------------------------------------------------------------
+# manifest.json — the time each frame was sampled from
+# ---------------------------------------------------------------------------
+
+
+def test_keyframes_zip_carries_a_manifest_of_frame_times() -> None:
+    """The zip names each frame's sampling time so a reader can place it in the clip."""
+    frames = [b"\xff\xd8\xff0", b"\xff\xd8\xff1"]
+    rendered = artifacts.render_artifact(_job_with_keyframes(frames, [0.0, 12.5]), "keyframes.zip")
+    assert rendered is not None
+    payload, _content_type = rendered
+    with zipfile.ZipFile(io.BytesIO(payload)) as zf:
+        manifest = json.loads(zf.read("manifest.json"))
+    assert manifest["frames"] == [
+        {"file": "frame_000.jpg", "index": 0, "time_sec": 0.0},
+        {"file": "frame_001.jpg", "index": 1, "time_sec": 12.5},
+    ]
+
+
+def test_keyframes_zip_omits_the_manifest_without_times() -> None:
+    """No times means no manifest, rather than one claiming times it does not have."""
+    rendered = artifacts.render_artifact(_job_with_keyframes([b"\xff\xd8\xff0"]), "keyframes.zip")
+    assert rendered is not None
+    payload, _content_type = rendered
+    with zipfile.ZipFile(io.BytesIO(payload)) as zf:
+        assert zf.namelist() == ["frame_000.jpg"]
+
+
+def test_keyframes_zip_omits_the_manifest_on_a_length_mismatch() -> None:
+    """A times list that does not pair with the frames is dropped, never guessed."""
+    frames = [b"\xff\xd8\xff0", b"\xff\xd8\xff1"]
+    rendered = artifacts.render_artifact(_job_with_keyframes(frames, [3.0]), "keyframes.zip")
+    assert rendered is not None
+    payload, _content_type = rendered
+    with zipfile.ZipFile(io.BytesIO(payload)) as zf:
+        assert "manifest.json" not in zf.namelist()
+
+
+def test_archive_zip_nests_the_manifest_with_the_frames() -> None:
+    """The combined archive carries the manifest inside its ``keyframes/`` folder."""
+    frames = [b"\xff\xd8\xff0"]
+    rendered = artifacts.render_artifact(_job_with_keyframes(frames, [7.25]), "archive.zip")
+    assert rendered is not None
+    payload, _content_type = rendered
+    with zipfile.ZipFile(io.BytesIO(payload)) as zf:
+        manifest = json.loads(zf.read("clip/keyframes/manifest.json"))
+    assert manifest["frames"] == [{"file": "frame_000.jpg", "index": 0, "time_sec": 7.25}]
 
 
 # ---------------------------------------------------------------------------

@@ -1,5 +1,6 @@
 """CLI-side file I/O helpers and per-format export rendering."""
 
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -7,6 +8,7 @@ import pandas as pd
 from loguru import logger
 from matplotlib.figure import Figure
 
+from nextext.core.keyframes import keyframe_manifest
 from nextext.pipeline import transcript_txt_exports
 
 
@@ -132,15 +134,17 @@ class FileProcessor:
 
         return data
 
-    def write_keyframes(self, frames: list[bytes]) -> Path | None:
+    def write_keyframes(self, frames: list[bytes], times: Sequence[float] | None = None) -> Path | None:
         """Write sampled video keyframes as JPEG files in their own directory.
 
         The frames land in ``{filename}_keyframes/frame_NNN.jpg``, mirroring
         the layout the API's ``keyframes.zip`` artifact uses, so a CLI run and
-        a downloaded archive are laid out the same way.
+        a downloaded archive are laid out the same way — ``manifest.json``
+        included when the sampling times are known.
 
         Args:
             frames (list[bytes]): JPEG payloads in sampling order.
+            times (Sequence[float] | None): Sampling time of each frame.
 
         Returns:
             Path | None: The directory written, or ``None`` when there were no
@@ -152,6 +156,9 @@ class FileProcessor:
         frames_dir.mkdir(parents=True, exist_ok=True)
         for index, payload in enumerate(frames):
             (frames_dir / f"frame_{index:03d}.jpg").write_bytes(payload)
+        manifest = keyframe_manifest(times, len(frames))
+        if manifest is not None:
+            (frames_dir / "manifest.json").write_bytes(manifest)
         logger.info("Saved {} keyframe(s): {}", len(frames), frames_dir)
         return frames_dir
 
