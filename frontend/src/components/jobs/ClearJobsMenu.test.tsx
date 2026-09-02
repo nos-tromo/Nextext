@@ -61,8 +61,15 @@ describe('ClearJobsMenu', () => {
   it('disables "Clear finished" when only active jobs exist', () => {
     renderMenu(<ClearJobsMenu jobs={[mkJob('a', 'running'), mkJob('b', 'queued')]} />)
     fireEvent.click(screen.getByRole('button', { name: /Clear jobs/ }))
-    expect(screen.getByRole('menuitem', { name: 'Clear finished (0)' })).toBeDisabled()
-    expect(screen.getByRole('menuitem', { name: 'Clear all (2)' })).toBeEnabled()
+    const finished = screen.getByRole('menuitem', { name: 'Clear finished (0)' })
+    // `aria-disabled`, not the attribute: a disabled button shows no tooltip,
+    // and the row still has to be able to say why it is unavailable.
+    expect(finished).toHaveAttribute('aria-disabled', 'true')
+    fireEvent.click(finished)
+    expect(screen.queryByRole('button', { name: 'Clear' })).toBeNull()
+    expect(screen.getByRole('menuitem', { name: 'Clear all (2)' })).not.toHaveAttribute(
+      'aria-disabled',
+    )
   })
 
   it('deletes every job on confirmed "Clear all"', async () => {
@@ -107,20 +114,43 @@ describe('ClearJobsMenu', () => {
     await waitFor(() => expect(screen.getByText('Cleared 1 of 2; 1 failed')).toBeInTheDocument())
   })
 
-  it('closes on Escape', () => {
+  it('closes on Escape, and only this layer', () => {
+    const onAncestorKey = vi.fn()
+    renderMenu(
+      <div onKeyDown={onAncestorKey}>
+        <ClearJobsMenu jobs={[mkJob('a', 'completed')]} />
+      </div>,
+    )
+    const trigger = screen.getByRole('button', { name: /Clear jobs/ })
+    fireEvent.click(trigger)
+    // Opening moves focus onto the first item, so Escape is pressed there —
+    // the menu catches it itself rather than listening on `document`, which is
+    // what stops one press from also closing a dialog around it.
+    fireEvent.keyDown(document.activeElement!, { key: 'Escape' })
+    expect(screen.queryByRole('menu')).toBeNull()
+    expect(trigger).toHaveFocus()
+    expect(onAncestorKey).not.toHaveBeenCalled()
+  })
+
+  it('closes on an outside press', () => {
     renderMenu(<ClearJobsMenu jobs={[mkJob('a', 'completed')]} />)
     fireEvent.click(screen.getByRole('button', { name: /Clear jobs/ }))
     expect(screen.getByRole('menu')).toBeInTheDocument()
-    fireEvent.keyDown(document, { key: 'Escape' })
+    fireEvent.mouseDown(document.body)
     expect(screen.queryByRole('menu')).toBeNull()
   })
 
-  it('closes on outside pointerdown', () => {
+  it('forgets a pending confirmation when it closes', () => {
     renderMenu(<ClearJobsMenu jobs={[mkJob('a', 'completed')]} />)
-    fireEvent.click(screen.getByRole('button', { name: /Clear jobs/ }))
-    expect(screen.getByRole('menu')).toBeInTheDocument()
-    fireEvent.pointerDown(document.body)
-    expect(screen.queryByRole('menu')).toBeNull()
+    const trigger = screen.getByRole('button', { name: /Clear jobs/ })
+    fireEvent.click(trigger)
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Clear all (1)' }))
+    expect(screen.getByRole('button', { name: 'Clear' })).toBeInTheDocument()
+    fireEvent.mouseDown(document.body)
+    fireEvent.click(trigger)
+    // Reopening on yesterday's question, one click from destroying the list,
+    // is the failure mode this guards.
+    expect(screen.getByRole('menuitem', { name: 'Clear all (1)' })).toBeInTheDocument()
   })
 
   it('invalidates the jobs query after a confirmed clear', async () => {
