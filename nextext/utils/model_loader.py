@@ -216,9 +216,6 @@ def main() -> None:
     for model_id in get_spacy_model_ids():
         try:
             download_spacy_model(model_id)
-        # An unwritable cache is a precondition, not a per-model fault: the
-        # remaining models cannot succeed, and aggregating repeats one cause
-        # 25 times.
         except PermissionError:
             raise
         except Exception as exc:

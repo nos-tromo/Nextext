@@ -37,7 +37,6 @@ help:
 	@echo "  make test       run pytest + vitest (test-backend / test-frontend for one)"
 
 # Fill the spacy-cache volume on a connected host. Runs through compose so the
-# volume-permissions service chowns the fresh (root-owned) volume first; a bare
-# `docker run` skips that and every install fails on permissions.
+# volume-permissions service chowns the fresh (root-owned) volume first.
 preload:
 	$(COMPOSE) run --rm --no-TTY -e NEXTEXT_OFFLINE=0 backend load-models
