@@ -47,7 +47,6 @@ Repository = "https://github.com/nos-tromo/Nextext.git"
 
 [project.scripts]
 load-models = "nextext.utils.model_loader:main"
-load-spacy-models = "nextext.utils.model_loader:main"
 nextext-api = "nextext.api.main:run"
 nextext-cli = "nextext.cli:main"
 

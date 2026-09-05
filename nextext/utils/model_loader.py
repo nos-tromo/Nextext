@@ -150,6 +150,7 @@ def download_spacy_model(model_id: str) -> None:
     Raises:
         FileNotFoundError: If offline mode is enabled and the model is not
             already cached.
+        PermissionError: If the cache directory is not writable.
         subprocess.CalledProcessError: If the subprocess command fails.
     """
     model_dir = ensure_spacy_model_path()
@@ -161,6 +162,15 @@ def download_spacy_model(model_id: str) -> None:
         raise FileNotFoundError(
             f"spaCy model '{model_id}' is not cached in '{model_dir}' and offline mode is active. "
             "Run 'load-models' with NEXTEXT_OFFLINE=0 on a connected host, or ship the cache volume."
+        )
+
+    # pip reports an unwritable --target as a bare exit status per model, so
+    # without this the whole preload reads as 25 stacked subprocess errors.
+    if not os.access(model_dir, os.W_OK):
+        raise PermissionError(
+            f"spaCy cache '{model_dir}' is not writable by uid {os.geteuid()}. A freshly created "
+            "Docker volume is root-owned; 'make preload' runs the preload through compose, whose "
+            "volume-permissions service chowns it first."
         )
 
     download_url = get_spacy_model_download_url(model_id)
@@ -197,6 +207,7 @@ def main() -> None:
     """Preload Nextext's spaCy language resources.
 
     Raises:
+        PermissionError: If the cache directory is not writable.
         RuntimeError: If any preload operation fails.
     """
     failures: list[str] = []
@@ -205,6 +216,11 @@ def main() -> None:
     for model_id in get_spacy_model_ids():
         try:
             download_spacy_model(model_id)
+        # An unwritable cache is a precondition, not a per-model fault: the
+        # remaining models cannot succeed, and aggregating repeats one cause
+        # 25 times.
+        except PermissionError:
+            raise
         except Exception as exc:
             failures.append(f"spaCy {model_id} ({exc})")
 

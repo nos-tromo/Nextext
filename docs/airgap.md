@@ -9,18 +9,30 @@ resources, which are preloaded ahead of time and shipped as a Docker volume.
 
 `NEXTEXT_OFFLINE=1` is the default: spaCy downloads are skipped and an
 uncached spaCy model raises an actionable error instead of attempting a
-doomed download. Preload the caches on a connected host:
+doomed download. Fill the cache on a connected host:
+
+```bash
+make preload
+```
+
+`load-models` preloads the configured spaCy packages — the only assets
+fetched locally; all model inference is remote. It is a download-once step:
+the packages live in the external `spacy-cache` volume (`make volumes`) and
+survive image upgrades, so a release bundle never carries them.
+
+`make preload` runs the command in a one-off container **through compose**,
+which matters on a fresh volume: a newly created Docker volume is root-owned
+and the backend runs as uid 10001, so the compose `volume-permissions`
+service has to chown it first. A bare `docker run` skips that and every
+install fails on permissions. On a `uv run` host, run the command directly
+instead:
 
 ```bash
 NEXTEXT_OFFLINE=0 uv run load-models
 ```
 
-`load-models` preloads the configured spaCy packages — the only assets
-fetched locally; all model inference is remote.
-The legacy alias `uv run load-spacy-models` still works.
-
-Alternatively, ship the `spacy-cache` volume alongside the image bundle. It
-is an external Docker volume created once per host with `make volumes`.
+Alternatively, ship the populated `spacy-cache` volume alongside the image
+bundle.
 
 ## Bundling the images
 

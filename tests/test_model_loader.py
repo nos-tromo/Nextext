@@ -106,6 +106,67 @@ def test_download_spacy_model_uses_persistent_target(
     ]
 
 
+def test_download_spacy_model_names_the_unwritable_cache(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """An unwritable cache is reported before pip is invoked.
+
+    A freshly created Docker volume is root-owned, so pip fails per model
+    with a bare exit status and the preload reads as a wall of stacked
+    subprocess errors. The cause has to be named once, up front.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): The pytest fixture for modifying environment variables and functions.
+        tmp_path (Path): The pytest fixture providing a temporary directory for testing.
+    """
+    cache_dir = tmp_path / "spacy-cache"
+    monkeypatch.setenv(model_loader.SPACY_MODEL_DIR, str(cache_dir))
+    monkeypatch.setenv("NEXTEXT_OFFLINE", "0")
+
+    def fail_run(cmd: list[str], check: bool) -> None:
+        """Fail the test if pip is reached.
+
+        Args:
+            cmd (list[str]): The command subprocess.run was asked to execute.
+            check (bool): Included for signature compatibility.
+        """
+        raise AssertionError("pip must not be invoked when the cache is unwritable")
+
+    monkeypatch.setattr(model_loader.subprocess, "run", fail_run)
+    monkeypatch.setattr(model_loader.os, "access", lambda path, mode: False)
+
+    with pytest.raises(PermissionError, match="make preload"):
+        model_loader.download_spacy_model("en_core_web_sm")
+
+
+def test_main_stops_at_the_first_permission_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One unwritable cache is reported once, not once per model.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): The pytest fixture for modifying environment variables and functions.
+    """
+    attempts: list[str] = []
+
+    def fake_download(model_id: str) -> None:
+        """Record the attempt, then fail as an unwritable cache would.
+
+        Args:
+            model_id (str): The spaCy model being downloaded.
+        """
+        attempts.append(model_id)
+        raise PermissionError("spaCy cache '/cache' is not writable by uid 10001. ... 'make preload' ...")
+
+    monkeypatch.setattr(model_loader, "download_spacy_model", fake_download)
+
+    with pytest.raises(PermissionError, match="not writable"):
+        model_loader.main()
+
+    assert len(attempts) == 1
+
+
 def test_get_spacy_model_package_version_uses_override(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

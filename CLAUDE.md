@@ -47,7 +47,7 @@ make build && make up-dev  # Docker: build images, then run detached; publishes 
 # cd frontend && pnpm dev  # local Vite dev server (proxies /api/v1 to localhost:8000)
 
 # Preload spaCy language resources (the only local downloads)
-NEXTEXT_OFFLINE=0 uv run load-models
+make preload
 
 # Tests
 uv run pytest              # run full test suite

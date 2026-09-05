@@ -60,7 +60,7 @@ external endpoints. Only the spaCy language resources are fetched
 locally, and `NEXTEXT_OFFLINE=1` (the default) skips even those:
 
 ```bash
-NEXTEXT_OFFLINE=0 uv run load-models
+make preload
 ```
 
 Preload them on a connected host before shipping to a disconnected one — see
