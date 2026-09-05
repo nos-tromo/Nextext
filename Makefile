@@ -15,7 +15,7 @@ NETWORKS := inference-net edge-net
 VOLUMES  := spacy-cache
 include make/common.mk
 
-.PHONY: help
+.PHONY: help preload
 
 help:
 	@echo "nextext — build-host helpers"
@@ -31,6 +31,12 @@ help:
 	@echo "  make stop       stop the containers"
 	@echo "  make down       stop + remove the containers"
 	@echo "  make logs       tail combined logs"
+	@echo "  make preload    fill the spacy-cache volume (connected host, one-off container)"
 	@echo "  make pre-commit run pre-commit hooks (ruff + pyrefly)"
 	@echo "  make verify     pre-push gate: pre-commit + frontend lint/build; mirrors CI's lint gate"
 	@echo "  make test       run pytest + vitest (test-backend / test-frontend for one)"
+
+# Fill the spacy-cache volume on a connected host. Runs through compose so the
+# volume-permissions service chowns the fresh (root-owned) volume first.
+preload:
+	$(COMPOSE) run --rm --no-TTY -e NEXTEXT_OFFLINE=0 backend load-models
