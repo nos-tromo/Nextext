@@ -25,7 +25,9 @@ export const MAX_RECONNECTS = 5
  * views (completed count, batch download) refresh.
  *
  * Reconnects on a dropped stream up to {@link MAX_RECONNECTS} consecutive times;
- * any received event resets the budget. Cleans up on unmount via AbortController.
+ * any received event resets the budget. Cleans up on unmount via AbortController,
+ * and by cancelling any in-flight reconnect wait so the loop unwinds immediately
+ * instead of holding a timer (and this closure) alive for the rest of the delay.
  */
 export function useOwnerJobStream(): void {
   const queryClient = useQueryClient()
@@ -34,6 +36,9 @@ export function useOwnerJobStream(): void {
     const controller = new AbortController()
     let cancelled = false
     let reconnects = 0
+    // Set while the loop is sleeping between reconnect attempts; clears the
+    // pending timer and resolves the wait so cleanup does not have to outlive it.
+    let cancelReconnectWait: (() => void) | undefined
     // Per-job fold state and terminal-dedupe, retained across reconnects so a
     // replayed history re-reduces onto the same monotonic progress.
     const states = new Map<string, JobProgress>()
@@ -66,7 +71,14 @@ export function useOwnerJobStream(): void {
         if (!cancelled) {
           reconnects += 1
           if (reconnects > MAX_RECONNECTS) return
-          await new Promise((resolve) => setTimeout(resolve, RECONNECT_DELAY_MS))
+          await new Promise<void>((resolve) => {
+            const timer = setTimeout(resolve, RECONNECT_DELAY_MS)
+            cancelReconnectWait = () => {
+              clearTimeout(timer)
+              resolve()
+            }
+          })
+          cancelReconnectWait = undefined
         }
       }
     }
@@ -75,6 +87,7 @@ export function useOwnerJobStream(): void {
     return () => {
       cancelled = true
       controller.abort()
+      cancelReconnectWait?.()
     }
   }, [queryClient])
 }

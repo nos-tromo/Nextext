@@ -102,7 +102,7 @@ export function VisualContextTab({ jobId, result, stem, fileName, mediaUrl }: Vi
           <tbody>
             {captions.map((caption, i) => (
               <tr
-                key={i}
+                key={caption.time_sec}
                 ref={i === activeIndex ? activeRowRef : undefined}
                 aria-current={i === activeIndex ? 'true' : undefined}
                 className={cn(

@@ -54,9 +54,9 @@ describe('Home German locale', () => {
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
     render(
       <QueryClientProvider client={qc}>
-        <LanguageContext.Provider value="de">
+        <LanguageContext value="de">
           <Home />
-        </LanguageContext.Provider>
+        </LanguageContext>
       </QueryClientProvider>,
     )
     expect(screen.getByText('Neuer Auftrag')).toBeInTheDocument()
