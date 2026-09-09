@@ -74,6 +74,10 @@ export function TranscriptTab({ jobId, segments, stem, fileName, mediaUrl }: Tra
           <tbody>
             {segments.map((seg, i) => (
               <tr
+                // Transcript segments are an ordered sequence with no id, rendered from
+                // an immutable result that never reorders, and the rows hold no state —
+                // the index is the stable identity.
+                // eslint-disable-next-line @eslint-react/no-array-index-key
                 key={i}
                 ref={i === activeIndex ? activeRowRef : undefined}
                 aria-current={i === activeIndex ? 'true' : undefined}

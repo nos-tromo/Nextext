@@ -35,8 +35,8 @@ export function EntitiesTab({ jobId, result, stem }: EntitiesTabProps) {
             </tr>
           </thead>
           <tbody>
-            {result.named_entities.map((ne, i) => (
-              <tr key={i} className="border-b border-border last:border-0 hover:bg-accent/40">
+            {result.named_entities.map((ne) => (
+              <tr key={`${ne.entity}\u0000${ne.category}`} className="border-b border-border last:border-0 hover:bg-accent/40">
                 <td className="px-4 py-2 text-foreground">{ne.entity}</td>
                 <td className="px-4 py-2 text-muted-foreground">{ne.category}</td>
                 <td className="px-4 py-2 text-right tabular-nums text-foreground">{ne.frequency}</td>

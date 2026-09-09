@@ -39,8 +39,8 @@ export function WordCountsTab({ jobId, result, stem }: WordCountsTabProps) {
             </tr>
           </thead>
           <tbody>
-            {result.word_counts.map((wc, i) => (
-              <tr key={i} className="border-b border-border last:border-0 hover:bg-accent/40">
+            {result.word_counts.map((wc) => (
+              <tr key={wc.word} className="border-b border-border last:border-0 hover:bg-accent/40">
                 <td className="whitespace-nowrap px-4 py-2 font-mono text-foreground">{wc.word}</td>
                 <td aria-hidden="true" className="w-full py-2 pr-2">
                   <div className="h-2 w-full rounded-sm bg-muted">

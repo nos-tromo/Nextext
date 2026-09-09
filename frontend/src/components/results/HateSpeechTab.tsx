@@ -43,6 +43,9 @@ export function HateSpeechTab({ jobId, result, stem }: HateSpeechTabProps) {
       </p>
       <ul className="space-y-3">
         {result.hate_speech_findings.map((finding, i) => (
+          // Findings carry no id, and the list renders from an immutable result that
+          // never reorders; the rows hold no state, so the index is the identity.
+          // eslint-disable-next-line @eslint-react/no-array-index-key
           <li key={i} className="rounded-md border border-border p-4">
             <div className="flex items-center gap-2">
               <span
