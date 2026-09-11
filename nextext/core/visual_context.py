@@ -183,6 +183,8 @@ def describe_keyframes(
 
     if failures:
         logger.warning("Captioned {} of {} keyframes ({} failed).", len(captions), len(selected), failures)
+    else:
+        logger.info("Captioned {} of {} keyframes.", len(captions), len(selected))
     return captions
 
 

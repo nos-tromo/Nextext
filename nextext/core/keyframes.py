@@ -109,6 +109,7 @@ def extract_keyframe_samples(file_path: Path, *, per_minute: int = 4, max_frames
     try:
         with av.open(str(file_path)) as container:
             if not container.streams.video:
+                logger.info("No video stream in '{}'; keyframe sampling skipped.", file_path.name)
                 return []
             stream = container.streams.video[0]
             stream.codec_context.skip_frame = "NONKEY"
@@ -120,6 +121,7 @@ def extract_keyframe_samples(file_path: Path, *, per_minute: int = 4, max_frames
                 packet.pts for packet in container.demux(stream) if packet.is_keyframe and packet.pts is not None
             ]
             if not keyframe_pts:
+                logger.info("No keyframes found in '{}'.", file_path.name)
                 return []
             # Evenly select ``target`` keyframes spanning the full duration.
             selected = subsample(sorted(keyframe_pts), target)
@@ -131,6 +133,13 @@ def extract_keyframe_samples(file_path: Path, *, per_minute: int = 4, max_frames
                     frame.to_image().save(buffer, format="JPEG")
                     frames.append(Keyframe(time_sec=_frame_time(frame, pts, stream), jpeg=buffer.getvalue()))
                     break
+            logger.info(
+                "Sampled {} keyframes from '{}' (duration={:.0f}s, target={}).",
+                len(frames),
+                file_path.name,
+                duration_sec,
+                target,
+            )
     except (FFmpegError, ValueError, OSError) as exc:
         logger.warning("Keyframe extraction failed for {}: {}", file_path.name, exc)
     return frames
