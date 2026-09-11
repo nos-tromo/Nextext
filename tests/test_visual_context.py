@@ -194,6 +194,21 @@ def test_describe_keyframes_captions_every_frame_in_order() -> None:
     assert [c.time_sec for c in captions] == [0.0, 10.0, 20.0]
 
 
+def test_describe_keyframes_logs_caption_count() -> None:
+    """A clean run reports its caption count at INFO, not only failures."""
+    from loguru import logger
+
+    pipeline = _FakePipeline(["a hallway", "a whiteboard", "a street"])
+    lines: list[str] = []
+    handler_id = logger.add(lines.append, level="INFO", format="{message}")
+    try:
+        describe_keyframes(_frames(3), pipeline, max_frames=10, max_side=512)
+    finally:
+        logger.remove(handler_id)
+
+    assert any("Captioned 3 of 3 keyframes." in line for line in lines)
+
+
 def test_describe_keyframes_sends_one_image_per_request() -> None:
     """Each request carries exactly the frame being described."""
     pipeline = _FakePipeline(["one", "two"])
