@@ -29,7 +29,7 @@ Nextext is a modular audio analysis toolkit that transcribes, translates, and an
 ## Project Context
 
 - Local ML runtimes (openai-whisper, pyannote, GLiNER, Silero VAD, torch) have been removed; every model call is an HTTP request to an external endpoint. `tests/test_no_torch.py` pins the no-torch invariant — camel-tools' torch/transformers requirements are excluded via `[tool.uv] override-dependencies`.
-- Docker base image is the pinned `ghcr.io/astral-sh/uv:*-python3.12-trixie-slim` across backend and frontend Dockerfiles.
+- Docker base images are digest-pinned on the `FROM` lines and Dependabot-bumped: the backend builds and runs on `python:3.12-slim-trixie` (uv is copied in from `ghcr.io/astral-sh/uv` for the build stage only), the frontend on `node:22-alpine` / `nginx-unprivileged:1.27-alpine`.
 
 ## Commands
 
