@@ -550,6 +550,7 @@ def _run_pipeline_blocking(state: JobState, push_event: PushEvent) -> dict[str, 
                 captions = []
         _complete(1, {"keyframes": len(keyframes), "frame_captions": len(captions)})
     else:
+        logger.info("Job {} keyframes not requested.", state.job_id)
         _complete(1, {"skipped": True})
 
     visual_context = format_visual_context(captions) if captions else None

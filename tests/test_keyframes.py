@@ -221,6 +221,22 @@ def test_extract_keyframes_returns_sample_jpegs(tmp_path: Path) -> None:
     assert frames == [s.jpeg for s in samples]
 
 
+def test_extract_keyframe_samples_logs_sample_count(tmp_path: Path) -> None:
+    """A successful run reports how many frames it sampled at INFO."""
+    from loguru import logger
+
+    video = tmp_path / "ramp.mkv"
+    _make_mjpeg_ramp(video, n_frames=30, fps=1)
+    lines: list[str] = []
+    handler_id = logger.add(lines.append, level="INFO", format="{message}")
+    try:
+        samples = extract_keyframe_samples(video, per_minute=60, max_frames=6)
+    finally:
+        logger.remove(handler_id)
+
+    assert any(f"Sampled {len(samples)} keyframes from 'ramp.mkv'" in line for line in lines)
+
+
 def test_extract_keyframe_samples_failsoft_on_audio_only(tmp_path: Path) -> None:
     """A file with no video stream yields no samples rather than raising."""
     wav = tmp_path / "silence.wav"
