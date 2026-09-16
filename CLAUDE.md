@@ -29,7 +29,8 @@ Nextext is a modular audio analysis toolkit that transcribes, translates, and an
 ## Project Context
 
 - Local ML runtimes (openai-whisper, pyannote, GLiNER, Silero VAD, torch) have been removed; every model call is an HTTP request to an external endpoint. `tests/test_no_torch.py` pins the no-torch invariant — camel-tools' torch/transformers requirements are excluded via `[tool.uv] override-dependencies`.
-- Docker base images are digest-pinned on the `FROM` lines and Dependabot-bumped: the backend builds and runs on `python:3.12-slim-trixie` (uv is copied in from `ghcr.io/astral-sh/uv` for the build stage only), the frontend on `node:22-alpine` / `nginx-unprivileged:1.27-alpine`.
+- Docker base images are digest-pinned on the `FROM` lines and Dependabot-bumped, with one deliberate exception: the backend builds and runs on the `python:3.12-slim-trixie` line (uv is copied in from `ghcr.io/astral-sh/uv` for the build stage only), and that interpreter line is fixed by `requires-python`, `uv.lock` and the CI matrix — the builder runs `uv` with `UV_PYTHON_DOWNLOADS=0`, so any other `python:*` tag fails `uv sync` by construction. `.github/dependabot.yml` therefore ignores minor/major bumps of `library/python` and only its digest refreshes; moving to another Python is a migration (lockfile, wheels, CI matrix, Dockerfile, docs), never an automated bump.
+- The frontend builds on the current `node:*-alpine` and is served by `nginx-unprivileged:*-alpine`; both move freely with Dependabot. Node ≥25 images ship no Corepack, so the builder installs pnpm with `npm install -g pnpm@<pin>` — keep that pin in step with `packageManager` in `frontend/package.json` and `pnpm-version` in `.github/workflows/ci.yml`.
 
 ## Commands
 
