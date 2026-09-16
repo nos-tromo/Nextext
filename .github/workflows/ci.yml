@@ -27,5 +27,5 @@ jobs:
       frontend-build: true
       frontend-dir: 'frontend'
       frontend-lint: true
-      node-version: '22'
+      node-version: '26'
       pnpm-version: '9.12.0'
