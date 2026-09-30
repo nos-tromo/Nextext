@@ -50,6 +50,8 @@ HS_OUTPUT_TOKENS_PER_ROW: int = 80
 _REASON_MAX_CHARS: int = 500
 _TRANSLATION_PREFIX: str = "\n    → "
 _EMPTY_BLOCK: str = "—"
+_MIN_ROW_CHARS: int = 2048
+"""A labelled row is never clipped below this, however small the core budget (the old per-row cap)."""
 _PLACEHOLDER_RE = re.compile(r"\{(language|context_before|segments|context_after|first_index|last_index)\}")
 _THINK_BLOCK_RE = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
 _THINK_CLOSE: str = "</think>"
@@ -188,7 +190,9 @@ def next_window(lines: Sequence[TranscriptLine], start: int, core_chars: int, co
 
     The core takes rows while their rendered cost fits ``core_chars``, but
     always at least one row, so a sweep always advances (an oversized row is
-    clipped in the prompt and labelled alone). Context margins walk outward
+    labelled alone). A labelled row is clipped only beyond
+    ``max(core_chars, 2048)`` characters, so even a tiny core shows it whole.
+    Context margins walk outward
     from the core on both sides: the adjacent row is always included (clipped
     to ``context_chars``) and further rows only while they fit the remaining
     budget. ``context_chars <= 0`` disables the margins.
@@ -204,8 +208,9 @@ def next_window(lines: Sequence[TranscriptLine], start: int, core_chars: int, co
     """
     core_end = start
     used = 0
+    row_cap = max(core_chars, _MIN_ROW_CHARS)
     while core_end < len(lines):
-        cost = _line_cost(lines[core_end], core_chars)
+        cost = _line_cost(lines[core_end], row_cap)
         if core_end > start and used + cost > core_chars:
             break
         used += cost
@@ -258,7 +263,8 @@ def render_window_prompt(
             ``{first_index}`` and ``{last_index}`` placeholders.
         lines (Sequence[TranscriptLine]): All classifiable rows, in order.
         window (TranscriptWindow): The window to render.
-        core_chars (int): Clip limit for core rows.
+        core_chars (int): Core budget; core rows are clipped only beyond
+            ``max(core_chars, 2048)`` characters.
         context_chars (int): Clip limit for context rows.
         language (str): Human-readable transcript language.
 
@@ -284,7 +290,7 @@ def render_window_prompt(
     values = {
         "language": language,
         "context_before": block(window.context_start, window.core_start, context_chars, keep_tail=True),
-        "segments": block(window.core_start, window.core_end, core_chars),
+        "segments": block(window.core_start, window.core_end, max(core_chars, _MIN_ROW_CHARS)),
         "context_after": block(window.core_end, window.context_end, context_chars),
         "first_index": str(lines[window.core_start].index),
         "last_index": str(lines[window.core_end - 1].index),
