@@ -84,6 +84,9 @@
 # Design specs and implementation plans from the brainstorming flow are tracked despite the *.md ignore.
 !docs/superpowers/specs/*.md
 !docs/superpowers/plans/*.md
+# Dev-only hate-speech eval harness: its README is tracked, its run reports are not.
+!eval/hate_speech/README.md
+eval/hate_speech/reports/
 # Per-host job persistence (created by NEXTEXT_DATA_DIR default)
 .nextext-data/
 # Built image tag stamp written by `make build`; never committed.
