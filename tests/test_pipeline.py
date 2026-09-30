@@ -11,7 +11,7 @@ import pandas as pd
 import pytest
 
 from nextext import pipeline
-from nextext.core.openai_cfg import InferencePipeline
+from nextext.core.openai_cfg import ChatReply, InferencePipeline
 from nextext.pipeline import transcript_txt_exports
 from nextext.utils.env_cfg import SentenceRestoreConfig, WhisperClientConfig
 
@@ -815,18 +815,19 @@ class _WindowedHSPipeline:
         self.prompt_keywords.append(keyword)
         return _HS_TEMPLATE
 
-    def call_model(self, prompt: str, **kwargs: Any) -> str:
+    def call_model_reply(self, prompt: str, **kwargs: Any) -> ChatReply:
         """Record the call and delegate to the scripted responder.
 
         Args:
             prompt (str): The rendered window prompt.
-            **kwargs (Any): Remaining ``call_model`` keyword arguments.
+            **kwargs (Any): Remaining ``call_model_reply`` keyword arguments.
 
         Returns:
-            str: The scripted reply.
+            ChatReply: The scripted reply (a bare string means it finished normally).
         """
         self.calls.append({"prompt": prompt, **kwargs})
-        return self.respond(prompt, kwargs)
+        reply = self.respond(prompt, kwargs)
+        return reply if isinstance(reply, ChatReply) else ChatReply(content=reply, finish_reason="stop")
 
     def core_indices(self, call: int) -> list[int] | None:
         """Return the index enum a structured call sent, or ``None`` for an unstructured one.
@@ -1639,6 +1640,50 @@ def test_summarization_reraises_non_transient_api_errors(
 
     with pytest.raises(openai.APIStatusError, match="invalid api key"):
         pipeline.summarization_pipeline("some transcript text", erroring)
+
+
+def test_hate_speech_pipeline_shrinks_a_window_whose_reply_was_cut_off(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A reply stopped at the output cap is not trusted: the window shrinks and is asked again.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): The monkeypatch fixture.
+    """
+    # 9 tokens -> a 27-char core holding all three 9-char rows; halved -> 13 chars, one row each.
+    _set_hs_budgets(monkeypatch, window_tokens=9, context_tokens=0)
+
+    def respond(prompt: str, kwargs: dict[str, Any]) -> Any:
+        core = kwargs["response_format"]["json_schema"]["schema"]["properties"]["findings"]["items"]["properties"]
+        if len(core["index"]["enum"]) > 1:
+            return ChatReply(content='{"findings": [{"index": 0, "stance": "quo', finish_reason="length")
+        return _hs_reply((2, "endorses")) if "S(2-2)" in prompt else '{"findings": []}'
+
+    fake = _WindowedHSPipeline(respond)
+    df = pd.DataFrame({"start": ["0:00:01", "0:00:02", "0:00:03"], "text": ["aaaa", "bbbb", "cccc"]})
+
+    results = pipeline.hate_speech_pipeline(df, cast(InferencePipeline, fake))
+
+    assert [fake.core_indices(i) for i in range(len(fake.calls))] == [[0, 1, 2], [0], [1], [2]]
+    assert [f["text"] for f in results] == ["cccc"]
+
+
+def test_hate_speech_pipeline_keeps_what_a_cut_off_single_row_reply_salvaged(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A single-row window cannot shrink further; its complete endorsed item is kept.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): The monkeypatch fixture.
+    """
+    _set_hs_budgets(monkeypatch, window_tokens=3, context_tokens=0)
+    item = json.loads(_hs_reply((0, "endorses")))["findings"][0]
+    cut_off = '{"findings": [' + json.dumps(item) + ', {"index": 0, "stance": "cond'
+    fake = _WindowedHSPipeline(lambda prompt, kwargs: ChatReply(content=cut_off, finish_reason="length"))
+    df = pd.DataFrame({"start": ["0:00:01"], "text": ["Die gehören alle weg."]})
+
+    results = pipeline.hate_speech_pipeline(df, cast(InferencePipeline, fake))
+
+    assert len(fake.calls) == 1
+    assert [f["text"] for f in results] == ["Die gehören alle weg."]
 
 
 def test_hate_speech_pipeline_keeps_partial_findings_on_transient_error(

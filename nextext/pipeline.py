@@ -17,7 +17,13 @@ from nextext.core.diarization import (
     fill_speakers_by_nearest_turn,
     renumber_speakers_by_appearance,
 )
-from nextext.core.hate_speech import TranscriptLine, classify_window, next_window, render_window_prompt
+from nextext.core.hate_speech import (
+    TranscriptLine,
+    WindowTruncatedError,
+    classify_window,
+    next_window,
+    render_window_prompt,
+)
 from nextext.core.ner import extract_entities
 from nextext.core.openai_cfg import InferencePipeline
 from nextext.core.outcomes import SkipReason
@@ -720,7 +726,9 @@ def hate_speech_pipeline(
     parsed is retried once unconstrained, which sticks when it parses. A
     context-length overflow halves both budgets and rebuilds the remaining
     windows (up to ``_MAX_OVERFLOW_RETRIES`` times); a window that still
-    overflows is skipped. A transient inference failure (connection error,
+    overflows is skipped. A reply stopped at the output-token cap is not
+    trusted either: its core is halved and the window asked again, and a
+    single-row window keeps whatever complete items the reply held. A transient inference failure (connection error,
     timeout, HTTP 429/5xx) stops the sweep and keeps the findings collected so
     far instead of failing the job. Rows left unclassified (unparseable replies,
     skipped windows, an early stop) are logged in one warning. Non-transient API
@@ -772,6 +780,27 @@ def hate_speech_pipeline(
                 if items is not None:
                     structured = False
                     logger.warning("Hate-speech replies with response_format were unparseable; continuing without it.")
+        except WindowTruncatedError as truncated:
+            if len(indices) > 1 and overflow_retries < _MAX_OVERFLOW_RETRIES:
+                overflow_retries += 1
+                core_chars = max(1, int(core_chars * _OVERFLOW_BUDGET_BACKOFF))
+                logger.warning(
+                    "A hate-speech reply for a {}-segment window stopped at the output-token cap; retrying with a "
+                    "{}-char core (retry {}/{}).",
+                    len(indices),
+                    core_chars,
+                    overflow_retries,
+                    _MAX_OVERFLOW_RETRIES,
+                )
+                continue
+            items = truncated.salvaged
+            unclassified += len(indices) - len(items)
+            logger.warning(
+                "A hate-speech reply for a {}-segment window stopped at the output-token cap; keeping {} salvaged "
+                "finding(s).",
+                len(indices),
+                len(items),
+            )
         except Exception as exc:
             if _is_context_length_error(exc):
                 if overflow_retries < _MAX_OVERFLOW_RETRIES:

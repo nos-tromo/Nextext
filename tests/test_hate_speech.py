@@ -14,6 +14,7 @@ from nextext.core.hate_speech import (
     HATE_SPEECH_STANCES,
     TranscriptLine,
     TranscriptWindow,
+    WindowTruncatedError,
     classify_window,
     next_window,
     parse_window_reply,
@@ -21,7 +22,7 @@ from nextext.core.hate_speech import (
     render_window_prompt,
     window_response_format,
 )
-from nextext.core.openai_cfg import InferencePipeline
+from nextext.core.openai_cfg import ChatReply, InferencePipeline
 
 
 def _item(index: Any, stance: str, **overrides: Any) -> dict[str, Any]:
@@ -437,29 +438,31 @@ def test_window_response_format_restricts_indices_to_the_core() -> None:
 
 
 class _RecordingPipeline:
-    """Structural stand-in for ``InferencePipeline`` that records ``call_model`` kwargs."""
+    """Structural stand-in for ``InferencePipeline`` that records ``call_model_reply`` kwargs."""
 
-    def __init__(self, reply: str) -> None:
+    def __init__(self, reply: str, finish_reason: str | None = "stop") -> None:
         """Store the canned reply.
 
         Args:
             reply (str): The text every call returns.
+            finish_reason (str | None): The finish reason every call reports.
         """
         self.reply = reply
+        self.finish_reason = finish_reason
         self.calls: list[dict[str, Any]] = []
 
-    def call_model(self, prompt: str, **kwargs: Any) -> str:
+    def call_model_reply(self, prompt: str, **kwargs: Any) -> ChatReply:
         """Record the call and return the canned reply.
 
         Args:
             prompt (str): The rendered window prompt.
-            **kwargs (Any): Remaining ``call_model`` keyword arguments.
+            **kwargs (Any): Remaining ``call_model_reply`` keyword arguments.
 
         Returns:
-            str: The canned reply.
+            ChatReply: The canned reply.
         """
         self.calls.append({"prompt": prompt, **kwargs})
-        return self.reply
+        return ChatReply(content=self.reply, finish_reason=self.finish_reason)
 
 
 def test_classify_window_sends_a_schema_and_no_system_prompt() -> None:
@@ -486,6 +489,42 @@ def test_classify_window_unstructured_call_omits_the_schema() -> None:
 
     assert findings == []
     assert pipeline.calls[0]["response_format"] is None
+
+
+def test_parse_salvages_every_complete_item_of_a_cut_off_reply() -> None:
+    """A reply cut off mid-list keeps every complete item, not just the first one."""
+    raw = (
+        '{"findings": ['
+        + json.dumps(_item(3, "quotes_or_reports"))
+        + ", "
+        + json.dumps(_item(4, "endorses"))
+        + ', {"index": 5, "target": "[Gruppe]", "reason": "abgeschn'
+    )
+
+    findings = parse_window_reply(raw, allowed=[3, 4, 5])
+
+    assert [f["index"] for f in findings or []] == [4]
+
+
+def test_classify_window_raises_when_the_reply_hits_the_output_cap() -> None:
+    """A reply stopped at the token cap is reported as truncated, carrying what it salvaged."""
+    raw = '{"findings": [' + json.dumps(_item(4, "endorses")) + ', {"index": 5, "sta'
+    pipeline = _RecordingPipeline(raw, finish_reason="length")
+
+    with pytest.raises(WindowTruncatedError) as caught:
+        classify_window(cast(InferencePipeline, pipeline), "PROMPT", [4, 5], structured=True)
+
+    assert [f["index"] for f in caught.value.salvaged] == [4]
+
+
+def test_classify_window_gives_dense_windows_a_larger_output_budget() -> None:
+    """The output cap grows with the core, so listing many candidate rows fits."""
+    pipeline = _RecordingPipeline('{"findings": []}')
+
+    classify_window(cast(InferencePipeline, pipeline), "PROMPT", [0], structured=True)
+    classify_window(cast(InferencePipeline, pipeline), "PROMPT", list(range(40)), structured=True)
+
+    assert pipeline.calls[1]["num_predict"] > pipeline.calls[0]["num_predict"]
 
 
 def test_classify_window_reports_an_unparseable_reply_as_none() -> None:

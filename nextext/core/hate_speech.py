@@ -42,7 +42,10 @@ CONFIDENCE_LEVELS: tuple[str, ...] = ("high", "medium", "low")
 """Allowed confidence values; unknown values are normalised to ``low``."""
 
 HS_MAX_OUTPUT_TOKENS: int = 1024
-"""Output-token cap for one window request (a findings list, never prose)."""
+"""Minimum output-token cap for one window request (a findings list, never prose)."""
+
+HS_OUTPUT_TOKENS_PER_ROW: int = 80
+"""Output tokens budgeted per core row, so a window whose every row is a candidate still fits."""
 
 _REASON_MAX_CHARS: int = 500
 _TRANSLATION_PREFIX: str = "\n    → "
@@ -91,6 +94,24 @@ class TranscriptWindow:
     core_start: int
     core_end: int
     context_end: int
+
+
+class WindowTruncatedError(RuntimeError):
+    """A window reply stopped at the output-token cap before its findings list was complete.
+
+    Attributes:
+        salvaged (list[WindowFinding]): Endorsed findings recovered from the
+            items that were complete before the cut.
+    """
+
+    def __init__(self, salvaged: list["WindowFinding"]) -> None:
+        """Keep what the cut-off reply still yielded.
+
+        Args:
+            salvaged (list[WindowFinding]): Findings from the complete items.
+        """
+        super().__init__("hate-speech window reply stopped at the output-token cap")
+        self.salvaged = salvaged
 
 
 class WindowFinding(TypedDict):
@@ -349,32 +370,45 @@ def _looks_like_findings(candidate: Any) -> bool:
 def _load_json_payload(text: str) -> Any:
     """Decode the findings payload from a reply that may wrap it in prose or fences.
 
+    Scanning skips past every value it decodes, so when the outer
+    ``{"findings": [...]`` never closes (a reply cut off at the output cap)
+    every complete item inside it is still recovered.
+
     Args:
         text (str): The reply with reasoning removed.
 
     Returns:
-        Any: The first ``{"findings": ...}`` object, else the first value that
-            looks like findings, else the whole reply decoded as JSON (or
-            ``None`` when nothing decodes).
+        Any: The first ``{"findings": ...}`` object, else the first list of
+            objects, else every complete finding object found (as a list), else
+            ``None``.
     """
     try:
         return json.loads(text)
     except json.JSONDecodeError:
         pass
     decoder = json.JSONDecoder()
-    fallback: Any = None
-    for position, char in enumerate(text):
-        if char not in "{[":
+    first_list: list[Any] | None = None
+    items: list[dict[str, Any]] = []
+    position = 0
+    while position < len(text):
+        if text[position] not in "{[":
+            position += 1
             continue
         try:
-            candidate, _ = decoder.raw_decode(text, position)
+            candidate, end = decoder.raw_decode(text, position)
         except json.JSONDecodeError:
+            position += 1
             continue
         if isinstance(candidate, dict) and "findings" in candidate:
             return candidate
-        if fallback is None and _looks_like_findings(candidate):
-            fallback = candidate
-    return fallback
+        if isinstance(candidate, list) and first_list is None and _looks_like_findings(candidate):
+            first_list = candidate
+        elif isinstance(candidate, dict) and _looks_like_findings(candidate):
+            items.append(candidate)
+        position = end
+    if first_list is not None:
+        return first_list
+    return items or None
 
 
 def _coerce_index(value: Any) -> int | None:
@@ -491,12 +525,19 @@ def classify_window(
     Returns:
         list[WindowFinding] | None: Findings, or ``None`` when the reply could
             not be parsed.
+
+    Raises:
+        WindowTruncatedError: When the reply stopped at the output-token cap;
+            it carries the findings of the items that were complete.
     """
-    raw = inference_pipeline.call_model(
+    reply = inference_pipeline.call_model_reply(
         prompt=prompt,
         temperature=0.0,
-        num_predict=HS_MAX_OUTPUT_TOKENS,
+        num_predict=max(HS_MAX_OUTPUT_TOKENS, HS_OUTPUT_TOKENS_PER_ROW * len(indices)),
         include_system_prompt=False,
         response_format=window_response_format(indices) if structured else None,
     )
-    return parse_window_reply(raw, allowed=indices)
+    findings = parse_window_reply(reply.content, allowed=indices)
+    if reply.finish_reason == "length":
+        raise WindowTruncatedError(findings or [])
+    return findings
