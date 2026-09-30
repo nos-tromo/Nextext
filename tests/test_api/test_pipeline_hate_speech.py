@@ -6,7 +6,8 @@ from typing import Any
 import pandas as pd
 import pytest
 
-from nextext.api.jobs import JobState, _run_pipeline_blocking
+from nextext.api.artifacts import render_artifact
+from nextext.api.jobs import JobState, _run_pipeline_blocking, _serialize_result
 from nextext.api.schemas import JobOptions, JobStatus
 from nextext.pipeline import TranscriptionOutcome
 
@@ -61,3 +62,56 @@ def test_worker_passes_the_resolved_language_and_stores_findings(
 
     assert seen["src_lang"] == "de"
     assert result["hate_speech_findings"] == findings
+
+
+_DIARIZED_FINDING: dict[str, Any] = {
+    "hate_speech": True,
+    "category": "ethnicity",
+    "confidence": "high",
+    "reason": "r",
+    "text": "Genau, raus mit denen.",
+    "start": "0:00:04",
+    "speaker": "Speaker 2",
+    "translation": "Exactly, get them out.",
+}
+
+
+def test_serialized_findings_keep_speaker_and_translation() -> None:
+    """The API result exposes who said it and the translation aid, not just the text."""
+    serialized = _serialize_result({"hate_speech_findings": [dict(_DIARIZED_FINDING)]})
+
+    assert serialized.hate_speech_findings is not None
+    finding = serialized.hate_speech_findings[0]
+    assert finding.speaker == "Speaker 2"
+    assert finding.translation == "Exactly, get them out."
+
+
+def test_serialized_findings_default_speaker_and_translation_to_none() -> None:
+    """Findings from an undiarized, untranslated job still validate."""
+    plain = {k: v for k, v in _DIARIZED_FINDING.items() if k not in {"speaker", "translation"}}
+
+    serialized = _serialize_result({"hate_speech_findings": [plain]})
+
+    assert serialized.hate_speech_findings is not None
+    assert serialized.hate_speech_findings[0].speaker is None
+    assert serialized.hate_speech_findings[0].translation is None
+
+
+def test_hate_speech_csv_carries_speaker_and_translation_columns() -> None:
+    """The CSV download keeps the existing column order and appends speaker and translation."""
+    state = JobState(
+        job_id="hs2",
+        owner_id="o",
+        file_name="talk.wav",
+        file_path=Path("talk.wav"),
+        source_file_hash="sha256:x",
+        options=JobOptions.model_validate({}),
+        status=JobStatus.COMPLETED,
+        result={"hate_speech_findings": [dict(_DIARIZED_FINDING)]},
+    )
+
+    rendered = render_artifact(state, "hate_speech.csv")
+
+    assert rendered is not None
+    header = rendered[0].decode("utf-8").splitlines()[0]
+    assert header == "hate_speech,category,confidence,reason,text,start,speaker,translation"

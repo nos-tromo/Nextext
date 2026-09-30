@@ -90,7 +90,12 @@ class NamedEntity(BaseModel):
 
 
 class HateSpeechFinding(BaseModel):
-    """One flagged segment returned by ``hate_speech_pipeline``."""
+    """One segment whose speaker endorses hate, as returned by ``hate_speech_pipeline``.
+
+    ``text`` is always the original transcript wording; ``translation`` carries
+    the translation shown to the classifier as an aid, when the job translated.
+    ``speaker`` is set for diarized transcripts.
+    """
 
     hate_speech: bool
     category: str
@@ -98,6 +103,8 @@ class HateSpeechFinding(BaseModel):
     reason: str
     text: str
     start: str | None = None
+    speaker: str | None = None
+    translation: str | None = None
 
 
 class FrameCaptionOut(BaseModel):
