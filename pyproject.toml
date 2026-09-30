@@ -73,6 +73,8 @@ nextext = [
 
 [tool.setuptools.packages.find]
 where = ["."]
+# eval/ is the dev-only hate-speech harness, never distributed.
+exclude = ["eval", "eval.*"]
 
 [tool.ruff]
 # Mirrors nos-tromo/.github/configs/python-strict/ruff.toml. target-version

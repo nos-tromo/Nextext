@@ -31,7 +31,8 @@ export function HateSpeechTab({ jobId, result, stem }: HateSpeechTabProps) {
   }
 
   const flagged = result.hate_speech_findings.filter((f) => f.hate_speech)
-  const total = result.hate_speech_findings.length
+  // Only flagged segments come back from the backend, so the denominator is the transcript.
+  const total = result.transcript.length || result.hate_speech_findings.length
 
   return (
     <div className="space-y-4">
@@ -70,10 +71,18 @@ export function HateSpeechTab({ jobId, result, stem }: HateSpeechTabProps) {
                 </>
               )}
             </div>
-            {finding.start !== null && (
-              <p className="mt-1 text-xs text-muted-foreground">{finding.start}</p>
+            {(finding.start !== null || finding.speaker) && (
+              <p className="mt-1 flex gap-2 text-xs text-muted-foreground">
+                {finding.start !== null && <span>{finding.start}</span>}
+                {finding.speaker && <span>{finding.speaker}</span>}
+              </p>
             )}
             <p className="mt-2 text-sm text-foreground">{finding.text}</p>
+            {finding.translation && (
+              <p className="mt-1 text-sm text-muted-foreground">
+                {t('results.col_translation')}: {finding.translation}
+              </p>
+            )}
             {finding.hate_speech && finding.reason && (
               <p className="mt-1 text-sm text-muted-foreground italic">{finding.reason}</p>
             )}

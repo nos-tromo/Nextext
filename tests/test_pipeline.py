@@ -1,7 +1,9 @@
 """Tests for the shared Nextext pipeline helpers."""
 
+import io
+import json
 from pathlib import Path
-from typing import Any, override
+from typing import Any, cast, override
 
 import httpx2
 import openai
@@ -9,7 +11,7 @@ import pandas as pd
 import pytest
 
 from nextext import pipeline
-from nextext.core.openai_cfg import InferencePipeline
+from nextext.core.openai_cfg import ChatReply, InferencePipeline
 from nextext.pipeline import transcript_txt_exports
 from nextext.utils.env_cfg import SentenceRestoreConfig, WhisperClientConfig
 
@@ -704,6 +706,7 @@ def test_summarization_pipeline_formats_prompt(monkeypatch: pytest.MonkeyPatch) 
             system_prompt: str | None = None,
             include_system_prompt: bool = True,
             think: bool | None = None,
+            response_format: dict[str, Any] | None = None,
         ) -> str:
             """Simulate calling the model with the given prompt.
 
@@ -718,6 +721,7 @@ def test_summarization_pipeline_formats_prompt(monkeypatch: pytest.MonkeyPatch) 
                 system_prompt (str | None): Unused test double argument.
                 include_system_prompt (bool): Unused test double argument.
                 think (bool | None): Unused test double argument.
+                response_format (dict[str, Any] | None): Unused test double argument.
 
             Returns:
                 str: The model's response.
@@ -752,99 +756,358 @@ def test_summarization_pipeline_rejects_empty_text(
         pipeline.summarization_pipeline("", dummy_pipeline)
 
 
-def test_hate_speech_pipeline_returns_flagged_rows(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Test that hate_speech_pipeline returns only rows flagged as hate speech.
+_HS_TEMPLATE = "L={language}\nB:\n{context_before}\nS({first_index}-{last_index}):\n{segments}\nA:\n{context_after}"
+"""Compact stand-in for the hate_speech_transcript prompt exposing every placeholder."""
+
+
+def _hs_reply(*items: tuple[int, str]) -> str:
+    """Serialize ``(index, stance)`` pairs as a findings reply.
 
     Args:
-        monkeypatch (pytest.MonkeyPatch): The monkeypatch fixture for modifying behavior.
-    """
-    from nextext.core.openai_cfg import InferencePipeline
+        *items (tuple[int, str]): Row index and stance per finding item.
 
-    responses = iter(
-        [
-            {
-                "hate_speech": True,
-                "category": "racism",
-                "confidence": "high",
-                "reason": "Contains slurs",
-            },
-            {
-                "hate_speech": False,
-                "category": "none",
-                "confidence": "low",
-                "reason": "",
-            },
-        ]
+    Returns:
+        str: The JSON reply.
+    """
+    return json.dumps(
+        {
+            "findings": [
+                {
+                    "index": index,
+                    "target": "[Gruppe]",
+                    "reason": "Hetze",
+                    "stance": stance,
+                    "category": "religion",
+                    "confidence": "high",
+                }
+                for index, stance in items
+            ]
+        }
     )
 
-    class DummyDetector:
-        def __init__(self, inference_pipeline: Any, max_chars: int) -> None:
-            pass
 
-        def detect(self, text: str) -> dict[str, Any]:
-            return next(responses)
+class _WindowedHSPipeline:
+    """Structural stand-in for ``InferencePipeline`` driving ``hate_speech_pipeline``.
 
-    monkeypatch.setattr(pipeline, "HateSpeechDetector", DummyDetector)
+    ``respond`` receives the prompt and the ``call_model`` keyword arguments
+    and returns the reply text or raises, so each test scripts the provider.
+    """
 
-    df = pd.DataFrame({"start": ["00:00:01", "00:00:05"], "text": ["bad text", "good text"]})
-    dummy_ip = InferencePipeline.__new__(InferencePipeline)
+    def __init__(self, respond: Any) -> None:
+        """Store the scripted responder.
 
-    results = pipeline.hate_speech_pipeline(df, dummy_ip)
+        Args:
+            respond (Any): Callable ``(prompt, kwargs) -> str`` that may raise.
+        """
+        self.respond = respond
+        self.calls: list[dict[str, Any]] = []
+        self.prompt_keywords: list[str] = []
 
-    assert len(results) == 1
-    assert results[0]["category"] == "racism"
-    assert results[0]["text"] == "bad text"
-    assert results[0]["start"] == "00:00:01"
+    def load_prompt(self, keyword: str = "system") -> str:
+        """Return the compact template and record the requested keyword.
+
+        Args:
+            keyword (str): The prompt keyword requested by the pipeline.
+
+        Returns:
+            str: The template.
+        """
+        self.prompt_keywords.append(keyword)
+        return _HS_TEMPLATE
+
+    def call_model_reply(self, prompt: str, **kwargs: Any) -> ChatReply:
+        """Record the call and delegate to the scripted responder.
+
+        Args:
+            prompt (str): The rendered window prompt.
+            **kwargs (Any): Remaining ``call_model_reply`` keyword arguments.
+
+        Returns:
+            ChatReply: The scripted reply (a bare string means it finished normally).
+        """
+        self.calls.append({"prompt": prompt, **kwargs})
+        reply = self.respond(prompt, kwargs)
+        return reply if isinstance(reply, ChatReply) else ChatReply(content=reply, finish_reason="stop")
+
+    def core_indices(self, call: int) -> list[int] | None:
+        """Return the index enum a structured call sent, or ``None`` for an unstructured one.
+
+        Args:
+            call (int): Position of the call.
+
+        Returns:
+            list[int] | None: The core indices the schema admitted.
+        """
+        response_format = self.calls[call]["response_format"]
+        if response_format is None:
+            return None
+        return response_format["json_schema"]["schema"]["properties"]["findings"]["items"]["properties"]["index"][
+            "enum"
+        ]
 
 
-def test_hate_speech_pipeline_reads_translation_column_when_present(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Detection runs against ``translation`` when that column is present.
+def _set_hs_budgets(monkeypatch: pytest.MonkeyPatch, window_tokens: int, context_tokens: int) -> None:
+    """Pin the hate-speech window budgets for one test.
 
-    Guards the :func:`effective_text_column` wiring: before translation had
-    its own column it overwrote ``text`` in place, so downstream analysis saw
-    the translated content. That behavior must be preserved — detection reads
-    the translated column and the flagged entry surfaces the translated text,
-    not the original.
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Fixture for patching environment variables.
+        window_tokens (int): ``HATE_SPEECH_WINDOW_TOKENS``.
+        context_tokens (int): ``HATE_SPEECH_CONTEXT_TOKENS``.
+    """
+    monkeypatch.setenv("HATE_SPEECH_WINDOW_TOKENS", str(window_tokens))
+    monkeypatch.setenv("HATE_SPEECH_CONTEXT_TOKENS", str(context_tokens))
+
+
+def test_hate_speech_pipeline_reports_only_endorsed_rows(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A condemnation is suppressed; only the endorsing row becomes a finding.
 
     Args:
         monkeypatch (pytest.MonkeyPatch): The monkeypatch fixture.
     """
-    from nextext.core.openai_cfg import InferencePipeline
-
-    seen: list[str] = []
-
-    class DummyDetector:
-        def __init__(self, inference_pipeline: Any, max_chars: int) -> None:
-            pass
-
-        def detect(self, text: str) -> dict[str, Any]:
-            seen.append(text)
-            return {
-                "hate_speech": True,
-                "category": "other",
-                "confidence": "low",
-                "reason": "",
-            }
-
-    monkeypatch.setattr(pipeline, "HateSpeechDetector", DummyDetector)
-
+    _set_hs_budgets(monkeypatch, window_tokens=1000, context_tokens=300)
+    fake = _WindowedHSPipeline(lambda prompt, kwargs: _hs_reply((0, "condemns_or_counters"), (1, "endorses")))
     df = pd.DataFrame(
         {
-            "start": ["00:00:01"],
-            "text": ["original source text"],
-            "translation": ["translated target text"],
+            "start": ["0:00:01", "0:00:05", "0:00:09"],
+            "text": ["Das ist antisemitisch.", "Die gehören alle weg.", "Weiter im Text."],
         }
     )
-    dummy_ip = InferencePipeline.__new__(InferencePipeline)
 
-    results = pipeline.hate_speech_pipeline(df, dummy_ip)
+    results = pipeline.hate_speech_pipeline(df, cast(InferencePipeline, fake))
 
-    assert seen == ["translated target text"]
-    assert results[0]["text"] == "translated target text"
+    assert results == [
+        {
+            "hate_speech": True,
+            "category": "religion",
+            "confidence": "high",
+            "reason": "Hetze",
+            "text": "Die gehören alle weg.",
+            "start": "0:00:05",
+        }
+    ]
+    assert fake.prompt_keywords == ["hate_speech_transcript"]
+
+
+def test_hate_speech_pipeline_judges_the_original_with_a_translation_aid(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The original wording is classified; the translation rides along as an aid and in the finding.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): The monkeypatch fixture.
+    """
+    _set_hs_budgets(monkeypatch, window_tokens=1000, context_tokens=300)
+    fake = _WindowedHSPipeline(lambda prompt, kwargs: _hs_reply((0, "endorses")))
+    df = pd.DataFrame(
+        {"start": ["0:00:01"], "text": ["original source text"], "translation": ["translated target text"]}
+    )
+
+    results = pipeline.hate_speech_pipeline(df, cast(InferencePipeline, fake))
+
+    assert "[0] original source text\n    → translated target text" in fake.calls[0]["prompt"]
+    assert results[0]["text"] == "original source text"
+    assert results[0]["translation"] == "translated target text"
+
+
+def test_hate_speech_pipeline_labels_rows_with_their_speaker(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Diarized rows are rendered with their speaker, and findings carry it.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): The monkeypatch fixture.
+    """
+    _set_hs_budgets(monkeypatch, window_tokens=1000, context_tokens=300)
+    fake = _WindowedHSPipeline(lambda prompt, kwargs: _hs_reply((1, "endorses")))
+    df = pd.DataFrame(
+        {
+            "start": ["0:00:01", "0:00:04"],
+            "speaker": ["Speaker 1", "Speaker 2"],
+            "text": ["Im Bus rief jemand etwas.", "Genau, raus mit denen."],
+        }
+    )
+
+    results = pipeline.hate_speech_pipeline(df, cast(InferencePipeline, fake))
+
+    assert "[0] Speaker 1: Im Bus rief jemand etwas.\n[1] Speaker 2: Genau, raus mit denen." in fake.calls[0]["prompt"]
+    assert results[0]["speaker"] == "Speaker 2"
+
+
+def test_hate_speech_pipeline_makes_one_request_per_window(monkeypatch: pytest.MonkeyPatch) -> None:
+    """All rows share one request when they fit; small budgets split them, each row labelled once.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): The monkeypatch fixture.
+    """
+    df = pd.DataFrame({"start": ["0:00:01", "0:00:02", "0:00:03"], "text": ["aaaa", "bbbb", "cccc"]})
+
+    _set_hs_budgets(monkeypatch, window_tokens=1000, context_tokens=0)
+    wide = _WindowedHSPipeline(lambda prompt, kwargs: '{"findings": []}')
+    pipeline.hate_speech_pipeline(df, cast(InferencePipeline, wide))
+
+    _set_hs_budgets(monkeypatch, window_tokens=3, context_tokens=0)
+    narrow = _WindowedHSPipeline(lambda prompt, kwargs: '{"findings": []}')
+    pipeline.hate_speech_pipeline(df, cast(InferencePipeline, narrow))
+
+    assert len(wide.calls) == 1
+    assert wide.core_indices(0) == [0, 1, 2]
+    assert [narrow.core_indices(i) for i in range(len(narrow.calls))] == [[0], [1], [2]]
+
+
+def test_hate_speech_pipeline_shows_neighbouring_rows_as_context(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A single-row core still sees the rows before and after it, read-only.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): The monkeypatch fixture.
+    """
+    _set_hs_budgets(monkeypatch, window_tokens=3, context_tokens=100)
+    fake = _WindowedHSPipeline(lambda prompt, kwargs: '{"findings": []}')
+    df = pd.DataFrame({"start": ["0:00:01", "0:00:02", "0:00:03"], "text": ["davor", "mitte", "danach"]})
+
+    pipeline.hate_speech_pipeline(df, cast(InferencePipeline, fake))
+
+    assert fake.calls[1]["prompt"] == "L=—\nB:\n[0] davor\nS(1-1):\n[1] mitte\nA:\n[2] danach"
+
+
+def test_hate_speech_pipeline_names_the_transcript_language(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The source language reaches the prompt as a readable name.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): The monkeypatch fixture.
+    """
+    _set_hs_budgets(monkeypatch, window_tokens=1000, context_tokens=0)
+    fake = _WindowedHSPipeline(lambda prompt, kwargs: '{"findings": []}')
+    df = pd.DataFrame({"start": ["0:00:01"], "text": ["Hallo."]})
+
+    pipeline.hate_speech_pipeline(df, cast(InferencePipeline, fake), src_lang="de")
+
+    assert fake.calls[0]["prompt"].startswith("L=German\n")
+
+
+def test_hate_speech_pipeline_sends_a_schema_and_no_system_prompt(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Requests are structured, deterministic, and carry no system role.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): The monkeypatch fixture.
+    """
+    _set_hs_budgets(monkeypatch, window_tokens=1000, context_tokens=0)
+    fake = _WindowedHSPipeline(lambda prompt, kwargs: '{"findings": []}')
+
+    pipeline.hate_speech_pipeline(pd.DataFrame({"text": ["Hallo."]}), cast(InferencePipeline, fake))
+
+    call = fake.calls[0]
+    assert call["include_system_prompt"] is False
+    assert call["temperature"] == 0.0
+    assert fake.core_indices(0) == [0]
+
+
+def test_hate_speech_pipeline_skips_blank_rows_and_empty_transcripts(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Blank or missing text is never sent, and an empty transcript makes no request.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): The monkeypatch fixture.
+    """
+    _set_hs_budgets(monkeypatch, window_tokens=1000, context_tokens=0)
+    fake = _WindowedHSPipeline(lambda prompt, kwargs: '{"findings": []}')
+    df = pd.DataFrame({"text": ["eins", "   ", None, "vier"]})
+
+    pipeline.hate_speech_pipeline(df, cast(InferencePipeline, fake))
+    empty = _WindowedHSPipeline(lambda prompt, kwargs: '{"findings": []}')
+    results = pipeline.hate_speech_pipeline(pd.DataFrame({"text": []}), cast(InferencePipeline, empty))
+
+    assert fake.core_indices(0) == [0, 3]
+    assert results == []
+    assert empty.calls == []
+
+
+def test_hate_speech_pipeline_falls_back_when_the_schema_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A provider that rejects ``response_format`` gets the window again unconstrained, then never again.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): The monkeypatch fixture.
+    """
+    _set_hs_budgets(monkeypatch, window_tokens=3, context_tokens=0)
+
+    def respond(prompt: str, kwargs: dict[str, Any]) -> str:
+        if kwargs["response_format"] is not None:
+            raise _api_status_error(400, "response_format json_schema is not supported")
+        return _hs_reply((0, "endorses")) if "S(0-0)" in prompt else '{"findings": []}'
+
+    fake = _WindowedHSPipeline(respond)
+    df = pd.DataFrame({"start": ["0:00:01", "0:00:02"], "text": ["erste", "zweite"]})
+
+    results = pipeline.hate_speech_pipeline(df, cast(InferencePipeline, fake))
+
+    assert [fake.core_indices(i) for i in range(len(fake.calls))] == [[0], None, None]
+    assert [f["text"] for f in results] == ["erste"]
+
+
+def test_hate_speech_pipeline_retries_an_unparseable_structured_reply_unconstrained(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A structured reply that cannot be parsed is retried once without the schema, which then sticks.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): The monkeypatch fixture.
+    """
+    _set_hs_budgets(monkeypatch, window_tokens=3, context_tokens=0)
+
+    def respond(prompt: str, kwargs: dict[str, Any]) -> str:
+        if kwargs["response_format"] is not None:
+            return ""
+        return _hs_reply((1, "endorses")) if "S(1-1)" in prompt else '{"findings": []}'
+
+    fake = _WindowedHSPipeline(respond)
+    df = pd.DataFrame({"start": ["0:00:01", "0:00:02"], "text": ["erste", "zweite"]})
+
+    results = pipeline.hate_speech_pipeline(df, cast(InferencePipeline, fake))
+
+    assert [fake.core_indices(i) for i in range(len(fake.calls))] == [[0], None, None]
+    assert [f["text"] for f in results] == ["zweite"]
+
+
+def test_hate_speech_pipeline_counts_unparseable_windows_as_unclassified(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Replies that never parse leave the rows unclassified and say so, instead of passing as clean.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): The monkeypatch fixture.
+    """
+    from loguru import logger
+
+    _set_hs_budgets(monkeypatch, window_tokens=1000, context_tokens=0)
+    fake = _WindowedHSPipeline(lambda prompt, kwargs: "I cannot help with that.")
+    df = pd.DataFrame({"text": ["eins", "zwei"]})
+
+    sink = io.StringIO()
+    handler_id = logger.add(sink, level="WARNING")
+    try:
+        results = pipeline.hate_speech_pipeline(df, cast(InferencePipeline, fake))
+    finally:
+        logger.remove(handler_id)
+
+    assert results == []
+    assert "2 of 2" in sink.getvalue()
+    assert "unclassified" in sink.getvalue()
+
+
+def test_hate_speech_pipeline_halves_the_window_on_context_overflow(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A context-length error shrinks the window and retries, still labelling every row.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): The monkeypatch fixture.
+    """
+    # 9 tokens -> a 27-char core holding all three 9-char rows; halved -> 13 chars, one row each.
+    _set_hs_budgets(monkeypatch, window_tokens=9, context_tokens=0)
+
+    def respond(prompt: str, kwargs: dict[str, Any]) -> str:
+        core = kwargs["response_format"]["json_schema"]["schema"]["properties"]["findings"]["items"]["properties"]
+        if len(core["index"]["enum"]) > 1:
+            raise _api_status_error(400, "This model's maximum context length is 8192 tokens.")
+        return '{"findings": []}'
+
+    fake = _WindowedHSPipeline(respond)
+    df = pd.DataFrame({"text": ["aaaa", "bbbb", "cccc"]})
+
+    pipeline.hate_speech_pipeline(df, cast(InferencePipeline, fake))
+
+    assert fake.core_indices(0) == [0, 1, 2]
+    assert [fake.core_indices(i) for i in range(1, len(fake.calls))] == [[0], [1], [2]]
 
 
 def test_wordlevel_pipeline_invokes_all_steps(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -996,6 +1259,7 @@ class _RecordingPipeline(InferencePipeline):
         system_prompt: str | None = None,
         include_system_prompt: bool = True,
         think: bool | None = None,
+        response_format: dict[str, Any] | None = None,
     ) -> str:
         """Record the call and return the canned reply.
 
@@ -1010,6 +1274,7 @@ class _RecordingPipeline(InferencePipeline):
             system_prompt (str | None): Unused test double argument.
             include_system_prompt (bool): Unused test double argument.
             think (bool | None): Unused test double argument.
+            response_format (dict[str, Any] | None): Unused test double argument.
 
         Returns:
             str: The canned reply.
@@ -1018,7 +1283,7 @@ class _RecordingPipeline(InferencePipeline):
             RuntimeError: If invoked more than 1000 times, a sign the
                 map-reduce recursion failed to terminate.
         """
-        del model, temperature, seed, stop, top_p, system_prompt, include_system_prompt, think
+        del model, temperature, seed, stop, top_p, system_prompt, include_system_prompt, think, response_format
         if len(self.calls) >= 1000:
             raise RuntimeError("call_model invoked too many times; recursion likely unbounded")
         self.calls.append({"prompt": prompt, "num_predict": num_predict})
@@ -1178,6 +1443,7 @@ class _OverflowingPipeline(InferencePipeline):
         system_prompt: str | None = None,
         include_system_prompt: bool = True,
         think: bool | None = None,
+        response_format: dict[str, Any] | None = None,
     ) -> str:
         """Raise when the payload is too large, otherwise return the reply.
 
@@ -1192,6 +1458,7 @@ class _OverflowingPipeline(InferencePipeline):
             system_prompt (str | None): Unused test double argument.
             include_system_prompt (bool): Unused test double argument.
             think (bool | None): Unused test double argument.
+            response_format (dict[str, Any] | None): Unused test double argument.
 
         Returns:
             str: The canned reply for in-budget payloads.
@@ -1199,7 +1466,8 @@ class _OverflowingPipeline(InferencePipeline):
         Raises:
             RuntimeError: When the payload exceeds ``max_payload_chars``.
         """
-        del model, temperature, seed, stop, num_predict, top_p, system_prompt, include_system_prompt, think
+        del model, temperature, seed, stop, num_predict
+        del top_p, system_prompt, include_system_prompt, think, response_format
         payload = prompt.removeprefix("Summarize: ")
         if len(payload) > self.max_payload_chars:
             self.overflow_count += 1
@@ -1374,46 +1642,81 @@ def test_summarization_reraises_non_transient_api_errors(
         pipeline.summarization_pipeline("some transcript text", erroring)
 
 
+def test_hate_speech_pipeline_shrinks_a_window_whose_reply_was_cut_off(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A reply stopped at the output cap is not trusted: the window shrinks and is asked again.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): The monkeypatch fixture.
+    """
+    # 9 tokens -> a 27-char core holding all three 9-char rows; halved -> 13 chars, one row each.
+    _set_hs_budgets(monkeypatch, window_tokens=9, context_tokens=0)
+
+    def respond(prompt: str, kwargs: dict[str, Any]) -> Any:
+        core = kwargs["response_format"]["json_schema"]["schema"]["properties"]["findings"]["items"]["properties"]
+        if len(core["index"]["enum"]) > 1:
+            return ChatReply(content='{"findings": [{"index": 0, "stance": "quo', finish_reason="length")
+        return _hs_reply((2, "endorses")) if "S(2-2)" in prompt else '{"findings": []}'
+
+    fake = _WindowedHSPipeline(respond)
+    df = pd.DataFrame({"start": ["0:00:01", "0:00:02", "0:00:03"], "text": ["aaaa", "bbbb", "cccc"]})
+
+    results = pipeline.hate_speech_pipeline(df, cast(InferencePipeline, fake))
+
+    assert [fake.core_indices(i) for i in range(len(fake.calls))] == [[0, 1, 2], [0], [1], [2]]
+    assert [f["text"] for f in results] == ["cccc"]
+
+
+def test_hate_speech_pipeline_keeps_what_a_cut_off_single_row_reply_salvaged(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A single-row window cannot shrink further; its complete endorsed item is kept.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): The monkeypatch fixture.
+    """
+    _set_hs_budgets(monkeypatch, window_tokens=3, context_tokens=0)
+    item = json.loads(_hs_reply((0, "endorses")))["findings"][0]
+    cut_off = '{"findings": [' + json.dumps(item) + ', {"index": 0, "stance": "cond'
+    fake = _WindowedHSPipeline(lambda prompt, kwargs: ChatReply(content=cut_off, finish_reason="length"))
+    df = pd.DataFrame({"start": ["0:00:01"], "text": ["Die gehören alle weg."]})
+
+    results = pipeline.hate_speech_pipeline(df, cast(InferencePipeline, fake))
+
+    assert len(fake.calls) == 1
+    assert [f["text"] for f in results] == ["Die gehören alle weg."]
+
+
 def test_hate_speech_pipeline_keeps_partial_findings_on_transient_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A transient inference failure mid-sweep returns the findings so far.
 
-    A router outage during the per-segment loop must not crash the job (and
-    with it the completed transcription); the sweep stops at the failing
-    segment and the findings collected up to that point are kept.
+    A router outage during the sweep must not crash the job (and with it the
+    completed transcription); the sweep stops at the failing window and the
+    findings collected up to that point are kept.
 
     Args:
         monkeypatch (pytest.MonkeyPatch): The monkeypatch fixture.
     """
+    _set_hs_budgets(monkeypatch, window_tokens=3, context_tokens=0)
 
-    class DummyDetector:
-        def __init__(self, inference_pipeline: Any, max_chars: int) -> None:
-            self.calls = 0
+    def respond(prompt: str, kwargs: dict[str, Any]) -> str:
+        if "S(1-1)" in prompt:
+            raise _api_status_error(500, "InternalServerError - Connection error.")
+        return _hs_reply((0, "endorses"))
 
-        def detect(self, text: str) -> dict[str, Any]:
-            if text == "second text":
-                raise _api_status_error(500, "InternalServerError - Connection error.")
-            return {
-                "hate_speech": True,
-                "category": "other",
-                "confidence": "low",
-                "reason": "",
-            }
-
-    monkeypatch.setattr(pipeline, "HateSpeechDetector", DummyDetector)
+    fake = _WindowedHSPipeline(respond)
     df = pd.DataFrame(
         {
             "start": ["00:00:01", "00:00:05", "00:00:09"],
             "text": ["first text", "second text", "third text"],
         }
     )
-    dummy_ip = InferencePipeline.__new__(InferencePipeline)
 
-    results = pipeline.hate_speech_pipeline(df, dummy_ip)
+    results = pipeline.hate_speech_pipeline(df, cast(InferencePipeline, fake))
 
-    assert len(results) == 1
-    assert results[0]["text"] == "first text"
+    assert [f["text"] for f in results] == ["first text"]
+    assert len(fake.calls) == 2
 
 
 def test_hate_speech_pipeline_reraises_non_transient_api_errors(
@@ -1424,20 +1727,16 @@ def test_hate_speech_pipeline_reraises_non_transient_api_errors(
     Args:
         monkeypatch (pytest.MonkeyPatch): The monkeypatch fixture.
     """
+    _set_hs_budgets(monkeypatch, window_tokens=1000, context_tokens=0)
 
-    class DummyDetector:
-        def __init__(self, inference_pipeline: Any, max_chars: int) -> None:
-            pass
+    def respond(prompt: str, kwargs: dict[str, Any]) -> str:
+        raise _api_status_error(401, "invalid api key")
 
-        def detect(self, text: str) -> dict[str, Any]:
-            raise _api_status_error(401, "invalid api key")
-
-    monkeypatch.setattr(pipeline, "HateSpeechDetector", DummyDetector)
+    fake = _WindowedHSPipeline(respond)
     df = pd.DataFrame({"start": ["00:00:01"], "text": ["some text"]})
-    dummy_ip = InferencePipeline.__new__(InferencePipeline)
 
     with pytest.raises(openai.APIStatusError, match="invalid api key"):
-        pipeline.hate_speech_pipeline(df, dummy_ip)
+        pipeline.hate_speech_pipeline(df, cast(InferencePipeline, fake))
 
 
 def test_transcript_txt_exports_transcribe_returns_single_block_file() -> None:

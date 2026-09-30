@@ -122,6 +122,49 @@ text — so words/timestamps stay untouched; questions get `؟`, exclamations
 `!`, else `.`. Fail-soft: a model outage degrades to today's behavior. Resolved
 by `load_sentence_restore_env`. Set `NEXTEXT_SENTENCE_RESTORE=off` to disable.
 
+## Hate-speech detection
+
+`HATE_SPEECH_WINDOW_TOKENS` / `HATE_SPEECH_CONTEXT_TOKENS` (backend + CLI) —
+context-window budgets for the hate-speech stage. Transcript rows are one
+sentence each, too little for the model to tell a speaker who *condemns* hate
+("Das ist antisemitisch.") from one who spreads it. So rows are judged in
+windows:
+
+- a **core** of about `HATE_SPEECH_WINDOW_TOKENS` (default `1000`, docint's
+  fine-chunk scale) of consecutive rows that the model labels, one request per
+  window;
+- read-only **context** of about `HATE_SPEECH_CONTEXT_TOKENS` (default `300`)
+  on each side. This lets the model resolve who is speaking, what is being
+  answered, and what "die" / "they" refers to. `0` disables the context.
+
+The model names the targeted group and the speaker's stance for every
+candidate row. Only rows whose speaker *endorses* group-focused enmity are
+reported; quoting, reporting, condemning, analysing, or asking about hate is
+not hate.
+
+It judges the original wording. When the job translated, the translation is
+shown as an aid and carried in the finding, next to the speaker.
+
+Requests use a JSON-schema `response_format`. A provider that rejects it, or
+whose constrained reply cannot be parsed, is served unconstrained for the rest
+of the sweep. A context overflow halves both budgets and retries.
+
+A reply cut off at the output cap (`finish_reason: length`) is not trusted
+either: the core is halved and the window asked again. The cap grows with the
+core, at 80 tokens per row and at least 1024. A single-row window keeps
+whatever complete items its reply held.
+
+Invalid values warn and fall back. Resolved by `load_hate_speech_env`. The
+prompt is `nextext/utils/prompts/<code>/hate_speech_transcript.txt`; docint
+keeps a byte-identical copy for its own transcript windows.
+
+**Ollama:** a window prompt is roughly 3k tokens. Give the model a context of
+at least 8k tokens (`OLLAMA_CONTEXT_LENGTH` on the Ollama server), or Ollama
+silently drops the start of the prompt.
+
+The dev-only harness `eval/hate_speech/` measures the classifier against
+labelled synthetic transcripts. It is not shipped; see its README.
+
 ## Video keyframes
 
 Keyframe extraction is a step of its own, requested per job

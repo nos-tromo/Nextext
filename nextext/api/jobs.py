@@ -663,7 +663,9 @@ def _run_pipeline_blocking(state: JobState, push_event: PushEvent) -> dict[str, 
     # Hate-speech detection ---------------------------------------------------
     _notify(5)
     if file_opts["hate_speech"]:
-        findings = hate_speech_pipeline(df=df, inference_pipeline=_ensure_inference())
+        findings = hate_speech_pipeline(
+            df=df, inference_pipeline=_ensure_inference(), src_lang=file_opts["src_lang"] or None
+        )
         result["hate_speech_findings"] = findings
         _complete(5, {"flagged": len(findings)})
     else:

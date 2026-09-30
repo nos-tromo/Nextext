@@ -21,7 +21,7 @@ Running `uv run nextext-cli [ARGS]` from the command line supports the following
 --[no-]diarize        Detect and label speakers (default: on).
 -w, --words           Show most frequently used words (default: False).
 -sum, --summarize     Additional transcript summarization (default: False).
--hs, --hate-speech    Detect hate speech in transcript segments via LLM (default: False).
+-hs, --hate-speech    Detect hate speech the speakers endorse, judging each segment in context windows via LLM (default: False).
 -kf, --keyframes      Sample video keyframes and describe them (default: False).
 -F, --full-analysis   Enable full analysis, equivalent to using -w -sum -hs -kf (default: False).
 -ed, --emit-docint-jsonl   Write a docint-compatible JSONL transcript to this path.
@@ -34,7 +34,9 @@ Every run writes into an output directory named after the source file. The
 transcript always lands there (`{stem}_transcript.txt`/`.csv`/`.xlsx`, plus
 `{stem}_translation.txt` for a translate task); the optional steps add their
 own files (`{stem}_summary.txt`, `{stem}_words.*`, `{stem}_entities.*`,
-`{stem}_wordcloud.png`, `{stem}_hate_speech.*`).
+`{stem}_wordcloud.png`, `{stem}_hate_speech.*`). The hate-speech files list
+only segments whose speaker endorses hate, with the original `text`, `start`,
+and — when present — `speaker` and the `translation` the classifier saw as an aid.
 
 `-kf/--keyframes` adds two: the sampled frames as
 `{stem}_keyframes/frame_NNN.jpg` plus a `manifest.json` of their sampling times
