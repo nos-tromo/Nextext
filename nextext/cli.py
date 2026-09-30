@@ -132,7 +132,9 @@ def parse_arguments(args_list: list[str] | None = None) -> argparse.Namespace:
         "--hate-speech",
         dest="hate_speech",
         action="store_true",
-        help="Detect hate speech in transcript segments via LLM (default: False).",
+        help=(
+            "Detect hate speech the speakers endorse, judging each segment in context windows via LLM (default: False)."
+        ),
     )
     parser.add_argument(
         "-F",
@@ -517,6 +519,7 @@ def _run_main(args: argparse.Namespace) -> int:
         hate_speech_findings = hate_speech_pipeline(
             df=transcript_df,
             inference_pipeline=ensure_inference(),
+            src_lang=args.src_lang,
         )
         if hate_speech_findings:
             file_processor.write_file_output(pd.DataFrame(hate_speech_findings), "hate_speech")

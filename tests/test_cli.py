@@ -438,3 +438,30 @@ def test_cli_keyframes_flag_defaults_to_off() -> None:
     assert cli.parse_arguments(["-f", "clip.mp4", "-kf"]).keyframes is True
     assert cli.parse_arguments(["-f", "clip.mp4", "--keyframes"]).keyframes is True
     assert cli.parse_arguments(["-f", "clip.mp4", "-F"]).keyframes is True
+
+
+def test_cli_hate_speech_uses_the_resolved_source_language(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """The detected transcript language (not the CLI default) reaches hate-speech detection.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Fixture for patching module attributes.
+        tmp_path (Path): Temporary directory fixture.
+    """
+    created = _summarizable_cli(monkeypatch, samples=[], captions=[])
+    df = pd.DataFrame({"start": ["0:00:00"], "end": ["0:00:02"], "text": ["Hallo."]})
+    monkeypatch.setattr(
+        cli, "transcription_pipeline", lambda **kwargs: TranscriptionOutcome(transcript=df, src_lang="de")
+    )
+    seen: dict[str, Any] = {}
+
+    def _fake_hate_speech(**kwargs: Any) -> list[dict[str, Any]]:
+        seen.update(kwargs)
+        return [{"hate_speech": True, "category": "other", "confidence": "low", "reason": "r", "text": "Hallo."}]
+
+    monkeypatch.setattr(cli, "hate_speech_pipeline", _fake_hate_speech)
+
+    cli._run_main(_args(tmp_path / "clip.wav", src_lang=None, hate_speech=True))
+
+    (processor,) = created
+    assert seen["src_lang"] == "de"
+    assert "hate_speech" in processor.file_output_labels
