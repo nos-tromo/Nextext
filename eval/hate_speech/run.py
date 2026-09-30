@@ -20,6 +20,7 @@ Usage::
     uv run python eval/hate_speech/run.py --strategy windowed --window-tokens 1 --context-tokens 0
     uv run python eval/hate_speech/run.py --mhc eval/hate_speech/data/mhc_german.csv --by-tag
     uv run python eval/hate_speech/run.py --emit-docint-jsonl eval/hate_speech/reports/docint
+    uv run python eval/hate_speech/run.py --chunks --chunk-prompt ../docint/docint/utils/prompts/de/hate_speech.txt
 """
 
 import argparse
@@ -32,12 +33,13 @@ from collections.abc import Callable, Sequence
 from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pandas as pd
 from score import GOLD_VALUES, RowResult, markdown_table, score_by_tag, score_rows
 
 from nextext.core.docint_transcript import build_docint_jsonl, transcript_segments_from_df
+from nextext.core.hate_speech import CONFIDENCE_LEVELS, HATE_SPEECH_CATEGORIES, HATE_SPEECH_STANCES
 from nextext.core.openai_cfg import InferencePipeline
 from nextext.pipeline import hate_speech_pipeline
 from nextext.utils.env_cfg import load_hate_speech_env, load_language_env
@@ -49,6 +51,8 @@ _BASELINE_PROMPTS_DIR = _HERE / "prompts" / "baseline"
 _BASELINE_SYSTEM_PROMPT = "You are a content moderation assistant. Respond only with valid JSON."
 _BASELINE_MAX_CHARS = 2048
 _ROW_SECONDS = 5
+_CHUNK_FIXTURES_DIR = _HERE / "chunk_fixtures"
+_CHUNK_MAX_CHARS = 8192
 _MHC_COUNTER_FUNCTIONALITIES = frozenset({"counter_quote_nh", "counter_ref_nh"})
 
 Classifier = Callable[[pd.DataFrame, str], set[int]]
@@ -280,6 +284,167 @@ def evaluate(transcripts: Sequence[dict[str, Any]], classify: Classifier) -> lis
     return results
 
 
+def load_chunk_fixtures(paths: Sequence[Path]) -> list[dict[str, Any]]:
+    """Load document-chunk fixtures as one-row transcripts.
+
+    Each line holds one chunk: ``id``, ``lang``, ``tags``, ``text``, ``gold``.
+
+    Args:
+        paths (Sequence[Path]): Chunk fixture JSONL files.
+
+    Returns:
+        list[dict[str, Any]]: One-row transcripts, scored like any other.
+
+    Raises:
+        ValueError: If a chunk carries a gold label outside :data:`GOLD_VALUES`.
+    """
+    chunks: list[dict[str, Any]] = []
+    for path in paths:
+        for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+            if not line.strip():
+                continue
+            chunk = json.loads(line)
+            if chunk["gold"] not in GOLD_VALUES:
+                raise ValueError(f"{path.name}:{line_number}: unknown gold label {chunk['gold']!r} in {chunk['id']}")
+            chunks.append(
+                {
+                    "id": chunk["id"],
+                    "lang": chunk["lang"],
+                    "tags": chunk["tags"],
+                    "rows": [{"text": chunk["text"], "gold": chunk["gold"]}],
+                }
+            )
+    return chunks
+
+
+def chunk_flag(raw: str) -> bool:
+    """Read docint's stance-aware chunk verdict: only ``endorses`` is hate speech.
+
+    Args:
+        raw (str): The model reply.
+
+    Returns:
+        bool: Whether the chunk is flagged.
+    """
+    match = re.search(r"\{.*\}", raw, re.DOTALL)
+    try:
+        data = json.loads(match.group() if match else raw)
+    except json.JSONDecodeError:
+        return False
+    if isinstance(data, list):
+        data = next((item for item in data if isinstance(item, dict)), None)
+    stance = str(data.get("stance") or "").strip().lower() if isinstance(data, dict) else ""
+    return stance.startswith("endors")
+
+
+def _chunk_response_format() -> dict[str, Any]:
+    """Build the strict single-verdict schema docint sends with a chunk request.
+
+    Returns:
+        dict[str, Any]: The ``response_format`` payload.
+    """
+    return {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "hate_speech_verdict",
+            "strict": True,
+            "schema": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["target", "reason", "stance", "category", "confidence"],
+                "properties": {
+                    "target": {"type": "string"},
+                    "reason": {"type": "string"},
+                    "stance": {"type": "string", "enum": [*HATE_SPEECH_STANCES, "none"]},
+                    "category": {"type": "string", "enum": [*HATE_SPEECH_CATEGORIES, "none"]},
+                    "confidence": {"type": "string", "enum": list(CONFIDENCE_LEVELS)},
+                },
+            },
+        },
+    }
+
+
+def chunk_classifier(pipeline: InferencePipeline, prompt_path: Path) -> Classifier:
+    """Build a classifier that sends each chunk the way docint's stance-aware chunk path does.
+
+    Args:
+        pipeline (InferencePipeline): The live inference client.
+        prompt_path (Path): docint's ``utils/prompts/<locale>/hate_speech.txt``.
+
+    Returns:
+        Classifier: One request per chunk (no system role, temperature 0,
+            strict schema), flagged when the stance is ``endorses``.
+    """
+    template = prompt_path.read_text(encoding="utf-8")
+
+    def classify(df: pd.DataFrame, language: str) -> set[int]:
+        """Classify each one-row chunk frame.
+
+        Args:
+            df (pd.DataFrame): The chunk frame.
+            language (str): Unused; docint sends no language with a chunk.
+
+        Returns:
+            set[int]: Flagged row positions.
+        """
+        del language
+        flagged: set[int] = set()
+        for position, text in enumerate(df["text"].astype(str).tolist()):
+            raw = pipeline.call_model(
+                prompt=template.replace("{text}", text[:_CHUNK_MAX_CHARS]),
+                include_system_prompt=False,
+                temperature=0.0,
+                top_p=0.1,
+                response_format=_chunk_response_format(),
+            )
+            if chunk_flag(raw):
+                flagged.add(position)
+        return flagged
+
+    return classify
+
+
+def chunk_baseline_classifier(pipeline: InferencePipeline) -> Classifier:
+    """Build the frozen copy of docint's pre-rewrite chunk call: old prompt, no system role, ``bool()`` parse.
+
+    Args:
+        pipeline (InferencePipeline): The live inference client.
+
+    Returns:
+        Classifier: One unconstrained request per chunk.
+    """
+    code = load_language_env().code
+    prompt_path = _BASELINE_PROMPTS_DIR / code / "hate_speech.txt"
+    if not prompt_path.exists():
+        prompt_path = _BASELINE_PROMPTS_DIR / "en" / "hate_speech.txt"
+    template = prompt_path.read_text(encoding="utf-8")
+
+    def classify(df: pd.DataFrame, language: str) -> set[int]:
+        """Classify each one-row chunk frame with the old prompt.
+
+        Args:
+            df (pd.DataFrame): The chunk frame.
+            language (str): Unused.
+
+        Returns:
+            set[int]: Flagged row positions.
+        """
+        del language
+        flagged: set[int] = set()
+        for position, text in enumerate(df["text"].astype(str).tolist()):
+            raw = pipeline.call_model(
+                prompt=template.replace("{text}", text[:_BASELINE_MAX_CHARS]),
+                include_system_prompt=False,
+                temperature=0.0,
+                top_p=0.1,
+            )
+            if baseline_flag(raw):
+                flagged.add(position)
+        return flagged
+
+    return classify
+
+
 def select_transcripts(
     *,
     fixtures: Sequence[Path] | None,
@@ -379,9 +544,18 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     parser.add_argument(
         "--strategy",
         nargs="+",
-        choices=("baseline", "windowed"),
-        default=["baseline", "windowed"],
-        help="Strategies to compare (default: both).",
+        choices=("baseline", "windowed", "chunk-baseline", "chunk"),
+        help="Strategies to compare (default: baseline + windowed; with --chunks: chunk-baseline + chunk).",
+    )
+    parser.add_argument(
+        "--chunks",
+        action="store_true",
+        help="Score the document-chunk fixtures (docint's per-chunk path) instead of transcripts.",
+    )
+    parser.add_argument(
+        "--chunk-prompt",
+        type=Path,
+        help="docint's utils/prompts/<locale>/hate_speech.txt, for the chunk strategy.",
     )
     parser.add_argument("--window-tokens", type=int, help="Override HATE_SPEECH_WINDOW_TOKENS.")
     parser.add_argument("--context-tokens", type=int, help="Override HATE_SPEECH_CONTEXT_TOKENS (0 = no context).")
@@ -416,9 +590,19 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.context_tokens is not None:
         os.environ["HATE_SPEECH_CONTEXT_TOKENS"] = str(args.context_tokens)
 
-    transcripts = select_transcripts(
-        fixtures=args.fixtures, mhc=args.mhc, mhc_lang=args.mhc_lang, tags=args.tag, limit=args.limit
-    )
+    if args.chunks:
+        transcripts = load_chunk_fixtures(args.fixtures or sorted(_CHUNK_FIXTURES_DIR.glob("*.jsonl")))
+        if args.tag:
+            transcripts = [t for t in transcripts if set(args.tag) & set(t["tags"])]
+        transcripts = transcripts[: args.limit] if args.limit is not None else transcripts
+    else:
+        transcripts = select_transcripts(
+            fixtures=args.fixtures, mhc=args.mhc, mhc_lang=args.mhc_lang, tags=args.tag, limit=args.limit
+        )
+    strategies = args.strategy or (["chunk-baseline", "chunk"] if args.chunks else ["baseline", "windowed"])
+    if "chunk" in strategies and args.chunk_prompt is None:
+        print("The chunk strategy needs --chunk-prompt (docint's hate_speech.txt).", file=sys.stderr)
+        return 2
 
     if args.emit_docint_jsonl:
         for path in emit_docint_jsonl(transcripts, args.emit_docint_jsonl):
@@ -433,6 +617,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     builders: dict[str, Callable[[InferencePipeline], Classifier]] = {
         "baseline": baseline_classifier,
         "windowed": windowed_classifier,
+        "chunk-baseline": chunk_baseline_classifier,
+        "chunk": lambda live: chunk_classifier(live, cast(Path, args.chunk_prompt)),
     }
     report: dict[str, Any] = {
         "created": datetime.now(UTC).isoformat(),
@@ -442,7 +628,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "strategies": {},
     }
     rows_by_strategy: dict[str, list[RowResult]] = {}
-    for name in args.strategy:
+    for name in strategies:
         started = time.monotonic()
         rows = evaluate(transcripts, builders[name](pipeline))
         elapsed = time.monotonic() - started

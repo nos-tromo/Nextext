@@ -56,6 +56,27 @@ verdict to `eval/hate_speech/reports/` (gitignored), along with the effective
 window budgets, prompt locale, provider and `OLLAMA_THINK` setting. Run with the
 production think setting: thinking tokens count against the output cap.
 
+## docint's chunk prompt
+
+docint judges every non-transcript node (documents, postings, image text) with
+its own per-chunk prompt. `--chunks` scores the invented chunks in
+`chunk_fixtures/` with two strategies:
+
+- `chunk-baseline` — docint's pre-rewrite call: the old prompt, no system role,
+  and the `bool()` parse.
+- `chunk` — its stance-aware prompt, read from a docint checkout.
+
+```bash
+uv run python eval/hate_speech/run.py --chunks \
+  --chunk-prompt ../docint/docint/utils/prompts/de/hate_speech.txt --by-tag
+```
+
+The chunk fixtures target the ways a stance rule can suppress real hate: hate
+styled as news, rhetorical questions, approving shares, coded ideology critique
+and meme text. Each has a counterpart that must stay clean: a genuine court
+report, legitimate critique of religious dogma, a press photo of a removed
+poster, and neutral mentions.
+
 ## Metrics
 
 Gold labels are stance-level: `none`, or the speaker's stance — `endorses`,

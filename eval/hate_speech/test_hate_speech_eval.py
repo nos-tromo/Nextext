@@ -3,7 +3,7 @@
 import json
 import re
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pandas as pd
 import pytest
@@ -296,3 +296,105 @@ def test_run_settings_record_the_effective_budgets_and_provider(monkeypatch: pyt
     assert settings["context_tokens"] == 0
     assert settings["provider"] == "vllm"
     assert settings["ollama_think"] == "0"
+
+
+# ---------------------------------------------------------------------------
+# Chunk mode (docint's per-chunk prompt)
+# ---------------------------------------------------------------------------
+
+_CHUNK_FIXTURES = Path(__file__).resolve().parent / "chunk_fixtures"
+
+
+def test_committed_chunk_fixtures_cover_the_chunk_prompt_risks() -> None:
+    """Chunk fixtures load and include the cases where a stance rule can suppress real hate."""
+    chunks = hs_run.load_chunk_fixtures(sorted(_CHUNK_FIXTURES.glob("*.jsonl")))
+
+    tags = {tag for chunk in chunks for tag in chunk["tags"]}
+    golds = [chunk["rows"][0]["gold"] for chunk in chunks]
+    assert {"report_framed_hate", "reporting", "rhetorical_question", "coded_ideology", "image"} <= tags
+    assert "endorses" in golds
+    assert "quotes_or_reports" in golds
+    assert all(len(chunk["rows"]) == 1 for chunk in chunks)
+
+
+def test_load_chunk_fixtures_rejects_unknown_gold_labels(tmp_path: Path) -> None:
+    """A typo in a chunk's gold label fails loudly.
+
+    Args:
+        tmp_path (Path): Temporary directory fixture.
+    """
+    path = tmp_path / "bad.jsonl"
+    path.write_text(json.dumps({"id": "c", "lang": "de", "tags": ["x"], "text": "a", "gold": "hate"}) + "\n")
+
+    with pytest.raises(ValueError, match="hate"):
+        hs_run.load_chunk_fixtures([path])
+
+
+class _ChunkPipeline:
+    """Structural stand-in for ``InferencePipeline`` recording chunk requests."""
+
+    def __init__(self, reply: str) -> None:
+        """Store the canned reply.
+
+        Args:
+            reply (str): The reply every call returns.
+        """
+        self.reply = reply
+        self.calls: list[dict[str, Any]] = []
+
+    def call_model(self, prompt: str, **kwargs: Any) -> str:
+        """Record the call and return the canned reply.
+
+        Args:
+            prompt (str): The rendered chunk prompt.
+            **kwargs (Any): Request keyword arguments.
+
+        Returns:
+            str: The canned reply.
+        """
+        self.calls.append({"prompt": prompt, **kwargs})
+        return self.reply
+
+
+def _one_chunk(text: str) -> pd.DataFrame:
+    """Build the one-row frame a chunk is scored as.
+
+    Args:
+        text (str): The chunk text.
+
+    Returns:
+        pd.DataFrame: The frame.
+    """
+    return hs_run.transcript_frame(_transcript([{"text": text, "gold": "none"}]))
+
+
+def test_chunk_classifier_flags_only_an_endorsing_stance(tmp_path: Path) -> None:
+    """The new chunk prompt's verdict is the stance: endorsement flags, condemnation does not.
+
+    Args:
+        tmp_path (Path): Temporary directory fixture.
+    """
+    prompt = tmp_path / "hate_speech.txt"
+    prompt.write_text("Classify:\n{text}", encoding="utf-8")
+    endorsing = _ChunkPipeline(json.dumps({"stance": "endorses", "category": "ethnicity"}))
+    condemning = _ChunkPipeline(json.dumps({"stance": "condemns_or_counters", "category": "ethnicity"}))
+
+    flagged = hs_run.chunk_classifier(cast(Any, endorsing), prompt)(_one_chunk("Eins."), "de")
+    clean = hs_run.chunk_classifier(cast(Any, condemning), prompt)(_one_chunk("Zwei."), "de")
+
+    assert flagged == {0}
+    assert clean == set()
+    assert endorsing.calls[0]["prompt"] == "Classify:\nEins."
+    assert endorsing.calls[0]["include_system_prompt"] is False
+    assert endorsing.calls[0]["response_format"]["json_schema"]["strict"] is True
+
+
+def test_chunk_baseline_classifier_reproduces_docints_old_call() -> None:
+    """The frozen chunk baseline sends the old prompt without a system role and trusts the boolean."""
+    pipeline = _ChunkPipeline('{"hate_speech": "false", "category": "none"}')
+
+    flagged = hs_run.chunk_baseline_classifier(cast(Any, pipeline))(_one_chunk("Drei."), "de")
+
+    assert flagged == {0}
+    assert pipeline.calls[0]["include_system_prompt"] is False
+    assert "Drei." in pipeline.calls[0]["prompt"]
