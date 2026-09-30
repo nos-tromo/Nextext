@@ -149,6 +149,11 @@ Requests use a JSON-schema `response_format`. A provider that rejects it, or
 whose constrained reply cannot be parsed, is served unconstrained for the rest
 of the sweep. A context overflow halves both budgets and retries.
 
+A reply cut off at the output cap (`finish_reason: length`) is not trusted
+either: the core is halved and the window asked again. The cap grows with the
+core, at 80 tokens per row and at least 1024. A single-row window keeps
+whatever complete items its reply held.
+
 Invalid values warn and fall back. Resolved by `load_hate_speech_env`. The
 prompt is `nextext/utils/prompts/<code>/hate_speech_transcript.txt`; docint
 keeps a byte-identical copy for its own transcript windows.
