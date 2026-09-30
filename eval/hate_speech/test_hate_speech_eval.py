@@ -1,6 +1,7 @@
 """Tests for the dev-only hate-speech eval harness (no network, no model calls)."""
 
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -201,3 +202,97 @@ def test_emit_docint_jsonl_writes_one_file_per_transcript(tmp_path: Path) -> Non
     assert [r["text"] for r in records] == ["a", "b"]
     assert records[0]["speaker"] == "Speaker 1"
     assert records[0]["language"] == "de"
+
+
+_PROMPTS = Path(__file__).resolve().parents[2] / "nextext" / "utils" / "prompts"
+
+
+def _words(text: str) -> set[str]:
+    """Return the lower-cased word set of a sentence.
+
+    Args:
+        text (str): The sentence.
+
+    Returns:
+        set[str]: Its words.
+    """
+    return set(re.findall(r"\w+", text.lower()))
+
+
+def _prompt_example_sentences() -> list[str]:
+    """Collect the few-shot example rows of every transcript prompt.
+
+    Returns:
+        list[str]: The example sentences (speaker label removed).
+    """
+    sentences: list[str] = []
+    for path in sorted(_PROMPTS.glob("*/hate_speech_transcript.txt")):
+        for line in path.read_text(encoding="utf-8").splitlines():
+            match = re.match(r"^\[[A-Z]\] (?:Speaker \d+: )?(.+)$", line)
+            if match:
+                sentences.append(match.group(1))
+    return sentences
+
+
+def test_committed_fixtures_do_not_copy_the_prompt_examples() -> None:
+    """A fixture that repeats (or nearly repeats) a few-shot example measures memorisation, not judgement."""
+    examples = [_words(sentence) for sentence in _prompt_example_sentences()]
+    rows = [row["text"] for t in hs_run.load_fixtures(sorted(_FIXTURES.glob("*.jsonl"))) for row in t["rows"]]
+    assert examples
+
+    overlapping = [
+        text
+        for text in rows
+        if any(len(_words(text) & ex) / len(_words(text) | ex) >= 0.6 for ex in examples if _words(text))
+    ]
+
+    assert overlapping == []
+
+
+def test_committed_fixtures_include_a_transcript_longer_than_one_default_window() -> None:
+    """At default budgets at least one transcript spans several windows, so window edges and context get exercised."""
+    default_core_chars = 1000 * 3
+    longest = max(
+        sum(len(row["text"]) + 12 for row in t["rows"]) for t in hs_run.load_fixtures(sorted(_FIXTURES.glob("*.jsonl")))
+    )
+
+    assert longest > 2 * default_core_chars
+
+
+def test_select_transcripts_runs_mhc_alone_unless_fixtures_are_named(tmp_path: Path) -> None:
+    """``--mhc`` scores the benchmark on its own; committed fixtures join only when asked for.
+
+    Args:
+        tmp_path (Path): Temporary directory fixture.
+    """
+    mhc = tmp_path / "mhc.csv"
+    pd.DataFrame({"functionality": ["counter_ref_nh"], "test_case": ["B"], "label_gold": ["non-hateful"]}).to_csv(
+        mhc, index=False
+    )
+    fixture = tmp_path / "one.jsonl"
+    fixture.write_text(json.dumps(_transcript([{"text": "a", "gold": "none"}], id="own")) + "\n", encoding="utf-8")
+
+    mhc_only = hs_run.select_transcripts(fixtures=None, mhc=mhc, mhc_lang="de", tags=None, limit=None)
+    both = hs_run.select_transcripts(fixtures=[fixture], mhc=mhc, mhc_lang="de", tags=None, limit=None)
+
+    assert [t["id"] for t in mhc_only] == ["mhc-0"]
+    assert [t["id"] for t in both] == ["own", "mhc-0"]
+
+
+def test_run_settings_record_the_effective_budgets_and_provider(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Reports state the budgets actually used (defaults included), the provider and the think setting.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Fixture for patching environment variables.
+    """
+    monkeypatch.delenv("HATE_SPEECH_WINDOW_TOKENS", raising=False)
+    monkeypatch.setenv("HATE_SPEECH_CONTEXT_TOKENS", "0")
+    monkeypatch.setenv("INFERENCE_PROVIDER", "vllm")
+    monkeypatch.setenv("OLLAMA_THINK", "0")
+
+    settings = hs_run.run_settings()
+
+    assert settings["window_tokens"] == 1000
+    assert settings["context_tokens"] == 0
+    assert settings["provider"] == "vllm"
+    assert settings["ollama_think"] == "0"

@@ -17,9 +17,9 @@ Two strategies are compared on the same rows:
 Usage::
 
     uv run python eval/hate_speech/run.py
-    uv run python eval/hate_speech/run.py --strategy windowed --context-tokens 0
+    uv run python eval/hate_speech/run.py --strategy windowed --window-tokens 1 --context-tokens 0
     uv run python eval/hate_speech/run.py --mhc eval/hate_speech/data/mhc_german.csv --by-tag
-    uv run python eval/hate_speech/run.py --emit-docint-jsonl /tmp/hs-docint
+    uv run python eval/hate_speech/run.py --emit-docint-jsonl eval/hate_speech/reports/docint
 """
 
 import argparse
@@ -40,7 +40,7 @@ from score import GOLD_VALUES, RowResult, markdown_table, score_by_tag, score_ro
 from nextext.core.docint_transcript import build_docint_jsonl, transcript_segments_from_df
 from nextext.core.openai_cfg import InferencePipeline
 from nextext.pipeline import hate_speech_pipeline
-from nextext.utils.env_cfg import load_language_env
+from nextext.utils.env_cfg import load_hate_speech_env, load_language_env
 
 _HERE = Path(__file__).resolve().parent
 _FIXTURES_DIR = _HERE / "fixtures"
@@ -280,6 +280,58 @@ def evaluate(transcripts: Sequence[dict[str, Any]], classify: Classifier) -> lis
     return results
 
 
+def select_transcripts(
+    *,
+    fixtures: Sequence[Path] | None,
+    mhc: Path | None,
+    mhc_lang: str,
+    tags: Sequence[str] | None,
+    limit: int | None,
+) -> list[dict[str, Any]]:
+    """Assemble the transcripts to score.
+
+    ``--mhc`` alone scores only the benchmark; the committed fixtures run when
+    no benchmark is given, or alongside it when ``--fixtures`` names them.
+
+    Args:
+        fixtures (Sequence[Path] | None): Fixture files, or ``None`` for the default.
+        mhc (Path | None): A Multilingual HateCheck CSV, or ``None``.
+        mhc_lang (str): Language code of the MHC suite.
+        tags (Sequence[str] | None): Keep only transcripts carrying one of these tags.
+        limit (int | None): Keep at most this many transcripts.
+
+    Returns:
+        list[dict[str, Any]]: The transcripts.
+    """
+    transcripts: list[dict[str, Any]] = []
+    if fixtures:
+        transcripts += load_fixtures(fixtures)
+    elif mhc is None:
+        transcripts += load_fixtures(sorted(_FIXTURES_DIR.glob("*.jsonl")))
+    if mhc is not None:
+        transcripts += load_mhc(mhc, lang=mhc_lang)
+    if tags:
+        transcripts = [t for t in transcripts if set(tags) & set(t["tags"])]
+    return transcripts[:limit] if limit is not None else transcripts
+
+
+def run_settings() -> dict[str, Any]:
+    """Describe the settings a run uses, for its report.
+
+    Returns:
+        dict[str, Any]: Effective window budgets (defaults included), prompt
+            locale, provider and the Ollama think setting.
+    """
+    budgets = load_hate_speech_env()
+    return {
+        "window_tokens": budgets.window_tokens,
+        "context_tokens": budgets.context_tokens,
+        "prompt_lang": load_language_env().code,
+        "provider": os.getenv("INFERENCE_PROVIDER", "ollama"),
+        "ollama_think": os.getenv("OLLAMA_THINK"),
+    }
+
+
 def emit_docint_jsonl(transcripts: Sequence[dict[str, Any]], out_dir: Path) -> list[Path]:
     """Write each transcript as the ``docint.jsonl`` payload Nextext would export.
 
@@ -318,7 +370,11 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     """
     parser = argparse.ArgumentParser(description="Score hate-speech classifiers against gold-labelled transcripts.")
     parser.add_argument("--fixtures", nargs="+", type=Path, help="Fixture JSONL files (default: the committed ones).")
-    parser.add_argument("--mhc", type=Path, help="Locally downloaded Multilingual HateCheck CSV (never committed).")
+    parser.add_argument(
+        "--mhc",
+        type=Path,
+        help="Local Multilingual HateCheck CSV (never committed); scored alone unless --fixtures is given.",
+    )
     parser.add_argument("--mhc-lang", default="de", help="Language code of the MHC suite (default: de).")
     parser.add_argument(
         "--strategy",
@@ -360,13 +416,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.context_tokens is not None:
         os.environ["HATE_SPEECH_CONTEXT_TOKENS"] = str(args.context_tokens)
 
-    transcripts = load_fixtures(args.fixtures or sorted(_FIXTURES_DIR.glob("*.jsonl")))
-    if args.mhc:
-        transcripts += load_mhc(args.mhc, lang=args.mhc_lang)
-    if args.tag:
-        transcripts = [t for t in transcripts if set(args.tag) & set(t["tags"])]
-    if args.limit is not None:
-        transcripts = transcripts[: args.limit]
+    transcripts = select_transcripts(
+        fixtures=args.fixtures, mhc=args.mhc, mhc_lang=args.mhc_lang, tags=args.tag, limit=args.limit
+    )
 
     if args.emit_docint_jsonl:
         for path in emit_docint_jsonl(transcripts, args.emit_docint_jsonl):
@@ -385,9 +437,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     report: dict[str, Any] = {
         "created": datetime.now(UTC).isoformat(),
         "model": pipeline.default_model,
-        "prompt_lang": load_language_env().code,
-        "window_tokens": os.getenv("HATE_SPEECH_WINDOW_TOKENS"),
-        "context_tokens": os.getenv("HATE_SPEECH_CONTEXT_TOKENS"),
+        **run_settings(),
         "transcripts": len(transcripts),
         "strategies": {},
     }
