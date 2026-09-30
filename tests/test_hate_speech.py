@@ -1,11 +1,17 @@
 """Tests for the windowed, stance-aware hate-speech detection agent."""
 
 import json
+import re
+from pathlib import Path
 from typing import Any, cast
 
 import pytest
 
+from nextext.core import hate_speech as hate_speech_module
 from nextext.core.hate_speech import (
+    CONFIDENCE_LEVELS,
+    HATE_SPEECH_CATEGORIES,
+    HATE_SPEECH_STANCES,
     TranscriptLine,
     TranscriptWindow,
     classify_window,
@@ -487,3 +493,62 @@ def test_classify_window_reports_an_unparseable_reply_as_none() -> None:
     pipeline = _RecordingPipeline("Sorry, I can't do that.")
 
     assert classify_window(cast(InferencePipeline, pipeline), "PROMPT", [1], structured=True) is None
+
+
+# ---------------------------------------------------------------------------
+# hate_speech_transcript prompt contract (en + de)
+# ---------------------------------------------------------------------------
+
+_PROMPT_DIR = Path(hate_speech_module.__file__).resolve().parents[1] / "utils" / "prompts"
+
+
+@pytest.mark.parametrize("locale", ["en", "de"])
+def test_transcript_prompt_renders_every_block(locale: str) -> None:
+    """Each locale's template exposes every placeholder the renderer fills, and nothing is left unfilled.
+
+    Args:
+        locale (str): Prompt locale directory.
+    """
+    template = (_PROMPT_DIR / locale / "hate_speech_transcript.txt").read_text(encoding="utf-8")
+    lines = [
+        TranscriptLine(index=3, text="Vorher.", speaker="Speaker 1"),
+        TranscriptLine(index=4, text="Das ist antisemitisch.", speaker="Speaker 2"),
+        TranscriptLine(index=5, text="Nachher.", speaker="Speaker 1"),
+    ]
+    window = TranscriptWindow(context_start=0, core_start=1, core_end=2, context_end=3)
+
+    prompt = render_window_prompt(template, lines, window, core_chars=1000, context_chars=1000, language="German")
+
+    assert "[3] Speaker 1: Vorher." in prompt
+    assert "[4] Speaker 2: Das ist antisemitisch." in prompt
+    assert "[5] Speaker 1: Nachher." in prompt
+    assert "German" in prompt
+    assert "4\u20134" in prompt  # en dash between the core bounds
+    assert re.search(r"\{(language|context_before|segments|context_after|first_index|last_index)\}", prompt) is None
+
+
+@pytest.mark.parametrize("locale", ["en", "de"])
+def test_transcript_prompt_names_every_parser_enum_value(locale: str) -> None:
+    """Unconstrained replies can only use values the prompt names; the parser enums must all appear.
+
+    Args:
+        locale (str): Prompt locale directory.
+    """
+    template = (_PROMPT_DIR / locale / "hate_speech_transcript.txt").read_text(encoding="utf-8")
+
+    for value in (*HATE_SPEECH_STANCES, *HATE_SPEECH_CATEGORIES, *CONFIDENCE_LEVELS):
+        assert value in template, value
+
+
+@pytest.mark.parametrize("locale", ["en", "de"])
+def test_transcript_prompt_keeps_the_instruction_prefix_static(locale: str) -> None:
+    """Placeholders only appear in the variable tail, so the long instruction prefix is cacheable.
+
+    Args:
+        locale (str): Prompt locale directory.
+    """
+    template = (_PROMPT_DIR / locale / "hate_speech_transcript.txt").read_text(encoding="utf-8")
+
+    first_placeholder = min(template.index(name) for name in ("{language}", "{context_before}", "{segments}"))
+
+    assert first_placeholder > len(template) * 0.7
