@@ -84,18 +84,8 @@ class _FakePipeline(InferencePipeline):
         Returns:
             str: The next queued reply, or ``""`` when exhausted.
         """
-        del (
-            model,
-            temperature,
-            seed,
-            stop,
-            num_predict,
-            top_p,
-            system_prompt,
-            include_system_prompt,
-            think,
-            response_format,
-        )
+        del model, temperature, seed, stop, num_predict
+        del top_p, system_prompt, include_system_prompt, think, response_format
         self.prompts.append(prompt)
         return self.replies.pop(0) if self.replies else ""
 

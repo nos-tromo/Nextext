@@ -1205,18 +1205,8 @@ class _OverflowingPipeline(InferencePipeline):
         Raises:
             RuntimeError: When the payload exceeds ``max_payload_chars``.
         """
-        del (
-            model,
-            temperature,
-            seed,
-            stop,
-            num_predict,
-            top_p,
-            system_prompt,
-            include_system_prompt,
-            think,
-            response_format,
-        )
+        del model, temperature, seed, stop, num_predict
+        del top_p, system_prompt, include_system_prompt, think, response_format
         payload = prompt.removeprefix("Summarize: ")
         if len(payload) > self.max_payload_chars:
             self.overflow_count += 1
