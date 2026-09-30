@@ -1,5 +1,6 @@
 """Tests for the windowed, stance-aware hate-speech detection agent."""
 
+import hashlib
 import json
 import re
 from pathlib import Path
@@ -636,3 +637,53 @@ def test_transcript_prompt_keeps_the_instruction_prefix_static(locale: str) -> N
     first_placeholder = min(template.index(name) for name in ("{language}", "{context_before}", "{segments}"))
 
     assert first_placeholder > len(template) * 0.7
+
+
+def _static_prefix(template: str) -> str:
+    """Return the instruction part of a transcript template (everything before the first placeholder).
+
+    Args:
+        template (str): The prompt template.
+
+    Returns:
+        str: The static instructions.
+    """
+    return template[: min(template.index(name) for name in ("{language}", "{context_before}", "{segments}"))]
+
+
+@pytest.mark.parametrize("locale", ["en", "de"])
+def test_transcript_prompt_examples_never_use_real_row_numbers(locale: str) -> None:
+    """Few-shot rows are lettered, so an example's "21 endorses" can never be mistaken for real row 21.
+
+    Args:
+        locale (str): Prompt locale directory.
+    """
+    prefix = _static_prefix((_PROMPT_DIR / locale / "hate_speech_transcript.txt").read_text(encoding="utf-8"))
+
+    assert re.search(r"(?m)^\[\d+\]", prefix) is None
+    assert re.search(r"(?m)^(Result|Ergebnis): .*\d", prefix) is None
+
+
+def test_german_prompt_does_not_exempt_the_term_it_uses_for_slurs() -> None:
+    """The not-GMF list must not name "Schimpfwörter", which the GMF list uses for slurs."""
+    prefix = _static_prefix((_PROMPT_DIR / "de" / "hate_speech_transcript.txt").read_text(encoding="utf-8"))
+    not_gmf = next(line for line in prefix.splitlines() if line.startswith("Keine GMF"))
+
+    assert "Schimpfw" not in not_gmf
+
+
+_DOCINT_TRANSCRIPT_PROMPT_SHA256: dict[str, str] = {
+    "en": "208e798b79810203d1d82398d760fe14807287d9caac8f741ca07ea38aabfda4",
+    "de": "99703816dc6dbd4a213358dd6af940b238591867fdb97be8c7f6e4a13b62f576",
+}
+"""SHA-256 of docint's byte-identical copy (``docint/utils/prompts/<locale>/hate_speech_transcript.txt``)."""
+
+
+def test_transcript_prompts_are_pinned_to_docints_copy() -> None:
+    """Nextext and docint ship byte-identical transcript prompts; change both repos together."""
+    digests = {
+        locale: hashlib.sha256((_PROMPT_DIR / locale / "hate_speech_transcript.txt").read_bytes()).hexdigest()
+        for locale in ("en", "de")
+    }
+
+    assert digests == _DOCINT_TRANSCRIPT_PROMPT_SHA256
