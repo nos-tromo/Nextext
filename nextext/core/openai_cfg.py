@@ -203,6 +203,7 @@ class InferencePipeline:
         system_prompt: str | None = None,
         include_system_prompt: bool = True,
         think: bool | None = None,
+        response_format: dict[str, Any] | None = None,
     ) -> str:
         """Call the configured inference provider via an OpenAI-compatible chat completions API.
 
@@ -225,6 +226,10 @@ class InferencePipeline:
                 :func:`load_inference_env`; if that is also ``None`` the field
                 is omitted entirely. Honoured by Ollama-hosted reasoning models
                 (e.g. Qwen3); a no-op for vLLM and OpenAI providers.
+            response_format (dict[str, Any] | None): OpenAI ``response_format``
+                forwarded verbatim (e.g. a ``json_schema`` constraint); ``None``
+                (default) omits the field. Routers may reject it or drop it
+                silently, so callers must still parse unconstrained replies.
 
         Returns:
             str: The generated response from the model.
@@ -245,6 +250,7 @@ class InferencePipeline:
             system_prompt=system_prompt,
             include_system_prompt=include_system_prompt,
             think=think,
+            response_format=response_format,
         )
 
     def call_vision(
@@ -334,6 +340,7 @@ class InferencePipeline:
         system_prompt: str | None,
         include_system_prompt: bool,
         think: bool | None,
+        response_format: dict[str, Any] | None = None,
     ) -> str:
         """Issue one chat-completions request and return its text content.
 
@@ -354,6 +361,8 @@ class InferencePipeline:
             system_prompt (str | None): Override for the default system prompt.
             include_system_prompt (bool): Whether to send a ``system`` role.
             think (bool | None): Override for the ``think`` ``extra_body`` field.
+            response_format (dict[str, Any] | None): Forwarded as
+                ``response_format`` when set; omitted when ``None``.
 
         Returns:
             str: The stripped response content, or ``""`` when the model
@@ -388,6 +397,8 @@ class InferencePipeline:
             request_kwargs["max_tokens"] = num_predict
         if top_p is not None:
             request_kwargs["top_p"] = top_p
+        if response_format is not None:
+            request_kwargs["response_format"] = response_format
 
         effective_think = think if think is not None else load_inference_env().think
         if effective_think is not None:

@@ -386,6 +386,51 @@ def test_call_model_preserves_existing_kwargs_when_think_set(
     assert recorded["extra_body"] == {"think": False}
 
 
+def test_call_model_forwards_response_format_verbatim(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A response_format argument must reach the request unchanged, beside extra_body.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): The pytest fixture for patching
+            environment variables and pipeline internals.
+    """
+    monkeypatch.setenv("TEXT_MODEL", "llama3.1:8b")
+    pipeline = InferencePipeline()
+    completions = _install_recording_client(monkeypatch, pipeline)
+    schema_format = {
+        "type": "json_schema",
+        "json_schema": {"name": "findings", "strict": True, "schema": {"type": "object"}},
+    }
+
+    pipeline.call_model("payload", response_format=schema_format, think=False)
+
+    recorded = completions.calls[0]
+    assert recorded["response_format"] == {
+        "type": "json_schema",
+        "json_schema": {"name": "findings", "strict": True, "schema": {"type": "object"}},
+    }
+    assert recorded["extra_body"] == {"think": False}
+
+
+def test_call_model_omits_response_format_by_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Without a response_format argument the request carries no such key at all.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): The pytest fixture for patching
+            environment variables and pipeline internals.
+    """
+    monkeypatch.setenv("TEXT_MODEL", "llama3.1:8b")
+    pipeline = InferencePipeline()
+    completions = _install_recording_client(monkeypatch, pipeline)
+
+    pipeline.call_model("payload")
+
+    assert "response_format" not in completions.calls[0]
+
+
 # ---------------------------------------------------------------------------
 # load_prompt locale resolution
 # ---------------------------------------------------------------------------

@@ -704,6 +704,7 @@ def test_summarization_pipeline_formats_prompt(monkeypatch: pytest.MonkeyPatch) 
             system_prompt: str | None = None,
             include_system_prompt: bool = True,
             think: bool | None = None,
+            response_format: dict[str, Any] | None = None,
         ) -> str:
             """Simulate calling the model with the given prompt.
 
@@ -718,6 +719,7 @@ def test_summarization_pipeline_formats_prompt(monkeypatch: pytest.MonkeyPatch) 
                 system_prompt (str | None): Unused test double argument.
                 include_system_prompt (bool): Unused test double argument.
                 think (bool | None): Unused test double argument.
+                response_format (dict[str, Any] | None): Unused test double argument.
 
             Returns:
                 str: The model's response.
@@ -996,6 +998,7 @@ class _RecordingPipeline(InferencePipeline):
         system_prompt: str | None = None,
         include_system_prompt: bool = True,
         think: bool | None = None,
+        response_format: dict[str, Any] | None = None,
     ) -> str:
         """Record the call and return the canned reply.
 
@@ -1010,6 +1013,7 @@ class _RecordingPipeline(InferencePipeline):
             system_prompt (str | None): Unused test double argument.
             include_system_prompt (bool): Unused test double argument.
             think (bool | None): Unused test double argument.
+            response_format (dict[str, Any] | None): Unused test double argument.
 
         Returns:
             str: The canned reply.
@@ -1018,7 +1022,7 @@ class _RecordingPipeline(InferencePipeline):
             RuntimeError: If invoked more than 1000 times, a sign the
                 map-reduce recursion failed to terminate.
         """
-        del model, temperature, seed, stop, top_p, system_prompt, include_system_prompt, think
+        del model, temperature, seed, stop, top_p, system_prompt, include_system_prompt, think, response_format
         if len(self.calls) >= 1000:
             raise RuntimeError("call_model invoked too many times; recursion likely unbounded")
         self.calls.append({"prompt": prompt, "num_predict": num_predict})
@@ -1178,6 +1182,7 @@ class _OverflowingPipeline(InferencePipeline):
         system_prompt: str | None = None,
         include_system_prompt: bool = True,
         think: bool | None = None,
+        response_format: dict[str, Any] | None = None,
     ) -> str:
         """Raise when the payload is too large, otherwise return the reply.
 
@@ -1192,6 +1197,7 @@ class _OverflowingPipeline(InferencePipeline):
             system_prompt (str | None): Unused test double argument.
             include_system_prompt (bool): Unused test double argument.
             think (bool | None): Unused test double argument.
+            response_format (dict[str, Any] | None): Unused test double argument.
 
         Returns:
             str: The canned reply for in-budget payloads.
@@ -1199,7 +1205,18 @@ class _OverflowingPipeline(InferencePipeline):
         Raises:
             RuntimeError: When the payload exceeds ``max_payload_chars``.
         """
-        del model, temperature, seed, stop, num_predict, top_p, system_prompt, include_system_prompt, think
+        del (
+            model,
+            temperature,
+            seed,
+            stop,
+            num_predict,
+            top_p,
+            system_prompt,
+            include_system_prompt,
+            think,
+            response_format,
+        )
         payload = prompt.removeprefix("Summarize: ")
         if len(payload) > self.max_payload_chars:
             self.overflow_count += 1
