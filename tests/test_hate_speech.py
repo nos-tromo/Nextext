@@ -111,11 +111,24 @@ def test_parse_drops_indices_outside_the_core() -> None:
     assert [f["index"] for f in findings] == [6]
 
 
-def test_parse_first_item_wins_on_duplicate_index() -> None:
-    """A later endorsing duplicate cannot override the model's first verdict for a row."""
-    raw = _reply(_item(7, "condemns_or_counters"), _item(7, "endorses"))
+@pytest.mark.parametrize(
+    "items",
+    [
+        (("condemns_or_counters", "quote"), ("endorses", "own view")),
+        (("endorses", "own view"), ("quotes_or_reports", "quote")),
+    ],
+)
+def test_parse_an_endorsing_entry_wins_on_a_duplicated_row(items: tuple[tuple[str, str], ...]) -> None:
+    """A row the model lists twice (quoting, then endorsing) is reported, whatever the order.
 
-    assert parse_window_reply(raw, allowed=[7]) == []
+    Args:
+        items (tuple[tuple[str, str], ...]): ``(stance, reason)`` per duplicate entry.
+    """
+    raw = _reply(*(_item(7, stance, reason=reason) for stance, reason in items))
+
+    findings = parse_window_reply(raw, allowed=[7])
+
+    assert findings == [{"index": 7, "category": "ethnicity", "confidence": "high", "reason": "own view"}]
 
 
 def test_parse_sorts_findings_by_index() -> None:
@@ -187,6 +200,38 @@ def test_parse_normalises_stance_spelling() -> None:
     raw = _reply(_item(1, " Endorses "), _item(2, "quotes-or-reports"))
 
     assert [f["index"] for f in parse_window_reply(raw, allowed=[1, 2]) or []] == [1]
+
+
+@pytest.mark.parametrize("stance", ["Endorses.", "endorsed", "ENDORSE", "endorsing"])
+def test_parse_accepts_unconstrained_inflections_of_endorses(stance: str) -> None:
+    """Without the schema, a model may inflect or punctuate the stance; it still counts.
+
+    Args:
+        stance (str): The stance as an unconstrained model wrote it.
+    """
+    assert [f["index"] for f in parse_window_reply(_reply(_item(1, stance)), allowed=[1]) or []] == [1]
+
+
+@pytest.mark.parametrize("stance", ["does not endorse", "non-endorsing", "unendorsed"])
+def test_parse_rejects_negated_endorsement(stance: str) -> None:
+    """Negations that merely contain the word are not endorsement.
+
+    Args:
+        stance (str): A negated stance.
+    """
+    assert parse_window_reply(_reply(_item(1, stance)), allowed=[1]) == []
+
+
+def test_parse_items_without_a_usable_index_are_unparseable_not_clean() -> None:
+    """A reply whose items name the row under another key cannot be read — it must not pass as clean."""
+    raw = json.dumps({"findings": [{"row": 3, "stance": "endorses", "category": "ethnicity"}]})
+
+    assert parse_window_reply(raw, allowed=[3]) is None
+
+
+def test_parse_out_of_core_indices_are_dropped_not_unparseable() -> None:
+    """Items pointing at context rows are a readable reply with nothing to report."""
+    assert parse_window_reply(_reply(_item(99, "endorses")), allowed=[3]) == []
 
 
 def test_parse_accepts_a_bare_list_and_a_single_object() -> None:

@@ -54,6 +54,7 @@ _PLACEHOLDER_RE = re.compile(r"\{(language|context_before|segments|context_after
 _THINK_BLOCK_RE = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
 _THINK_CLOSE: str = "</think>"
 _INDEX_TEXT_RE = re.compile(r"^\[?\s*(\d+)\s*\]?$")
+_NON_WORD_RE = re.compile(r"[^a-z_]+")
 
 
 @dataclass(frozen=True)
@@ -450,13 +451,35 @@ def _normalize_choice(value: Any, choices: Sequence[str], default: str) -> str:
     return normalized if normalized in choices else default
 
 
+def _normalize_stance(value: Any) -> str:
+    """Normalise a stance, accepting unconstrained inflections of ``endorses``.
+
+    Without the JSON schema a model may write ``"Endorses."`` or
+    ``"endorsed"``; those still count, while negations such as
+    ``"does not endorse"`` do not start with the stem and stay ``unclear``.
+
+    Args:
+        value (Any): The raw ``stance`` value.
+
+    Returns:
+        str: One of :data:`HATE_SPEECH_STANCES`.
+    """
+    if not isinstance(value, str):
+        return "unclear"
+    normalized = _NON_WORD_RE.sub("_", value.strip().lower()).strip("_")
+    if normalized in HATE_SPEECH_STANCES:
+        return normalized
+    return "endorses" if normalized.startswith("endors") else "unclear"
+
+
 def parse_window_reply(raw: str, allowed: Collection[int]) -> list[WindowFinding] | None:
     """Parse a window reply into the rows whose speaker endorses hate.
 
-    No boolean verdict is read: a row is a finding if and only if its stance
-    is ``endorses``. Items for rows outside ``allowed`` are dropped; the first
-    item per row wins; categories and confidences are normalised to their
-    enums.
+    No boolean verdict is read: a row is a finding if and only if an item for
+    it has the stance ``endorses`` (a row listed twice — say, quoted and then
+    endorsed — is reported; the first endorsing item supplies the details).
+    Items for rows outside ``allowed`` are dropped; categories and confidences
+    are normalised to their enums.
 
     Args:
         raw (str): The raw model reply.
@@ -465,7 +488,8 @@ def parse_window_reply(raw: str, allowed: Collection[int]) -> list[WindowFinding
     Returns:
         list[WindowFinding] | None: Endorsed-hate findings in row order (``[]``
             when the reply lists none), or ``None`` when the reply holds no
-            usable findings structure.
+            usable findings structure — including items none of which carries
+            a readable ``index``.
     """
     payload = _load_json_payload(_strip_reasoning(raw or ""))
     items: Any
@@ -479,27 +503,28 @@ def parse_window_reply(raw: str, allowed: Collection[int]) -> list[WindowFinding
         return None
 
     allowed_set = set(allowed)
-    seen: set[int] = set()
-    findings: list[WindowFinding] = []
+    by_index: dict[int, WindowFinding] = {}
+    readable = 0
     for item in items:
         if not isinstance(item, dict):
             continue
         index = _coerce_index(item.get("index"))
-        if index is None or index not in allowed_set or index in seen:
+        if index is None:
             continue
-        seen.add(index)
-        if _normalize_choice(item.get("stance"), HATE_SPEECH_STANCES, "unclear") != "endorses":
+        readable += 1
+        if index not in allowed_set or index in by_index:
             continue
-        findings.append(
-            WindowFinding(
-                index=index,
-                category=_normalize_choice(item.get("category"), HATE_SPEECH_CATEGORIES, "other"),
-                confidence=_normalize_choice(item.get("confidence"), CONFIDENCE_LEVELS, "low"),
-                reason=str(item.get("reason") or "").strip()[:_REASON_MAX_CHARS],
-            )
+        if _normalize_stance(item.get("stance")) != "endorses":
+            continue
+        by_index[index] = WindowFinding(
+            index=index,
+            category=_normalize_choice(item.get("category"), HATE_SPEECH_CATEGORIES, "other"),
+            confidence=_normalize_choice(item.get("confidence"), CONFIDENCE_LEVELS, "low"),
+            reason=str(item.get("reason") or "").strip()[:_REASON_MAX_CHARS],
         )
-    findings.sort(key=lambda finding: finding["index"])
-    return findings
+    if items and not readable:
+        return None
+    return [by_index[index] for index in sorted(by_index)]
 
 
 def classify_window(
