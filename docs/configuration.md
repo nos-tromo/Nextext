@@ -172,6 +172,8 @@ distancing is a finding. The caption is labelled `Image description:`
 - A silent clip is judged from its captions alone.
 - No vision request is added: the stage reads only the captions the keyframe
   step already wrote, so a job without captions judges no frames.
+- An unconstrained reply that lists one verdict per statement is read as the
+  whole caption: it is a finding when any listed verdict endorses.
 
 **Ollama:** a window prompt is roughly 3k tokens. Give the model a context of
 at least 8k tokens (`OLLAMA_CONTEXT_LENGTH` on the Ollama server), or Ollama

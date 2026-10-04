@@ -645,33 +645,49 @@ def passage_response_format() -> dict[str, Any]:
     }
 
 
-def _first_json_object(text: str) -> dict[str, Any] | None:
-    """Return the first JSON object in a reply that may wrap it in prose or fences.
+def _verdict_payload(value: Any) -> dict[str, Any] | list[Any] | None:
+    """Return ``value`` when it can carry a verdict: an object, or a list holding one.
+
+    Args:
+        value (Any): A decoded JSON value.
+
+    Returns:
+        dict[str, Any] | list[Any] | None: ``value``, or ``None`` for anything else.
+    """
+    if isinstance(value, dict) or (isinstance(value, list) and any(isinstance(item, dict) for item in value)):
+        return value
+    return None
+
+
+def _first_json_verdict(text: str) -> dict[str, Any] | list[Any] | None:
+    """Return the first JSON object, or list of objects, in a reply that may wrap it in prose or fences.
+
+    A list is returned whole: scanning for ``{`` alone would read a fenced
+    per-statement list as its first item and drop every later verdict.
 
     Args:
         text (str): The reply with reasoning removed.
 
     Returns:
-        dict[str, Any] | None: The object (the first one of a list), or ``None``.
+        dict[str, Any] | list[Any] | None: The first decodable verdict payload, or ``None``.
     """
     try:
-        parsed = json.loads(text)
+        payload = _verdict_payload(json.loads(text))
     except json.JSONDecodeError:
-        parsed = None
-    if isinstance(parsed, list):
-        parsed = next((item for item in parsed if isinstance(item, dict)), None)
-    if isinstance(parsed, dict):
-        return parsed
+        payload = None
+    if payload is not None:
+        return payload
     decoder = json.JSONDecoder()
     for position, char in enumerate(text):
-        if char != "{":
+        if char not in "{[":
             continue
         try:
             candidate, _ = decoder.raw_decode(text, position)
         except json.JSONDecodeError:
             continue
-        if isinstance(candidate, dict):
-            return candidate
+        found = _verdict_payload(candidate)
+        if found is not None:
+            return found
     return None
 
 
@@ -680,7 +696,10 @@ def parse_passage_reply(raw: str) -> PassageVerdict | None:
 
     No boolean is read, so neither a stray ``"hate_speech": true`` nor the
     string ``"false"`` can create a finding. An endorsed verdict never carries
-    the category ``none``.
+    the category ``none``. A model that answers with one verdict per statement
+    is read as the passage the prompt asked about: its first endorsing verdict,
+    else its first verdict — never its first item alone, which silently drops
+    an endorsement that is not listed first.
 
     Args:
         raw (str): The raw model reply (reasoning, prose and fences tolerated).
@@ -688,15 +707,20 @@ def parse_passage_reply(raw: str) -> PassageVerdict | None:
     Returns:
         PassageVerdict | None: The verdict, or ``None`` when the reply holds no JSON object.
     """
-    payload = _first_json_object(_strip_reasoning(raw or ""))
+    payload = _first_json_verdict(_strip_reasoning(raw or ""))
     if payload is None:
         return None
-    endorsed = _normalize_stance(payload.get("stance")) == "endorses"
+    if isinstance(payload, list):
+        verdicts = [item for item in payload if isinstance(item, dict)]
+        verdict = next((item for item in verdicts if _normalize_stance(item.get("stance")) == "endorses"), verdicts[0])
+    else:
+        verdict = payload
+    endorsed = _normalize_stance(verdict.get("stance")) == "endorses"
     return PassageVerdict(
         endorsed=endorsed,
-        category=_normalize_choice(payload.get("category"), HATE_SPEECH_CATEGORIES, "other") if endorsed else "none",
-        confidence=_normalize_choice(payload.get("confidence"), CONFIDENCE_LEVELS, "low"),
-        reason=str(payload.get("reason") or "").strip()[:_REASON_MAX_CHARS],
+        category=_normalize_choice(verdict.get("category"), HATE_SPEECH_CATEGORIES, "other") if endorsed else "none",
+        confidence=_normalize_choice(verdict.get("confidence"), CONFIDENCE_LEVELS, "low"),
+        reason=str(verdict.get("reason") or "").strip()[:_REASON_MAX_CHARS],
     )
 
 
