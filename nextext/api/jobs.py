@@ -1008,6 +1008,27 @@ class JobManager:
                 frame = _format_sse(event_name, tagged)
                 loop.call_soon_threadsafe(self._dispatch_event, state, event_name, tagged, frame)
 
+            def _push_terminal(event_name: str, payload: dict[str, Any]) -> None:
+                """Publish a terminal event synchronously, on the loop thread.
+
+                ``_push`` defers dispatch to a later loop step. For a terminal
+                event that would leave a window where ``state.status`` already
+                reads finished but history lacks the terminal frame, and
+                :meth:`subscribe` closes a finished job's stream once history
+                is drained — so a subscriber attaching in that window lost the
+                frame. Dispatching in the same step as the status flip closes
+                it. Order is kept: every frame the pipeline thread pushed is
+                dispatched before the worker resumes from ``to_thread``.
+
+                Args:
+                    event_name: Terminal SSE event name.
+                    payload: JSON-serializable payload.
+                """
+                if state.deleted:
+                    return
+                tagged = {"job_id": state.job_id, **payload}
+                self._dispatch_event(state, event_name, tagged, _format_sse(event_name, tagged))
+
             try:
                 result = await asyncio.to_thread(self._pipeline_runner, state, _push)
                 state.result = result
@@ -1021,7 +1042,7 @@ class JobManager:
                     record_skipped(skip_code)
                 else:
                     record_completed()
-                _push(
+                _push_terminal(
                     "job_completed",
                     {
                         "job_id": state.job_id,
@@ -1045,7 +1066,7 @@ class JobManager:
                 state.error = "Job failed."
                 state.error_code = failure_code
                 state.finished_at = _utcnow()
-                _push(
+                _push_terminal(
                     "job_failed",
                     {
                         "job_id": state.job_id,
