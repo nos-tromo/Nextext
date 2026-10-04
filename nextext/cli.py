@@ -19,9 +19,10 @@ from nextext.core.keyframes import extract_keyframe_samples
 from nextext.core.openai_cfg import InferencePipeline
 from nextext.core.outcomes import skip_reason_text
 from nextext.core.processing import FileProcessor
-from nextext.core.visual_context import describe_keyframes, format_visual_context
+from nextext.core.visual_context import FrameCaption, describe_keyframes, format_visual_context
 from nextext.pipeline import (
     effective_text_column,
+    frame_hate_speech_pipeline,
     hate_speech_pipeline,
     normalize_language_code,
     should_translate,
@@ -311,12 +312,13 @@ def _keyframe_step(
     args: argparse.Namespace,
     file_processor: FileProcessor,
     ensure_inference: Callable[[], InferencePipeline],
-) -> str | None:
+) -> list[FrameCaption]:
     """Sample and describe video keyframes when ``--keyframes`` was given.
 
     The step is independent of ``--summarize``: the sampled JPEGs and the
     timestamped descriptions are written as outputs in their own right, and
-    the returned block feeds the summary only when one was also requested.
+    the returned captions feed the summary and the hate-speech pass only when
+    those were also requested.
     Captioning within the step obeys ``NEXTEXT_VISUAL_SUMMARY`` and is
     fail-soft — a caption outage still leaves the frames on disk.
 
@@ -327,11 +329,11 @@ def _keyframe_step(
             run's inference pipeline, created on first use.
 
     Returns:
-        str | None: The formatted visual-context block, or ``None`` when the
-            step was off, the file has no frames, or nothing was captioned.
+        list[FrameCaption]: The captions, empty when the step was off, the
+            file has no frames, or nothing was captioned.
     """
     if not args.keyframes:
-        return None
+        return []
     rates = load_keyframe_defaults()
     samples = extract_keyframe_samples(
         args.file_path,
@@ -340,23 +342,21 @@ def _keyframe_step(
     )
     if not samples:
         logger.info("No keyframes sampled from '{}' (no video stream, or sampling is off).", args.file_path)
-        return None
+        return []
     file_processor.write_keyframes([sample.jpeg for sample in samples], [sample.time_sec for sample in samples])
 
     visual_cfg = load_visual_summary_env()
     if not visual_cfg.enabled:
-        return None
+        return []
     captions = describe_keyframes(
         samples,
         ensure_inference(),
         max_frames=visual_cfg.max_frames,
         max_side=visual_cfg.max_side,
     )
-    if not captions:
-        return None
-    visual_context = format_visual_context(captions)
-    file_processor.write_file_output(visual_context, "visual_context")
-    return visual_context
+    if captions:
+        file_processor.write_file_output(format_visual_context(captions), "visual_context")
+    return captions
 
 
 def _run_main(args: argparse.Namespace) -> int:
@@ -417,8 +417,9 @@ def _run_main(args: argparse.Namespace) -> int:
 
         # Keyframes: an opt-in step of its own. It runs ahead of the no-speech
         # guard below, so a silent video still yields what could be seen — and
-        # its captions feed the summary when one was also requested.
-        visual_context = _keyframe_step(args, file_processor, ensure_inference)
+        # its captions feed the summary and the hate-speech pass when requested.
+        captions = _keyframe_step(args, file_processor, ensure_inference)
+        visual_context = format_visual_context(captions) or None
 
         # Guard: stop early when the transcript contains no speech
         if outcome.is_empty:
@@ -439,6 +440,11 @@ def _run_main(args: argparse.Namespace) -> int:
                 )
                 if visual_summary:
                     file_processor.write_file_output(visual_summary, "summary")
+            # Likewise the captions can show hate a silent clip never speaks.
+            if args.hate_speech and captions:
+                frame_findings = frame_hate_speech_pipeline(captions, inference_pipeline=ensure_inference())
+                if frame_findings:
+                    file_processor.write_file_output(pd.DataFrame(frame_findings), "hate_speech")
             # Honour an explicit export request even here: the helper warns
             # that there are no segments rather than leaving the caller to
             # wonder why its target file never appeared.
@@ -521,6 +527,7 @@ def _run_main(args: argparse.Namespace) -> int:
             inference_pipeline=ensure_inference(),
             src_lang=args.src_lang,
         )
+        hate_speech_findings += frame_hate_speech_pipeline(captions, inference_pipeline=ensure_inference())
         if hate_speech_findings:
             file_processor.write_file_output(pd.DataFrame(hate_speech_findings), "hate_speech")
             logger.info("Hate speech detected in {} segment(s).", len(hate_speech_findings))

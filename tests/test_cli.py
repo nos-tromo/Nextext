@@ -432,6 +432,60 @@ def test_cli_silent_video_summarizes_its_captions(monkeypatch: pytest.MonkeyPatc
     assert processor.keyframe_writes == [[b"\xff\xd8a"]]
 
 
+def test_cli_silent_video_judges_its_captions_for_hate_speech(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """A silent clip's captions are judged, and an endorsing one is written as a finding.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Fixture for patching module attributes.
+        tmp_path (Path): Temporary directory fixture.
+    """
+    monkeypatch.delenv("NEXTEXT_VISUAL_SUMMARY", raising=False)
+    caption = FrameCaption(time_sec=3.0, caption="a flag bearing a hate symbol")
+    created = _summarizable_cli(monkeypatch, samples=[Keyframe(time_sec=3.0, jpeg=b"\xff\xd8a")], captions=[caption])
+    empty = pd.DataFrame({"start": [], "end": [], "text": []})
+    monkeypatch.setattr(
+        cli,
+        "transcription_pipeline",
+        lambda **kwargs: TranscriptionOutcome(transcript=empty, src_lang="en", skip_reason="vad_no_speech"),
+    )
+    judged: list[list[FrameCaption]] = []
+
+    def _fake_frames(captions: list[FrameCaption], inference_pipeline: Any) -> list[dict[str, Any]]:
+        judged.append(list(captions))
+        return [{"hate_speech": True, "text": caption.caption, "source": "frame"}]
+
+    monkeypatch.setattr(cli, "frame_hate_speech_pipeline", _fake_frames)
+
+    assert cli._run_main(_args(tmp_path / "clip.mp4", hate_speech=True, keyframes=True)) == 3
+
+    (processor,) = created
+    assert judged == [[caption]]
+    assert "hate_speech" in processor.file_output_labels
+
+
+def test_cli_spoken_video_judges_transcript_and_captions(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """With speech, the caption findings are written beside the transcript's.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Fixture for patching module attributes.
+        tmp_path (Path): Temporary directory fixture.
+    """
+    monkeypatch.delenv("NEXTEXT_VISUAL_SUMMARY", raising=False)
+    caption = FrameCaption(time_sec=3.0, caption="a flag bearing a hate symbol")
+    created = _summarizable_cli(monkeypatch, samples=[Keyframe(time_sec=3.0, jpeg=b"\xff\xd8a")], captions=[caption])
+    monkeypatch.setattr(cli, "hate_speech_pipeline", lambda **kwargs: [])
+    monkeypatch.setattr(
+        cli,
+        "frame_hate_speech_pipeline",
+        lambda captions, inference_pipeline: [{"hate_speech": True, "text": captions[0].caption, "source": "frame"}],
+    )
+
+    cli._run_main(_args(tmp_path / "clip.mp4", hate_speech=True, keyframes=True))
+
+    (processor,) = created
+    assert "hate_speech" in processor.file_output_labels
+
+
 def test_cli_keyframes_flag_defaults_to_off() -> None:
     """The step is opt-in, and full analysis opts in on the caller's behalf."""
     assert cli.parse_arguments(["-f", "clip.mp4", "-sum"]).keyframes is False

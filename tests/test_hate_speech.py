@@ -16,9 +16,13 @@ from nextext.core.hate_speech import (
     TranscriptLine,
     TranscriptWindow,
     WindowTruncatedError,
+    classify_passage,
     classify_window,
+    image_passage,
     next_window,
+    parse_passage_reply,
     parse_window_reply,
+    passage_response_format,
     render_line,
     render_window_prompt,
     window_response_format,
@@ -718,3 +722,110 @@ def test_image_prompts_are_pinned_to_docints_chunk_prompt() -> None:
     }
 
     assert digests == _DOCINT_IMAGE_PROMPT_SHA256
+
+
+# ---------------------------------------------------------------------------
+# Single passages (keyframe captions)
+# ---------------------------------------------------------------------------
+
+
+def _verdict(stance: str, **overrides: Any) -> str:
+    """Serialize one passage verdict the way a schema-constrained model answers.
+
+    Args:
+        stance (str): The ``stance`` value.
+        **overrides (Any): Field overrides.
+
+    Returns:
+        str: The JSON reply text.
+    """
+    verdict: dict[str, Any] = {
+        "target": "[Gruppe]",
+        "reason": "kurz",
+        "stance": stance,
+        "category": "extremism",
+        "confidence": "high",
+    }
+    verdict.update(overrides)
+    return json.dumps(verdict)
+
+
+def test_passage_verdict_comes_from_the_stance_alone() -> None:
+    """Only ``endorses`` is a finding; a stray ``hate_speech: true`` cannot create one."""
+    assert parse_passage_reply(_verdict("endorses")) == {
+        "endorsed": True,
+        "category": "extremism",
+        "confidence": "high",
+        "reason": "kurz",
+    }
+    for stance in ("quotes_or_reports", "condemns_or_counters", "analyzes_or_discusses", "unclear", "none"):
+        verdict = parse_passage_reply(_verdict(stance, hate_speech=True))
+        assert verdict is not None
+        assert verdict["endorsed"] is False, stance
+        assert verdict["category"] == "none", stance
+
+
+def test_passage_reply_tolerates_reasoning_prose_fences_and_inflections() -> None:
+    """An unconstrained reply still parses, and an endorsed verdict never carries ``none``."""
+    raw = (
+        "<think>weighing it</think>Verdict follows: ```json\n"
+        + _verdict("Endorses.", category="none", confidence="HIGH")
+        + "\n```"
+    )
+
+    assert parse_passage_reply(raw) == {"endorsed": True, "category": "other", "confidence": "high", "reason": "kurz"}
+
+
+def test_passage_reply_without_json_is_unparseable() -> None:
+    """A refusal or an empty reply is no verdict at all, never a clean one."""
+    assert parse_passage_reply("I cannot judge this image.") is None
+    assert parse_passage_reply("") is None
+
+
+@pytest.mark.parametrize(
+    ("language", "label"),
+    [("en", "Image description"), ("de", "Bildbeschreibung"), ("xx", "Image description")],
+)
+def test_image_passage_labels_a_caption_as_docint_labels_an_image(language: str, label: str) -> None:
+    """The label matches docint's, per prompt language, with the caption's whitespace collapsed.
+
+    Args:
+        language (str): Prompt language code.
+        label (str): The expected label.
+    """
+    assert image_passage("  A flag\non  a wall ", language) == f"{label}: A flag on a wall"
+
+
+def test_classify_passage_sends_a_strict_schema_and_no_system_prompt() -> None:
+    """A structured call carries the verdict schema at temperature 0 without a system role."""
+    pipeline = _RecordingPipeline(_verdict("endorses"))
+
+    verdict = classify_passage(cast(InferencePipeline, pipeline), "PROMPT", structured=True)
+
+    assert verdict is not None and verdict["endorsed"] is True
+    call = pipeline.calls[0]
+    assert call["prompt"] == "PROMPT"
+    assert call["include_system_prompt"] is False
+    assert call["temperature"] == 0.0
+    assert call["response_format"] == passage_response_format()
+
+
+def test_classify_passage_unstructured_sends_no_schema() -> None:
+    """Without ``structured`` the request carries no ``response_format``."""
+    pipeline = _RecordingPipeline(_verdict("none"))
+
+    classify_passage(cast(InferencePipeline, pipeline), "PROMPT", structured=False)
+
+    assert pipeline.calls[0]["response_format"] is None
+
+
+def test_passage_schema_is_strict_and_admits_none() -> None:
+    """Every property is required, none may be added, and ``none`` is a valid stance and category."""
+    schema = passage_response_format()["json_schema"]["schema"]
+
+    assert passage_response_format()["json_schema"]["strict"] is True
+    assert schema["additionalProperties"] is False
+    assert schema["required"] == ["target", "reason", "stance", "category", "confidence"]
+    assert schema["properties"]["stance"]["enum"] == [*HATE_SPEECH_STANCES, "none"]
+    assert schema["properties"]["category"]["enum"] == [*HATE_SPEECH_CATEGORIES, "none"]
+    assert schema["properties"]["confidence"]["enum"] == list(CONFIDENCE_LEVELS)

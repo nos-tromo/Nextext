@@ -1,7 +1,9 @@
 """Shared pipeline entry points for Nextext processing stages."""
 
 import math
+from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
@@ -20,7 +22,9 @@ from nextext.core.diarization import (
 from nextext.core.hate_speech import (
     TranscriptLine,
     WindowTruncatedError,
+    classify_passage,
     classify_window,
+    image_passage,
     next_window,
     render_window_prompt,
 )
@@ -30,9 +34,11 @@ from nextext.core.outcomes import SkipReason
 from nextext.core.sentence_segmentation import restore_sentence_segments, terminal_punctuation_ratio
 from nextext.core.transcription import ExternalWhisperTranscriber
 from nextext.core.translation import Translator
+from nextext.core.visual_context import FrameCaption
 from nextext.core.words import WordCounter
 from nextext.utils.env_cfg import (
     load_hate_speech_env,
+    load_language_env,
     load_sentence_restore_env,
     load_summary_env,
     load_whisper_env,
@@ -745,7 +751,8 @@ def hate_speech_pipeline(
         list[dict]: One finding per endorsing row, in transcript order, each
             with ``hate_speech`` (always ``True``), ``category``,
             ``confidence``, ``reason``, ``text`` (original) and ``start``, plus
-            ``speaker`` / ``translation`` when the transcript has those columns.
+            ``speaker`` / ``translation`` when the transcript has those columns,
+            and ``source`` (``"transcript"``).
     """
     lines = _transcript_lines(df)
     if not lines:
@@ -852,6 +859,7 @@ def hate_speech_pipeline(
                     finding["speaker"] = line.speaker
                 if has_translation:
                     finding["translation"] = line.translation
+                finding["source"] = "transcript"
                 findings.append(finding)
         position = window.core_end
 
@@ -866,6 +874,120 @@ def hate_speech_pipeline(
         "Hate-speech detection classified {} segment(s) in {} window(s); {} flagged.",
         len(lines) - unclassified,
         windows,
+        len(findings),
+    )
+    return findings
+
+
+def _frame_start(seconds: float) -> str:
+    """Render a frame's time the way transcript ``start`` values read (``H:MM:SS``).
+
+    Args:
+        seconds (float): Offset from the start of the clip; non-finite or
+            negative values render as ``0:00:00``.
+
+    Returns:
+        str: The time stamp.
+    """
+    if not math.isfinite(seconds) or seconds < 0:
+        seconds = 0.0
+    return str(timedelta(seconds=round(seconds)))
+
+
+def frame_hate_speech_pipeline(
+    captions: Sequence[FrameCaption],
+    inference_pipeline: InferencePipeline,
+) -> list[dict[str, Any]]:
+    """Detect endorsed hate in what a video shows, judging each keyframe caption.
+
+    A picture whose hate is purely visual leaves nothing in the transcript, so
+    the captions the keyframe step wrote are judged one per request with the
+    ``hate_speech_image`` prompt, a byte-identical copy of docint's chunk
+    prompt, whose image rule judges the message a picture conveys. Each caption
+    is labelled as an image description (:func:`image_passage`). Only captions
+    that *endorse* group-focused enmity are reported.
+
+    Failures follow :func:`hate_speech_pipeline`: a rejected or unparseable
+    ``response_format`` switches the rest of the sweep to unconstrained
+    requests, a caption that overflows the context is skipped, a transient
+    inference error stops the sweep and keeps the findings collected so far,
+    and any other API error raises.
+
+    Args:
+        captions (Sequence[FrameCaption]): Keyframe captions in time order.
+        inference_pipeline (InferencePipeline): Shared inference client.
+
+    Returns:
+        list[dict]: One finding per endorsing caption, in time order, each with
+            ``hate_speech`` (always ``True``), ``category``, ``confidence``,
+            ``reason``, ``text`` (the caption), ``start`` (the frame's time) and
+            ``source`` (``"frame"``).
+    """
+    if not captions:
+        return []
+
+    template = inference_pipeline.load_prompt("hate_speech_image")
+    language = load_language_env().code
+    findings: list[dict[str, Any]] = []
+    structured = True
+    unclassified = 0
+    position = 0
+    while position < len(captions):
+        caption = captions[position]
+        prompt = template.replace("{text}", image_passage(caption.caption, language))
+        try:
+            verdict = classify_passage(inference_pipeline, prompt, structured=structured)
+            if verdict is None and structured:
+                verdict = classify_passage(inference_pipeline, prompt, structured=False)
+                if verdict is not None:
+                    structured = False
+                    logger.warning("Hate-speech replies with response_format were unparseable; continuing without it.")
+        except Exception as exc:
+            if _is_context_length_error(exc):
+                unclassified += 1
+                position += 1
+                continue
+            if structured and _is_structured_output_rejection(exc):
+                structured = False
+                logger.warning("The inference endpoint rejected response_format; continuing without it: {}", exc)
+                continue
+            if not _is_transient_inference_error(exc):
+                raise
+            unclassified += len(captions) - position
+            logger.warning(
+                "Hate-speech detection on frame captions stopped at a transient inference error; keeping the {} "
+                "finding(s) collected so far instead of failing the job: {}",
+                len(findings),
+                exc,
+            )
+            break
+
+        if verdict is None:
+            unclassified += 1
+        elif verdict["endorsed"]:
+            findings.append(
+                {
+                    "hate_speech": True,
+                    "category": verdict["category"],
+                    "confidence": verdict["confidence"],
+                    "reason": verdict["reason"],
+                    "text": caption.caption,
+                    "start": _frame_start(caption.time_sec),
+                    "source": "frame",
+                }
+            )
+        position += 1
+
+    if unclassified:
+        logger.warning(
+            "Hate-speech detection left {} of {} frame caption(s) unclassified (unparseable replies, "
+            "overflowing captions, or an early stop).",
+            unclassified,
+            len(captions),
+        )
+    logger.info(
+        "Hate-speech detection judged {} frame caption(s); {} flagged.",
+        len(captions) - unclassified,
         len(findings),
     )
     return findings

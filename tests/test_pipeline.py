@@ -12,6 +12,7 @@ import pytest
 
 from nextext import pipeline
 from nextext.core.openai_cfg import ChatReply, InferencePipeline
+from nextext.core.visual_context import FrameCaption
 from nextext.pipeline import transcript_txt_exports
 from nextext.utils.env_cfg import SentenceRestoreConfig, WhisperClientConfig
 
@@ -883,6 +884,7 @@ def test_hate_speech_pipeline_reports_only_endorsed_rows(monkeypatch: pytest.Mon
             "reason": "Hetze",
             "text": "Die gehören alle weg.",
             "start": "0:00:05",
+            "source": "transcript",
         }
     ]
     assert fake.prompt_keywords == ["hate_speech_transcript"]
@@ -2200,3 +2202,174 @@ def test_summarization_with_visual_context_still_chunks_long_input(
     )
 
     assert len(recorder.calls) > 1  # map-reduce still engaged
+
+
+# ---------------------------------------------------------------------------
+# frame_hate_speech_pipeline: keyframe captions
+# ---------------------------------------------------------------------------
+
+_FRAME_TEMPLATE = "Judge:\n{text}"
+_CALM_FRAME = FrameCaption(time_sec=5.0, caption="A speaker at a lectern.")
+_HATEFUL_FRAME = FrameCaption(time_sec=83.6, caption="A flag bearing a HATEFUL symbol hangs on a wall.")
+
+
+class _FrameHSPipeline(_WindowedHSPipeline):
+    """``_WindowedHSPipeline`` serving a one-slot passage template."""
+
+    @override
+    def load_prompt(self, keyword: str = "system") -> str:
+        """Return the passage template and record the requested keyword.
+
+        Args:
+            keyword (str): The prompt keyword requested by the pipeline.
+
+        Returns:
+            str: The template.
+        """
+        self.prompt_keywords.append(keyword)
+        return _FRAME_TEMPLATE
+
+
+def _frame_verdict(prompt: str, kwargs: dict[str, Any]) -> str:
+    """Endorse only a caption carrying the hateful marker.
+
+    Args:
+        prompt (str): The rendered prompt.
+        kwargs (dict[str, Any]): The request's keyword arguments.
+
+    Returns:
+        str: A JSON verdict.
+    """
+    endorsed = "HATEFUL" in prompt
+    return json.dumps(
+        {
+            "target": "[Gruppe]" if endorsed else "",
+            "reason": "Shows a hate symbol without distance." if endorsed else "",
+            "stance": "endorses" if endorsed else "none",
+            "category": "extremism" if endorsed else "none",
+            "confidence": "high",
+        }
+    )
+
+
+def test_frame_hate_speech_pipeline_reports_only_endorsed_captions() -> None:
+    """A caption showing hate becomes a finding timed like a transcript row; a calm one does not."""
+    fake = _FrameHSPipeline(_frame_verdict)
+
+    results = pipeline.frame_hate_speech_pipeline([_CALM_FRAME, _HATEFUL_FRAME], cast(InferencePipeline, fake))
+
+    assert results == [
+        {
+            "hate_speech": True,
+            "category": "extremism",
+            "confidence": "high",
+            "reason": "Shows a hate symbol without distance.",
+            "text": _HATEFUL_FRAME.caption,
+            "start": "0:01:24",
+            "source": "frame",
+        }
+    ]
+    assert fake.prompt_keywords == ["hate_speech_image"]
+    assert [call["prompt"] for call in fake.calls] == [
+        f"Judge:\nImage description: {_CALM_FRAME.caption}",
+        f"Judge:\nImage description: {_HATEFUL_FRAME.caption}",
+    ]
+    assert all(call["response_format"] is not None for call in fake.calls)
+    assert all(call["include_system_prompt"] is False and call["temperature"] == 0.0 for call in fake.calls)
+
+
+def test_frame_hate_speech_pipeline_labels_captions_in_the_prompt_language(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A German deployment labels the caption the way docint's German prompt reads it.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): The monkeypatch fixture.
+    """
+    monkeypatch.setenv("RESPONSE_LANGUAGE", "de")
+    fake = _FrameHSPipeline(_frame_verdict)
+
+    pipeline.frame_hate_speech_pipeline([_CALM_FRAME], cast(InferencePipeline, fake))
+
+    assert fake.calls[0]["prompt"] == f"Judge:\nBildbeschreibung: {_CALM_FRAME.caption}"
+
+
+def test_frame_hate_speech_pipeline_without_captions_calls_nothing() -> None:
+    """An audio-only job, or one without captions, costs no request and loads no prompt."""
+    fake = _FrameHSPipeline(_frame_verdict)
+
+    assert pipeline.frame_hate_speech_pipeline([], cast(InferencePipeline, fake)) == []
+    assert fake.calls == []
+    assert fake.prompt_keywords == []
+
+
+def test_frame_hate_speech_pipeline_retries_an_unparseable_structured_reply_without_the_schema() -> None:
+    """A constrained reply that does not parse is asked again unconstrained, and that sticks."""
+
+    def _respond(prompt: str, kwargs: dict[str, Any]) -> str:
+        return "not json" if kwargs["response_format"] is not None else _frame_verdict(prompt, kwargs)
+
+    fake = _FrameHSPipeline(_respond)
+
+    results = pipeline.frame_hate_speech_pipeline([_HATEFUL_FRAME, _CALM_FRAME], cast(InferencePipeline, fake))
+
+    assert [finding["text"] for finding in results] == [_HATEFUL_FRAME.caption]
+    assert [call["response_format"] is not None for call in fake.calls] == [True, False, False]
+
+
+def test_frame_hate_speech_pipeline_drops_a_rejected_schema_and_asks_again() -> None:
+    """A provider rejecting ``response_format`` gets the same caption unconstrained."""
+
+    def _respond(prompt: str, kwargs: dict[str, Any]) -> str:
+        if kwargs["response_format"] is not None:
+            raise _api_status_error(400, "response_format is not supported")
+        return _frame_verdict(prompt, kwargs)
+
+    fake = _FrameHSPipeline(_respond)
+
+    results = pipeline.frame_hate_speech_pipeline([_HATEFUL_FRAME], cast(InferencePipeline, fake))
+
+    assert [finding["text"] for finding in results] == [_HATEFUL_FRAME.caption]
+    assert [call["response_format"] is not None for call in fake.calls] == [True, False]
+
+
+def test_frame_hate_speech_pipeline_skips_a_caption_that_overflows_the_context() -> None:
+    """An overflowing caption is left unclassified; the sweep goes on."""
+
+    def _respond(prompt: str, kwargs: dict[str, Any]) -> str:
+        if _CALM_FRAME.caption in prompt:
+            raise _api_status_error(400, "This model's maximum context length is 2048 tokens")
+        return _frame_verdict(prompt, kwargs)
+
+    fake = _FrameHSPipeline(_respond)
+
+    results = pipeline.frame_hate_speech_pipeline([_CALM_FRAME, _HATEFUL_FRAME], cast(InferencePipeline, fake))
+
+    assert [finding["text"] for finding in results] == [_HATEFUL_FRAME.caption]
+
+
+def test_frame_hate_speech_pipeline_keeps_its_findings_at_a_transient_error() -> None:
+    """A dropped connection ends the sweep without losing what was found."""
+    request = httpx2.Request("POST", "http://inference.invalid/v1/chat/completions")
+
+    def _respond(prompt: str, kwargs: dict[str, Any]) -> str:
+        if _CALM_FRAME.caption in prompt:
+            raise openai.APIConnectionError(request=request)
+        return _frame_verdict(prompt, kwargs)
+
+    fake = _FrameHSPipeline(_respond)
+
+    results = pipeline.frame_hate_speech_pipeline(
+        [_HATEFUL_FRAME, _CALM_FRAME, _HATEFUL_FRAME], cast(InferencePipeline, fake)
+    )
+
+    assert len(results) == 1
+    assert len(fake.calls) == 2
+
+
+def test_frame_hate_speech_pipeline_raises_configuration_errors() -> None:
+    """A 401 is a misconfigured endpoint, which must fail the job loudly."""
+
+    def _respond(prompt: str, kwargs: dict[str, Any]) -> str:
+        raise _api_status_error(401, "invalid api key")
+
+    with pytest.raises(openai.APIStatusError):
+        pipeline.frame_hate_speech_pipeline([_CALM_FRAME], cast(InferencePipeline, _FrameHSPipeline(_respond)))

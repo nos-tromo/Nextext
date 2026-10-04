@@ -6,6 +6,10 @@ tell who is speaking, what is being answered, and what a pronoun refers to. The
 model returns row indices plus the speaker's stance for every candidate row —
 never text — and only rows whose speaker *endorses* group-focused enmity become
 findings. Quoting, reporting, condemning or analysing hate is not hate.
+
+Keyframe captions are judged one per request instead (:func:`classify_passage`),
+with a byte-identical copy of docint's chunk prompt, so a picture whose hate is
+purely visual is judged by the message it conveys.
 """
 
 import json
@@ -57,6 +61,8 @@ _THINK_BLOCK_RE = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
 _THINK_CLOSE: str = "</think>"
 _INDEX_TEXT_RE = re.compile(r"^\[?\s*(\d+)\s*\]?$")
 _NON_WORD_RE = re.compile(r"[^a-z_]+")
+_IMAGE_DESCRIPTION_LABELS: dict[str, str] = {"en": "Image description", "de": "Bildbeschreibung"}
+"""docint's label for an image's description, per prompt language; keep the two in step."""
 
 
 @dataclass(frozen=True)
@@ -572,3 +578,149 @@ def classify_window(
     if reply.finish_reason == "length":
         raise WindowTruncatedError(findings or [])
     return findings
+
+
+class PassageVerdict(TypedDict):
+    """The verdict on one passage judged on its own, such as a keyframe caption.
+
+    Attributes:
+        endorsed (bool): Whether the passage endorses group-focused enmity.
+        category (str): One of :data:`HATE_SPEECH_CATEGORIES`, or ``none`` when not endorsed.
+        confidence (str): One of :data:`CONFIDENCE_LEVELS`.
+        reason (str): The model's one-sentence rationale.
+    """
+
+    endorsed: bool
+    category: str
+    confidence: str
+    reason: str
+
+
+def image_passage(caption: str, language: str) -> str:
+    """Label a keyframe caption as an image description, the way docint labels its images.
+
+    The label tells the prompt it is reading a description of a picture, so it
+    judges the message the picture conveys rather than the neutral voice
+    describing it.
+
+    Args:
+        caption (str): The caption.
+        language (str): Prompt language code; unknown codes use English.
+
+    Returns:
+        str: ``"<label>: <caption>"`` with the caption's whitespace collapsed.
+    """
+    label = _IMAGE_DESCRIPTION_LABELS.get(language, _IMAGE_DESCRIPTION_LABELS["en"])
+    return f"{label}: {' '.join(caption.split())}"
+
+
+def passage_response_format() -> dict[str, Any]:
+    """Build the ``response_format`` JSON schema for one passage verdict.
+
+    Mirrors docint's ``chunk_response_format``: every property is required and
+    none may be added, and ``reason`` precedes ``stance`` so the rationale is
+    generated before the decision.
+
+    Returns:
+        dict[str, Any]: The ``response_format`` payload.
+    """
+    return {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "hate_speech_verdict",
+            "strict": True,
+            "schema": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["target", "reason", "stance", "category", "confidence"],
+                "properties": {
+                    "target": {"type": "string"},
+                    "reason": {"type": "string"},
+                    "stance": {"type": "string", "enum": [*HATE_SPEECH_STANCES, "none"]},
+                    "category": {"type": "string", "enum": [*HATE_SPEECH_CATEGORIES, "none"]},
+                    "confidence": {"type": "string", "enum": list(CONFIDENCE_LEVELS)},
+                },
+            },
+        },
+    }
+
+
+def _first_json_object(text: str) -> dict[str, Any] | None:
+    """Return the first JSON object in a reply that may wrap it in prose or fences.
+
+    Args:
+        text (str): The reply with reasoning removed.
+
+    Returns:
+        dict[str, Any] | None: The object (the first one of a list), or ``None``.
+    """
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        parsed = None
+    if isinstance(parsed, list):
+        parsed = next((item for item in parsed if isinstance(item, dict)), None)
+    if isinstance(parsed, dict):
+        return parsed
+    decoder = json.JSONDecoder()
+    for position, char in enumerate(text):
+        if char != "{":
+            continue
+        try:
+            candidate, _ = decoder.raw_decode(text, position)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(candidate, dict):
+            return candidate
+    return None
+
+
+def parse_passage_reply(raw: str) -> PassageVerdict | None:
+    """Parse a single-passage verdict; the verdict comes from ``stance`` alone.
+
+    No boolean is read, so neither a stray ``"hate_speech": true`` nor the
+    string ``"false"`` can create a finding. An endorsed verdict never carries
+    the category ``none``.
+
+    Args:
+        raw (str): The raw model reply (reasoning, prose and fences tolerated).
+
+    Returns:
+        PassageVerdict | None: The verdict, or ``None`` when the reply holds no JSON object.
+    """
+    payload = _first_json_object(_strip_reasoning(raw or ""))
+    if payload is None:
+        return None
+    endorsed = _normalize_stance(payload.get("stance")) == "endorses"
+    return PassageVerdict(
+        endorsed=endorsed,
+        category=_normalize_choice(payload.get("category"), HATE_SPEECH_CATEGORIES, "other") if endorsed else "none",
+        confidence=_normalize_choice(payload.get("confidence"), CONFIDENCE_LEVELS, "low"),
+        reason=str(payload.get("reason") or "").strip()[:_REASON_MAX_CHARS],
+    )
+
+
+def classify_passage(
+    inference_pipeline: InferencePipeline,
+    prompt: str,
+    *,
+    structured: bool,
+) -> PassageVerdict | None:
+    """Classify one rendered passage prompt, at temperature 0 and without a system role.
+
+    Args:
+        inference_pipeline (InferencePipeline): Shared inference client.
+        prompt (str): The rendered ``hate_speech_image`` prompt.
+        structured (bool): Whether to send :func:`passage_response_format`.
+
+    Returns:
+        PassageVerdict | None: The verdict, or ``None`` when the reply could not be parsed.
+    """
+    reply = inference_pipeline.call_model_reply(
+        prompt=prompt,
+        temperature=0.0,
+        num_predict=HS_MAX_OUTPUT_TOKENS,
+        include_system_prompt=False,
+        response_format=passage_response_format() if structured else None,
+    )
+    return parse_passage_reply(reply.content)
