@@ -782,6 +782,54 @@ def test_passage_reply_without_json_is_unparseable() -> None:
     assert parse_passage_reply("") is None
 
 
+def test_passage_reply_reports_the_endorsement_in_a_fenced_verdict_list() -> None:
+    """A fenced per-statement list is judged by its endorsing verdict, not by its first item."""
+    raw = (
+        "```json\n["
+        + _verdict("none", target="", reason="Beschreibt eine Person.", category="none")
+        + ", "
+        + _verdict("endorses", reason="Ruft zu Gewalt gegen <Gruppe> auf.", category="religion", confidence="medium")
+        + "]\n```"
+    )
+
+    assert parse_passage_reply(raw) == {
+        "endorsed": True,
+        "category": "religion",
+        "confidence": "medium",
+        "reason": "Ruft zu Gewalt gegen <Gruppe> auf.",
+    }
+
+
+@pytest.mark.parametrize(
+    ("first", "second"),
+    [("condemns_or_counters", "endorses"), ("endorses", "condemns_or_counters")],
+)
+def test_passage_reply_flags_a_bare_verdict_list_with_any_endorsement(first: str, second: str) -> None:
+    """An unfenced list is aggregated the same way: one endorsement anywhere makes the passage a finding.
+
+    Args:
+        first (str): Stance of the first listed verdict.
+        second (str): Stance of the second listed verdict.
+    """
+    verdict = parse_passage_reply("[" + _verdict(first) + ", " + _verdict(second) + "]")
+
+    assert verdict is not None
+    assert verdict["endorsed"] is True
+
+
+def test_passage_reply_skips_bracketed_prose_before_the_verdict() -> None:
+    """A bracket in the prose is not a verdict list; the object after it is still read."""
+    verdict = parse_passage_reply("Bild [1] entscheidet: " + _verdict("endorses"))
+
+    assert verdict is not None
+    assert verdict["endorsed"] is True
+
+
+def test_passage_reply_reads_an_empty_list_as_no_verdict() -> None:
+    """A list holding no verdict object is unparseable, never a crash."""
+    assert parse_passage_reply("[]") is None
+
+
 @pytest.mark.parametrize(
     ("language", "label"),
     [("en", "Image description"), ("de", "Bildbeschreibung"), ("xx", "Image description")],
