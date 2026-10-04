@@ -701,3 +701,20 @@ def test_transcript_prompts_are_pinned_to_docints_copy() -> None:
     }
 
     assert digests == _DOCINT_TRANSCRIPT_PROMPT_SHA256
+
+
+_DOCINT_IMAGE_PROMPT_SHA256: dict[str, str] = {
+    "en": "2dd0526d6c5ed5ad4ea730a2ca534745712c15039719da031ec8bb078b783a27",
+    "de": "c5069d64de9b2f600f4266f68d22f5ae0ce29f6047d7a15bf3ef1e45ef7d01f2",
+}
+"""SHA-256 of docint's chunk prompt (``docint/utils/prompts/<locale>/hate_speech.txt``), which this file copies."""
+
+
+def test_image_prompts_are_pinned_to_docints_chunk_prompt() -> None:
+    """Keyframe captions are judged with a byte-identical copy of docint's chunk prompt; change both repos together."""
+    digests = {
+        locale: hashlib.sha256((_PROMPT_DIR / locale / "hate_speech_image.txt").read_bytes()).hexdigest()
+        for locale in ("en", "de")
+    }
+
+    assert digests == _DOCINT_IMAGE_PROMPT_SHA256

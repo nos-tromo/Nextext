@@ -741,6 +741,22 @@ def test_frame_caption_prompt_loads_in_english(monkeypatch: pytest.MonkeyPatch) 
     assert "{" not in prompt  # a plain instruction, not a format template
 
 
+@pytest.mark.parametrize(("language", "word"), [("en", "symbols"), ("de", "Symbole")])
+def test_frame_caption_prompt_asks_for_symbols_by_name(
+    monkeypatch: pytest.MonkeyPatch, language: str, word: str
+) -> None:
+    """A symbol described only vaguely gives the hate-speech pass nothing to judge.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): The monkeypatch fixture.
+        language (str): Prompt locale.
+        word (str): The locale's word for symbols.
+    """
+    monkeypatch.setenv("OPENAI_API_KEY", "k")
+    monkeypatch.setenv("RESPONSE_LANGUAGE", language)
+    assert word in InferencePipeline().load_prompt("frame_caption")
+
+
 def test_frame_caption_prompt_is_localized_for_german(monkeypatch: pytest.MonkeyPatch) -> None:
     """German deployments caption in German, so the summary stays one language."""
     monkeypatch.setenv("OPENAI_API_KEY", "k")
