@@ -72,6 +72,30 @@ describe('HateSpeechTab', () => {
     expect(screen.queryByText(/^Translation:/)).not.toBeInTheDocument()
   })
 
+  it('counts frame findings on their own and marks them as video frames', () => {
+    const result = makeResult({
+      hate_speech_findings: [
+        finding({ source: 'transcript' }),
+        finding({ source: 'frame', text: 'A flag bearing a hate symbol.', start: '0:00:03' }),
+      ],
+    })
+    render(<HateSpeechTab jobId="j1" result={result} stem="talk" />)
+    expect(screen.getByText('1 of 3 segments flagged.')).toBeInTheDocument()
+    expect(screen.getByText('1 video frame flagged.')).toBeInTheDocument()
+    expect(screen.getAllByText('Video frame')).toHaveLength(1)
+  })
+
+  it('reports only the frames for a silent clip', () => {
+    const result = makeResult({
+      transcript: [],
+      skipped: true,
+      hate_speech_findings: [finding({ source: 'frame', text: 'A flag bearing a hate symbol.' })],
+    })
+    render(<HateSpeechTab jobId="j1" result={result} stem="clip" />)
+    expect(screen.queryByText(/segments? flagged/)).not.toBeInTheDocument()
+    expect(screen.getByText('1 video frame flagged.')).toBeInTheDocument()
+  })
+
   it('keeps the empty state when nothing was flagged', () => {
     render(<HateSpeechTab jobId="j1" result={makeResult({ hate_speech_findings: [] })} stem="talk" />)
     expect(screen.getByText('No hate-speech findings for this job.')).toBeInTheDocument()

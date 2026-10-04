@@ -63,6 +63,8 @@ export interface HateSpeechFinding {
   speaker: string | null
   /** Translation shown to the classifier as an aid; null when the job did not translate. */
   translation: string | null
+  /** A transcript segment, or a keyframe caption (whose `start` is the frame's time); absent reads as transcript. */
+  source?: 'transcript' | 'frame'
 }
 
 /** Why a completed job produced no transcript. Mirrors nextext/core/outcomes.py. */
