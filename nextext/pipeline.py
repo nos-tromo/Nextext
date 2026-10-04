@@ -1,6 +1,9 @@
 """Shared pipeline entry points for Nextext processing stages."""
 
+import math
+from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
@@ -16,19 +19,31 @@ from nextext.core.diarization import (
     fill_speakers_by_nearest_turn,
     renumber_speakers_by_appearance,
 )
-from nextext.core.hate_speech import HateSpeechDetector
+from nextext.core.hate_speech import (
+    TranscriptLine,
+    WindowTruncatedError,
+    classify_passage,
+    classify_window,
+    image_passage,
+    next_window,
+    render_window_prompt,
+)
 from nextext.core.ner import extract_entities
 from nextext.core.openai_cfg import InferencePipeline
 from nextext.core.outcomes import SkipReason
 from nextext.core.sentence_segmentation import restore_sentence_segments, terminal_punctuation_ratio
 from nextext.core.transcription import ExternalWhisperTranscriber
 from nextext.core.translation import Translator
+from nextext.core.visual_context import FrameCaption
 from nextext.core.words import WordCounter
 from nextext.utils.env_cfg import (
+    load_hate_speech_env,
+    load_language_env,
     load_sentence_restore_env,
     load_summary_env,
     load_whisper_env,
 )
+from nextext.utils.mappings_loader import language_name_from_code
 
 
 @dataclass(frozen=True)
@@ -252,9 +267,10 @@ def effective_text_column(df: pd.DataFrame) -> str:
     The transcript DataFrame always keeps the original transcribed text in
     ``text``. When :func:`translation_pipeline` has run, the translated text
     lives in a separate ``translation`` column, and downstream agents
-    (word-level analysis, summarization, hate-speech detection) should
-    analyze that translated text rather than the original — matching the
-    pre-existing behavior from before translation had its own column.
+    (word-level analysis, summarization) should analyze that translated text
+    rather than the original — matching the pre-existing behavior from before
+    translation had its own column. Hate-speech detection is the exception: it
+    judges the original ``text`` and shows the translation only as an aid.
 
     Args:
         df (pd.DataFrame): Transcript DataFrame, optionally translated.
@@ -633,60 +649,345 @@ def wordlevel_pipeline(
     return word_counts, named_entities, wordcloud
 
 
+def _clean_cell(value: Any) -> str:
+    """Return a DataFrame cell as stripped text, treating ``None``/NaN as empty.
+
+    Args:
+        value (Any): The cell value.
+
+    Returns:
+        str: The stripped text, or ``""`` for missing values.
+    """
+    if value is None or (isinstance(value, float) and math.isnan(value)):
+        return ""
+    return str(value).strip()
+
+
+def _transcript_lines(df: pd.DataFrame) -> list[TranscriptLine]:
+    """Convert transcript rows into classifier lines, skipping rows without text.
+
+    ``index`` is the row's DataFrame position — the identifier the model
+    reports back. The original ``text`` is always judged; ``translation``, when
+    that column exists, rides along as an aid.
+
+    Args:
+        df (pd.DataFrame): Transcript DataFrame with a ``text`` column and
+            optional ``speaker`` / ``translation`` columns.
+
+    Returns:
+        list[TranscriptLine]: One line per row with non-blank text, in order.
+    """
+    has_speaker = "speaker" in df.columns
+    has_translation = "translation" in df.columns
+    lines: list[TranscriptLine] = []
+    for position, record in enumerate(df.to_dict("records")):
+        text = _clean_cell(record.get("text"))
+        if not text:
+            continue
+        lines.append(
+            TranscriptLine(
+                index=position,
+                text=text,
+                speaker=(_clean_cell(record.get("speaker")) or None) if has_speaker else None,
+                translation=(_clean_cell(record.get("translation")) or None) if has_translation else None,
+            )
+        )
+    return lines
+
+
+def _is_structured_output_rejection(exc: Exception) -> bool:
+    """Report whether a request error may be a provider rejecting ``response_format``.
+
+    Context-length overflows are also reported as HTTP 400 by some providers
+    (vLLM), so callers must check :func:`_is_context_length_error` first.
+
+    Args:
+        exc (Exception): The exception raised by an inference call.
+
+    Returns:
+        bool: ``True`` for HTTP 400/422 client errors.
+    """
+    return isinstance(exc, openai.APIStatusError) and exc.status_code in (400, 422)
+
+
 def hate_speech_pipeline(
     df: pd.DataFrame,
     inference_pipeline: InferencePipeline,
-    max_chars: int = 2048,
+    src_lang: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Detect hate speech in each transcript segment using an LLM.
+    """Detect endorsed hate speech in a transcript, judging every row in context.
 
-    Only segments flagged as hate speech are included in the returned list.
-    Each entry in the list is a :class:`HateSpeechDetection` dict extended with
-    the analyzed text for display purposes. Detection runs against the
-    translated text (``translation`` column) when translation has run,
-    otherwise the original transcribed text (``text`` column) — see
-    :func:`effective_text_column`.
+    Rows are classified in windows (:func:`nextext.core.hate_speech.next_window`):
+    a core of consecutive rows the model labels, framed by read-only
+    neighbouring rows, so a sentence is never judged in isolation. Budgets come
+    from :func:`load_hate_speech_env`. Only rows whose speaker *endorses*
+    group-focused enmity are reported — quoting, reporting, condemning or
+    analysing hate is not hate. The original ``text`` is always judged; a
+    ``translation`` column, when present, is shown to the model as an aid and
+    carried in the findings.
 
-    A transient inference-service failure (connection error, timeout, HTTP
-    429/5xx) mid-sweep stops the sweep and returns the findings collected up
-    to the failing segment, instead of failing the job (which would discard
-    the already-completed transcription held only in memory) or hammering an
-    unreachable endpoint once per remaining segment. Non-transient API errors
-    (4xx configuration problems) still raise.
+    Requests are schema-constrained (``response_format``). A provider that
+    rejects the schema (HTTP 400/422) gets the window again unconstrained, and
+    the rest of the sweep stays unconstrained; a structured reply that cannot be
+    parsed is retried once unconstrained, which sticks when it parses. A
+    context-length overflow halves both budgets and rebuilds the remaining
+    windows (up to ``_MAX_OVERFLOW_RETRIES`` times); a window that still
+    overflows is skipped. A reply stopped at the output-token cap is not
+    trusted either: its core is halved and the window asked again, and a
+    single-row window keeps whatever complete items the reply held. A transient inference failure (connection error,
+    timeout, HTTP 429/5xx) stops the sweep and keeps the findings collected so
+    far instead of failing the job. Rows left unclassified (unparseable replies,
+    skipped windows, an early stop) are logged in one warning. Non-transient API
+    errors (4xx configuration problems) still raise.
 
     Args:
-        df (pd.DataFrame): Transcript DataFrame with a ``text`` column.
+        df (pd.DataFrame): Transcript DataFrame with a ``text`` column and
+            optional ``start``, ``speaker`` and ``translation`` columns.
         inference_pipeline (InferencePipeline): Shared inference client.
-        max_chars (int): Maximum characters per segment sent for detection. Defaults to 2048.
+        src_lang (str | None): ISO 639-1 code of the transcript language, shown
+            to the model as a language name. Defaults to ``None`` (unknown).
 
     Returns:
-        list[dict]: Flagged segments, each containing hate_speech, category,
-            confidence, reason, text, and start (segment timestamp when
-            available). Possibly a truncated set if the sweep was cut short by
-            a transient inference failure (fail-soft, logged as a warning).
+        list[dict]: One finding per endorsing row, in transcript order, each
+            with ``hate_speech`` (always ``True``), ``category``,
+            ``confidence``, ``reason``, ``text`` (original) and ``start``, plus
+            ``speaker`` / ``translation`` when the transcript has those columns,
+            and ``source`` (``"transcript"``).
     """
-    detector = HateSpeechDetector(inference_pipeline, max_chars)
-    has_start = "start" in df.columns
-    text_column = effective_text_column(df)
-    results: list[dict[str, Any]] = []
-    for position, (_, row) in enumerate(df.iterrows()):
+    lines = _transcript_lines(df)
+    if not lines:
+        return []
+
+    config = load_hate_speech_env()
+    template = inference_pipeline.load_prompt("hate_speech_transcript")
+    language = language_name_from_code(src_lang, default=src_lang or "—")
+    core_chars = max(1, int(config.window_tokens * _CHARS_PER_TOKEN))
+    context_chars = max(0, int(config.context_tokens * _CHARS_PER_TOKEN))
+    starts = [_clean_cell(value) for value in df["start"].tolist()] if "start" in df.columns else None
+    has_speaker = "speaker" in df.columns
+    has_translation = "translation" in df.columns
+    line_by_index = {line.index: line for line in lines}
+
+    findings: list[dict[str, Any]] = []
+    structured = True
+    overflow_retries = 0
+    unclassified = 0
+    windows = 0
+    position = 0
+    while position < len(lines):
+        window = next_window(lines, position, core_chars, context_chars)
+        indices = [line.index for line in lines[window.core_start : window.core_end]]
+        prompt = render_window_prompt(
+            template, lines, window, core_chars=core_chars, context_chars=context_chars, language=language
+        )
         try:
-            detection = detector.detect(str(row[text_column]))
+            items = classify_window(inference_pipeline, prompt, indices, structured=structured)
+            if items is None and structured:
+                items = classify_window(inference_pipeline, prompt, indices, structured=False)
+                if items is not None:
+                    structured = False
+                    logger.warning("Hate-speech replies with response_format were unparseable; continuing without it.")
+        except WindowTruncatedError as truncated:
+            if len(indices) > 1 and overflow_retries < _MAX_OVERFLOW_RETRIES:
+                overflow_retries += 1
+                core_chars = max(1, int(core_chars * _OVERFLOW_BUDGET_BACKOFF))
+                logger.warning(
+                    "A hate-speech reply for a {}-segment window stopped at the output-token cap; retrying with a "
+                    "{}-char core (retry {}/{}).",
+                    len(indices),
+                    core_chars,
+                    overflow_retries,
+                    _MAX_OVERFLOW_RETRIES,
+                )
+                continue
+            items = truncated.salvaged
+            unclassified += len(indices) - len(items)
+            logger.warning(
+                "A hate-speech reply for a {}-segment window stopped at the output-token cap; keeping {} salvaged "
+                "finding(s).",
+                len(indices),
+                len(items),
+            )
         except Exception as exc:
+            if _is_context_length_error(exc):
+                if overflow_retries < _MAX_OVERFLOW_RETRIES:
+                    overflow_retries += 1
+                    core_chars = max(1, int(core_chars * _OVERFLOW_BUDGET_BACKOFF))
+                    context_chars = int(context_chars * _OVERFLOW_BUDGET_BACKOFF)
+                    logger.warning(
+                        "Hate-speech window overflowed the model context; retrying with a {}-char core "
+                        "and {}-char context margins (retry {}/{}).",
+                        core_chars,
+                        context_chars,
+                        overflow_retries,
+                        _MAX_OVERFLOW_RETRIES,
+                    )
+                    continue
+                unclassified += len(indices)
+                position = window.core_end
+                continue
+            if structured and _is_structured_output_rejection(exc):
+                structured = False
+                logger.warning("The inference endpoint rejected response_format; continuing without it: {}", exc)
+                continue
             if not _is_transient_inference_error(exc):
                 raise
+            unclassified += len(lines) - window.core_start
             logger.warning(
-                "Hate-speech detection failed with a transient inference error on segment "
-                "{}/{}; keeping the {} finding(s) collected so far instead of failing the job: {}",
-                position + 1,
-                len(df),
-                len(results),
+                "Hate-speech detection stopped at a transient inference error; keeping the {} finding(s) "
+                "collected so far instead of failing the job: {}",
+                len(findings),
                 exc,
             )
             break
-        if detection["hate_speech"]:
-            entry = dict(detection)
-            entry["text"] = str(row[text_column])
-            entry["start"] = str(row["start"]) if has_start else ""
-            results.append(entry)
-    return results
+
+        windows += 1
+        if items is None:
+            unclassified += len(indices)
+        else:
+            for item in items:
+                line = line_by_index[item["index"]]
+                finding: dict[str, Any] = {
+                    "hate_speech": True,
+                    "category": item["category"],
+                    "confidence": item["confidence"],
+                    "reason": item["reason"],
+                    "text": line.text,
+                    "start": starts[line.index] if starts is not None else "",
+                }
+                if has_speaker:
+                    finding["speaker"] = line.speaker
+                if has_translation:
+                    finding["translation"] = line.translation
+                finding["source"] = "transcript"
+                findings.append(finding)
+        position = window.core_end
+
+    if unclassified:
+        logger.warning(
+            "Hate-speech detection left {} of {} segment(s) unclassified (unparseable replies, "
+            "overflowing windows, or an early stop).",
+            unclassified,
+            len(lines),
+        )
+    logger.info(
+        "Hate-speech detection classified {} segment(s) in {} window(s); {} flagged.",
+        len(lines) - unclassified,
+        windows,
+        len(findings),
+    )
+    return findings
+
+
+def _frame_start(seconds: float) -> str:
+    """Render a frame's time the way transcript ``start`` values read (``H:MM:SS``).
+
+    Args:
+        seconds (float): Offset from the start of the clip; non-finite or
+            negative values render as ``0:00:00``.
+
+    Returns:
+        str: The time stamp.
+    """
+    if not math.isfinite(seconds) or seconds < 0:
+        seconds = 0.0
+    return str(timedelta(seconds=round(seconds)))
+
+
+def frame_hate_speech_pipeline(
+    captions: Sequence[FrameCaption],
+    inference_pipeline: InferencePipeline,
+) -> list[dict[str, Any]]:
+    """Detect endorsed hate in what a video shows, judging each keyframe caption.
+
+    A picture whose hate is purely visual leaves nothing in the transcript, so
+    the captions the keyframe step wrote are judged one per request with the
+    ``hate_speech_image`` prompt, a byte-identical copy of docint's chunk
+    prompt, whose image rule judges the message a picture conveys. Each caption
+    is labelled as an image description (:func:`image_passage`). Only captions
+    that *endorse* group-focused enmity are reported.
+
+    Failures follow :func:`hate_speech_pipeline`: a rejected or unparseable
+    ``response_format`` switches the rest of the sweep to unconstrained
+    requests, a caption that overflows the context is skipped, a transient
+    inference error stops the sweep and keeps the findings collected so far,
+    and any other API error raises.
+
+    Args:
+        captions (Sequence[FrameCaption]): Keyframe captions in time order.
+        inference_pipeline (InferencePipeline): Shared inference client.
+
+    Returns:
+        list[dict]: One finding per endorsing caption, in time order, each with
+            ``hate_speech`` (always ``True``), ``category``, ``confidence``,
+            ``reason``, ``text`` (the caption), ``start`` (the frame's time) and
+            ``source`` (``"frame"``).
+    """
+    if not captions:
+        return []
+
+    template = inference_pipeline.load_prompt("hate_speech_image")
+    language = load_language_env().code
+    findings: list[dict[str, Any]] = []
+    structured = True
+    unclassified = 0
+    position = 0
+    while position < len(captions):
+        caption = captions[position]
+        prompt = template.replace("{text}", image_passage(caption.caption, language))
+        try:
+            verdict = classify_passage(inference_pipeline, prompt, structured=structured)
+            if verdict is None and structured:
+                verdict = classify_passage(inference_pipeline, prompt, structured=False)
+                if verdict is not None:
+                    structured = False
+                    logger.warning("Hate-speech replies with response_format were unparseable; continuing without it.")
+        except Exception as exc:
+            if _is_context_length_error(exc):
+                unclassified += 1
+                position += 1
+                continue
+            if structured and _is_structured_output_rejection(exc):
+                structured = False
+                logger.warning("The inference endpoint rejected response_format; continuing without it: {}", exc)
+                continue
+            if not _is_transient_inference_error(exc):
+                raise
+            unclassified += len(captions) - position
+            logger.warning(
+                "Hate-speech detection on frame captions stopped at a transient inference error; keeping the {} "
+                "finding(s) collected so far instead of failing the job: {}",
+                len(findings),
+                exc,
+            )
+            break
+
+        if verdict is None:
+            unclassified += 1
+        elif verdict["endorsed"]:
+            findings.append(
+                {
+                    "hate_speech": True,
+                    "category": verdict["category"],
+                    "confidence": verdict["confidence"],
+                    "reason": verdict["reason"],
+                    "text": caption.caption,
+                    "start": _frame_start(caption.time_sec),
+                    "source": "frame",
+                }
+            )
+        position += 1
+
+    if unclassified:
+        logger.warning(
+            "Hate-speech detection left {} of {} frame caption(s) unclassified (unparseable replies, "
+            "overflowing captions, or an early stop).",
+            unclassified,
+            len(captions),
+        )
+    logger.info(
+        "Hate-speech detection judged {} frame caption(s); {} flagged.",
+        len(captions) - unclassified,
+        len(findings),
+    )
+    return findings

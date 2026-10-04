@@ -24,6 +24,7 @@
 **/data/
 **/dist/
 **/env/
+**/eval/
 **/legacy/
 **/lib/
 **/models/

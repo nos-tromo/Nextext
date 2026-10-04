@@ -269,6 +269,24 @@ class SummaryConfig:
     max_input_tokens: int
 
 
+@dataclass(frozen=True)
+class HateSpeechConfig:
+    """Dataclass for the hate-speech stage's context-window budgets.
+
+    Attributes:
+        window_tokens: Estimated tokens of transcript rows labelled per request
+            (the window's core). Every row is labelled exactly once, in the core
+            of one window.
+        context_tokens: Estimated tokens of read-only neighbouring rows shown on
+            each side of the core so the model can resolve who is speaking,
+            what is being answered, and what pronouns refer to. ``0`` disables
+            the context margins.
+    """
+
+    window_tokens: int
+    context_tokens: int
+
+
 EXTERNAL_WHISPER_DEFAULTS: dict[str, str] = {
     "openai": "whisper-1",
     "vllm": "openai/whisper-large-v3",
@@ -279,6 +297,8 @@ DEFAULT_NER_TIMEOUT: float = 120.0
 DEFAULT_VAD_TIMEOUT: float = 60.0
 DEFAULT_SENTENCE_RESTORE_MIN_PUNCT_RATIO: float = 0.01
 DEFAULT_SUMMARY_MAX_INPUT_TOKENS: int = 6000
+DEFAULT_HATE_SPEECH_WINDOW_TOKENS: int = 1000
+DEFAULT_HATE_SPEECH_CONTEXT_TOKENS: int = 300
 DEFAULT_KEYFRAMES_PER_MINUTE: int = 4
 DEFAULT_KEYFRAMES_MAX: int = 20
 KEYFRAMES_MAX_CEILING: int = 200
@@ -491,6 +511,32 @@ def _load_positive_int(name: str, default: int, *, ceiling: int | None = None) -
     return value
 
 
+def _load_non_negative_int(name: str, default: int) -> int:
+    """Reads a non-negative integer budget from the environment, fail-soft.
+
+    Unlike :func:`_load_positive_int`, ``0`` is a valid value (it switches the
+    budgeted feature off).
+
+    Args:
+        name: Environment variable to read.
+        default: Value used when unset, unparseable, or negative.
+
+    Returns:
+        int: The resolved budget, always ``>= 0``.
+    """
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return default
+    try:
+        parsed = int(raw)
+        if parsed < 0:
+            raise ValueError
+    except ValueError:
+        logger.warning("Invalid {} '{}'. Falling back to {}.", name, raw, default)
+        return default
+    return parsed
+
+
 def load_visual_summary_env() -> VisualSummaryConfig:
     """Loads the visual-context (keyframe captioning) configuration.
 
@@ -590,6 +636,30 @@ def load_summary_env() -> SummaryConfig:
             )
 
     return SummaryConfig(max_input_tokens=max_input_tokens)
+
+
+def load_hate_speech_env() -> HateSpeechConfig:
+    """Loads the hate-speech context-window budgets from the environment.
+
+    The windowed classifier in :mod:`nextext.pipeline` labels a core of
+    transcript rows per request and shows neighbouring rows on both sides as
+    read-only context.
+
+    Returns:
+        HateSpeechConfig: Dataclass containing the resolved settings.
+        - window_tokens (int): ``HATE_SPEECH_WINDOW_TOKENS`` parsed as a
+          positive integer. Defaults to
+          :data:`DEFAULT_HATE_SPEECH_WINDOW_TOKENS`; invalid values warn and
+          fall back to the default.
+        - context_tokens (int): ``HATE_SPEECH_CONTEXT_TOKENS`` parsed as a
+          non-negative integer (``0`` = no context). Defaults to
+          :data:`DEFAULT_HATE_SPEECH_CONTEXT_TOKENS`; invalid values warn and
+          fall back to the default.
+    """
+    return HateSpeechConfig(
+        window_tokens=_load_positive_int("HATE_SPEECH_WINDOW_TOKENS", DEFAULT_HATE_SPEECH_WINDOW_TOKENS),
+        context_tokens=_load_non_negative_int("HATE_SPEECH_CONTEXT_TOKENS", DEFAULT_HATE_SPEECH_CONTEXT_TOKENS),
+    )
 
 
 @dataclass(frozen=True)

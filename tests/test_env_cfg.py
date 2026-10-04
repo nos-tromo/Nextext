@@ -6,6 +6,8 @@ import pytest
 
 from nextext.utils.env_cfg import (
     DEFAULT_DIARIZE_TIMEOUT,
+    DEFAULT_HATE_SPEECH_CONTEXT_TOKENS,
+    DEFAULT_HATE_SPEECH_WINDOW_TOKENS,
     DEFAULT_JOB_CONCURRENCY,
     DEFAULT_NER_TIMEOUT,
     DEFAULT_SUMMARY_MAX_INPUT_TOKENS,
@@ -14,6 +16,7 @@ from nextext.utils.env_cfg import (
     DEFAULT_VISUAL_SUMMARY_MAX_FRAMES,
     KEYFRAMES_MAX_CEILING,
     load_diarization_env,
+    load_hate_speech_env,
     load_inference_env,
     load_job_concurrency,
     load_language_env,
@@ -743,6 +746,106 @@ def test_load_summary_env_invalid_budget_warns_and_defaults(
 
     assert cfg.max_input_tokens == DEFAULT_SUMMARY_MAX_INPUT_TOKENS
     assert "SUMMARY_MAX_INPUT_TOKENS" in sink.getvalue()
+
+
+# ---------------------------------------------------------------------------
+# load_hate_speech_env
+# ---------------------------------------------------------------------------
+
+
+def test_load_hate_speech_env_unset_returns_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Unset budgets fall back to the documented window and context defaults.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Fixture for patching environment variables.
+    """
+    monkeypatch.delenv("HATE_SPEECH_WINDOW_TOKENS", raising=False)
+    monkeypatch.delenv("HATE_SPEECH_CONTEXT_TOKENS", raising=False)
+
+    cfg = load_hate_speech_env()
+
+    assert cfg.window_tokens == DEFAULT_HATE_SPEECH_WINDOW_TOKENS
+    assert cfg.context_tokens == DEFAULT_HATE_SPEECH_CONTEXT_TOKENS
+
+
+def test_load_hate_speech_env_parses_valid_budgets(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Valid budgets are parsed as integers, surrounding whitespace ignored.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Fixture for patching environment variables.
+    """
+    monkeypatch.setenv("HATE_SPEECH_WINDOW_TOKENS", " 800 ")
+    monkeypatch.setenv("HATE_SPEECH_CONTEXT_TOKENS", "150")
+
+    cfg = load_hate_speech_env()
+
+    assert cfg.window_tokens == 800
+    assert cfg.context_tokens == 150
+
+
+def test_load_hate_speech_env_zero_context_disables_context(monkeypatch: pytest.MonkeyPatch) -> None:
+    """HATE_SPEECH_CONTEXT_TOKENS=0 is a valid value (no context margins), not an error.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Fixture for patching environment variables.
+    """
+    monkeypatch.setenv("HATE_SPEECH_CONTEXT_TOKENS", "0")
+
+    cfg = load_hate_speech_env()
+
+    assert cfg.context_tokens == 0
+
+
+@pytest.mark.parametrize("raw_value", ["not-a-number", "0", "-5", "1.5"])
+def test_load_hate_speech_env_invalid_window_warns_and_defaults(
+    monkeypatch: pytest.MonkeyPatch,
+    raw_value: str,
+) -> None:
+    """A non-integer or non-positive window budget warns and falls back to the default.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Fixture for patching environment variables.
+        raw_value (str): An invalid window budget.
+    """
+    from loguru import logger
+
+    monkeypatch.setenv("HATE_SPEECH_WINDOW_TOKENS", raw_value)
+
+    sink = io.StringIO()
+    handler_id = logger.add(sink, level="WARNING")
+    try:
+        cfg = load_hate_speech_env()
+    finally:
+        logger.remove(handler_id)
+
+    assert cfg.window_tokens == DEFAULT_HATE_SPEECH_WINDOW_TOKENS
+    assert "HATE_SPEECH_WINDOW_TOKENS" in sink.getvalue()
+
+
+@pytest.mark.parametrize("raw_value", ["not-a-number", "-1", "2.5"])
+def test_load_hate_speech_env_invalid_context_warns_and_defaults(
+    monkeypatch: pytest.MonkeyPatch,
+    raw_value: str,
+) -> None:
+    """A non-integer or negative context budget warns and falls back to the default.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Fixture for patching environment variables.
+        raw_value (str): An invalid context budget.
+    """
+    from loguru import logger
+
+    monkeypatch.setenv("HATE_SPEECH_CONTEXT_TOKENS", raw_value)
+
+    sink = io.StringIO()
+    handler_id = logger.add(sink, level="WARNING")
+    try:
+        cfg = load_hate_speech_env()
+    finally:
+        logger.remove(handler_id)
+
+    assert cfg.context_tokens == DEFAULT_HATE_SPEECH_CONTEXT_TOKENS
+    assert "HATE_SPEECH_CONTEXT_TOKENS" in sink.getvalue()
 
 
 # ---------------------------------------------------------------------------

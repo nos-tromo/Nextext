@@ -31,6 +31,21 @@ else:
 PROMPT_DIR: Path = Path(__file__).parent.parent / "utils" / "prompts"
 
 
+@dataclass(frozen=True)
+class ChatReply:
+    """One chat-completions reply.
+
+    Attributes:
+        content (str): The stripped text content, or ``""`` for a non-text reply.
+        finish_reason (str | None): Why generation stopped (``"stop"``,
+            ``"length"`` when the output-token cap was hit, ...), when the
+            provider reports it.
+    """
+
+    content: str
+    finish_reason: str | None = None
+
+
 @dataclass
 class InferencePipeline:
     """Inference pipeline for OpenAI-compatible chat completions.
@@ -203,6 +218,7 @@ class InferencePipeline:
         system_prompt: str | None = None,
         include_system_prompt: bool = True,
         think: bool | None = None,
+        response_format: dict[str, Any] | None = None,
     ) -> str:
         """Call the configured inference provider via an OpenAI-compatible chat completions API.
 
@@ -225,9 +241,69 @@ class InferencePipeline:
                 :func:`load_inference_env`; if that is also ``None`` the field
                 is omitted entirely. Honoured by Ollama-hosted reasoning models
                 (e.g. Qwen3); a no-op for vLLM and OpenAI providers.
+            response_format (dict[str, Any] | None): OpenAI ``response_format``
+                forwarded verbatim (e.g. a ``json_schema`` constraint); ``None``
+                (default) omits the field. Routers may reject it or drop it
+                silently, so callers must still parse unconstrained replies.
 
         Returns:
             str: The generated response from the model.
+
+        Raises:
+            RuntimeError: If the configured inference provider is not reachable,
+                if the ``openai`` package is not installed, or if ``TEXT_MODEL``
+                is unset and no ``model`` argument is supplied.
+        """
+        return self.call_model_reply(
+            prompt,
+            model=model,
+            temperature=temperature,
+            seed=seed,
+            stop=stop,
+            num_predict=num_predict,
+            top_p=top_p,
+            system_prompt=system_prompt,
+            include_system_prompt=include_system_prompt,
+            think=think,
+            response_format=response_format,
+        ).content
+
+    def call_model_reply(
+        self,
+        prompt: str,
+        model: str | None = None,
+        temperature: float = 0.1,
+        seed: int = 42,
+        stop: list[str] | None = None,
+        num_predict: int | None = None,
+        top_p: float | None = None,
+        system_prompt: str | None = None,
+        include_system_prompt: bool = True,
+        think: bool | None = None,
+        response_format: dict[str, Any] | None = None,
+    ) -> ChatReply:
+        """Like :meth:`call_model`, but also report why generation stopped.
+
+        Callers that must not trust a reply cut off at the output-token cap
+        (``finish_reason == "length"``) use this instead of :meth:`call_model`.
+
+        Args:
+            prompt (str): The user prompt to send to the model.
+            model (str | None): The model to use. Defaults to ``TEXT_MODEL``.
+            temperature (float): Sampling temperature for response generation.
+            seed (int): Random seed for reproducibility.
+            stop (list[str] | None): Stop tokens to end generation early.
+            num_predict (int | None): Maximum number of tokens to generate.
+            top_p (float | None): Nucleus sampling parameter.
+            system_prompt (str | None): Override the default system prompt for this call.
+            include_system_prompt (bool): When False, no ``system`` role is sent.
+            think (bool | None): Override the ``think`` field forwarded via
+                ``extra_body``; ``None`` falls back to ``OLLAMA_THINK``.
+            response_format (dict[str, Any] | None): OpenAI ``response_format``
+                forwarded verbatim; ``None`` omits the field.
+
+        Returns:
+            ChatReply: The reply text and its finish reason.
 
         Raises:
             RuntimeError: If the configured inference provider is not reachable,
@@ -245,6 +321,7 @@ class InferencePipeline:
             system_prompt=system_prompt,
             include_system_prompt=include_system_prompt,
             think=think,
+            response_format=response_format,
         )
 
     def call_vision(
@@ -319,7 +396,7 @@ class InferencePipeline:
             system_prompt=system_prompt,
             include_system_prompt=include_system_prompt,
             think=think,
-        )
+        ).content
 
     def _chat(
         self,
@@ -334,8 +411,9 @@ class InferencePipeline:
         system_prompt: str | None,
         include_system_prompt: bool,
         think: bool | None,
-    ) -> str:
-        """Issue one chat-completions request and return its text content.
+        response_format: dict[str, Any] | None = None,
+    ) -> ChatReply:
+        """Issue one chat-completions request and return its text content and finish reason.
 
         The shared core behind :meth:`call_model` (plain string content) and
         :meth:`call_vision` (multimodal content parts): health gate, message
@@ -354,10 +432,13 @@ class InferencePipeline:
             system_prompt (str | None): Override for the default system prompt.
             include_system_prompt (bool): Whether to send a ``system`` role.
             think (bool | None): Override for the ``think`` ``extra_body`` field.
+            response_format (dict[str, Any] | None): Forwarded as
+                ``response_format`` when set; omitted when ``None``.
 
         Returns:
-            str: The stripped response content, or ``""`` when the model
-                returned non-textual content (e.g. a refusal-only reply).
+            ChatReply: The stripped response content (``""`` when the model
+                returned non-textual content, e.g. a refusal-only reply) and
+                the provider's ``finish_reason`` when reported.
 
         Raises:
             RuntimeError: If the provider is unreachable, the ``openai`` package
@@ -388,11 +469,18 @@ class InferencePipeline:
             request_kwargs["max_tokens"] = num_predict
         if top_p is not None:
             request_kwargs["top_p"] = top_p
+        if response_format is not None:
+            request_kwargs["response_format"] = response_format
 
         effective_think = think if think is not None else load_inference_env().think
         if effective_think is not None:
             request_kwargs["extra_body"] = {"think": effective_think}
 
         response = self.client.chat.completions.create(**request_kwargs)
-        content = response.choices[0].message.content
-        return content.strip() if isinstance(content, str) else ""
+        choice = response.choices[0]
+        content = choice.message.content
+        finish_reason = getattr(choice, "finish_reason", None)
+        return ChatReply(
+            content=content.strip() if isinstance(content, str) else "",
+            finish_reason=finish_reason if isinstance(finish_reason, str) else None,
+        )

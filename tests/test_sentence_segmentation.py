@@ -64,6 +64,7 @@ class _FakePipeline(InferencePipeline):
         system_prompt: str | None = None,
         include_system_prompt: bool = True,
         think: bool | None = None,
+        response_format: dict[str, Any] | None = None,
     ) -> str:
         """Record the prompt and pop the next canned reply.
 
@@ -78,11 +79,13 @@ class _FakePipeline(InferencePipeline):
             system_prompt (str | None): Unused test-double argument.
             include_system_prompt (bool): Unused test-double argument.
             think (bool | None): Unused test-double argument.
+            response_format (dict[str, Any] | None): Unused test-double argument.
 
         Returns:
             str: The next queued reply, or ``""`` when exhausted.
         """
-        del model, temperature, seed, stop, num_predict, top_p, system_prompt, include_system_prompt, think
+        del model, temperature, seed, stop, num_predict
+        del top_p, system_prompt, include_system_prompt, think, response_format
         self.prompts.append(prompt)
         return self.replies.pop(0) if self.replies else ""
 
@@ -139,6 +142,7 @@ def test_segment_run_failsoft_on_error_is_single_sentence() -> None:
             system_prompt: str | None = None,
             include_system_prompt: bool = True,
             think: bool | None = None,
+            response_format: dict[str, Any] | None = None,
         ) -> str:
             """Raise to simulate a provider outage.
 
@@ -153,6 +157,7 @@ def test_segment_run_failsoft_on_error_is_single_sentence() -> None:
                 system_prompt (str | None): Ignored.
                 include_system_prompt (bool): Ignored.
                 think (bool | None): Ignored.
+                response_format (dict[str, Any] | None): Ignored.
 
             Raises:
                 RuntimeError: Always.

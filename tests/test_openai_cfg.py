@@ -1,7 +1,7 @@
 """Tests for the inference client configuration helpers."""
 
 import io
-from typing import Any, ClassVar
+from typing import Any, ClassVar, override
 
 import pytest
 
@@ -386,6 +386,116 @@ def test_call_model_preserves_existing_kwargs_when_think_set(
     assert recorded["extra_body"] == {"think": False}
 
 
+def test_call_model_forwards_response_format_verbatim(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A response_format argument must reach the request unchanged, beside extra_body.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): The pytest fixture for patching
+            environment variables and pipeline internals.
+    """
+    monkeypatch.setenv("TEXT_MODEL", "llama3.1:8b")
+    pipeline = InferencePipeline()
+    completions = _install_recording_client(monkeypatch, pipeline)
+    schema_format = {
+        "type": "json_schema",
+        "json_schema": {"name": "findings", "strict": True, "schema": {"type": "object"}},
+    }
+
+    pipeline.call_model("payload", response_format=schema_format, think=False)
+
+    recorded = completions.calls[0]
+    assert recorded["response_format"] == {
+        "type": "json_schema",
+        "json_schema": {"name": "findings", "strict": True, "schema": {"type": "object"}},
+    }
+    assert recorded["extra_body"] == {"think": False}
+
+
+def test_call_model_omits_response_format_by_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Without a response_format argument the request carries no such key at all.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): The pytest fixture for patching
+            environment variables and pipeline internals.
+    """
+    monkeypatch.setenv("TEXT_MODEL", "llama3.1:8b")
+    pipeline = InferencePipeline()
+    completions = _install_recording_client(monkeypatch, pipeline)
+
+    pipeline.call_model("payload")
+
+    assert "response_format" not in completions.calls[0]
+
+
+def test_call_model_reply_reports_the_finish_reason(monkeypatch: pytest.MonkeyPatch) -> None:
+    """call_model_reply surfaces why generation stopped, so a cut-off reply is detectable.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): The pytest fixture for patching
+            environment variables and pipeline internals.
+    """
+
+    class _TruncatingCompletions(_RecordingCompletions):
+        """Recording endpoint whose reply stopped at the token cap."""
+
+        @override
+        def create(self, **kwargs: Any) -> Any:
+            """Record the call and return a reply cut off at the cap.
+
+            Args:
+                **kwargs (Any): Request keyword arguments.
+
+            Returns:
+                Any: A completion whose only choice finished with ``length``.
+            """
+            self.calls.append(kwargs)
+
+            class _Msg:
+                content = '{"findings": ['
+
+            class _Choice:
+                message = _Msg()
+                finish_reason = "length"
+
+            class _Resp:
+                choices: ClassVar[list[Any]] = [_Choice()]
+
+            return _Resp()
+
+    monkeypatch.setenv("TEXT_MODEL", "llama3.1:8b")
+    pipeline = InferencePipeline()
+    completions = _TruncatingCompletions()
+    monkeypatch.setattr(pipeline, "_client", _RecordingClient(completions))
+    monkeypatch.setattr(pipeline, "get_health", lambda: True)
+
+    reply = pipeline.call_model_reply("payload", num_predict=16)
+
+    assert reply.content == '{"findings": ['
+    assert reply.finish_reason == "length"
+    assert completions.calls[0]["max_tokens"] == 16
+
+
+def test_call_model_reply_leaves_finish_reason_empty_when_unreported(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Providers that omit ``finish_reason`` yield ``None``, never an error.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): The pytest fixture for patching
+            environment variables and pipeline internals.
+    """
+    monkeypatch.setenv("TEXT_MODEL", "llama3.1:8b")
+    pipeline = InferencePipeline()
+    _install_recording_client(monkeypatch, pipeline)
+
+    reply = pipeline.call_model_reply("payload")
+
+    assert reply.content == "ok"
+    assert reply.finish_reason is None
+
+
 # ---------------------------------------------------------------------------
 # load_prompt locale resolution
 # ---------------------------------------------------------------------------
@@ -629,6 +739,22 @@ def test_frame_caption_prompt_loads_in_english(monkeypatch: pytest.MonkeyPatch) 
     prompt = InferencePipeline().load_prompt("frame_caption")
     assert prompt.strip()
     assert "{" not in prompt  # a plain instruction, not a format template
+
+
+@pytest.mark.parametrize(("language", "word"), [("en", "symbols"), ("de", "Symbole")])
+def test_frame_caption_prompt_asks_for_symbols_by_name(
+    monkeypatch: pytest.MonkeyPatch, language: str, word: str
+) -> None:
+    """A symbol described only vaguely gives the hate-speech pass nothing to judge.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): The monkeypatch fixture.
+        language (str): Prompt locale.
+        word (str): The locale's word for symbols.
+    """
+    monkeypatch.setenv("OPENAI_API_KEY", "k")
+    monkeypatch.setenv("RESPONSE_LANGUAGE", language)
+    assert word in InferencePipeline().load_prompt("frame_caption")
 
 
 def test_frame_caption_prompt_is_localized_for_german(monkeypatch: pytest.MonkeyPatch) -> None:

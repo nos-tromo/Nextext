@@ -1,127 +1,726 @@
-"""Hate speech detection agent using an LLM via InferencePipeline."""
+"""Hate-speech detection agent: windowed, stance-aware transcript classification.
+
+Transcript rows are judged in context windows: a *core* of consecutive rows the
+model labels, framed by read-only neighbouring rows before and after so it can
+tell who is speaking, what is being answered, and what a pronoun refers to. The
+model returns row indices plus the speaker's stance for every candidate row —
+never text — and only rows whose speaker *endorses* group-focused enmity become
+findings. Quoting, reporting, condemning or analysing hate is not hate.
+
+Keyframe captions are judged one per request instead (:func:`classify_passage`),
+with a byte-identical copy of docint's chunk prompt, so a picture whose hate is
+purely visual is judged by the message it conveys.
+"""
 
 import json
 import re
+from collections.abc import Collection, Sequence
+from dataclasses import dataclass
 from typing import Any, TypedDict
-
-from loguru import logger
 
 from nextext.core.openai_cfg import InferencePipeline
 
+HATE_SPEECH_STANCES: tuple[str, ...] = (
+    "endorses",
+    "quotes_or_reports",
+    "condemns_or_counters",
+    "analyzes_or_discusses",
+    "unclear",
+)
+"""Speaker stances the model may assign to a candidate row; only ``endorses`` is reported."""
 
-class HateSpeechDetection(TypedDict):
-    """Structured result from hate speech detection.
+HATE_SPEECH_CATEGORIES: tuple[str, ...] = (
+    "race",
+    "ethnicity",
+    "religion",
+    "gender",
+    "sexual_orientation",
+    "disability",
+    "nationality",
+    "extremism",
+    "other",
+)
+"""Group-focused-enmity (GMF) categories; unknown labels are normalised to ``other``."""
+
+CONFIDENCE_LEVELS: tuple[str, ...] = ("high", "medium", "low")
+"""Allowed confidence values; unknown values are normalised to ``low``."""
+
+HS_MAX_OUTPUT_TOKENS: int = 1024
+"""Minimum output-token cap for one window request (a findings list, never prose)."""
+
+HS_OUTPUT_TOKENS_PER_ROW: int = 80
+"""Output tokens budgeted per core row, so a window whose every row is a candidate still fits."""
+
+_REASON_MAX_CHARS: int = 500
+_TRANSLATION_PREFIX: str = "\n    → "
+_EMPTY_BLOCK: str = "—"
+_MIN_ROW_CHARS: int = 2048
+"""A labelled row is never clipped below this, however small the core budget (the old per-row cap)."""
+_PLACEHOLDER_RE = re.compile(r"\{(language|context_before|segments|context_after|first_index|last_index)\}")
+_THINK_BLOCK_RE = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
+_THINK_CLOSE: str = "</think>"
+_INDEX_TEXT_RE = re.compile(r"^\[?\s*(\d+)\s*\]?$")
+_NON_WORD_RE = re.compile(r"[^a-z_]+")
+_IMAGE_DESCRIPTION_LABELS: dict[str, str] = {"en": "Image description", "de": "Bildbeschreibung"}
+"""docint's label for an image's description, per prompt language; keep the two in step."""
+
+
+@dataclass(frozen=True)
+class TranscriptLine:
+    """One transcript row as the classifier sees it.
 
     Attributes:
-        hate_speech (bool): Whether the segment was flagged as hate speech.
-        category (str): Normalised hate-speech category label.
-        confidence (str): One of ``"high"``, ``"medium"``, or ``"low"``.
-        reason (str): Short free-text rationale from the LLM.
+        index (int): The row's position in the transcript DataFrame — the
+            identifier the model reports back.
+        text (str): Original-language text, stripped (never the translation).
+        speaker (str | None): Diarization label, or ``None`` when unknown.
+        translation (str | None): Translation shown as an aid, or ``None``.
     """
 
-    hate_speech: bool
+    index: int
+    text: str
+    speaker: str | None = None
+    translation: str | None = None
+
+
+@dataclass(frozen=True)
+class TranscriptWindow:
+    """Positions (into the line list) of one classification window.
+
+    The core ``[core_start, core_end)`` is labelled; the margins
+    ``[context_start, core_start)`` and ``[core_end, context_end)`` are shown
+    as read-only context. Consecutive windows have disjoint cores, so every
+    row is labelled exactly once.
+
+    Attributes:
+        context_start (int): First context position before the core.
+        core_start (int): First labelled position.
+        core_end (int): One past the last labelled position.
+        context_end (int): One past the last context position after the core.
+    """
+
+    context_start: int
+    core_start: int
+    core_end: int
+    context_end: int
+
+
+class WindowTruncatedError(RuntimeError):
+    """A window reply stopped at the output-token cap before its findings list was complete.
+
+    Attributes:
+        salvaged (list[WindowFinding]): Endorsed findings recovered from the
+            items that were complete before the cut.
+    """
+
+    def __init__(self, salvaged: list["WindowFinding"]) -> None:
+        """Keep what the cut-off reply still yielded.
+
+        Args:
+            salvaged (list[WindowFinding]): Findings from the complete items.
+        """
+        super().__init__("hate-speech window reply stopped at the output-token cap")
+        self.salvaged = salvaged
+
+
+class WindowFinding(TypedDict):
+    """One row whose speaker endorses group-focused enmity.
+
+    Attributes:
+        index (int): Row index (``TranscriptLine.index``) of the finding.
+        category (str): One of :data:`HATE_SPEECH_CATEGORIES`.
+        confidence (str): One of :data:`CONFIDENCE_LEVELS`.
+        reason (str): Short rationale in the prompt's language.
+    """
+
+    index: int
     category: str
     confidence: str
     reason: str
 
 
-class HateSpeechDetector:
-    """Detect hate speech in text segments using an LLM.
+def _clip(text: str, limit: int, *, keep_tail: bool = False) -> str:
+    """Shorten ``text`` to at most ``limit`` characters, marking the cut with ``…``.
 
-    Attributes:
-        inference_pipeline (InferencePipeline): Shared inference client.
-        max_chars (int): Maximum characters of input text sent for detection.
-        prompt_template (str): Hate-speech prompt template loaded at
-            construction time.
+    Args:
+        text (str): The text to clip.
+        limit (int): Maximum length of the result.
+        keep_tail (bool): Keep the end of the text instead of its start.
+
+    Returns:
+        str: ``text`` unchanged when it fits, otherwise the clipped text.
+    """
+    if len(text) <= limit:
+        return text
+    if limit <= 1:
+        return "…"
+    return "…" + text[-(limit - 1) :] if keep_tail else text[: limit - 1] + "…"
+
+
+def render_line(line: TranscriptLine, cap: int, *, keep_tail: bool = False) -> str:
+    """Render one row as ``[index] Speaker: text`` plus an optional translation aid line.
+
+    Args:
+        line (TranscriptLine): The row to render.
+        cap (int): Maximum characters kept of the text and, separately, of the
+            translation.
+        keep_tail (bool): Clip from the start instead of the end — used for the
+            context row just before the core, whose ending is closest to it.
+
+    Returns:
+        str: The rendered row; a translation goes on an indented ``→`` line.
+    """
+    prefix = f"[{line.index}] {line.speaker}: " if line.speaker else f"[{line.index}] "
+    rendered = prefix + _clip(line.text, cap, keep_tail=keep_tail)
+    if line.translation:
+        rendered += _TRANSLATION_PREFIX + _clip(line.translation, cap, keep_tail=keep_tail)
+    return rendered
+
+
+def _line_cost(line: TranscriptLine, cap: int, *, keep_tail: bool = False) -> int:
+    """Return the rendered size of a row including its trailing newline.
+
+    Args:
+        line (TranscriptLine): The row.
+        cap (int): The clip limit it will be rendered with.
+        keep_tail (bool): Whether it is rendered tail-first.
+
+    Returns:
+        int: Characters the row occupies in the prompt.
+    """
+    return len(render_line(line, cap, keep_tail=keep_tail)) + 1
+
+
+def next_window(lines: Sequence[TranscriptLine], start: int, core_chars: int, context_chars: int) -> TranscriptWindow:
+    """Build the classification window whose core begins at ``start``.
+
+    The core takes rows while their rendered cost fits ``core_chars``, but
+    always at least one row, so a sweep always advances (an oversized row is
+    labelled alone). A labelled row is clipped only beyond
+    ``max(core_chars, 2048)`` characters, so even a tiny core shows it whole.
+    Context margins walk outward
+    from the core on both sides: the adjacent row is always included (clipped
+    to ``context_chars``) and further rows only while they fit the remaining
+    budget. ``context_chars <= 0`` disables the margins.
+
+    Args:
+        lines (Sequence[TranscriptLine]): All classifiable rows, in order.
+        start (int): Position of the first core row; must be ``< len(lines)``.
+        core_chars (int): Character budget of the core.
+        context_chars (int): Character budget of each context margin.
+
+    Returns:
+        TranscriptWindow: The window's positions.
+    """
+    core_end = start
+    used = 0
+    row_cap = max(core_chars, _MIN_ROW_CHARS)
+    while core_end < len(lines):
+        cost = _line_cost(lines[core_end], row_cap)
+        if core_end > start and used + cost > core_chars:
+            break
+        used += cost
+        core_end += 1
+
+    context_start = start
+    context_end = core_end
+    if context_chars > 0:
+        remaining = context_chars
+        position = start - 1
+        while position >= 0 and remaining > 0:
+            cost = _line_cost(lines[position], context_chars, keep_tail=True)
+            if position < start - 1 and cost > remaining:
+                break
+            remaining -= cost
+            context_start = position
+            position -= 1
+
+        remaining = context_chars
+        position = core_end
+        while position < len(lines) and remaining > 0:
+            cost = _line_cost(lines[position], context_chars)
+            if position > core_end and cost > remaining:
+                break
+            remaining -= cost
+            position += 1
+            context_end = position
+
+    return TranscriptWindow(context_start=context_start, core_start=start, core_end=core_end, context_end=context_end)
+
+
+def render_window_prompt(
+    template: str,
+    lines: Sequence[TranscriptLine],
+    window: TranscriptWindow,
+    *,
+    core_chars: int,
+    context_chars: int,
+    language: str,
+) -> str:
+    """Fill the transcript prompt template for one window in a single pass.
+
+    Every placeholder is substituted by one regular-expression pass over the
+    template, so placeholder-like text spoken in the transcript is inserted
+    verbatim and never substituted again.
+
+    Args:
+        template (str): Prompt template with ``{language}``,
+            ``{context_before}``, ``{segments}``, ``{context_after}``,
+            ``{first_index}`` and ``{last_index}`` placeholders.
+        lines (Sequence[TranscriptLine]): All classifiable rows, in order.
+        window (TranscriptWindow): The window to render.
+        core_chars (int): Core budget; core rows are clipped only beyond
+            ``max(core_chars, 2048)`` characters.
+        context_chars (int): Clip limit for context rows.
+        language (str): Human-readable transcript language.
+
+    Returns:
+        str: The rendered prompt. An empty context block renders as ``—``.
     """
 
-    def __init__(self, inference_pipeline: InferencePipeline, max_chars: int = 2048) -> None:
-        """Initialize the detector with a shared inference client.
+    def block(start: int, end: int, cap: int, *, keep_tail: bool = False) -> str:
+        """Render rows ``[start, end)`` one per line.
 
         Args:
-            inference_pipeline (InferencePipeline): Shared inference client.
-            max_chars (int): Maximum characters of input text sent for
-                detection. Defaults to ``2048``.
-        """
-        self.inference_pipeline = inference_pipeline
-        self.max_chars = max_chars
-        self.prompt_template = inference_pipeline.load_prompt("hate_speech")
-
-    def detect(self, text: str) -> HateSpeechDetection:
-        """Analyse a text segment for hate speech and return a structured result.
-
-        Args:
-            text (str): The text to analyse.
+            start (int): First position.
+            end (int): One past the last position.
+            cap (int): Clip limit.
+            keep_tail (bool): Clip tail-first.
 
         Returns:
-            HateSpeechDetection: Structured detection result with hate_speech flag,
-                category, confidence, and reason.
+            str: The rendered rows, or ``—`` when the range is empty.
         """
-        prompt = self.prompt_template.replace("{text}", text[: self.max_chars])
-        raw = self.inference_pipeline.call_model(
-            prompt=prompt,
-            system_prompt="You are a content moderation assistant. Respond only with valid JSON.",
-        )
-        return _parse_hate_speech_payload(raw)
+        rendered = [render_line(lines[position], cap, keep_tail=keep_tail) for position in range(start, end)]
+        return "\n".join(rendered) if rendered else _EMPTY_BLOCK
+
+    values = {
+        "language": language,
+        "context_before": block(window.context_start, window.core_start, context_chars, keep_tail=True),
+        "segments": block(window.core_start, window.core_end, max(core_chars, _MIN_ROW_CHARS)),
+        "context_after": block(window.core_end, window.context_end, context_chars),
+        "first_index": str(lines[window.core_start].index),
+        "last_index": str(lines[window.core_end - 1].index),
+    }
+    return _PLACEHOLDER_RE.sub(lambda match: values[match.group(1)], template)
 
 
-def _parse_hate_speech_payload(raw: str) -> HateSpeechDetection:
-    """Parse an LLM hate speech JSON response with fallbacks for malformed output.
+def window_response_format(indices: Sequence[int]) -> dict[str, Any]:
+    """Build the ``response_format`` JSON schema for one window.
+
+    Portable across vLLM, Ollama and OpenAI strict mode: every property is
+    required and no additional properties are allowed. ``index`` is restricted
+    to the core rows, so a schema-enforcing backend cannot report a context
+    row. ``reason`` precedes ``stance`` both in declaration order and
+    alphabetically, so the rationale is generated before the decision on every
+    backend.
 
     Args:
-        raw (str): Raw string response from the LLM.
+        indices (Sequence[int]): Row indices of the window's core.
 
     Returns:
-        HateSpeechDetection: Parsed and normalised detection result.
+        dict[str, Any]: The ``response_format`` payload.
     """
-    data: dict[str, Any] = {}
+    item_schema: dict[str, Any] = {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["index", "target", "reason", "stance", "category", "confidence"],
+        "properties": {
+            "index": {"type": "integer", "enum": list(indices)},
+            "target": {"type": "string"},
+            "reason": {"type": "string"},
+            "stance": {"type": "string", "enum": list(HATE_SPEECH_STANCES)},
+            "category": {"type": "string", "enum": list(HATE_SPEECH_CATEGORIES)},
+            "confidence": {"type": "string", "enum": list(CONFIDENCE_LEVELS)},
+        },
+    }
+    return {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "hate_speech_findings",
+            "strict": True,
+            "schema": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["findings"],
+                "properties": {"findings": {"type": "array", "items": item_schema}},
+            },
+        },
+    }
+
+
+def _strip_reasoning(raw: str) -> str:
+    """Remove ``<think>`` reasoning blocks (and anything before a dangling close tag).
+
+    Args:
+        raw (str): The raw model reply.
+
+    Returns:
+        str: The reply without reasoning, stripped.
+    """
+    text = _THINK_BLOCK_RE.sub("", raw)
+    close = text.lower().rfind(_THINK_CLOSE)
+    if close != -1:
+        text = text[close + len(_THINK_CLOSE) :]
+    return text.strip()
+
+
+def _looks_like_findings(candidate: Any) -> bool:
+    """Report whether a decoded JSON value can stand in for a findings payload.
+
+    Args:
+        candidate (Any): A decoded JSON value.
+
+    Returns:
+        bool: ``True`` for a single finding object or a list of objects.
+    """
+    if isinstance(candidate, dict):
+        return "index" in candidate
+    if isinstance(candidate, list):
+        return all(isinstance(item, dict) for item in candidate)
+    return False
+
+
+def _load_json_payload(text: str) -> Any:
+    """Decode the findings payload from a reply that may wrap it in prose or fences.
+
+    Scanning skips past every value it decodes, so when the outer
+    ``{"findings": [...]`` never closes (a reply cut off at the output cap)
+    every complete item inside it is still recovered.
+
+    Args:
+        text (str): The reply with reasoning removed.
+
+    Returns:
+        Any: The first ``{"findings": ...}`` object, else the first list of
+            objects, else every complete finding object found (as a list), else
+            ``None``.
+    """
     try:
-        data = json.loads(raw)
+        return json.loads(text)
     except json.JSONDecodeError:
-        match = re.search(r"\{.*\}", raw, re.DOTALL)
-        if match:
-            try:
-                data = json.loads(match.group())
-            except json.JSONDecodeError:
-                logger.warning("Could not parse hate speech response: {}", raw[:200])
-                return _default_detection()
-        else:
-            logger.warning("No JSON found in hate speech response: {}", raw[:200])
-            return _default_detection()
-
-    return HateSpeechDetection(
-        hate_speech=bool(data.get("hate_speech", False)),
-        category=str(data.get("category", "none")).lower(),
-        confidence=_normalize_confidence(str(data.get("confidence", "low"))),
-        reason=str(data.get("reason", "")),
-    )
-
-
-def _default_detection() -> HateSpeechDetection:
-    """Return a safe default detection when parsing fails.
-
-    Returns:
-        HateSpeechDetection: A detection flagged as non-hate with low
-            confidence and a ``"Parse error"`` reason.
-    """
-    return HateSpeechDetection(
-        hate_speech=False,
-        category="none",
-        confidence="low",
-        reason="Parse error",
-    )
+        pass
+    decoder = json.JSONDecoder()
+    first_list: list[Any] | None = None
+    items: list[dict[str, Any]] = []
+    position = 0
+    while position < len(text):
+        if text[position] not in "{[":
+            position += 1
+            continue
+        try:
+            candidate, end = decoder.raw_decode(text, position)
+        except json.JSONDecodeError:
+            position += 1
+            continue
+        if isinstance(candidate, dict) and "findings" in candidate:
+            return candidate
+        if isinstance(candidate, list) and first_list is None and _looks_like_findings(candidate):
+            first_list = candidate
+        elif isinstance(candidate, dict) and _looks_like_findings(candidate):
+            items.append(candidate)
+        position = end
+    if first_list is not None:
+        return first_list
+    return items or None
 
 
-def _normalize_confidence(value: str) -> str:
-    """Normalise a confidence string to high/medium/low.
+def _coerce_index(value: Any) -> int | None:
+    """Convert a model-emitted row index to ``int``.
 
     Args:
-        value (str): Raw confidence string from the LLM.
+        value (Any): The ``index`` value (int, integral float, or digit string,
+            optionally in brackets).
 
     Returns:
-        str: One of "high", "medium", or "low".
+        int | None: The index, or ``None`` for booleans, fractions and junk.
     """
-    normalized = value.lower().strip()
-    if normalized in ("high", "medium", "low"):
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value) if value.is_integer() else None
+    if isinstance(value, str):
+        match = _INDEX_TEXT_RE.match(value.strip())
+        return int(match.group(1)) if match else None
+    return None
+
+
+def _normalize_choice(value: Any, choices: Sequence[str], default: str) -> str:
+    """Normalise an enum-like string (case, whitespace, separators) against ``choices``.
+
+    Args:
+        value (Any): The raw value.
+        choices (Sequence[str]): Allowed values.
+        default (str): Value returned for anything not in ``choices``.
+
+    Returns:
+        str: The matching choice, or ``default``.
+    """
+    if not isinstance(value, str):
+        return default
+    normalized = value.strip().lower().replace("-", "_").replace(" ", "_")
+    return normalized if normalized in choices else default
+
+
+def _normalize_stance(value: Any) -> str:
+    """Normalise a stance, accepting unconstrained inflections of ``endorses``.
+
+    Without the JSON schema a model may write ``"Endorses."`` or
+    ``"endorsed"``; those still count, while negations such as
+    ``"does not endorse"`` do not start with the stem and stay ``unclear``.
+
+    Args:
+        value (Any): The raw ``stance`` value.
+
+    Returns:
+        str: One of :data:`HATE_SPEECH_STANCES`.
+    """
+    if not isinstance(value, str):
+        return "unclear"
+    normalized = _NON_WORD_RE.sub("_", value.strip().lower()).strip("_")
+    if normalized in HATE_SPEECH_STANCES:
         return normalized
-    return "low"
+    return "endorses" if normalized.startswith("endors") else "unclear"
+
+
+def parse_window_reply(raw: str, allowed: Collection[int]) -> list[WindowFinding] | None:
+    """Parse a window reply into the rows whose speaker endorses hate.
+
+    No boolean verdict is read: a row is a finding if and only if an item for
+    it has the stance ``endorses`` (a row listed twice — say, quoted and then
+    endorsed — is reported; the first endorsing item supplies the details).
+    Items for rows outside ``allowed`` are dropped; categories and confidences
+    are normalised to their enums.
+
+    Args:
+        raw (str): The raw model reply.
+        allowed (Collection[int]): Row indices of the window's core.
+
+    Returns:
+        list[WindowFinding] | None: Endorsed-hate findings in row order (``[]``
+            when the reply lists none), or ``None`` when the reply holds no
+            usable findings structure — including items none of which carries
+            a readable ``index``.
+    """
+    payload = _load_json_payload(_strip_reasoning(raw or ""))
+    items: Any
+    if isinstance(payload, dict):
+        items = payload.get("findings") if "findings" in payload else ([payload] if "index" in payload else None)
+    elif isinstance(payload, list):
+        items = payload
+    else:
+        return None
+    if not isinstance(items, list):
+        return None
+
+    allowed_set = set(allowed)
+    by_index: dict[int, WindowFinding] = {}
+    readable = 0
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        index = _coerce_index(item.get("index"))
+        if index is None:
+            continue
+        readable += 1
+        if index not in allowed_set or index in by_index:
+            continue
+        if _normalize_stance(item.get("stance")) != "endorses":
+            continue
+        by_index[index] = WindowFinding(
+            index=index,
+            category=_normalize_choice(item.get("category"), HATE_SPEECH_CATEGORIES, "other"),
+            confidence=_normalize_choice(item.get("confidence"), CONFIDENCE_LEVELS, "low"),
+            reason=str(item.get("reason") or "").strip()[:_REASON_MAX_CHARS],
+        )
+    if items and not readable:
+        return None
+    return [by_index[index] for index in sorted(by_index)]
+
+
+def classify_window(
+    inference_pipeline: InferencePipeline,
+    prompt: str,
+    indices: Sequence[int],
+    *,
+    structured: bool,
+) -> list[WindowFinding] | None:
+    """Classify one rendered window and return its endorsed-hate findings.
+
+    The request carries no system message — the prompt holds all instructions
+    — and runs at temperature 0. With ``structured`` the reply is constrained
+    by :func:`window_response_format`; the parser accepts unconstrained replies
+    either way, because routers may drop the constraint silently.
+
+    Args:
+        inference_pipeline (InferencePipeline): Shared inference client.
+        prompt (str): The rendered window prompt.
+        indices (Sequence[int]): Row indices of the window's core.
+        structured (bool): Whether to send the JSON-schema constraint.
+
+    Returns:
+        list[WindowFinding] | None: Findings, or ``None`` when the reply could
+            not be parsed.
+
+    Raises:
+        WindowTruncatedError: When the reply stopped at the output-token cap;
+            it carries the findings of the items that were complete.
+    """
+    reply = inference_pipeline.call_model_reply(
+        prompt=prompt,
+        temperature=0.0,
+        num_predict=max(HS_MAX_OUTPUT_TOKENS, HS_OUTPUT_TOKENS_PER_ROW * len(indices)),
+        include_system_prompt=False,
+        response_format=window_response_format(indices) if structured else None,
+    )
+    findings = parse_window_reply(reply.content, allowed=indices)
+    if reply.finish_reason == "length":
+        raise WindowTruncatedError(findings or [])
+    return findings
+
+
+class PassageVerdict(TypedDict):
+    """The verdict on one passage judged on its own, such as a keyframe caption.
+
+    Attributes:
+        endorsed (bool): Whether the passage endorses group-focused enmity.
+        category (str): One of :data:`HATE_SPEECH_CATEGORIES`, or ``none`` when not endorsed.
+        confidence (str): One of :data:`CONFIDENCE_LEVELS`.
+        reason (str): The model's one-sentence rationale.
+    """
+
+    endorsed: bool
+    category: str
+    confidence: str
+    reason: str
+
+
+def image_passage(caption: str, language: str) -> str:
+    """Label a keyframe caption as an image description, the way docint labels its images.
+
+    The label tells the prompt it is reading a description of a picture, so it
+    judges the message the picture conveys rather than the neutral voice
+    describing it.
+
+    Args:
+        caption (str): The caption.
+        language (str): Prompt language code; unknown codes use English.
+
+    Returns:
+        str: ``"<label>: <caption>"`` with the caption's whitespace collapsed.
+    """
+    label = _IMAGE_DESCRIPTION_LABELS.get(language, _IMAGE_DESCRIPTION_LABELS["en"])
+    return f"{label}: {' '.join(caption.split())}"
+
+
+def passage_response_format() -> dict[str, Any]:
+    """Build the ``response_format`` JSON schema for one passage verdict.
+
+    Mirrors docint's ``chunk_response_format``: every property is required and
+    none may be added, and ``reason`` precedes ``stance`` so the rationale is
+    generated before the decision.
+
+    Returns:
+        dict[str, Any]: The ``response_format`` payload.
+    """
+    return {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "hate_speech_verdict",
+            "strict": True,
+            "schema": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["target", "reason", "stance", "category", "confidence"],
+                "properties": {
+                    "target": {"type": "string"},
+                    "reason": {"type": "string"},
+                    "stance": {"type": "string", "enum": [*HATE_SPEECH_STANCES, "none"]},
+                    "category": {"type": "string", "enum": [*HATE_SPEECH_CATEGORIES, "none"]},
+                    "confidence": {"type": "string", "enum": list(CONFIDENCE_LEVELS)},
+                },
+            },
+        },
+    }
+
+
+def _first_json_object(text: str) -> dict[str, Any] | None:
+    """Return the first JSON object in a reply that may wrap it in prose or fences.
+
+    Args:
+        text (str): The reply with reasoning removed.
+
+    Returns:
+        dict[str, Any] | None: The object (the first one of a list), or ``None``.
+    """
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        parsed = None
+    if isinstance(parsed, list):
+        parsed = next((item for item in parsed if isinstance(item, dict)), None)
+    if isinstance(parsed, dict):
+        return parsed
+    decoder = json.JSONDecoder()
+    for position, char in enumerate(text):
+        if char != "{":
+            continue
+        try:
+            candidate, _ = decoder.raw_decode(text, position)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(candidate, dict):
+            return candidate
+    return None
+
+
+def parse_passage_reply(raw: str) -> PassageVerdict | None:
+    """Parse a single-passage verdict; the verdict comes from ``stance`` alone.
+
+    No boolean is read, so neither a stray ``"hate_speech": true`` nor the
+    string ``"false"`` can create a finding. An endorsed verdict never carries
+    the category ``none``.
+
+    Args:
+        raw (str): The raw model reply (reasoning, prose and fences tolerated).
+
+    Returns:
+        PassageVerdict | None: The verdict, or ``None`` when the reply holds no JSON object.
+    """
+    payload = _first_json_object(_strip_reasoning(raw or ""))
+    if payload is None:
+        return None
+    endorsed = _normalize_stance(payload.get("stance")) == "endorses"
+    return PassageVerdict(
+        endorsed=endorsed,
+        category=_normalize_choice(payload.get("category"), HATE_SPEECH_CATEGORIES, "other") if endorsed else "none",
+        confidence=_normalize_choice(payload.get("confidence"), CONFIDENCE_LEVELS, "low"),
+        reason=str(payload.get("reason") or "").strip()[:_REASON_MAX_CHARS],
+    )
+
+
+def classify_passage(
+    inference_pipeline: InferencePipeline,
+    prompt: str,
+    *,
+    structured: bool,
+) -> PassageVerdict | None:
+    """Classify one rendered passage prompt, at temperature 0 and without a system role.
+
+    Args:
+        inference_pipeline (InferencePipeline): Shared inference client.
+        prompt (str): The rendered ``hate_speech_image`` prompt.
+        structured (bool): Whether to send :func:`passage_response_format`.
+
+    Returns:
+        PassageVerdict | None: The verdict, or ``None`` when the reply could not be parsed.
+    """
+    reply = inference_pipeline.call_model_reply(
+        prompt=prompt,
+        temperature=0.0,
+        num_predict=HS_MAX_OUTPUT_TOKENS,
+        include_system_prompt=False,
+        response_format=passage_response_format() if structured else None,
+    )
+    return parse_passage_reply(reply.content)

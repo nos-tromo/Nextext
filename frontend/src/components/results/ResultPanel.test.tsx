@@ -254,6 +254,43 @@ describe('ResultPanel', () => {
     expect(screen.queryByRole('button', { name: 'Transcript' })).not.toBeInTheDocument()
   })
 
+  it('shows a silent clip\u2019s frame findings under the banner', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        new Response(
+          JSON.stringify(
+            makeSnapshot({
+              transcript: [],
+              skipped: true,
+              skip_reason_code: 'vad_no_speech',
+              frame_captions: [{ time_sec: 3, caption: 'A flag bearing a hate symbol.' }],
+              hate_speech_findings: [
+                {
+                  hate_speech: true,
+                  category: 'extremism',
+                  confidence: 'high',
+                  reason: 'Shows a hate symbol without distance.',
+                  text: 'A flag bearing a hate symbol.',
+                  start: '0:00:03',
+                  speaker: null,
+                  translation: null,
+                  source: 'frame',
+                },
+              ],
+            }),
+          ),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        ),
+      ),
+    )
+
+    mountResultPanel('j1', 'clip.mp4')
+
+    await waitFor(() => expect(screen.getByRole('alert')).toBeInTheDocument())
+    expect(screen.getByRole('button', { name: 'Hate Speech' })).toBeInTheDocument()
+  })
+
   it('shows the Visual context tab for frames that were never described', async () => {
     vi.stubGlobal(
       'fetch',

@@ -16,8 +16,10 @@ const CONFIDENCE_CLASSES: Record<HateSpeechFinding['confidence'], string> = {
 }
 
 /**
- * Displays per-segment hate-speech detection findings in a card list, with
- * confidence badges and CSV/XLSX download buttons.
+ * Displays hate-speech findings in a card list, with confidence badges and
+ * CSV/XLSX download buttons. Transcript segments are counted against the
+ * transcript; keyframe captions, judged for what a video shows, are counted
+ * on their own and marked as video frames.
  * Renders a placeholder when no findings are present.
  *
  * @param jobId - The job identifier, forwarded to {@link DownloadButtons}.
@@ -30,17 +32,31 @@ export function HateSpeechTab({ jobId, result, stem }: HateSpeechTabProps) {
     return <p className="text-sm text-muted-foreground">{t('results.no_hate_speech')}</p>
   }
 
-  const flagged = result.hate_speech_findings.filter((f) => f.hate_speech)
-  const total = result.hate_speech_findings.length
+  const segmentFindings = result.hate_speech_findings.filter((f) => f.source !== 'frame')
+  const frameFindings = result.hate_speech_findings.filter((f) => f.source === 'frame' && f.hate_speech)
+  const flagged = segmentFindings.filter((f) => f.hate_speech)
+  // Only flagged segments come back from the backend, so the denominator is the transcript.
+  const total = result.transcript.length || segmentFindings.length
 
   return (
     <div className="space-y-4">
-      <p className="text-sm text-muted-foreground">
-        {t(total === 1 ? 'results.flagged_summary_one' : 'results.flagged_summary_other', {
-          flagged: flagged.length,
-          total,
-        })}
-      </p>
+      <div className="space-y-1 text-sm text-muted-foreground">
+        {total > 0 && (
+          <p>
+            {t(total === 1 ? 'results.flagged_summary_one' : 'results.flagged_summary_other', {
+              flagged: flagged.length,
+              total,
+            })}
+          </p>
+        )}
+        {frameFindings.length > 0 && (
+          <p>
+            {t(frameFindings.length === 1 ? 'results.flagged_frames_one' : 'results.flagged_frames_other', {
+              count: frameFindings.length,
+            })}
+          </p>
+        )}
+      </div>
       <ul className="space-y-3">
         {result.hate_speech_findings.map((finding, i) => (
           // Findings carry no id, and the list renders from an immutable result that
@@ -56,6 +72,11 @@ export function HateSpeechTab({ jobId, result, stem }: HateSpeechTabProps) {
               >
                 {finding.hate_speech ? t('results.flagged') : t('results.clean')}
               </span>
+              {finding.source === 'frame' && (
+                <span className="rounded border border-border bg-muted px-1.5 py-px text-xs font-medium text-muted-foreground">
+                  {t('results.source_frame')}
+                </span>
+              )}
               {finding.hate_speech && (
                 <>
                   <span className="text-sm text-muted-foreground">{finding.category}</span>
@@ -70,10 +91,18 @@ export function HateSpeechTab({ jobId, result, stem }: HateSpeechTabProps) {
                 </>
               )}
             </div>
-            {finding.start !== null && (
-              <p className="mt-1 text-xs text-muted-foreground">{finding.start}</p>
+            {(finding.start !== null || finding.speaker) && (
+              <p className="mt-1 flex gap-2 text-xs text-muted-foreground">
+                {finding.start !== null && <span>{finding.start}</span>}
+                {finding.speaker && <span>{finding.speaker}</span>}
+              </p>
             )}
             <p className="mt-2 text-sm text-foreground">{finding.text}</p>
+            {finding.translation && (
+              <p className="mt-1 text-sm text-muted-foreground">
+                {t('results.col_translation')}: {finding.translation}
+              </p>
+            )}
             {finding.hate_speech && finding.reason && (
               <p className="mt-1 text-sm text-muted-foreground italic">{finding.reason}</p>
             )}

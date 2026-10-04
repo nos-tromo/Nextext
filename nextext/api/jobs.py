@@ -392,6 +392,7 @@ def _run_pipeline_blocking(state: JobState, push_event: PushEvent) -> dict[str, 
     from nextext.core.visual_context import FrameCaption, describe_keyframes, format_visual_context
     from nextext.pipeline import (
         effective_text_column,
+        frame_hate_speech_pipeline,
         hate_speech_pipeline,
         normalize_language_code,
         should_translate,
@@ -568,13 +569,19 @@ def _run_pipeline_blocking(state: JobState, push_event: PushEvent) -> dict[str, 
                 visual_context=visual_context,
             )
             _complete(4, {"summary": bool(visual_summary)})
+        # Likewise the captions can show hate a silent clip never speaks.
+        frame_findings: list[dict[str, Any]] | None = None
+        if file_opts["hate_speech"] and captions:
+            _notify(5)
+            frame_findings = frame_hate_speech_pipeline(captions, inference_pipeline=_ensure_inference())
+            _complete(5, {"flagged": len(frame_findings)})
         return {
             "transcript": df,
             "summary": visual_summary,
             "word_counts": None,
             "named_entities": None,
             "wordcloud": None,
-            "hate_speech_findings": None,
+            "hate_speech_findings": frame_findings or None,
             "resolved_src_lang": file_opts["src_lang"],
             "transcript_language": transcript_language,
             "skipped": True,
@@ -663,7 +670,10 @@ def _run_pipeline_blocking(state: JobState, push_event: PushEvent) -> dict[str, 
     # Hate-speech detection ---------------------------------------------------
     _notify(5)
     if file_opts["hate_speech"]:
-        findings = hate_speech_pipeline(df=df, inference_pipeline=_ensure_inference())
+        findings = hate_speech_pipeline(
+            df=df, inference_pipeline=_ensure_inference(), src_lang=file_opts["src_lang"] or None
+        )
+        findings += frame_hate_speech_pipeline(captions, inference_pipeline=_ensure_inference())
         result["hate_speech_findings"] = findings
         _complete(5, {"flagged": len(findings)})
     else:
