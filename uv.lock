@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = "==3.12.*"
 resolution-markers = [
     "sys_platform == 'win32'",
@@ -768,7 +768,7 @@ wheels = [
 
 [[package]]
 name = "nextext"
-version = "1.12.9"
+version = "1.12.10"
 source = { editable = "." }
 dependencies = [
     { name = "anyio" },
