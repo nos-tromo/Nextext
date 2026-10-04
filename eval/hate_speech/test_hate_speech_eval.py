@@ -312,6 +312,7 @@ def test_committed_chunk_fixtures_cover_the_chunk_prompt_risks() -> None:
     tags = {tag for chunk in chunks for tag in chunk["tags"]}
     golds = [chunk["rows"][0]["gold"] for chunk in chunks]
     assert {"report_framed_hate", "reporting", "rhetorical_question", "coded_ideology", "image"} <= tags
+    assert {"image_symbol", "image_distanced", "image_benign"} <= tags
     assert "endorses" in golds
     assert "quotes_or_reports" in golds
     assert all(len(chunk["rows"]) == 1 for chunk in chunks)

@@ -158,6 +158,21 @@ Invalid values warn and fall back. Resolved by `load_hate_speech_env`. The
 prompt is `nextext/utils/prompts/<code>/hate_speech_transcript.txt`; docint
 keeps a byte-identical copy for its own transcript windows.
 
+**What a video shows.** A picture whose hate is purely visual leaves nothing in
+the transcript. So when a job captioned its keyframes, the stage also judges
+each caption, one request per caption, with
+`nextext/utils/prompts/<code>/hate_speech_image.txt`. That file is a
+byte-identical copy of docint's chunk prompt (both repos pin its hash), whose
+image rule judges the message a picture conveys: a hate symbol shown with no
+distancing is a finding. The caption is labelled `Image description:`
+(`Bildbeschreibung:`), as docint labels its images.
+
+- Findings carry `source: frame`, the caption as `text` and the frame's time as
+  `start`; transcript findings carry `source: transcript`.
+- A silent clip is judged from its captions alone.
+- No vision request is added: the stage reads only the captions the keyframe
+  step already wrote, so a job without captions judges no frames.
+
 **Ollama:** a window prompt is roughly 3k tokens. Give the model a context of
 at least 8k tokens (`OLLAMA_CONTEXT_LENGTH` on the Ollama server), or Ollama
 silently drops the start of the prompt.
@@ -202,7 +217,10 @@ the timestamped captions become a result in their own right: they surface on
 and in the SPA's **Visual context** tab. A job that *also* asked for a summary
 has them folded into it, so the summary covers what was shown as well as what
 was said — and for a video whose audio held no speech, the captions are the
-summary's only source.
+summary's only source. A job that asked for hate-speech detection has them
+judged as well ([Hate-speech detection](#hate-speech-detection)); the caption
+prompt asks for recognisable symbols, emblems, flags, gestures and codes by
+name, so what a frame shows reaches that pass in words.
 
 This needs a **vision-capable** `TEXT_MODEL` (the shared `vllm-service` chat
 endpoint serves one). Captioning is fail-soft end to end: a per-frame outage

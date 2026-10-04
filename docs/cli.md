@@ -21,7 +21,7 @@ Running `uv run nextext-cli [ARGS]` from the command line supports the following
 --[no-]diarize        Detect and label speakers (default: on).
 -w, --words           Show most frequently used words (default: False).
 -sum, --summarize     Additional transcript summarization (default: False).
--hs, --hate-speech    Detect hate speech the speakers endorse, judging each segment in context windows via LLM (default: False).
+-hs, --hate-speech    Detect hate speech the speakers endorse, judging each segment in context windows via LLM; with -kf, also judge the keyframe captions (default: False).
 -kf, --keyframes      Sample video keyframes and describe them (default: False).
 -F, --full-analysis   Enable full analysis, equivalent to using -w -sum -hs -kf (default: False).
 -ed, --emit-docint-jsonl   Write a docint-compatible JSONL transcript to this path.
@@ -36,7 +36,9 @@ transcript always lands there (`{stem}_transcript.txt`/`.csv`/`.xlsx`, plus
 own files (`{stem}_summary.txt`, `{stem}_words.*`, `{stem}_entities.*`,
 `{stem}_wordcloud.png`, `{stem}_hate_speech.*`). The hate-speech files list
 only segments whose speaker endorses hate, with the original `text`, `start`,
-and — when present — `speaker` and the `translation` the classifier saw as an aid.
+and — when present — `speaker` and the `translation` the classifier saw as an aid,
+plus `source` (`transcript`). With `-kf`, keyframe captions that endorse hate
+are listed too, with `source` `frame` and the frame's time as `start`.
 
 `-kf/--keyframes` adds two: the sampled frames as
 `{stem}_keyframes/frame_NNN.jpg` plus a `manifest.json` of their sampling times
@@ -52,7 +54,7 @@ they also feed the summary.
 | `0`  | The run produced a transcript. |
 | `1`  | The run failed (unhandled error, e.g. an undecodable file or an unreachable endpoint). |
 | `2`  | Command-line usage error — argparse's own code (unknown flag, missing `-f`). Not a pipeline outcome. |
-| `3`  | The file held no processable speech: nothing was transcribed and the text analysis stages were skipped. An empty transcript is still written, and the warning names which of the three causes fired (`vad_no_speech`, `asr_empty_transcript`, `asr_all_segments_filtered`). `-kf` still runs, so a silent video still yields its keyframes, their descriptions, and — with `-sum` — a summary written from them. |
+| `3`  | The file held no processable speech: nothing was transcribed and the text analysis stages were skipped. An empty transcript is still written, and the warning names which of the three causes fired (`vad_no_speech`, `asr_empty_transcript`, `asr_all_segments_filtered`). `-kf` still runs, so a silent video still yields its keyframes and their descriptions, plus a summary written from them with `-sum` and hate-speech findings judged from them with `-hs`. |
 
 Exit `3` is what lets a batch loop tell "nothing to transcribe" apart from a
 successful run — kept distinct from argparse's `2` so a mistyped flag is never

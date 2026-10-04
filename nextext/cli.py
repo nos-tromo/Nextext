@@ -134,7 +134,8 @@ def parse_arguments(args_list: list[str] | None = None) -> argparse.Namespace:
         dest="hate_speech",
         action="store_true",
         help=(
-            "Detect hate speech the speakers endorse, judging each segment in context windows via LLM (default: False)."
+            "Detect hate speech the speakers endorse, judging each segment in context windows via LLM; "
+            "with -kf, also judge the keyframe captions (default: False)."
         ),
     )
     parser.add_argument(

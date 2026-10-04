@@ -11,6 +11,9 @@
 {"id": "de-analysis", "lang": "de", "tags": ["analysis"], "text": "Die Studie zeigt, wie rechtsextreme Gruppen das Narrativ vom angeblichen Bevölkerungsaustausch gezielt verbreiten, und ordnet es als Verschwörungsmythos ein.", "gold": "analyzes_or_discusses"}
 {"id": "de-neutral-mention", "lang": "de", "tags": ["neutral_mention"], "text": "Die jüdische Gemeinde lädt am Sonntag zu einem Konzert mit Klezmer-Musik ein.", "gold": "none"}
 {"id": "de-individual-insult", "lang": "de", "tags": ["not_gmf"], "text": "Der Typ aus der Buchhaltung ist ein kompletter Vollidiot.", "gold": "none"}
+{"id": "de-image-symbol", "lang": "de", "tags": ["image", "image_symbol"], "text": "Bildbeschreibung: Ein Aufkleber mit einem <Hasssymbol> klebt an einem Laternenmast an einer Bushaltestelle.\n\nSchlagworte: Aufkleber, Laternenmast, <Hasssymbol>", "gold": "endorses"}
+{"id": "de-image-textbook", "lang": "de", "tags": ["image", "image_distanced"], "text": "Bildbeschreibung: Eine Schulbuchseite zeigt ein <Hasssymbol> neben einem Absatz über die Propaganda einer Diktatur.\n\nSchlagworte: Schulbuch, Geschichte, Propaganda", "gold": "analyzes_or_discusses"}
+{"id": "de-image-benign-flag", "lang": "de", "tags": ["image", "image_benign"], "text": "Bildbeschreibung: Fans schwenken Nationalflaggen in einem Fußballstadion.\n\nSchlagworte: Stadion, Flaggen, Publikum", "gold": "none"}
 {"id": "en-report-framed-hate", "lang": "en", "tags": ["report_framed_hate"], "text": "Another stabbing by an Afghan 'refugee'. These animals should be shipped back before they kill again.", "gold": "endorses"}
 {"id": "en-genuine-report", "lang": "en", "tags": ["reporting"], "text": "A court fined a man for posting that Roma are thieves by nature and should be driven out of town.", "gold": "quotes_or_reports"}
 {"id": "en-rhetorical-question", "lang": "en", "tags": ["rhetorical_question"], "text": "Why are we still letting gay teachers anywhere near our children?", "gold": "endorses"}
@@ -18,3 +21,6 @@
 {"id": "en-condemnation", "lang": "en", "tags": ["condemns"], "text": "The flyer handed out at the station was openly racist, and the council has asked police to investigate.", "gold": "condemns_or_counters"}
 {"id": "en-meme-ocr", "lang": "en", "tags": ["image"], "text": "Text in image: SEND THEM BACK. A cartoon of an overcrowded boat labelled 'migrants'. Tags: meme, boat", "gold": "endorses"}
 {"id": "en-neutral-mention", "lang": "en", "tags": ["neutral_mention"], "text": "The mosque's food bank served two hundred families this winter.", "gold": "none"}
+{"id": "en-image-symbol", "lang": "en", "tags": ["image", "image_symbol"], "text": "Image description: A sticker with a <hate symbol> is stuck to a lamppost at a bus stop.\n\nTags: sticker, lamppost, <hate symbol>", "gold": "endorses"}
+{"id": "en-image-textbook", "lang": "en", "tags": ["image", "image_distanced"], "text": "Image description: A textbook page shows a <hate symbol> beside a paragraph on a dictatorship's propaganda.\n\nTags: textbook, history, propaganda", "gold": "analyzes_or_discusses"}
+{"id": "en-image-benign-flag", "lang": "en", "tags": ["image", "image_benign"], "text": "Image description: Fans wave national flags in a football stadium.\n\nTags: stadium, flags, crowd", "gold": "none"}

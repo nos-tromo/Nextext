@@ -58,9 +58,10 @@ production think setting: thinking tokens count against the output cap.
 
 ## docint's chunk prompt
 
-docint judges every non-transcript node (documents, postings, image text) with
-its own per-chunk prompt. `--chunks` scores the invented chunks in
-`chunk_fixtures/` with two strategies:
+docint judges every non-transcript node (documents, postings, an image's text,
+caption and tags) with its own per-chunk prompt, and Nextext judges keyframe
+captions with a byte-identical copy (`nextext/utils/prompts/<code>/hate_speech_image.txt`).
+`--chunks` scores the invented chunks in `chunk_fixtures/` with two strategies:
 
 - `chunk-baseline` — docint's pre-rewrite call: the old prompt, no system role,
   and the `bool()` parse.
@@ -71,11 +72,17 @@ uv run python eval/hate_speech/run.py --chunks \
   --chunk-prompt ../docint/docint/utils/prompts/de/hate_speech.txt --by-tag
 ```
 
+Without a docint checkout, `--chunk-prompt nextext/utils/prompts/de/hate_speech_image.txt`
+scores the same prompt.
+
 The chunk fixtures target the ways a stance rule can suppress real hate: hate
-styled as news, rhetorical questions, approving shares, coded ideology critique
-and meme text. Each has a counterpart that must stay clean: a genuine court
-report, legitimate critique of religious dogma, a press photo of a removed
-poster, and neutral mentions.
+styled as news, rhetorical questions, approving shares, coded ideology critique,
+meme text, and a hate symbol in a picture with no words. Each has a counterpart
+that must stay clean: a genuine court report, legitimate critique of religious
+dogma, a press photo of a removed poster, the same kind of symbol on a history
+textbook page, a benign flag, and neutral mentions. The image fixtures use a
+`<hate symbol>` placeholder and the labels docint and Nextext put on image
+input (`Image description:`, `Tags:`).
 
 ## Metrics
 
