@@ -60,7 +60,7 @@ def parse_arguments(args_list: list[str] | None = None) -> argparse.Namespace:
         argparse.ArgumentError: If there is an error in argument parsing.
     """
     parser = argparse.ArgumentParser(
-        description="Audio transcription and analysis.",
+        description="Audio/video transcription, translation and analysis toolkit.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
 
