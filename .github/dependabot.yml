@@ -24,6 +24,13 @@ updates:
     ignore:
       - dependency-name: "pyrefly"
       - dependency-name: "ruff"
+      # setuptools is a [build-system] requirement only, so Dependabot can
+      # raise that floor but never refreshes the runtime copy in uv.lock
+      # (pulled in by torch, spacy and thinc). Once the floor allows the
+      # newest release, every run fails with "No files have changed!".
+      # Refresh the lockfile copy by hand with
+      # `uv lock --upgrade-package setuptools`.
+      - dependency-name: "setuptools"
 
   - package-ecosystem: "npm"
     directory: "/frontend"
