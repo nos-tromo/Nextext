@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "nextext"
-version = "1.12.11"
+version = "1.12.12"
 description = "Audio/video transcription, translation and analysis toolkit — FastAPI + React + CLI over external inference"
 authors = [
     { name = "nos-tromo" }
