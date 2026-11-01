@@ -1,10 +1,10 @@
 [build-system]
-requires = ["setuptools>=84.0.0", "wheel"]
+requires = ["setuptools>=84.1.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "nextext"
-version = "1.12.12"
+version = "1.12.13"
 description = "Audio/video transcription, translation and analysis toolkit — FastAPI + React + CLI over external inference"
 authors = [
     { name = "nos-tromo" }
