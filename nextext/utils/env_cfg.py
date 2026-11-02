@@ -845,6 +845,10 @@ def load_whisper_env() -> WhisperClientConfig:
 
 EDGE_SECRET_MIN_LENGTH: int = 32
 SERVICE_TOKEN_MIN_LENGTH: int = 32
+# Service principals live in their own namespace, so no user identity can
+# collide with one: a service token resolves to ``service:<name>``, and no
+# other source may produce a principal with this prefix.
+SERVICE_PRINCIPAL_PREFIX: str = "service:"
 _SERVICE_NAME_PATTERN: re.Pattern[str] = re.compile(r"[A-Za-z0-9._-]+")
 
 
@@ -866,14 +870,16 @@ class PrincipalConfig:
             principal (the caller's owner identifier).
         default_identity: Developer / header-less fallback identity used when
             the trusted header is absent, or ``None`` when unset (the resolver
-            then fails closed with HTTP 401).
+            then fails closed with HTTP 401). Never in the service namespace
+            (:data:`SERVICE_PRINCIPAL_PREFIX`).
         edge_secret: Secret the edge gateway sends as ``X-Edge-Secret``. When
             set, the trusted header is honoured only on requests carrying it;
             ``None`` keeps the header trusted from any caller. Kept out of
             ``repr``.
         service_tokens: ``(name, token)`` pairs for services that call the API
             directly with ``Authorization: Bearer <token>``; such a request
-            resolves to ``name``. Kept out of ``repr``.
+            resolves to the principal ``service:<name>``. Kept out of
+            ``repr``.
     """
 
     header_name: str
@@ -997,13 +1003,19 @@ def load_principal_env(
 
     Raises:
         PrincipalConfigError: When ``NEXTEXT_EDGE_SECRET`` or
-            ``NEXTEXT_SERVICE_TOKENS`` is malformed.
+            ``NEXTEXT_SERVICE_TOKENS`` is malformed, or when
+            ``NEXTEXT_DEFAULT_IDENTITY`` lies in the service namespace.
     """
     raw_identity = os.getenv("NEXTEXT_DEFAULT_IDENTITY")
     if raw_identity is not None and raw_identity.strip():
         resolved_identity: str | None = raw_identity.strip()
     else:
         resolved_identity = default_identity
+    if resolved_identity is not None and resolved_identity.startswith(SERVICE_PRINCIPAL_PREFIX):
+        raise PrincipalConfigError(
+            f"NEXTEXT_DEFAULT_IDENTITY must not start with '{SERVICE_PRINCIPAL_PREFIX}', "
+            "the prefix reserved for service tokens."
+        )
 
     edge_secret = _load_edge_secret()
     return PrincipalConfig(

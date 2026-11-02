@@ -81,11 +81,11 @@ def test_whoami_ignores_gateway_headers_without_edge_secret(monkeypatch: pytest.
 
 
 def test_whoami_resolves_a_docint_style_service_call(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Docint's client headers (bearer token plus ``X-Auth-User: docint``) resolve to the token's name."""
+    """The docint client's headers (bearer token plus ``X-Auth-User: docint``) resolve to ``service:docint``."""
     monkeypatch.setenv("NEXTEXT_EDGE_SECRET", EDGE_SECRET)
     monkeypatch.setenv("NEXTEXT_SERVICE_TOKENS", f"docint={DOCINT_TOKEN}")
     headers = {"Authorization": f"Bearer {DOCINT_TOKEN}", OWNER_HEADER: "docint"}
     with TestClient(create_app()) as client:
         response = client.get("/api/v1/whoami", headers=headers)
     assert response.status_code == 200
-    assert response.json() == {"username": "docint", "display_name": None}
+    assert response.json() == {"username": "service:docint", "display_name": None}

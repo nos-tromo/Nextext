@@ -1373,3 +1373,31 @@ def test_principal_config_repr_hides_the_secret_and_tokens(monkeypatch: pytest.M
     text = repr(load_principal_env())
     assert _EDGE_SECRET not in text
     assert _DOCINT_TOKEN not in text
+
+
+def test_load_principal_env_rejects_a_default_identity_in_the_service_namespace(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``service:`` is reserved for service tokens, so the dev fallback cannot claim it.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): The pytest fixture for patching
+            environment variables.
+    """
+    monkeypatch.setenv("NEXTEXT_DEFAULT_IDENTITY", " service:docint-for-tests ")
+    with pytest.raises(PrincipalConfigError, match="NEXTEXT_DEFAULT_IDENTITY") as excinfo:
+        load_principal_env()
+    assert "docint-for-tests" not in str(excinfo.value)
+
+
+def test_load_principal_env_accepts_a_default_identity_outside_the_service_namespace(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Only the exact ``service:`` prefix is reserved.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): The pytest fixture for patching
+            environment variables.
+    """
+    monkeypatch.setenv("NEXTEXT_DEFAULT_IDENTITY", "service-account")
+    assert load_principal_env().default_identity == "service-account"

@@ -274,16 +274,24 @@ Each request resolves to one principal, which scopes that caller's in-memory
 jobs (`nextext/api/identity.py`):
 
 1. **Service token.** `Authorization: Bearer <token>` matching an entry of
-   `NEXTEXT_SERVICE_TOKENS` resolves to that entry's name. The identity header
-   on such a request is ignored: a service acts only as itself, never as a
-   user.
+   `NEXTEXT_SERVICE_TOKENS` resolves to the service principal
+   `service:<name>`. The identity header on such a request is ignored: a
+   service acts only as itself, never as a user.
 2. **Trusted header** (`NEXTEXT_AUTH_HEADER`, default `X-Auth-User`), which the
    edge gateway sets to the signed-in user. With `NEXTEXT_EDGE_SECRET` set, it
    counts only on a request whose `X-Edge-Secret` header matches the secret;
    on any other request it is ignored as if absent, and a warning records the
-   method and path — never a header value.
-3. **`NEXTEXT_DEFAULT_IDENTITY`**, the dev / header-less fallback. Production
-   leaves it unset, so a request with none of the above gets `401`.
+   method and path — never a header value. A value starting with `service:` is
+   ignored the same way on every request.
+3. **`NEXTEXT_DEFAULT_IDENTITY`**, the dev / header-less fallback. It may not
+   start with `service:` either; a value that does stops the backend at
+   startup. Production leaves it unset, so a request with none of the above
+   gets `401`.
+
+The `service:` namespace keeps services and users apart: a user called
+`docint` is a different principal from the docint service (`service:docint`)
+and cannot list or read its jobs, which hold other users' media and
+transcripts.
 
 `NEXTEXT_AUTH_HEADER` is read by the backend only. The SPA
 (`frontend/src/api/client.ts`) and the edge gateway always send `X-Auth-User`,
@@ -325,9 +333,8 @@ position and never echoes a name or token. Generate each token with
 `make secret` in edge-plane.
 
 docint sends its `NEXTEXT_API_KEY` as the bearer token, so its entry carries
-that value. Naming the entry `docint` keeps the principal docint already
-resolves to through the `X-Auth-User: docint` header it sends. A bearer
-token that matches no entry is not an error: the request continues with the
+that value, and its calls then resolve to `service:docint`. A bearer token
+that matches no entry is not an error: the request continues with the
 trusted header. Tokens are compared in constant time and never logged.
 
 ### Rolling out
@@ -336,7 +343,10 @@ Each step must not lock out a caller that is still on the old path:
 
 1. **Service token first.** Set the same token as docint's `NEXTEXT_API_KEY`
    and in Nextext's `NEXTEXT_SERVICE_TOKENS`, then recreate both. docint's
-   calls resolve to `docint` before and after, so nothing changes yet.
+   calls keep working, but their principal changes from `docint` to
+   `service:docint`, and a job docint started under the old principal is no
+   longer visible to it. Recreating the backend drops in-memory jobs anyway,
+   so do this while docint has no transcription in flight.
 2. **Gateway before backend.** Set `NEXTEXT_EDGE_SECRET` in edge-plane's
    `.env` and recreate the gateway, so it already sends the secret; then set
    it in Nextext's `.env` and recreate the backend. In the reverse order,

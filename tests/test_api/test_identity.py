@@ -6,12 +6,16 @@ the env fallback, and what reaches the logs.
 
 from __future__ import annotations
 
+import io
+import json
+
 import pytest
 from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
 
 from nextext.api import main as main_module
 from nextext.api.identity import EDGE_SECRET_HEADER, resolve_principal
+from nextext.api.jobs import JobManager
 from nextext.api.main import create_app
 from nextext.utils.env_cfg import PrincipalConfigError, load_principal_env
 
@@ -262,22 +266,22 @@ def test_logged_path_is_percent_encoded(monkeypatch: pytest.MonkeyPatch, log_lin
 # --- Service tokens -----------------------------------------------------------
 
 
-@pytest.mark.parametrize(("token", "name"), [(DOCINT_TOKEN, "docint"), (OTHER_TOKEN, "other")])
-def test_service_token_resolves_to_its_name_not_the_header(
-    monkeypatch: pytest.MonkeyPatch, token: str, name: str
+@pytest.mark.parametrize(("token", "principal"), [(DOCINT_TOKEN, "service:docint"), (OTHER_TOKEN, "service:other")])
+def test_service_token_resolves_to_its_service_principal_not_the_header(
+    monkeypatch: pytest.MonkeyPatch, token: str, principal: str
 ) -> None:
     """A matching bearer token wins over the header: a service cannot act as a user.
 
     Args:
         monkeypatch: Pytest environment patcher.
         token: The bearer token to present.
-        name: The service name it is configured under.
+        principal: The service principal its entry resolves to.
     """
     _set_service_tokens(monkeypatch)
     with TestClient(_build_app()) as client:
         response = client.get("/whoami", headers={"Authorization": f"Bearer {token}", DEFAULT_HEADER: "alice"})
     assert response.status_code == 200
-    assert response.json() == {"owner": name}
+    assert response.json() == {"owner": principal}
 
 
 def test_service_token_needs_no_edge_secret_and_beats_a_verified_header(
@@ -295,8 +299,8 @@ def test_service_token_needs_no_edge_secret_and_beats_a_verified_header(
     with TestClient(_build_app()) as client:
         direct = client.get("/whoami", headers={**bearer, DEFAULT_HEADER: "docint"})
         verified = client.get("/whoami", headers={**bearer, DEFAULT_HEADER: "alice", EDGE_SECRET_HEADER: EDGE_SECRET})
-    assert direct.json() == {"owner": "docint"}
-    assert verified.json() == {"owner": "docint"}
+    assert direct.json() == {"owner": "service:docint"}
+    assert verified.json() == {"owner": "service:docint"}
     assert log_lines == []
 
 
@@ -305,7 +309,7 @@ def test_bearer_scheme_is_case_insensitive(monkeypatch: pytest.MonkeyPatch) -> N
     _set_service_tokens(monkeypatch)
     with TestClient(_build_app()) as client:
         response = client.get("/whoami", headers={"Authorization": f"bearer {DOCINT_TOKEN}"})
-    assert response.json() == {"owner": "docint"}
+    assert response.json() == {"owner": "service:docint"}
 
 
 @pytest.mark.parametrize(
@@ -403,6 +407,7 @@ def test_startup_does_not_warn_with_edge_secret_or_dev_identity(
     [
         pytest.param("NEXTEXT_EDGE_SECRET", "short-edge-secret-for-tests", id="short-secret"),
         pytest.param("NEXTEXT_SERVICE_TOKENS", "docint", id="malformed-tokens"),
+        pytest.param("NEXTEXT_DEFAULT_IDENTITY", "service:docint", id="service-default-identity"),
     ],
 )
 def test_startup_fails_fast_on_malformed_identity_config(
@@ -418,3 +423,95 @@ def test_startup_fails_fast_on_malformed_identity_config(
     monkeypatch.setenv(name, value)
     with pytest.raises(PrincipalConfigError), TestClient(create_app()):
         pass
+
+
+# --- Service namespace ----------------------------------------------------------
+
+# A header claiming a service principal, sent with no edge secret configured,
+# with a valid one, and with a wrong one.
+_SERVICE_HEADER_CASES = [
+    pytest.param(None, {}, id="no-edge-secret"),
+    pytest.param(EDGE_SECRET, {EDGE_SECRET_HEADER: EDGE_SECRET}, id="edge-verified"),
+    pytest.param(EDGE_SECRET, {EDGE_SECRET_HEADER: WRONG_EDGE_SECRET}, id="edge-unverified"),
+]
+
+
+@pytest.mark.parametrize(("edge_secret", "edge_headers"), _SERVICE_HEADER_CASES)
+def test_service_namespace_header_never_becomes_a_principal(
+    monkeypatch: pytest.MonkeyPatch, log_lines: list[str], edge_secret: str | None, edge_headers: dict[str, str]
+) -> None:
+    """``X-Auth-User: service:docint`` is ignored and logged without its value.
+
+    Args:
+        monkeypatch: Pytest environment patcher.
+        log_lines: Captured loguru messages.
+        edge_secret: The configured edge secret, if any.
+        edge_headers: The ``X-Edge-Secret`` header to send, if any.
+    """
+    if edge_secret is not None:
+        monkeypatch.setenv("NEXTEXT_EDGE_SECRET", edge_secret)
+    _set_service_tokens(monkeypatch)
+    with TestClient(_build_app()) as client:
+        response = client.get("/whoami", headers={DEFAULT_HEADER: "  service:docint  ", **edge_headers})
+    assert response.status_code == 401
+    assert len(log_lines) == 1
+    assert "GET /whoami:" in log_lines[0]
+    assert "docint" not in log_lines[0]
+
+
+@pytest.mark.parametrize(("edge_secret", "edge_headers"), _SERVICE_HEADER_CASES)
+def test_service_namespace_header_falls_back_to_default_identity(
+    monkeypatch: pytest.MonkeyPatch, edge_secret: str | None, edge_headers: dict[str, str]
+) -> None:
+    """An ignored ``service:`` header falls through to the default identity.
+
+    Args:
+        monkeypatch: Pytest environment patcher.
+        edge_secret: The configured edge secret, if any.
+        edge_headers: The ``X-Edge-Secret`` header to send, if any.
+    """
+    if edge_secret is not None:
+        monkeypatch.setenv("NEXTEXT_EDGE_SECRET", edge_secret)
+    monkeypatch.setenv("NEXTEXT_DEFAULT_IDENTITY", "service-account")
+    with TestClient(_build_app()) as client:
+        response = client.get("/whoami", headers={DEFAULT_HEADER: "service:docint", **edge_headers})
+    assert response.status_code == 200
+    assert response.json() == {"owner": "service-account"}
+
+
+def test_user_named_like_a_service_is_a_different_principal(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An edge-verified user ``docint`` stays ``docint``; the token resolves to ``service:docint``."""
+    monkeypatch.setenv("NEXTEXT_EDGE_SECRET", EDGE_SECRET)
+    _set_service_tokens(monkeypatch)
+    with TestClient(_build_app()) as client:
+        user = client.get("/whoami", headers={DEFAULT_HEADER: "docint", EDGE_SECRET_HEADER: EDGE_SECRET})
+        service = client.get("/whoami", headers={"Authorization": f"Bearer {DOCINT_TOKEN}"})
+    assert user.json() == {"owner": "docint"}
+    assert service.json() == {"owner": "service:docint"}
+
+
+def test_user_named_like_a_service_cannot_see_its_jobs(
+    monkeypatch: pytest.MonkeyPatch, stub_app_client: tuple[TestClient, JobManager]
+) -> None:
+    """The jobs docint submits, holding other users' media, stay hidden from a user called ``docint``.
+
+    Args:
+        monkeypatch: Pytest environment patcher.
+        stub_app_client: Client and job manager over the stubbed pipeline.
+    """
+    monkeypatch.setenv("NEXTEXT_EDGE_SECRET", EDGE_SECRET)
+    _set_service_tokens(monkeypatch)
+    client, _ = stub_app_client
+    service = {"Authorization": f"Bearer {DOCINT_TOKEN}"}
+    user = {DEFAULT_HEADER: "docint", EDGE_SECRET_HEADER: EDGE_SECRET}
+    created = client.post(
+        "/api/v1/jobs",
+        files={"file": ("clip.wav", io.BytesIO(b"x"), "audio/wav")},
+        data={"options": json.dumps({"task": "transcribe"})},
+        headers=service,
+    )
+    assert created.status_code == 201, created.text
+    job_id = created.json()["job_id"]
+    assert [job["job_id"] for job in client.get("/api/v1/jobs", headers=service).json()["jobs"]] == [job_id]
+    assert client.get("/api/v1/jobs", headers=user).json()["jobs"] == []
+    assert client.get(f"/api/v1/jobs/{job_id}", headers=user).status_code == 404
