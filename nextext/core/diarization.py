@@ -20,6 +20,7 @@ import httpx as httpx  # explicit re-export so tests can monkeypatch diarization
 from loguru import logger
 
 from nextext.utils.env_cfg import load_diarization_env
+from nextext.utils.log_cfg import error_label
 
 __all__ = [
     "SPEAKER_LABEL_PREFIX",
@@ -160,16 +161,8 @@ def diarize_file(
             )
         response.raise_for_status()
         payload = response.json()
-    except httpx.HTTPStatusError as exc:
-        logger.error(
-            "Diarization request to {} failed ({}): {}",
-            url,
-            exc.response.status_code,
-            exc.response.text[:500],
-        )
-        return []
     except (httpx.HTTPError, ValueError, OSError) as exc:
-        logger.error("Diarization request to {} failed: {}", url, exc)
+        logger.error("Diarization request to {} failed: {}", url, error_label(exc))
         return []
 
     if not isinstance(payload, dict):

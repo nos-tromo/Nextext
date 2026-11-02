@@ -21,6 +21,7 @@ import pandas as pd
 from loguru import logger
 
 from nextext.utils.env_cfg import load_ner_env
+from nextext.utils.log_cfg import error_label
 
 __all__ = ["extract_entities"]
 
@@ -125,16 +126,8 @@ def extract_entities(text: str, columns: list[str] | None = None) -> pd.DataFram
             )
             response.raise_for_status()
             payload = response.json()
-        except httpx.HTTPStatusError as exc:
-            logger.error(
-                "NER request to {} failed ({}): {}",
-                url,
-                exc.response.status_code,
-                exc.response.text[:500],
-            )
-            continue
         except (httpx.HTTPError, ValueError, OSError) as exc:
-            logger.error("NER request to {} failed: {}", url, exc)
+            logger.error("NER request to {} failed: {}", url, error_label(exc))
             continue
 
         if not isinstance(payload, dict):

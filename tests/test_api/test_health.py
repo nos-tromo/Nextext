@@ -59,3 +59,31 @@ def test_health_swallows_inference_exception(
 
     assert response.status_code == 200
     assert response.json()["inference"] is False
+
+
+def test_health_logs_an_unexpected_failure_by_class_only(
+    api_client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    log_lines: list[str],
+) -> None:
+    """The defensive guard logs the error's class and frames, not its message.
+
+    ``log_lines`` is requested after ``api_client`` so its sink outlives the
+    lifespan's ``setup_logging()``.
+    """
+    from nextext.api.routes import health as health_module
+
+    detail = "invented provider detail 0427"
+
+    class _BrokenPipeline:
+        def get_health(self) -> bool:
+            raise RuntimeError(detail)
+
+    monkeypatch.setattr(health_module, "InferencePipeline", _BrokenPipeline)
+
+    response = api_client.get("/api/v1/health")
+
+    assert response.status_code == 200
+    logged = "\n".join(log_lines)
+    assert "Inference health check raised unexpectedly: RuntimeError" in logged
+    assert detail not in logged

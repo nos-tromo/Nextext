@@ -18,6 +18,7 @@ from nextext.core.audio import normalize_for_transcription
 from nextext.core.outcomes import SkipReason
 from nextext.core.vad import has_speech
 from nextext.utils.env_cfg import load_inference_env, load_whisper_env
+from nextext.utils.log_cfg import error_label
 from nextext.utils.mappings_loader import load_mappings
 
 OPENAI_WHISPER_MAX_UPLOAD_BYTES: int = 25 * 1024 * 1024
@@ -347,13 +348,7 @@ class ExternalWhisperTranscriber:
                             kwargs["language"] = self.src_lang
                         response = client.audio.transcriptions.create(**kwargs)
             except APIStatusError as exc:
-                body = getattr(exc, "response", None)
-                body_text = body.text if body is not None else ""
-                logger.error(
-                    "External Whisper API error {}: {}",
-                    exc.status_code,
-                    body_text or exc.message,
-                )
+                logger.error("External Whisper API error: {}", error_label(exc))
                 raise
         raw_segments = [
             {

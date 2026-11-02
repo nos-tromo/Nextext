@@ -7,6 +7,8 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock
 
+import httpx2
+import openai
 import pandas as pd
 import pytest
 
@@ -802,3 +804,42 @@ def test_external_transcriber_skip_reason_is_none_for_a_normal_run(
     transcriber.transcription()
 
     assert transcriber.skip_reason is None
+
+
+def test_transcription_logs_a_whisper_rejection_by_class_and_status(
+    monkeypatch: pytest.MonkeyPatch,
+    log_lines: list[str],
+) -> None:
+    """A Whisper error body is never logged; the error still propagates.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Patches the client, VAD guard, and
+            the normalization seam.
+        log_lines (list[str]): Captured loguru messages.
+    """
+    echoed = "invented upstream detail 0427"
+    request = httpx2.Request("POST", "http://whisper.invalid/v1/audio/transcriptions")
+    response = httpx2.Response(400, request=request, text=f"rejected upload: {echoed}")
+    fake_client = MagicMock()
+    fake_client.audio.transcriptions.create.side_effect = openai.BadRequestError(
+        f"Error code: 400 - {echoed}", response=response, body={"error": echoed}
+    )
+
+    transcriber = ExternalWhisperTranscriber.__new__(ExternalWhisperTranscriber)
+    transcriber.file_path = transcription.Path(__file__)
+    transcriber.src_lang = "en"
+    transcriber.task = "transcribe"
+    transcriber._model_id = "whisper-1"
+    transcriber._client = None
+    transcriber.transcription_result = None
+
+    monkeypatch.setattr(type(transcriber), "_get_client", property(lambda self: fake_client))
+    monkeypatch.setattr(transcription, "has_speech", lambda _path: True)
+    monkeypatch.setattr(transcription, "normalize_for_transcription", _passthrough_normalize)
+
+    with pytest.raises(openai.BadRequestError):
+        transcriber.transcription()
+
+    logged = "\n".join(log_lines)
+    assert "External Whisper API error: BadRequestError (HTTP 400)" in logged
+    assert echoed not in logged

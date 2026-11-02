@@ -230,3 +230,61 @@ def test_has_speech_true_on_missing_field(
     audio.write_bytes(b"x")
 
     assert has_speech(audio) is True
+
+
+def test_has_speech_keeps_an_echoed_error_body_out_of_the_log(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    log_lines: list[str],
+) -> None:
+    """A rejection whose body echoes request content is logged by class and status only.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Fixture for patching env vars and httpx.
+        tmp_path (Path): Temporary directory fixture for the audio file.
+        log_lines (list[str]): Captured loguru messages.
+    """
+    monkeypatch.setenv("VAD_API_BASE", "http://router:7000")
+    echoed = "invented upstream detail 0427"
+
+    def fake_post(url: str, **kwargs: Any) -> httpx.Response:
+        return httpx.Response(415, text=f"unsupported media: {echoed}", request=httpx.Request("POST", url))
+
+    monkeypatch.setattr(vad.httpx, "post", fake_post)
+    audio = tmp_path / "clip.wav"
+    audio.write_bytes(b"x")
+
+    assert has_speech(audio) is True
+
+    logged = "\n".join(log_lines)
+    assert "VAD request to http://router:7000/vad failed: HTTPStatusError (HTTP 415); assuming speech." in logged
+    assert echoed not in logged
+
+
+def test_has_speech_logs_a_transport_error_by_class_only(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    log_lines: list[str],
+) -> None:
+    """A transport error is named by class; its message is not logged.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Fixture for patching env vars and httpx.
+        tmp_path (Path): Temporary directory fixture for the audio file.
+        log_lines (list[str]): Captured loguru messages.
+    """
+    monkeypatch.setenv("VAD_API_BASE", "http://router:7000")
+    detail = "invented transport detail 0427"
+
+    def fake_post(url: str, **kwargs: Any) -> httpx.Response:
+        raise httpx.ConnectError(detail)
+
+    monkeypatch.setattr(vad.httpx, "post", fake_post)
+    audio = tmp_path / "clip.wav"
+    audio.write_bytes(b"x")
+
+    assert has_speech(audio) is True
+
+    logged = "\n".join(log_lines)
+    assert "failed: ConnectError; assuming speech." in logged
+    assert detail not in logged

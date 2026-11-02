@@ -693,3 +693,41 @@ def test_visual_context_off_keeps_the_transcript_when_the_provider_is_down(
     assert result["keyframes"] == [b"\xff\xd8a"]
     assert result["frame_captions"] is None
     assert not result["transcript"].empty
+
+
+def test_pipeline_logs_a_captioning_failure_by_class_only(
+    monkeypatch: pytest.MonkeyPatch,
+    _summarizable: Path,
+    log_lines: list[str],
+) -> None:
+    """An unexpected captioning error keeps the frames and stays out of the log by message.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Fixture for patching module attributes.
+        _summarizable (Path): Stub media path with the heavy stages patched out.
+        log_lines (list[str]): Captured loguru messages.
+    """
+    monkeypatch.delenv("NEXTEXT_VISUAL_SUMMARY", raising=False)
+    detail = "invented caption detail 0427"
+
+    def _fails(samples: Any, pipeline: Any, **kw: Any) -> list[FrameCaption]:
+        """Fail with a message that quotes content.
+
+        Args:
+            samples (Any): Ignored.
+            pipeline (Any): Ignored.
+            **kw (Any): Ignored.
+
+        Raises:
+            RuntimeError: Always.
+        """
+        raise RuntimeError(detail)
+
+    monkeypatch.setattr("nextext.core.visual_context.describe_keyframes", _fails)
+
+    result = _run_pipeline_blocking(_video_state("v9", _summarizable, keyframes=True), lambda *a, **k: None)
+
+    assert result["keyframes"] == [b"\xff\xd8a", b"\xff\xd8b"]
+    logged = "\n".join(log_lines)
+    assert "Job v9 visual context unavailable: RuntimeError" in logged
+    assert detail not in logged

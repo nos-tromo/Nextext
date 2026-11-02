@@ -367,3 +367,46 @@ def test_prepare_frame_is_applied_before_upload() -> None:
 
     sent: Any = pipeline.calls[0][1][0]
     assert max(_size(sent)) == 256
+
+
+# ---------------------------------------------------------------------------
+# Operational logs: provider errors are logged by class and status only
+# ---------------------------------------------------------------------------
+
+_ECHOED = "invented upstream detail 0427"
+_CHAT_REQUEST = httpx2.Request("POST", "http://inference.invalid/v1/chat/completions")
+
+
+def test_describe_keyframes_logs_a_first_frame_rejection_by_class_and_status(log_lines: list[str]) -> None:
+    """A text-only model's rejection is logged without the body it carried.
+
+    Args:
+        log_lines (list[str]): Captured loguru messages.
+    """
+    rejection = openai.BadRequestError(
+        f"Error code: 400 - {_ECHOED}", response=httpx2.Response(400, request=_CHAT_REQUEST), body={"error": _ECHOED}
+    )
+
+    assert describe_keyframes(_frames(2), _FakePipeline([rejection]), max_frames=10, max_side=512) == []
+
+    logged = "\n".join(log_lines)
+    assert "rejected image input (BadRequestError (HTTP 400))" in logged
+    assert _ECHOED not in logged
+
+
+def test_describe_keyframes_logs_a_frame_failure_by_class_and_status(log_lines: list[str]) -> None:
+    """A failed caption request is logged without the body it carried.
+
+    Args:
+        log_lines (list[str]): Captured loguru messages.
+    """
+    failure = openai.InternalServerError(
+        f"Error code: 500 - {_ECHOED}", response=httpx2.Response(500, request=_CHAT_REQUEST), body={"error": _ECHOED}
+    )
+
+    captions = describe_keyframes(_frames(2), _FakePipeline(["first", failure]), max_frames=10, max_side=512)
+
+    assert [c.caption for c in captions] == ["first"]
+    logged = "\n".join(log_lines)
+    assert "failed: InternalServerError (HTTP 500)" in logged
+    assert _ECHOED not in logged

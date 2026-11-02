@@ -72,8 +72,10 @@ identity header, and the blob-URL workaround used for the word cloud would
 buffer the entire recording in memory and forfeit seeking. The token is minted
 at job creation, handed out only on the owner-scoped snapshot, never listed,
 and dies with the job; every failure answers `404`, so a wrong token cannot be
-used to probe which jobs exist. Its one cost is that it appears in proxy access
-logs.
+used to probe which jobs exist. It travels in the query string, which the app's
+own access logs — the frontend's nginx and the backend's uvicorn — drop; nginx's
+error log still records it when it logs an error for the request (see
+[configuration.md](configuration.md#logs)).
 
 In the SPA, the transcript row (or frame caption) under the playhead is
 highlighted and scrolled into view as playback advances, so the highlight

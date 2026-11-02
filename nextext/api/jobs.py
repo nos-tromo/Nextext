@@ -49,6 +49,7 @@ from nextext.core.docint_transcript import parse_hhmmss_to_seconds
 from nextext.core.keyframes import extract_keyframe_samples
 from nextext.core.outcomes import FailureCode, SkipReason, skip_reason_text
 from nextext.utils.env_cfg import load_job_concurrency, load_visual_summary_env
+from nextext.utils.log_cfg import error_label, exception_frames
 
 _TERMINAL_EVENT_NAMES: frozenset[str] = frozenset({"job_completed", "job_failed", "job_cancelled"})
 
@@ -547,7 +548,7 @@ def _run_pipeline_blocking(state: JobState, push_event: PushEvent) -> dict[str, 
                     max_side=visual_cfg.max_side,
                 )
             except Exception as exc:
-                logger.warning("Job {} visual context unavailable: {}", state.job_id, exc)
+                logger.warning("Job {} visual context unavailable: {}", state.job_id, error_label(exc))
                 captions = []
         _complete(1, {"keyframes": len(keyframes), "frame_captions": len(captions)})
     else:
@@ -1054,13 +1055,14 @@ class JobManager:
             except Exception as exc:
                 # An undecodable upload is the user's to fix, so it earns a
                 # typed code and a warning; everything else is ours and keeps
-                # the full traceback. Neither leaks detail past ``error``.
+                # its traceback frames, but not its message, which can quote
+                # an upstream reply. Neither leaks detail past ``error``.
                 if isinstance(exc, AudioDecodeError):
                     failure_code: FailureCode = "undecodable_media"
                     logger.warning("Job {} failed: media could not be decoded ({}).", state.job_id, exc)
                 else:
                     failure_code = "internal"
-                    logger.exception("Job {} failed.", state.job_id)
+                    logger.error("Job {} failed: {}\n{}", state.job_id, error_label(exc), exception_frames(exc))
                 record_failed(failure_code)
                 state.status = JobStatus.FAILED
                 state.error = "Job failed."

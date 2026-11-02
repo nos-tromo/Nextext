@@ -32,6 +32,7 @@ import httpx as httpx  # explicit re-export so tests can monkeypatch vad.httpx
 from loguru import logger
 
 from nextext.utils.env_cfg import load_vad_env
+from nextext.utils.log_cfg import error_label
 
 __all__ = ["has_speech"]
 
@@ -72,16 +73,8 @@ def has_speech(file_path: Path) -> bool:
             )
         response.raise_for_status()
         payload = response.json()
-    except httpx.HTTPStatusError as exc:
-        logger.warning(
-            "VAD request to {} failed ({}): {}; assuming speech.",
-            url,
-            exc.response.status_code,
-            exc.response.text[:500],
-        )
-        return True
     except (httpx.HTTPError, ValueError, OSError) as exc:
-        logger.warning("VAD request to {} failed: {}; assuming speech.", url, exc)
+        logger.warning("VAD request to {} failed: {}; assuming speech.", url, error_label(exc))
         return True
 
     if not isinstance(payload, dict):

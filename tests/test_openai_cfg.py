@@ -783,3 +783,38 @@ def test_summary_prompt_mentions_visual_context(monkeypatch: pytest.MonkeyPatch,
     assert prompt.count("{") == 1  # str.format would choke on any other brace
     keyword = "Visual context" if language == "en" else "Visueller Kontext"
     assert keyword in prompt
+
+
+def test_get_health_logs_a_connection_failure_by_class_only(
+    monkeypatch: pytest.MonkeyPatch,
+    log_lines: list[str],
+) -> None:
+    """An unreachable provider reads as unhealthy and is logged by class only.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Fixture for patching env vars and ``requests``.
+        log_lines (list[str]): Captured loguru messages.
+    """
+    detail = "invented connection detail 0427"
+    monkeypatch.setenv("OPENAI_API_BASE", "http://inference.invalid/v1")
+    monkeypatch.setenv("OPENAI_API_KEY", "invented-key")
+
+    def _unreachable(*args: Any, **kwargs: Any) -> Any:
+        """Fail like a refused connection.
+
+        Args:
+            *args (Any): Ignored.
+            **kwargs (Any): Ignored.
+
+        Raises:
+            requests.ConnectionError: Always.
+        """
+        raise openai_cfg.requests.ConnectionError(detail)
+
+    monkeypatch.setattr(openai_cfg.requests, "get", _unreachable)
+
+    assert InferencePipeline().get_health() is False
+
+    logged = "\n".join(log_lines)
+    assert "Inference health check failed: ConnectionError" in logged
+    assert detail not in logged

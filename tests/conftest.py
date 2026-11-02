@@ -7,7 +7,10 @@ to the whole suite.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+
 import pytest
+from loguru import logger
 
 
 @pytest.fixture(autouse=True)
@@ -36,3 +39,23 @@ def _hermetic_response_language_env(monkeypatch: pytest.MonkeyPatch) -> None:
     """
     monkeypatch.delenv("RESPONSE_LANGUAGE", raising=False)
     monkeypatch.delenv("NEXTEXT_RESPONSE_LANGUAGE", raising=False)
+
+
+@pytest.fixture
+def log_lines() -> Iterator[list[str]]:
+    """Capture every loguru message emitted while a test runs.
+
+    Each entry is the rendered message plus any traceback loguru attaches, so
+    a test can assert that content stays out of the operational logs. Request
+    this fixture after any fixture that starts the app lifespan:
+    ``setup_logging()`` removes every sink, this one included.
+
+    Yields:
+        list[str]: The captured messages, in emission order.
+    """
+    lines: list[str] = []
+    sink_id = logger.add(lines.append, level="DEBUG", format="{message}")
+    try:
+        yield lines
+    finally:
+        logger.remove(sink_id)

@@ -43,6 +43,7 @@ from nextext.utils.env_cfg import (
     load_summary_env,
     load_whisper_env,
 )
+from nextext.utils.log_cfg import error_label
 from nextext.utils.mappings_loader import language_name_from_code
 
 
@@ -152,7 +153,7 @@ def transcription_pipeline(
             try:
                 restored = restore_sentence_segments(words, turns or None, InferencePipeline())
             except Exception as exc:  # fail-soft: any restore failure keeps today's behavior
-                logger.warning("Sentence restoration failed; falling back to unrestored segments: {}", exc)
+                logger.warning("Sentence restoration failed; falling back to unrestored segments: {}", error_label(exc))
                 restored = []
         if restored:
             transcriber.transcription_result["segments"] = restored
@@ -593,7 +594,7 @@ def summarization_pipeline(
                     logger.warning(
                         "Summarization request failed with a transient inference error; "
                         "returning an empty summary instead of failing the job: {}",
-                        exc,
+                        error_label(exc),
                     )
                     return ""
                 raise
@@ -828,7 +829,9 @@ def hate_speech_pipeline(
                 continue
             if structured and _is_structured_output_rejection(exc):
                 structured = False
-                logger.warning("The inference endpoint rejected response_format; continuing without it: {}", exc)
+                logger.warning(
+                    "The inference endpoint rejected response_format; continuing without it: {}", error_label(exc)
+                )
                 continue
             if not _is_transient_inference_error(exc):
                 raise
@@ -837,7 +840,7 @@ def hate_speech_pipeline(
                 "Hate-speech detection stopped at a transient inference error; keeping the {} finding(s) "
                 "collected so far instead of failing the job: {}",
                 len(findings),
-                exc,
+                error_label(exc),
             )
             break
 
@@ -949,7 +952,9 @@ def frame_hate_speech_pipeline(
                 continue
             if structured and _is_structured_output_rejection(exc):
                 structured = False
-                logger.warning("The inference endpoint rejected response_format; continuing without it: {}", exc)
+                logger.warning(
+                    "The inference endpoint rejected response_format; continuing without it: {}", error_label(exc)
+                )
                 continue
             if not _is_transient_inference_error(exc):
                 raise
@@ -958,7 +963,7 @@ def frame_hate_speech_pipeline(
                 "Hate-speech detection on frame captions stopped at a transient inference error; keeping the {} "
                 "finding(s) collected so far instead of failing the job: {}",
                 len(findings),
-                exc,
+                error_label(exc),
             )
             break
 
