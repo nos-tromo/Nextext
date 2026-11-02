@@ -18,6 +18,7 @@ from loguru import logger
 from nextext.core.diarization import _speaker_by_overlap
 from nextext.core.openai_cfg import InferencePipeline
 from nextext.core.transcription import _ends_with_punctuation
+from nextext.utils.log_cfg import error_label
 
 _TERMINAL_MARKS: tuple[str, ...] = (".", "!", "?", "؟", "۔", "…")  # noqa: RUF001 - Arabic marks
 
@@ -106,7 +107,9 @@ def _segment_run(run_words: list[dict[str, Any]], inference_pipeline: InferenceP
             )
             local = _parse_boundaries(reply, window_len)
         except Exception as exc:  # fail-soft: any provider/parse failure → one sentence
-            logger.warning("Sentence segmentation failed for a run window; treating it as one sentence: {}", exc)
+            logger.warning(
+                "Sentence segmentation failed for a run window; treating it as one sentence: {}", error_label(exc)
+            )
             local: list[tuple[int, str]] = []
         for index, mark in local:
             marks_by_index.setdefault(start + index, mark)

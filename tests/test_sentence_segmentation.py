@@ -217,3 +217,33 @@ def test_restore_inherits_speaker_and_splits_on_change() -> None:
     assert [seg["speaker"] for seg in segments] == ["Speaker 1", "Speaker 2"]
     assert segments[0]["text"] == "a b."
     assert segments[1]["text"] == "c d."
+
+
+def test_segment_run_logs_a_failure_by_class_only(monkeypatch: pytest.MonkeyPatch, log_lines: list[str]) -> None:
+    """A failure whose message quotes the model's reply is logged by class only.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Fixture for patching the reply parser.
+        log_lines (list[str]): Captured loguru messages.
+    """
+    reply = "invented model output 0427"
+
+    def _unparseable(text: str, window_len: int) -> list[tuple[int, str]]:
+        """Fail the way a parser quoting its input would.
+
+        Args:
+            text (str): The model reply.
+            window_len (int): Unused.
+
+        Raises:
+            ValueError: Always, quoting ``text``.
+        """
+        raise ValueError(f"cannot parse boundaries from: {text}")
+
+    monkeypatch.setattr(sentence_segmentation, "_parse_boundaries", _unparseable)
+
+    assert _segment_run(_words("abc"), _FakePipeline([reply])) == [(2, ".")]
+
+    logged = "\n".join(log_lines)
+    assert "treating it as one sentence: ValueError" in logged
+    assert reply not in logged

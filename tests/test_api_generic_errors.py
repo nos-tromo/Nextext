@@ -1,4 +1,9 @@
-"""Tests that user-facing error bodies are generic while full detail goes to logs."""
+"""Tests that error bodies are generic and logs name the error without its message.
+
+An exception message can quote request or transcript content, so it reaches
+neither the client nor the operational logs; the logs keep the exception
+class and traceback frames.
+"""
 
 from __future__ import annotations
 
@@ -63,8 +68,8 @@ def app_with_boom() -> FastAPI:
     return app
 
 
-def test_unhandled_error_is_generic_and_logged(app_with_boom: FastAPI) -> None:
-    """A raising endpoint returns a generic body; the marker only appears in logs."""
+def test_unhandled_error_is_generic_and_logged_without_its_message(app_with_boom: FastAPI) -> None:
+    """A raising endpoint returns a generic body; the log names the error but not its message."""
     records, sink_id = _capture_logs()
     try:
         client = TestClient(app_with_boom, raise_server_exceptions=False)
@@ -72,7 +77,10 @@ def test_unhandled_error_is_generic_and_logged(app_with_boom: FastAPI) -> None:
         assert resp.status_code == 500
         assert resp.json() == {"detail": "Internal server error."}
         assert MARKER not in resp.text
-        assert any(MARKER in r for r in records)
+        logged = "\n".join(records)
+        assert "Unhandled error on GET /boom: RuntimeError" in logged
+        assert "Traceback (most recent call last):" in logged
+        assert MARKER not in logged
     finally:
         logger.remove(sink_id)
 
@@ -162,10 +170,10 @@ def _wait_for_status(client: TestClient, job_id: str, target: str, timeout: floa
     raise AssertionError(f"Job '{job_id}' never reached status '{target}'. Last seen: {last}")
 
 
-def test_job_failure_error_is_generic_and_logged(
+def test_job_failure_error_is_generic_and_logged_without_its_message(
     boom_app_client: tuple[TestClient, list[str]],
 ) -> None:
-    """A pipeline failure surfaces a static error and logs the real one."""
+    """A pipeline failure surfaces a static error and logs its class and frames, not its message."""
     client, records = boom_app_client
     options = {
         "task": "transcribe",
@@ -185,4 +193,7 @@ def test_job_failure_error_is_generic_and_logged(
     snapshot = _wait_for_status(client, job_id, "failed")
     assert snapshot["error"] == "Job failed."
     assert MARKER not in json.dumps(snapshot)
-    assert any(MARKER in r for r in records)
+    logged = "\n".join(records)
+    assert f"Job {job_id} failed: RuntimeError" in logged
+    assert "_boom_pipeline_runner" in logged
+    assert MARKER not in logged

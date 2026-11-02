@@ -460,3 +460,61 @@ def test_build_none_word_between_two_speakers_folds_into_run() -> None:
         {"start": 0.2, "end": 1.6, "text": "a b", "speaker": "Speaker 1"},
         {"start": 2.4, "end": 2.6, "text": "c", "speaker": "Speaker 2"},
     ]
+
+
+def test_diarize_file_keeps_an_echoed_error_body_out_of_the_log(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    log_lines: list[str],
+) -> None:
+    """A rejection whose body echoes request content is logged by class and status only.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Fixture for patching env vars and httpx.
+        tmp_path (Path): Temporary directory fixture for the audio file.
+        log_lines (list[str]): Captured loguru messages.
+    """
+    monkeypatch.setenv("DIARIZE_API_BASE", "http://router:9000")
+    echoed = "invented upstream detail 0427"
+
+    def fake_post(url: str, **kwargs: Any) -> httpx.Response:
+        return httpx.Response(400, text=f"bad request: {echoed}", request=httpx.Request("POST", url))
+
+    monkeypatch.setattr(diarization.httpx, "post", fake_post)
+    audio = tmp_path / "clip.wav"
+    audio.write_bytes(b"x")
+
+    assert diarize_file(audio) == []
+
+    logged = "\n".join(log_lines)
+    assert "Diarization request to http://router:9000/diarize failed: HTTPStatusError (HTTP 400)" in logged
+    assert echoed not in logged
+
+
+def test_diarize_file_logs_a_transport_error_by_class_only(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    log_lines: list[str],
+) -> None:
+    """A transport error is named by class; its message is not logged.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Fixture for patching env vars and httpx.
+        tmp_path (Path): Temporary directory fixture for the audio file.
+        log_lines (list[str]): Captured loguru messages.
+    """
+    monkeypatch.setenv("DIARIZE_API_BASE", "http://router:9000")
+    detail = "invented transport detail 0427"
+
+    def fake_post(url: str, **kwargs: Any) -> httpx.Response:
+        raise httpx.ReadTimeout(detail)
+
+    monkeypatch.setattr(diarization.httpx, "post", fake_post)
+    audio = tmp_path / "clip.wav"
+    audio.write_bytes(b"x")
+
+    assert diarize_file(audio) == []
+
+    logged = "\n".join(log_lines)
+    assert "failed: ReadTimeout" in logged
+    assert detail not in logged

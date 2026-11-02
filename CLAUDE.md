@@ -80,6 +80,10 @@ Before claiming a check is green, run the actual command and paste the output. `
 - All new/modified Python functions must have Google-style docstrings.
 - Python 3.12 is the target; prefer explicit types and distinct variable names across branches to satisfy pyrefly.
 
+## Logging
+
+Operational logs (both containers' stdout/stderr) carry no upstream error bodies or transcript text, and the access logs no query strings. An error message can quote the request it rejected, so log an upstream or model failure with `error_label(exc)` (exception class plus HTTP status) and an unexpected one with `exception_frames(exc)` (traceback frames, no message) from `nextext/utils/log_cfg.py` — never the response body, `str(exc)`, or `logger.exception`. `setup_logging()` also strips the query string (which can carry the media token) from uvicorn's access log and the exception message from uvicorn's error log; the frontend nginx writes its access log in the `scrubbed` format (`frontend/nginx/default.conf`), which records no query string, referer or client address. nginx's error log has a fixed format: an error logged for a request (e.g. the backend unreachable or timing out) still carries the full request line, query string included, with the client address and referer.
+
 ## Architecture
 
 **Agent-based design:** Each feature is a stateless agent (module) with narrow input/output. The FastAPI backend orchestrates them; the React frontend is a static SPA served by nginx that never imports the pipeline directly.

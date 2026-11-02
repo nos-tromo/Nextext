@@ -507,9 +507,10 @@ async def stream_media(
     owner-scoped job snapshot, grants read of media that owner already
     uploaded, and dies with the job.
 
-    Trade-off, accepted deliberately: the token rides in the query string and
-    therefore reaches proxy access logs. It is per-job, unguessable, and
-    revoked by ``DELETE /jobs/{id}``.
+    The token rides in the query string; the app's own nginx and uvicorn
+    access logs drop the query string, so neither records it, though nginx's
+    error log still does when it logs an error for the request. It is
+    per-job, unguessable, and revoked by ``DELETE /jobs/{id}``.
 
     Served via ``FileResponse``, which answers ``Range`` requests with ``206``
     — that is what lets the player seek without re-fetching the whole

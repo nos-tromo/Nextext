@@ -16,6 +16,7 @@ from nextext.api.schemas import (
 )
 from nextext.core.openai_cfg import InferencePipeline
 from nextext.utils.env_cfg import DEFAULT_TARGET_LANG, load_default_target_lang, load_language_env
+from nextext.utils.log_cfg import error_label, exception_frames
 from nextext.utils.mappings_loader import load_mappings
 
 router = APIRouter(tags=["health"])
@@ -43,8 +44,8 @@ def get_health() -> HealthResponse:
     """
     try:
         inference_ok = InferencePipeline().get_health()
-    except Exception:  # pragma: no cover - defensive; never want /health to 500
-        logger.exception("Inference health check raised unexpectedly.")
+    except Exception as exc:  # pragma: no cover - defensive; never want /health to 500
+        logger.error("Inference health check raised unexpectedly: {}\n{}", error_label(exc), exception_frames(exc))
         inference_ok = False
     return HealthResponse(inference=inference_ok, version=_package_version())
 

@@ -114,3 +114,40 @@ def test_media_location_has_long_read_timeout() -> None:
     assert winner is not None
     seconds = _read_timeout_seconds(winner[1])
     assert seconds is not None and seconds >= 300
+
+
+# Variables that would put the query string (and with it the per-job media
+# token), the referer, or the client address into the access log.
+_LEAKY_LOG_VARIABLES = frozenset(
+    {
+        "request",
+        "request_uri",
+        "args",
+        "query_string",
+        "is_args",
+        "http_referer",
+        "remote_addr",
+        "http_x_forwarded_for",
+    }
+)
+
+
+def test_access_log_records_no_query_string_referer_or_client_address() -> None:
+    """The only access log uses the ``scrubbed`` format, which has none of them.
+
+    ``access_log`` sits in the server block so it replaces the image's inherited
+    ``main`` format, which logs ``$request`` (query string included), the
+    referer, and the client address.
+    """
+    conf = _CONF.read_text(encoding="utf-8")
+    log_format = re.search(r"log_format\s+scrubbed\s+(.*?);", conf, re.DOTALL)
+    assert log_format is not None, "the `scrubbed` log_format is missing"
+
+    variables = set(re.findall(r"\$(\w+)", log_format.group(1)))
+    assert "uri" in variables
+    assert not variables & _LEAKY_LOG_VARIABLES
+    assert not any(name.startswith("arg_") for name in variables)
+
+    directives = re.findall(r"^\s*access_log\s+(.*?);", conf, re.MULTILINE)
+    assert directives == ["/var/log/nginx/access.log scrubbed"]
+    assert conf.index("access_log") > conf.index("server {")

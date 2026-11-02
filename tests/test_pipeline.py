@@ -2373,3 +2373,159 @@ def test_frame_hate_speech_pipeline_raises_configuration_errors() -> None:
 
     with pytest.raises(openai.APIStatusError):
         pipeline.frame_hate_speech_pipeline([_CALM_FRAME], cast(InferencePipeline, _FrameHSPipeline(_respond)))
+
+
+# ---------------------------------------------------------------------------
+# Operational logs: an upstream error that echoes its input stays out of them
+# ---------------------------------------------------------------------------
+
+# Invented stand-in for transcript or caption text a provider error could quote.
+_ECHOED = "invented transcript line 0427"
+
+
+def test_transcription_pipeline_logs_a_restore_failure_by_class_only(
+    monkeypatch: pytest.MonkeyPatch,
+    log_lines: list[str],
+) -> None:
+    """A failed sentence restoration is logged by class, not by its message.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): The monkeypatch fixture.
+        log_lines (list[str]): Captured loguru messages.
+    """
+    _install_restorable(monkeypatch)
+    monkeypatch.setattr(
+        pipeline, "load_sentence_restore_env", lambda: SentenceRestoreConfig(enabled=True, min_punct_ratio=0.01)
+    )
+
+    def boom(*args: Any, **kwargs: Any) -> list[dict[str, Any]]:
+        """Fail with a message that quotes transcript text.
+
+        Args:
+            *args (Any): Ignored.
+            **kwargs (Any): Ignored.
+
+        Raises:
+            RuntimeError: Always.
+        """
+        raise RuntimeError(f"model rejected the window: {_ECHOED}")
+
+    monkeypatch.setattr(pipeline, "restore_sentence_segments", boom)
+
+    pipeline.transcription_pipeline(file_path=Path("/tmp/a.wav"), src_lang="ar", diarize=False)
+
+    logged = "\n".join(log_lines)
+    assert "Sentence restoration failed; falling back to unrestored segments: RuntimeError" in logged
+    assert _ECHOED not in logged
+
+
+def test_summarization_logs_a_transient_error_by_class_and_status(
+    monkeypatch: pytest.MonkeyPatch,
+    log_lines: list[str],
+) -> None:
+    """A transient 5xx whose body quotes the transcript is logged without it.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Fixture for patching environment variables.
+        log_lines (list[str]): Captured loguru messages.
+    """
+    monkeypatch.delenv("SUMMARY_MAX_INPUT_TOKENS", raising=False)
+    erroring = _ErroringPipeline(_api_status_error(502, f"upstream could not summarize: {_ECHOED}"))
+
+    assert pipeline.summarization_pipeline(_ECHOED, erroring) == ""
+
+    logged = "\n".join(log_lines)
+    assert "APIStatusError (HTTP 502)" in logged
+    assert _ECHOED not in logged
+
+
+def test_hate_speech_pipeline_logs_a_rejected_schema_by_class_and_status(
+    monkeypatch: pytest.MonkeyPatch,
+    log_lines: list[str],
+) -> None:
+    """A ``response_format`` rejection that echoes the prompt is logged without it.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): The monkeypatch fixture.
+        log_lines (list[str]): Captured loguru messages.
+    """
+    _set_hs_budgets(monkeypatch, window_tokens=1000, context_tokens=0)
+
+    def respond(prompt: str, kwargs: dict[str, Any]) -> str:
+        if kwargs["response_format"] is not None:
+            raise _api_status_error(400, f"response_format rejected for prompt: {prompt}")
+        return '{"findings": []}'
+
+    df = pd.DataFrame({"start": ["00:00:01"], "text": [_ECHOED]})
+
+    assert pipeline.hate_speech_pipeline(df, cast(InferencePipeline, _WindowedHSPipeline(respond))) == []
+
+    logged = "\n".join(log_lines)
+    assert "rejected response_format; continuing without it: APIStatusError (HTTP 400)" in logged
+    assert _ECHOED not in logged
+
+
+def test_hate_speech_pipeline_logs_a_transient_error_by_class_and_status(
+    monkeypatch: pytest.MonkeyPatch,
+    log_lines: list[str],
+) -> None:
+    """A transient failure that echoes the prompt is logged without it.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): The monkeypatch fixture.
+        log_lines (list[str]): Captured loguru messages.
+    """
+    _set_hs_budgets(monkeypatch, window_tokens=1000, context_tokens=0)
+
+    def respond(prompt: str, kwargs: dict[str, Any]) -> str:
+        raise _api_status_error(503, f"upstream failed on prompt: {prompt}")
+
+    df = pd.DataFrame({"start": ["00:00:01"], "text": [_ECHOED]})
+
+    assert pipeline.hate_speech_pipeline(df, cast(InferencePipeline, _WindowedHSPipeline(respond))) == []
+
+    logged = "\n".join(log_lines)
+    assert "stopped at a transient inference error" in logged
+    assert "APIStatusError (HTTP 503)" in logged
+    assert _ECHOED not in logged
+
+
+def test_frame_hate_speech_pipeline_logs_a_rejected_schema_by_class_and_status(log_lines: list[str]) -> None:
+    """A ``response_format`` rejection quoting a caption is logged without it.
+
+    Args:
+        log_lines (list[str]): Captured loguru messages.
+    """
+
+    def _respond(prompt: str, kwargs: dict[str, Any]) -> str:
+        if kwargs["response_format"] is not None:
+            raise _api_status_error(422, f"response_format rejected for prompt: {prompt}")
+        return _frame_verdict(prompt, kwargs)
+
+    frame = FrameCaption(time_sec=1.0, caption=_ECHOED)
+
+    pipeline.frame_hate_speech_pipeline([frame], cast(InferencePipeline, _FrameHSPipeline(_respond)))
+
+    logged = "\n".join(log_lines)
+    assert "rejected response_format; continuing without it: APIStatusError (HTTP 422)" in logged
+    assert _ECHOED not in logged
+
+
+def test_frame_hate_speech_pipeline_logs_a_transient_error_by_class_and_status(log_lines: list[str]) -> None:
+    """A transient failure quoting a caption is logged without it.
+
+    Args:
+        log_lines (list[str]): Captured loguru messages.
+    """
+
+    def _respond(prompt: str, kwargs: dict[str, Any]) -> str:
+        raise _api_status_error(500, f"upstream failed on prompt: {prompt}")
+
+    frame = FrameCaption(time_sec=1.0, caption=_ECHOED)
+
+    assert pipeline.frame_hate_speech_pipeline([frame], cast(InferencePipeline, _FrameHSPipeline(_respond))) == []
+
+    logged = "\n".join(log_lines)
+    assert "stopped at a transient inference error" in logged
+    assert "APIStatusError (HTTP 500)" in logged
+    assert _ECHOED not in logged

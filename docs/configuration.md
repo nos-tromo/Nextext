@@ -293,3 +293,25 @@ A rising `nextext_jobs_skipped_total{reason="vad_no_speech"}` usually means the
 `/vad` endpoint is over-reporting silence; a rising
 `nextext_jobs_failed_total{code="undecodable_media"}` means users are uploading
 containers PyAV cannot decode. Both are visible without reading logs.
+
+## Logs
+
+Both containers log to stdout/stderr for the container logging driver. Those
+operational logs carry no upstream error bodies or transcript text, and the
+access logs no query strings:
+
+- A failed call to an inference endpoint — Whisper, `/vad`, `/diarize`,
+  `/gliner`, or the chat model — is logged by exception class and HTTP status,
+  never by its message or response body: a rejection can quote the request it
+  rejected.
+- An unexpected job or request failure is logged by exception class and
+  traceback frames, without the message.
+- The backend's uvicorn access log and the frontend's nginx access log record
+  the request path without its query string, which can carry the per-job
+  media token (see [architecture.md](architecture.md#playback)). An nginx
+  access line reads `time "METHOD path protocol" status bytes request-time
+  "X-Request-Id"` — no referer or client address.
+
+nginx's error log has a fixed format: an error logged for a request — the
+backend unreachable or timing out, say — still carries the full request line,
+query string included, with the client address and referer.

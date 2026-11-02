@@ -285,3 +285,57 @@ def test_extract_entities_empty_text_returns_empty(
 
     assert list(df.columns) == ["Category", "Entity", "Frequency"]
     assert df.empty
+
+
+def test_extract_entities_keeps_an_echoed_error_body_out_of_the_log(
+    monkeypatch: pytest.MonkeyPatch,
+    log_lines: list[str],
+) -> None:
+    """A 4xx that echoes the request text is logged by class and status only.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Fixture for patching env vars and httpx.
+        log_lines (list[str]): Captured loguru messages.
+    """
+    monkeypatch.setenv("NER_API_BASE", "http://router:4000")
+    echoed = "invented transcript line 0427"
+
+    def fake_post(url: str, **kwargs: Any) -> httpx.Response:
+        return httpx.Response(
+            422,
+            text=f"unprocessable text: {kwargs['json']['text']}",
+            request=httpx.Request("POST", url),
+        )
+
+    monkeypatch.setattr(ner.httpx, "post", fake_post)
+
+    assert extract_entities(echoed).empty
+
+    logged = "\n".join(log_lines)
+    assert "NER request to http://router:4000/gliner failed: HTTPStatusError (HTTP 422)" in logged
+    assert echoed not in logged
+
+
+def test_extract_entities_logs_a_transport_error_by_class_only(
+    monkeypatch: pytest.MonkeyPatch,
+    log_lines: list[str],
+) -> None:
+    """A transport error is named by class; its message is not logged.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Fixture for patching env vars and httpx.
+        log_lines (list[str]): Captured loguru messages.
+    """
+    monkeypatch.setenv("NER_API_BASE", "http://router:4000")
+    detail = "invented transport detail 0427"
+
+    def fake_post(url: str, **kwargs: Any) -> httpx.Response:
+        raise httpx.ConnectError(detail)
+
+    monkeypatch.setattr(ner.httpx, "post", fake_post)
+
+    assert extract_entities("Invented sample sentence.").empty
+
+    logged = "\n".join(log_lines)
+    assert "failed: ConnectError" in logged
+    assert detail not in logged

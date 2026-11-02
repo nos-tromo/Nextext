@@ -16,6 +16,7 @@ from nextext.utils.env_cfg import (
     load_inference_env,
     load_language_env,
 )
+from nextext.utils.log_cfg import error_label
 
 load_dotenv()
 
@@ -136,7 +137,7 @@ class InferencePipeline:
             )
             return response.status_code < 500
         except requests.RequestException as exc:
-            logger.error("Inference health check failed: {}", exc)
+            logger.error("Inference health check failed: {}", error_label(exc))
             return False
 
     @property

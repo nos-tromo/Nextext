@@ -30,6 +30,7 @@ from PIL import Image
 
 from nextext.core.keyframes import Keyframe, subsample
 from nextext.core.openai_cfg import InferencePipeline
+from nextext.utils.log_cfg import error_label
 
 __all__ = ["FrameCaption", "describe_keyframes", "format_visual_context", "prepare_frame"]
 
@@ -170,10 +171,10 @@ def describe_keyframes(
                 logger.warning(
                     "The chat model rejected image input ({}); skipping visual context for this job. "
                     "Visual summaries need a vision-capable TEXT_MODEL.",
-                    exc,
+                    error_label(exc),
                 )
                 return []
-            logger.warning("Keyframe caption at {:.1f}s failed: {}", sample.time_sec, exc)
+            logger.warning("Keyframe caption at {:.1f}s failed: {}", sample.time_sec, error_label(exc))
             continue
 
         text = " ".join(reply.split())
