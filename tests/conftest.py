@@ -41,6 +41,29 @@ def _hermetic_response_language_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("NEXTEXT_RESPONSE_LANGUAGE", raising=False)
 
 
+@pytest.fixture(autouse=True)
+def _hermetic_identity_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Clear the identity variables before every test.
+
+    The API tests send the owner under the default ``X-Auth-User`` header and
+    assume the header is trusted from any caller. A local ``.env`` (copied
+    into the process environment at import time, see above) that sets an
+    edge secret, service tokens, a default identity, or another header name
+    would otherwise change how every request resolves; tests that need one
+    set it explicitly.
+
+    Args:
+        monkeypatch: Fixture for patching environment variables.
+    """
+    for name in (
+        "NEXTEXT_AUTH_HEADER",
+        "NEXTEXT_DEFAULT_IDENTITY",
+        "NEXTEXT_EDGE_SECRET",
+        "NEXTEXT_SERVICE_TOKENS",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+
 @pytest.fixture
 def log_lines() -> Iterator[list[str]]:
     """Capture every loguru message emitted while a test runs.

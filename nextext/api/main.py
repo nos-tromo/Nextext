@@ -12,6 +12,7 @@ from loguru import logger
 from prometheus_fastapi_instrumentator import Instrumentator
 
 from nextext.api.errors import install_error_handlers
+from nextext.api.identity import check_principal_config
 from nextext.api.jobs import JobManager
 from nextext.api.routes import router as api_router
 from nextext.utils.log_cfg import setup_logging
@@ -24,15 +25,20 @@ except PackageNotFoundError:  # running from source without an installed dist
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    """Configure logging and the job manager for the app lifetime.
+    """Configure logging, check the identity config, and run the job manager.
 
     Args:
         app: The FastAPI application instance.
 
     Yields:
         None: Control is yielded after startup configuration completes.
+
+    Raises:
+        PrincipalConfigError: When the identity configuration is malformed,
+            so the backend refuses to start.
     """
     setup_logging()
+    check_principal_config()
     job_manager = JobManager()
     await job_manager.start()
     app.state.job_manager = job_manager

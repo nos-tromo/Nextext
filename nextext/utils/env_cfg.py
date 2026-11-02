@@ -1,7 +1,8 @@
 """Centralized environment-config dataclasses (every env var loader lives here)."""
 
 import os
-from dataclasses import dataclass
+import re
+from dataclasses import dataclass, field
 from typing import Literal
 
 from dotenv import load_dotenv
@@ -842,6 +843,20 @@ def load_whisper_env() -> WhisperClientConfig:
     return WhisperClientConfig(api_base=api_base, api_key=api_key, model=model)
 
 
+EDGE_SECRET_MIN_LENGTH: int = 32
+SERVICE_TOKEN_MIN_LENGTH: int = 32
+_SERVICE_NAME_PATTERN: re.Pattern[str] = re.compile(r"[A-Za-z0-9._-]+")
+
+
+class PrincipalConfigError(ValueError):
+    """Raised when the identity configuration is malformed.
+
+    Messages name the offending variable — and, for ``NEXTEXT_SERVICE_TOKENS``,
+    the 1-based position of the offending entry — but never a configured value,
+    so the error is safe to log.
+    """
+
+
 @dataclass(frozen=True)
 class PrincipalConfig:
     """Dataclass for request-principal resolution configuration.
@@ -852,10 +867,103 @@ class PrincipalConfig:
         default_identity: Developer / header-less fallback identity used when
             the trusted header is absent, or ``None`` when unset (the resolver
             then fails closed with HTTP 401).
+        edge_secret: Secret the edge gateway sends as ``X-Edge-Secret``. When
+            set, the trusted header is honoured only on requests carrying it;
+            ``None`` keeps the header trusted from any caller. Kept out of
+            ``repr``.
+        service_tokens: ``(name, token)`` pairs for services that call the API
+            directly with ``Authorization: Bearer <token>``; such a request
+            resolves to ``name``. Kept out of ``repr``.
     """
 
     header_name: str
     default_identity: str | None
+    edge_secret: str | None = field(default=None, repr=False)
+    service_tokens: tuple[tuple[str, str], ...] = field(default=(), repr=False)
+
+
+def _load_edge_secret() -> str | None:
+    """Loads the edge-gateway secret from ``NEXTEXT_EDGE_SECRET``.
+
+    Returns:
+        str | None: The stripped secret, or ``None`` when unset or blank.
+
+    Raises:
+        PrincipalConfigError: When the secret is shorter than
+            :data:`EDGE_SECRET_MIN_LENGTH` characters.
+    """
+    secret = os.getenv("NEXTEXT_EDGE_SECRET", "").strip()
+    if not secret:
+        return None
+    if len(secret) < EDGE_SECRET_MIN_LENGTH:
+        raise PrincipalConfigError(
+            f"NEXTEXT_EDGE_SECRET is shorter than {EDGE_SECRET_MIN_LENGTH} characters; "
+            "generate one with `make secret` in edge-plane."
+        )
+    return secret
+
+
+def _load_service_tokens(edge_secret: str | None) -> tuple[tuple[str, str], ...]:
+    """Parses ``NEXTEXT_SERVICE_TOKENS`` into ``(name, token)`` pairs.
+
+    The value is a comma-separated list of ``name=token`` entries; empty
+    entries (e.g. a trailing comma) are skipped. Names must match
+    ``[A-Za-z0-9._-]+`` and be unique; tokens must be at least
+    :data:`SERVICE_TOKEN_MIN_LENGTH` characters, unique, and distinct from the
+    edge secret — a shared value would let one holder act as the other.
+
+    Args:
+        edge_secret (str | None): The configured edge secret, which no token
+            may equal.
+
+    Returns:
+        tuple[tuple[str, str], ...]: The configured pairs, in order; empty
+            when the variable is unset or blank.
+
+    Raises:
+        PrincipalConfigError: When an entry is malformed. The message names
+            the entry by position only — never its name or token.
+    """
+    raw = os.getenv("NEXTEXT_SERVICE_TOKENS", "").strip()
+    if not raw:
+        return ()
+    pairs: list[tuple[str, str]] = []
+    name_positions: dict[str, int] = {}
+    token_positions: dict[str, int] = {}
+    for position, entry in enumerate(raw.split(","), start=1):
+        if not entry.strip():
+            continue
+        raw_name, separator, raw_token = entry.partition("=")
+        name = raw_name.strip()
+        token = raw_token.strip()
+        if not separator:
+            raise PrincipalConfigError(f"NEXTEXT_SERVICE_TOKENS entry {position} is not a name=token pair.")
+        if not _SERVICE_NAME_PATTERN.fullmatch(name):
+            raise PrincipalConfigError(
+                f"NEXTEXT_SERVICE_TOKENS entry {position}: the name must be non-empty and use only "
+                "letters, digits, '.', '_' or '-'."
+            )
+        if len(token) < SERVICE_TOKEN_MIN_LENGTH:
+            raise PrincipalConfigError(
+                f"NEXTEXT_SERVICE_TOKENS entry {position}: the token is shorter than "
+                f"{SERVICE_TOKEN_MIN_LENGTH} characters."
+            )
+        if name in name_positions:
+            raise PrincipalConfigError(
+                f"NEXTEXT_SERVICE_TOKENS entries {name_positions[name]} and {position} use the same name."
+            )
+        if token in token_positions:
+            raise PrincipalConfigError(
+                f"NEXTEXT_SERVICE_TOKENS entries {token_positions[token]} and {position} use the same token."
+            )
+        if token == edge_secret:
+            raise PrincipalConfigError(
+                f"NEXTEXT_SERVICE_TOKENS entry {position} reuses NEXTEXT_EDGE_SECRET; give each its own value."
+            )
+        name_positions[name] = position
+        token_positions[token] = position
+        pairs.append((name, token))
+    return tuple(pairs)
 
 
 def load_principal_env(
@@ -864,12 +972,12 @@ def load_principal_env(
 ) -> PrincipalConfig:
     """Loads request-principal configuration from environment variables.
 
-    The backend has no real authentication: identity is whatever the trusted
-    header carries, with an optional env-var fallback so developers (and any
-    header-less client) resolve to a single configured identity instead of
-    being rejected. The seam is intentionally thin — swapping the header read
-    for a verified-token read later leaves ownership queries and routes
-    untouched.
+    Identity is carried by a trusted header, with an optional env-var fallback
+    so developers (and any header-less client) resolve to a single configured
+    identity instead of being rejected. ``NEXTEXT_EDGE_SECRET`` restricts the
+    header to requests from the edge gateway, and ``NEXTEXT_SERVICE_TOKENS``
+    lets services that call the API directly authenticate as themselves; see
+    :mod:`nextext.api.identity` for the resolution order.
 
     Args:
         default_header_name (str): Default trusted header carrying the
@@ -882,6 +990,14 @@ def load_principal_env(
         - header_name (str): The trusted header carrying the principal.
         - default_identity (str | None): Fallback identity, or ``None`` when
           unset (the resolver then fails closed with HTTP 401).
+        - edge_secret (str | None): The edge-gateway secret, or ``None`` when
+          unset or blank.
+        - service_tokens (tuple[tuple[str, str], ...]): Configured
+          ``(name, token)`` pairs.
+
+    Raises:
+        PrincipalConfigError: When ``NEXTEXT_EDGE_SECRET`` or
+            ``NEXTEXT_SERVICE_TOKENS`` is malformed.
     """
     raw_identity = os.getenv("NEXTEXT_DEFAULT_IDENTITY")
     if raw_identity is not None and raw_identity.strip():
@@ -889,7 +1005,10 @@ def load_principal_env(
     else:
         resolved_identity = default_identity
 
+    edge_secret = _load_edge_secret()
     return PrincipalConfig(
         header_name=os.getenv("NEXTEXT_AUTH_HEADER", default_header_name),
         default_identity=resolved_identity,
+        edge_secret=edge_secret,
+        service_tokens=_load_service_tokens(edge_secret),
     )

@@ -151,3 +151,22 @@ def test_access_log_records_no_query_string_referer_or_client_address() -> None:
     directives = re.findall(r"^\s*access_log\s+(.*?);", conf, re.MULTILINE)
     assert directives == ["/var/log/nginx/access.log scrubbed"]
     assert conf.index("access_log") > conf.index("server {")
+
+
+# Headers the backend reads from the edge gateway's requests; nginx forwards
+# client request headers as received by default.
+_GATEWAY_HEADERS = ("X-Edge-Secret", "X-Auth-User", "X-Auth-Name", "Authorization")
+
+
+def test_proxy_forwards_gateway_identity_headers() -> None:
+    """Nginx passes the gateway's identity headers through to the backend unchanged.
+
+    The backend trusts ``X-Auth-User`` only alongside a matching
+    ``X-Edge-Secret`` (``nextext/api/identity.py``), so turning header
+    forwarding off, or overwriting one of these headers, would leave every
+    request through the gateway unauthenticated.
+    """
+    conf = _CONF.read_text(encoding="utf-8")
+    assert not re.search(r"proxy_pass_request_headers\s+off", conf)
+    for header in _GATEWAY_HEADERS:
+        assert not re.search(rf"proxy_set_header\s+{re.escape(header)}\s", conf, re.IGNORECASE), header

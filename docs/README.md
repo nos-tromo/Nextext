@@ -9,8 +9,8 @@ quick start, and first run) with topic-by-topic deep dives.
 
 | Document | What it covers |
 |---|---|
-| [configuration.md](configuration.md) | Inference provider selection, dedicated per-model endpoints, localization, provider setup recipes, upload limits, job concurrency, sentence restoration, keyframes, the production sub-path, metrics, logs |
-| [architecture.md](architecture.md) | The backend/frontend service split, the in-memory job and anonymous-identity model, image tagging |
+| [configuration.md](configuration.md) | Inference provider selection, dedicated per-model endpoints, localization, provider setup recipes, upload limits, job concurrency, sentence restoration, keyframes, the production sub-path, identity (edge secret, service tokens, rollout order), metrics, logs |
+| [architecture.md](architecture.md) | The backend/frontend service split, the in-memory job and identity model, image tagging |
 | [airgap.md](airgap.md) | Offline behaviour, preloading the language caches, `make bundle`, loading the tarballs on a disconnected host |
 | [cli.md](cli.md) | `nextext-cli` — flags and directory batch processing |
 

@@ -265,12 +265,87 @@ existing root-anchored locations (the SSE job-events endpoint included),
 redirecting bare `/` to `/nextext/`.
 
 The gateway is the sole production entry point and is what injects
-`X-Auth-User` for the backend's trusted-header principal seam
-(`nextext/api/identity.py`) — production leaves `NEXTEXT_DEFAULT_IDENTITY`
-unset so requests without that header are rejected as unauthenticated; any
-dev-only fallback stays dev-only. `NEXTEXT_AUTH_HEADER` (backend + frontend,
-default `X-Auth-User`) names the header; both sides read the same variable so
-they agree on it.
+`X-Auth-User` — and `X-Edge-Secret` — for the backend's trusted-header
+principal seam; see [Identity](#identity).
+
+## Identity
+
+Each request resolves to one principal, which scopes that caller's in-memory
+jobs (`nextext/api/identity.py`):
+
+1. **Service token.** `Authorization: Bearer <token>` matching an entry of
+   `NEXTEXT_SERVICE_TOKENS` resolves to that entry's name. The identity header
+   on such a request is ignored: a service acts only as itself, never as a
+   user.
+2. **Trusted header** (`NEXTEXT_AUTH_HEADER`, default `X-Auth-User`), which the
+   edge gateway sets to the signed-in user. With `NEXTEXT_EDGE_SECRET` set, it
+   counts only on a request whose `X-Edge-Secret` header matches the secret;
+   on any other request it is ignored as if absent, and a warning records the
+   method and path — never a header value.
+3. **`NEXTEXT_DEFAULT_IDENTITY`**, the dev / header-less fallback. Production
+   leaves it unset, so a request with none of the above gets `401`.
+
+`NEXTEXT_AUTH_HEADER` is read by the backend only. The SPA
+(`frontend/src/api/client.ts`) and the edge gateway always send `X-Auth-User`,
+so another name suits only other callers. `GET /jobs/{id}/media` is
+authorized by its per-job token, not by the principal, and is unaffected by
+all of this.
+
+### Edge secret
+
+`NEXTEXT_EDGE_SECRET` is shared with the edge gateway, which sends it as
+`X-Edge-Secret` on every request it proxies; the frontend's nginx passes it
+through to the backend. Generate it with `make secret` in edge-plane and set
+the same value, under the same name, in both repos' `.env`; then run `make up`
+in each, since a plain restart keeps the old value. A value shorter than 32
+characters stops the backend at startup; the error never shows the value.
+
+Without the secret, the trusted header is believed from any caller that can
+reach the backend — anything on `inference-net`, or anything that can reach
+the frontend — and startup logs a warning saying so, unless
+`NEXTEXT_DEFAULT_IDENTITY` marks a dev setup. With it set, only the gateway
+can assert a user: a request that reaches the frontend or the backend some
+other way (the SPA under `make up-dev`, say) carries no usable identity and
+gets `401` unless `NEXTEXT_DEFAULT_IDENTITY` is set. The gateway's side of
+the contract is edge-plane's `docs/identity-contract.md`.
+
+### Service tokens
+
+`NEXTEXT_SERVICE_TOKENS` lists the services that call the API directly, as
+comma-separated `name=token` pairs:
+
+```bash
+NEXTEXT_SERVICE_TOKENS=docint=<token>
+```
+
+Names use letters, digits, `.`, `_` and `-` and are unique; tokens are at
+least 32 characters, unique, and never equal to the edge secret. Anything
+else stops the backend at startup, with an error that names the entry by its
+position and never echoes a name or token. Generate each token with
+`make secret` in edge-plane.
+
+docint sends its `NEXTEXT_API_KEY` as the bearer token, so its entry carries
+that value. Naming the entry `docint` keeps the principal docint already
+resolves to through the `X-Auth-User: docint` header it sends. A bearer
+token that matches no entry is not an error: the request continues with the
+trusted header. Tokens are compared in constant time and never logged.
+
+### Rolling out
+
+Each step must not lock out a caller that is still on the old path:
+
+1. **Service token first.** Set the same token as docint's `NEXTEXT_API_KEY`
+   and in Nextext's `NEXTEXT_SERVICE_TOKENS`, then recreate both. docint's
+   calls resolve to `docint` before and after, so nothing changes yet.
+2. **Gateway before backend.** Set `NEXTEXT_EDGE_SECRET` in edge-plane's
+   `.env` and recreate the gateway, so it already sends the secret; then set
+   it in Nextext's `.env` and recreate the backend. In the reverse order,
+   every request through the gateway gets `401` until the gateway catches up.
+   A full `deploy` bring-up starts the gateway last, so it has no such
+   window.
+
+Without a matching token, docint's calls fall back to the trusted header,
+which the backend ignores once the edge secret is set — they then get `401`.
 
 ## Metrics
 

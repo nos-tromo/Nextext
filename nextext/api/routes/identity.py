@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Request
 
-from nextext.api.identity import resolve_principal
+from nextext.api.identity import identity_headers_trusted, resolve_principal
 from nextext.api.schemas import WhoamiResponse
 
 router = APIRouter(tags=["identity"])
@@ -25,7 +25,8 @@ def get_whoami(
     (Authelia's displayname, injected by the edge gateway) and is purely
     decorative — it plays no part in identity/principal resolution, unlike
     ``username``. ``None`` when the header is absent (dev without the
-    gateway in front).
+    gateway in front) or, with ``NEXTEXT_EDGE_SECRET`` set, when the request
+    is not edge-verified — the gateway's headers count only from the gateway.
 
     Args:
         request: The incoming request, for the decorative ``X-Auth-Name``
@@ -35,9 +36,10 @@ def get_whoami(
 
     Returns:
         WhoamiResponse: The caller's resolved principal name plus, if
-            present, the gateway's decorative display name.
+            present and trusted, the gateway's decorative display name.
     """
-    return WhoamiResponse(username=principal, display_name=request.headers.get("X-Auth-Name"))
+    display_name = request.headers.get("X-Auth-Name") if identity_headers_trusted(request) else None
+    return WhoamiResponse(username=principal, display_name=display_name)
 
 
 __all__ = ["router"]
