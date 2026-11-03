@@ -1,14 +1,45 @@
-"""CLI entry point: single-file in-process pipeline runner (no backend required)."""
+"""CLI entry point: single-file in-process pipeline runner (no backend required).
+
+Every run that processes a file writes its own data-protection audit chain
+(:mod:`nextext.audit`), attributed to ``AUDIT_CLI_USER`` via ``cli``: the
+file's intake (``collect``), each model call (``ai_call``), the joined result
+(``combine``) and every output file it writes (``disclose`` to
+``file:<output>``). Inside the backend container (``make cli``) the chain goes
+to the container's log; elsewhere to stdout, which the CLI uses for nothing
+else. A run whose actions need a stated purpose (``AUDIT_REQUIRE_PURPOSE``)
+takes it from ``AUDIT_CASE_REF`` / ``AUDIT_REASON`` and exits ``2`` without
+one; a failed audit write stops the run with a non-zero exit.
+"""
 
 import argparse
 import hashlib
 import os
+import sys
+import uuid
 from collections.abc import Callable
 from pathlib import Path
 
 import pandas as pd
 from loguru import logger
+from matplotlib.figure import Figure
 
+from nextext.audit import (
+    CAPTION_STAGE,
+    FRAME_HATE_SPEECH_STAGE,
+    HATE_SPEECH_STAGE,
+    MEDIA,
+    SUMMARY_STAGE,
+    TRANSCRIPTION_STAGE,
+    TRANSLATION_STAGE,
+    VISUAL_SUMMARY_STAGE,
+    WORDLEVEL_STAGE,
+    AuditSink,
+    JobAudit,
+    Origin,
+    build_emitter,
+    emit_config_event,
+    joined_analyses,
+)
 from nextext.core.docint_transcript import (
     build_docint_jsonl,
 )
@@ -21,6 +52,7 @@ from nextext.core.outcomes import skip_reason_text
 from nextext.core.processing import FileProcessor
 from nextext.core.visual_context import FrameCaption, describe_keyframes, format_visual_context
 from nextext.pipeline import (
+    column_text,
     effective_text_column,
     frame_hate_speech_pipeline,
     hate_speech_pipeline,
@@ -31,13 +63,23 @@ from nextext.pipeline import (
     translation_pipeline,
     wordlevel_pipeline,
 )
+from nextext.utils.audit_event import Actor, AuditEmitter, Purpose
+from nextext.utils.audit_runtime import purpose_from_env
 from nextext.utils.env_cfg import (
+    load_audit_env,
+    load_cli_audit_user,
     load_keyframe_defaults,
     load_visual_summary_env,
 )
 from nextext.utils.log_cfg import setup_logging
 
 setup_logging()
+
+#: What a CLI run does with the file: it reads it in, sends it to the models,
+#: joins their results and writes output files. A purpose required for any of
+#: these is required for the run.
+CLI_ACTIONS: frozenset[str] = frozenset({"collect", "ai_call", "combine", "disclose"})
+_HASH_CHUNK = 1 << 20
 
 
 def parse_arguments(args_list: list[str] | None = None) -> argparse.Namespace:
@@ -220,7 +262,7 @@ def _emit_docint_jsonl(
     output_path: Path,
     language: str | None,
     force_overwrite: bool = False,
-) -> None:
+) -> Path | None:
     """Write a docint JSONL payload for a completed transcription run.
 
     The write is atomic: the payload is materialized to ``<target>.tmp``
@@ -239,6 +281,10 @@ def _emit_docint_jsonl(
             target file. When ``False`` (default), refuse and raise
             :class:`FileExistsError`.
 
+    Returns:
+        Path | None: The file written, or ``None`` when there were no
+            segments to export.
+
     Raises:
         FileExistsError: If the resolved target already exists and
             ``force_overwrite`` is ``False``.
@@ -247,7 +293,7 @@ def _emit_docint_jsonl(
     segments = _transcript_segments_from_df(transcript_df)
     if not segments:
         logger.warning("No transcript segments available; skipping docint JSONL export.")
-        return
+        return None
     try:
         file_hash = f"sha256:{hashlib.sha256(source_path.read_bytes()).hexdigest()}"
     except OSError as exc:
@@ -281,6 +327,7 @@ def _emit_docint_jsonl(
     tmp.write_bytes(payload)
     os.replace(tmp, target)
     logger.info("Wrote docint JSONL to '{}'.", target)
+    return target
 
 
 def main() -> None:
@@ -306,13 +353,146 @@ def main() -> None:
     # Parse command-line arguments
     args = parse_arguments()
 
-    raise SystemExit(_run_main(args))
+    raise SystemExit(run_cli(args))
+
+
+def _refuse(message: str) -> int:
+    """Print a one-line refusal to stderr and return the usage exit code.
+
+    Args:
+        message (str): The reason, naming no value.
+
+    Returns:
+        int: ``2``, the exit code argparse uses for usage errors.
+    """
+    print(f"nextext-cli: {message}", file=sys.stderr)
+    return 2
+
+
+def _file_sha256(path: Path) -> str:
+    """Hash a file in chunks, so a multi-GB recording never sits in memory.
+
+    Args:
+        path (Path): The file to hash.
+
+    Returns:
+        str: The lowercase hex SHA-256 of its bytes.
+    """
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        while chunk := handle.read(_HASH_CHUNK):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _cli_analyses(args: argparse.Namespace) -> list[str]:
+    """Name the analyses a run asked for, for its ``collect`` event.
+
+    Args:
+        args (argparse.Namespace): Parsed CLI arguments.
+
+    Returns:
+        list[str]: Transcription always, then each opt-in analysis requested.
+    """
+    requested = ["transcription"]
+    for name, wanted in (
+        ("diarization", args.diarize),
+        ("translation", args.task == "translate"),
+        ("word_level", args.words),
+        ("summary", args.summarize),
+        ("hate_speech", args.hate_speech),
+        ("keyframes", args.keyframes),
+    ):
+        if wanted:
+            requested.append(name)
+    return requested
+
+
+def _collect_criteria(args: argparse.Namespace) -> dict[str, object]:
+    """Describe the input file for the run's ``collect`` event: size, hash, what was asked.
+
+    Never the file's name or path, which can name the people in it.
+
+    Args:
+        args (argparse.Namespace): Parsed CLI arguments.
+
+    Returns:
+        dict[str, object]: The event's criteria.
+
+    Raises:
+        OSError: If the file cannot be read.
+    """
+    path: Path = args.file_path
+    return {
+        "files": 1,
+        "bytes": path.stat().st_size,
+        "source_sha256": _file_sha256(path),
+        "analyses": _cli_analyses(args),
+        "options": {
+            "src_lang": args.src_lang,
+            "trg_lang": args.trg_lang,
+            "task": args.task,
+            "diarize": args.diarize,
+            "words": args.words,
+            "summarization": args.summarize,
+            "hate_speech": args.hate_speech,
+            "keyframes": args.keyframes,
+            "docint_jsonl": getattr(args, "emit_docint_jsonl", None) is not None,
+        },
+    }
+
+
+def run_cli(
+    args: argparse.Namespace,
+    *,
+    emitter_factory: Callable[[str | None], AuditEmitter] = build_emitter,
+) -> int:
+    """Run the pipeline on one file inside its own audit chain.
+
+    The chain starts before the file is read and closes when the run ends,
+    whether it succeeds, finds no speech, or fails.
+
+    Args:
+        args (argparse.Namespace): Parsed CLI arguments.
+        emitter_factory (Callable[[str | None], AuditEmitter]): Creates the
+            run's audit emitter from the ``AUDIT_OUTPUT`` mode.
+
+    Returns:
+        int: ``0`` for a normal run, ``3`` when the file held no processable
+            speech, ``2`` when the audit settings or the stated purpose are
+            malformed, or a purpose is required and missing.
+
+    Raises:
+        AuditWriteError: If an audit event cannot be written; the run stops.
+        OSError: If the audit stream or the input file cannot be opened.
+    """
+    try:
+        audit_cfg = load_audit_env()
+        case_ref, reason = purpose_from_env(os.environ)
+    except ValueError as exc:  # PurposeError is a ValueError; neither names a value.
+        return _refuse(str(exc))
+    purpose = Purpose(case_ref=case_ref, reason=reason) if case_ref or reason else None
+    actor = Actor(load_cli_audit_user(), "cli")
+    emitter = emitter_factory(audit_cfg.output)
+    emitter.start()
+    try:
+        # A run has no identity seam, so only the purpose requirement states its mode.
+        emit_config_event(emitter, {"require_purpose": sorted(audit_cfg.require_purpose)})
+        if purpose is None and audit_cfg.require_purpose & CLI_ACTIONS:
+            emitter.emit("collect", MEDIA, actor, outcome="denied", criteria={"files": 1})
+            return _refuse("this run needs a stated purpose: set AUDIT_CASE_REF and/or AUDIT_REASON.")
+        audit = JobAudit(AuditSink(emitter), uuid.uuid4().hex, Origin(actor=actor, purpose=purpose))
+        audit.collect(_collect_criteria(args))
+        return _run_main(args, audit)
+    finally:
+        emitter.close()
 
 
 def _keyframe_step(
     args: argparse.Namespace,
     file_processor: FileProcessor,
     ensure_inference: Callable[[], InferencePipeline],
+    audit: JobAudit,
 ) -> list[FrameCaption]:
     """Sample and describe video keyframes when ``--keyframes`` was given.
 
@@ -328,6 +508,7 @@ def _keyframe_step(
         file_processor (FileProcessor): Writer for this run's output files.
         ensure_inference (Callable[[], InferencePipeline]): Accessor for the
             run's inference pipeline, created on first use.
+        audit (JobAudit): The run's audit trail.
 
     Returns:
         list[FrameCaption]: The captions, empty when the step was off, the
@@ -345,27 +526,119 @@ def _keyframe_step(
         logger.info("No keyframes sampled from '{}' (no video stream, or sampling is off).", args.file_path)
         return []
     file_processor.write_keyframes([sample.jpeg for sample in samples], [sample.time_sec for sample in samples])
+    audit.disclose_file("keyframes")
 
     visual_cfg = load_visual_summary_env()
     if not visual_cfg.enabled:
         return []
-    captions = describe_keyframes(
-        samples,
-        ensure_inference(),
-        max_frames=visual_cfg.max_frames,
-        max_side=visual_cfg.max_side,
-    )
+    caption_pipeline = ensure_inference()
+    with audit.stage(CAPTION_STAGE) as notes:
+        captions = describe_keyframes(
+            samples,
+            caption_pipeline,
+            max_frames=visual_cfg.max_frames,
+            max_side=visual_cfg.max_side,
+        )
+        notes.result("chat", text=format_visual_context(captions) if captions else None)
     if captions:
-        file_processor.write_file_output(format_visual_context(captions), "visual_context")
+        _write_output(file_processor, audit, format_visual_context(captions), "visual_context")
     return captions
 
 
-def _run_main(args: argparse.Namespace) -> int:
+def _write_output(
+    file_processor: FileProcessor,
+    audit: JobAudit,
+    data: str | pd.DataFrame | Figure,
+    label: str,
+) -> None:
+    """Write one output file and record its disclosure (``file:<label>``).
+
+    Args:
+        file_processor (FileProcessor): Writer for this run's output files.
+        audit (JobAudit): The run's audit trail.
+        data (str | pd.DataFrame | Figure): What to write.
+        label (str): The output's name, e.g. ``summary``.
+    """
+    file_processor.write_file_output(data, label)
+    audit.disclose_file(label)
+
+
+def _write_transcript(file_processor: FileProcessor, audit: JobAudit, transcript_df: pd.DataFrame) -> None:
+    """Write the transcript files and record their disclosure.
+
+    Args:
+        file_processor (FileProcessor): Writer for this run's output files.
+        audit (JobAudit): The run's audit trail.
+        transcript_df (pd.DataFrame): The transcript, optionally translated.
+    """
+    file_processor.write_transcript_output(transcript_df)
+    audit.disclose_file("transcript")
+    if "translation" in transcript_df.columns:
+        audit.disclose_file("translation")
+
+
+def _write_docint(args: argparse.Namespace, audit: JobAudit, transcript_df: pd.DataFrame, language: str | None) -> None:
+    """Write the docint JSONL export when asked for, and record it.
+
+    Args:
+        args (argparse.Namespace): Parsed CLI arguments.
+        audit (JobAudit): The run's audit trail.
+        transcript_df (pd.DataFrame): The transcript.
+        language (str | None): The transcript's source language.
+    """
+    if getattr(args, "emit_docint_jsonl", None) is None:
+        return
+    written = _emit_docint_jsonl(
+        transcript_df=transcript_df,
+        source_path=args.file_path,
+        output_path=args.emit_docint_jsonl,
+        language=language,
+        force_overwrite=getattr(args, "force_docint_jsonl", False),
+    )
+    if written is not None:
+        audit.disclose_file("docint.jsonl")
+
+
+def _record_combination(
+    audit: JobAudit,
+    transcript_df: pd.DataFrame,
+    *,
+    word_counts: bool = False,
+    named_entities: bool = False,
+    summary: bool = False,
+    captions: bool = False,
+    hate_speech: bool = False,
+) -> None:
+    """Record the run's ``combine`` event, if its result joins several analyses.
+
+    Args:
+        audit (JobAudit): The run's audit trail.
+        transcript_df (pd.DataFrame): The transcript; empty when none.
+        word_counts (bool): Whether word counts were produced.
+        named_entities (bool): Whether named entities were produced.
+        summary (bool): Whether a summary was produced.
+        captions (bool): Whether keyframe captions were produced.
+        hate_speech (bool): Whether hate-speech detection ran.
+    """
+    analyses, speaker_attributed = joined_analyses(
+        transcript_columns=[] if transcript_df.empty else list(transcript_df.columns),
+        word_counts=word_counts,
+        named_entities=named_entities,
+        summary=summary,
+        frame_captions=captions,
+        hate_speech=hate_speech,
+    )
+    audit.combine(analyses, speaker_attributed=speaker_attributed)
+
+
+def _run_main(args: argparse.Namespace, audit: JobAudit) -> int:
     """Execute the main Nextext pipeline on the parsed CLI arguments.
 
     Args:
         args (argparse.Namespace): Parsed CLI arguments from
             :func:`parse_arguments`.
+        audit (JobAudit): The run's audit trail; every model call, the
+            joined result and every output file are recorded on it.
 
     Returns:
         int: ``0`` for a normal run; ``3`` when the file yielded no
@@ -408,18 +681,20 @@ def _run_main(args: argparse.Namespace) -> int:
 
     # Transcribe and diarize the audio file
     if args.task in ["transcribe", "translate"]:
-        outcome = transcription_pipeline(
-            file_path=args.file_path,
-            src_lang=args.src_lang,
-            diarize=args.diarize,
-        )
+        with audit.stage(TRANSCRIPTION_STAGE) as notes:
+            outcome = transcription_pipeline(
+                file_path=args.file_path,
+                src_lang=args.src_lang,
+                diarize=args.diarize,
+            )
+            notes.result("asr", text=column_text(outcome.transcript, "text"), segments=len(outcome.transcript))
         transcript_df = outcome.transcript
         args.src_lang = outcome.src_lang  # Update source language if detected
 
         # Keyframes: an opt-in step of its own. It runs ahead of the no-speech
         # guard below, so a silent video still yields what could be seen — and
         # its captions feed the summary and the hate-speech pass when requested.
-        captions = _keyframe_step(args, file_processor, ensure_inference)
+        captions = _keyframe_step(args, file_processor, ensure_inference, audit)
         visual_context = format_visual_context(captions) or None
 
         # Guard: stop early when the transcript contains no speech
@@ -430,33 +705,37 @@ def _run_main(args: argparse.Namespace) -> int:
                 outcome.skip_reason or "unknown",
                 skip_reason_text(outcome.skip_reason),
             )
-            file_processor.write_transcript_output(transcript_df)
+            _write_transcript(file_processor, audit, transcript_df)
             # The captions are a summarizable source in their own right, so a
             # requested summary is still written — from the visuals alone.
+            visual_summary = ""
             if args.summarize and visual_context:
-                visual_summary = summarization_pipeline(
-                    text="",
-                    inference_pipeline=ensure_inference(),
-                    visual_context=visual_context,
-                )
+                summary_pipeline = ensure_inference()
+                with audit.stage(VISUAL_SUMMARY_STAGE) as notes:
+                    visual_summary = summarization_pipeline(
+                        text="",
+                        inference_pipeline=summary_pipeline,
+                        visual_context=visual_context,
+                    )
+                    notes.result("chat", text=visual_summary, inputs=["visual_context"])
                 if visual_summary:
-                    file_processor.write_file_output(visual_summary, "summary")
+                    _write_output(file_processor, audit, visual_summary, "summary")
             # Likewise the captions can show hate a silent clip never speaks.
-            if args.hate_speech and captions:
-                frame_findings = frame_hate_speech_pipeline(captions, inference_pipeline=ensure_inference())
+            judged_frames = bool(args.hate_speech and captions)
+            if judged_frames:
+                frame_pipeline = ensure_inference()
+                with audit.stage(FRAME_HATE_SPEECH_STAGE) as notes:
+                    frame_findings = frame_hate_speech_pipeline(captions, inference_pipeline=frame_pipeline)
+                    notes.result("chat", frames=len(captions))
                 if frame_findings:
-                    file_processor.write_file_output(pd.DataFrame(frame_findings), "hate_speech")
+                    _write_output(file_processor, audit, pd.DataFrame(frame_findings), "hate_speech")
+            _record_combination(
+                audit, transcript_df, summary=bool(visual_summary), captions=bool(captions), hate_speech=judged_frames
+            )
             # Honour an explicit export request even here: the helper warns
             # that there are no segments rather than leaving the caller to
             # wonder why its target file never appeared.
-            if getattr(args, "emit_docint_jsonl", None) is not None:
-                _emit_docint_jsonl(
-                    transcript_df=transcript_df,
-                    source_path=args.file_path,
-                    output_path=args.emit_docint_jsonl,
-                    language=None,
-                    force_overwrite=getattr(args, "force_docint_jsonl", False),
-                )
+            _write_docint(args, audit, transcript_df, None)
             return 3
     else:
         logger.error("Invalid task specified: {}", args.task)
@@ -467,12 +746,20 @@ def _run_main(args: argparse.Namespace) -> int:
     # whenever a translate task was requested and the resolved source differs
     # from the target (so an English target is translated too).
     if should_translate(args.task, args.src_lang, args.trg_lang):
-        transcript_df = translation_pipeline(
-            df=transcript_df,
-            trg_lang=args.trg_lang,
-            src_lang=args.src_lang,
-            inference_pipeline=ensure_inference(),
-        )
+        translation_inference = ensure_inference()
+        with audit.stage(TRANSLATION_STAGE) as notes:
+            transcript_df = translation_pipeline(
+                df=transcript_df,
+                trg_lang=args.trg_lang,
+                src_lang=args.src_lang,
+                inference_pipeline=translation_inference,
+            )
+            notes.result(
+                "chat",
+                text=column_text(transcript_df, "translation"),
+                src_lang=args.src_lang,
+                trg_lang=args.trg_lang,
+            )
 
     # Streamline language for further processing
     if args.task == "transcribe":
@@ -495,11 +782,15 @@ def _run_main(args: argparse.Namespace) -> int:
     detected_src_lang = normalize_language_code(args.src_lang) if args.src_lang else None
 
     # Calculate word statistics
+    has_word_counts = has_entities = False
     if args.words:
-        word_counts, named_entities, wordcloud_fig = wordlevel_pipeline(
-            data=transcript_df,
-            language=transcript_lang,
-        )
+        with audit.stage(WORDLEVEL_STAGE):
+            word_counts, named_entities, wordcloud_fig = wordlevel_pipeline(
+                data=transcript_df,
+                language=transcript_lang,
+            )
+        has_word_counts = isinstance(word_counts, pd.DataFrame) and not word_counts.empty
+        has_entities = isinstance(named_entities, pd.DataFrame) and not named_entities.empty
         exports = [
             (word_counts, "words"),
             (named_entities, "entities"),
@@ -507,36 +798,58 @@ def _run_main(args: argparse.Namespace) -> int:
         ]
         for export, name in exports:
             if export is not None:
-                file_processor.write_file_output(export, name)
+                _write_output(file_processor, audit, export, name)
 
+    transcript_summary = ""
     if args.summarize:
         # Summarize the transcribed text (translated text when available),
         # together with the keyframe captions when the keyframe step ran.
         summary_text_column = effective_text_column(transcript_df)
-        transcript_summary = summarization_pipeline(
-            text=" ".join(transcript_df[summary_text_column].astype(str).tolist()),
-            inference_pipeline=ensure_inference(),
-            visual_context=visual_context,
-        )
+        summary_inference = ensure_inference()
+        with audit.stage(SUMMARY_STAGE) as notes:
+            transcript_summary = summarization_pipeline(
+                text=" ".join(transcript_df[summary_text_column].astype(str).tolist()),
+                inference_pipeline=summary_inference,
+                visual_context=visual_context,
+            )
+            summary_input = "translation" if summary_text_column == "translation" else "transcript"
+            notes.result(
+                "chat",
+                text=transcript_summary,
+                inputs=[summary_input, *(["visual_context"] if visual_context else [])],
+            )
         if transcript_summary:
-            file_processor.write_file_output(transcript_summary, "summary")
+            _write_output(file_processor, audit, transcript_summary, "summary")
 
-    # Hate speech detection
+    # Hate speech detection — recorded by what was judged, never by what was found.
     if args.hate_speech:
-        hate_speech_findings = hate_speech_pipeline(
-            df=transcript_df,
-            inference_pipeline=ensure_inference(),
-            src_lang=args.src_lang,
-        )
-        hate_speech_findings += frame_hate_speech_pipeline(captions, inference_pipeline=ensure_inference())
+        hate_speech_inference = ensure_inference()
+        with audit.stage(HATE_SPEECH_STAGE) as notes:
+            hate_speech_findings = hate_speech_pipeline(
+                df=transcript_df,
+                inference_pipeline=hate_speech_inference,
+                src_lang=args.src_lang,
+            )
+            hate_speech_findings += frame_hate_speech_pipeline(captions, inference_pipeline=hate_speech_inference)
+            notes.result("chat", segments=len(transcript_df), frames=len(captions))
         if hate_speech_findings:
-            file_processor.write_file_output(pd.DataFrame(hate_speech_findings), "hate_speech")
+            _write_output(file_processor, audit, pd.DataFrame(hate_speech_findings), "hate_speech")
             logger.info("Hate speech detected in {} segment(s).", len(hate_speech_findings))
         else:
             logger.info("No hate speech detected.")
 
+    _record_combination(
+        audit,
+        transcript_df,
+        word_counts=has_word_counts,
+        named_entities=has_entities,
+        summary=bool(transcript_summary),
+        captions=bool(captions),
+        hate_speech=bool(args.hate_speech),
+    )
+
     # Save final transcript
-    file_processor.write_transcript_output(transcript_df)
+    _write_transcript(file_processor, audit, transcript_df)
 
     # Optional: emit a docint-compatible JSONL payload next to the transcript.
     # ``_transcript_segments_from_df`` returns integer-valued floats for
@@ -546,14 +859,7 @@ def _run_main(args: argparse.Namespace) -> int:
     # ``transcript_segments_from_df`` — so ``language`` is the resolved
     # source language here, not ``transcript_lang`` (which is the target for
     # a ``translate`` task and only describes the downstream-analysis text).
-    if getattr(args, "emit_docint_jsonl", None) is not None:
-        _emit_docint_jsonl(
-            transcript_df=transcript_df,
-            source_path=args.file_path,
-            output_path=args.emit_docint_jsonl,
-            language=detected_src_lang,
-            force_overwrite=getattr(args, "force_docint_jsonl", False),
-        )
+    _write_docint(args, audit, transcript_df, detected_src_lang)
 
     logger.info("The end of our elaborate plans, the end of everything that stands.")
     return 0

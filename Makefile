@@ -15,7 +15,7 @@ NETWORKS := inference-net edge-net
 VOLUMES  := spacy-cache
 include make/common.mk
 
-.PHONY: help preload
+.PHONY: help preload cli
 
 help:
 	@echo "nextext — build-host helpers"
@@ -32,6 +32,9 @@ help:
 	@echo "  make down       stop + remove the containers"
 	@echo "  make logs       tail combined logs"
 	@echo "  make preload    fill the spacy-cache volume (connected host, one-off container)"
+	@echo "  make cli ARGS='-f /tmp/<file> ...' [CASE_REF=... REASON=...]"
+	@echo "                  run nextext-cli inside the running backend (audited; the backend must be up;"
+	@echo "                  copy the file in first: docker compose --env-file .env -f docker/compose.yaml cp <file> backend:/tmp/)"
 	@echo "  make pre-commit run pre-commit hooks (ruff + pyrefly)"
 	@echo "  make verify     pre-push gate: pre-commit + frontend lint/build; mirrors CI's lint gate"
 	@echo "  make test       run pytest + vitest (test-backend / test-frontend for one)"
@@ -40,3 +43,16 @@ help:
 # volume-permissions service chowns the fresh (root-owned) volume first.
 preload:
 	$(COMPOSE) run --rm --no-TTY -e NEXTEXT_OFFLINE=0 backend load-models
+
+# Run nextext-cli inside the running backend, not a one-off container, so the
+# run's audit chain lands in the backend's own log (AUDIT_OUTPUT=container) —
+# a one-off container can exit before the log collector sees it. The run is
+# attributed to the host account that started it; CASE_REF / REASON state its
+# purpose (required when AUDIT_REQUIRE_PURPOSE lists one of its actions).
+# The file must be inside the container: /tmp is the writable scratch volume,
+# and outputs land under /tmp/output/<stem>/.
+cli:
+	$(COMPOSE) exec -w /tmp \
+		-e AUDIT_CLI_USER="$${SUDO_USER:-$$(id -un)}" \
+		-e AUDIT_CASE_REF="$(CASE_REF)" -e AUDIT_REASON="$(REASON)" \
+		backend nextext-cli $(ARGS)
