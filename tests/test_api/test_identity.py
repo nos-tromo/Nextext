@@ -194,14 +194,100 @@ def test_non_ascii_edge_secret_is_a_mismatch_not_an_error(monkeypatch: pytest.Mo
     assert response.status_code == 401
 
 
-def test_unverified_header_falls_back_to_default_identity(monkeypatch: pytest.MonkeyPatch) -> None:
-    """An ignored header falls through to the header-less behaviour."""
+def test_default_identity_is_ignored_while_the_edge_secret_is_set(monkeypatch: pytest.MonkeyPatch) -> None:
+    """With an edge secret, an unverified or missing header gets 401, never the default identity."""
     monkeypatch.setenv("NEXTEXT_EDGE_SECRET", EDGE_SECRET)
     monkeypatch.setenv("NEXTEXT_DEFAULT_IDENTITY", "service-account")
     with TestClient(_build_app()) as client:
-        response = client.get("/whoami", headers={DEFAULT_HEADER: FORGED_OWNER})
-    assert response.status_code == 200
-    assert response.json() == {"owner": "service-account"}
+        unverified = client.get("/whoami", headers={DEFAULT_HEADER: FORGED_OWNER})
+        headerless = client.get("/whoami")
+        verified = client.get("/whoami", headers={DEFAULT_HEADER: "alice", EDGE_SECRET_HEADER: EDGE_SECRET})
+    assert unverified.status_code == 401
+    assert headerless.status_code == 401
+    assert verified.json() == {"owner": "alice"}
+
+
+_VERIFIED = "verified"
+_HEADERLESS = "headerless"
+_FORGED = "forged"
+_SERVICE = "service"
+
+# (edge secret set, default identity set, request) -> expected principal, or None for 401.
+_RESOLUTION_MATRIX = [
+    (False, False, _VERIFIED, "alice"),
+    (False, False, _HEADERLESS, None),
+    (False, False, _SERVICE, "service:docint"),
+    (False, True, _VERIFIED, "alice"),
+    (False, True, _HEADERLESS, "service-account"),
+    (False, True, _SERVICE, "service:docint"),
+    (True, False, _VERIFIED, "alice"),
+    (True, False, _HEADERLESS, None),
+    (True, False, _FORGED, None),
+    (True, False, _SERVICE, "service:docint"),
+    (True, True, _VERIFIED, "alice"),
+    (True, True, _HEADERLESS, None),
+    (True, True, _FORGED, None),
+    (True, True, _SERVICE, "service:docint"),
+]
+
+
+@pytest.mark.parametrize(("edge_secret", "default_identity", "request_kind", "expected"), _RESOLUTION_MATRIX)
+def test_default_identity_applies_only_without_an_edge_secret(
+    monkeypatch: pytest.MonkeyPatch, edge_secret: bool, default_identity: bool, request_kind: str, expected: str | None
+) -> None:
+    """Every combination of edge secret and default identity resolves as the federation rule says.
+
+    The default identity counts only while no edge secret is set; with one, a
+    request without a verified identity — no header, or a header with a wrong
+    secret — gets 401. Service tokens resolve the same in every combination.
+
+    Args:
+        monkeypatch: Pytest environment patcher.
+        edge_secret: Whether ``NEXTEXT_EDGE_SECRET`` is set.
+        default_identity: Whether ``NEXTEXT_DEFAULT_IDENTITY`` is set.
+        request_kind: The request sent.
+        expected: The principal it must resolve to, or ``None`` for 401.
+    """
+    if edge_secret:
+        monkeypatch.setenv("NEXTEXT_EDGE_SECRET", EDGE_SECRET)
+    if default_identity:
+        monkeypatch.setenv("NEXTEXT_DEFAULT_IDENTITY", "service-account")
+    _set_service_tokens(monkeypatch)
+    headers = {
+        _VERIFIED: {DEFAULT_HEADER: "alice", EDGE_SECRET_HEADER: EDGE_SECRET},
+        _HEADERLESS: {},
+        _FORGED: {DEFAULT_HEADER: FORGED_OWNER, EDGE_SECRET_HEADER: WRONG_EDGE_SECRET},
+        _SERVICE: {"Authorization": f"Bearer {DOCINT_TOKEN}"},
+    }[request_kind]
+    with TestClient(_build_app()) as client:
+        response = client.get("/whoami", headers=headers)
+    if expected is None:
+        assert response.status_code == 401
+    else:
+        assert response.status_code == 200
+        assert response.json() == {"owner": expected}
+
+
+def test_startup_warns_once_when_default_identity_and_edge_secret_are_both_set(
+    monkeypatch: pytest.MonkeyPatch, log_lines: list[str]
+) -> None:
+    """Both set: one startup warning that the default identity is ignored.
+
+    Args:
+        monkeypatch: Pytest patcher.
+        log_lines: Captured loguru messages.
+    """
+    monkeypatch.setattr(main_module, "setup_logging", lambda: None)
+    monkeypatch.setenv("NEXTEXT_EDGE_SECRET", EDGE_SECRET)
+    monkeypatch.setenv("NEXTEXT_DEFAULT_IDENTITY", "service-account")
+    with TestClient(create_app()) as client:
+        client.get("/api/v1/whoami")
+        client.get("/api/v1/whoami")
+    warnings = [line for line in log_lines if "NEXTEXT_DEFAULT_IDENTITY is ignored" in line]
+    assert len(warnings) == 1
+    assert "NEXTEXT_EDGE_SECRET" in warnings[0]
+    assert EDGE_SECRET not in "".join(log_lines)
+    assert "service-account" not in "".join(log_lines)
 
 
 def test_ignored_header_is_logged_without_values(monkeypatch: pytest.MonkeyPatch, log_lines: list[str]) -> None:
@@ -463,7 +549,9 @@ def test_service_namespace_header_never_becomes_a_principal(
 def test_service_namespace_header_falls_back_to_default_identity(
     monkeypatch: pytest.MonkeyPatch, edge_secret: str | None, edge_headers: dict[str, str]
 ) -> None:
-    """An ignored ``service:`` header falls through to the default identity.
+    """An ignored ``service:`` header falls through to the header-less behaviour.
+
+    That is the default identity without an edge secret, and 401 with one.
 
     Args:
         monkeypatch: Pytest environment patcher.
@@ -475,8 +563,11 @@ def test_service_namespace_header_falls_back_to_default_identity(
     monkeypatch.setenv("NEXTEXT_DEFAULT_IDENTITY", "service-account")
     with TestClient(_build_app()) as client:
         response = client.get("/whoami", headers={DEFAULT_HEADER: "service:docint", **edge_headers})
-    assert response.status_code == 200
-    assert response.json() == {"owner": "service-account"}
+    if edge_secret is None:
+        assert response.status_code == 200
+        assert response.json() == {"owner": "service-account"}
+    else:
+        assert response.status_code == 401
 
 
 def test_user_named_like_a_service_is_a_different_principal(monkeypatch: pytest.MonkeyPatch) -> None:

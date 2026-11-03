@@ -12,7 +12,9 @@ Identity is resolved per request, in this order:
    is ignored, with a warning, as if it were absent. A value in the service
    namespace (``service:…``) is ignored the same way on every request.
 3. ``NEXTEXT_DEFAULT_IDENTITY``, the dev / header-less fallback, which may not
-   lie in the service namespace either.
+   lie in the service namespace either. It is honoured only while no edge
+   secret is set: with both set it is ignored (startup warns once), so in the
+   production shape a request without a verified identity gets 401.
 4. Otherwise fail closed with HTTP 401.
 
 The React frontend carries a stable per-browser identifier in its URL
@@ -167,7 +169,7 @@ def resolve_principal(request: Request) -> str:
        edge-verified request when ``NEXTEXT_EDGE_SECRET`` is set, and never
        with a value in the service namespace; otherwise it is ignored and the
        method and path are logged.
-    3. The configured default identity.
+    3. The configured default identity, only while no edge secret is set.
     4. Otherwise fail closed with HTTP 401.
 
     Args:
@@ -178,7 +180,7 @@ def resolve_principal(request: Request) -> str:
 
     Raises:
         HTTPException: 401 when neither a service token, a trusted header,
-            nor a configured default identity is available.
+            nor a usable default identity is available.
     """
     cfg = load_principal_env()
     service = _service_principal(request, cfg)
@@ -199,7 +201,7 @@ def resolve_principal(request: Request) -> str:
             _log_path(request),
             reason,
         )
-    if cfg.default_identity:
+    if cfg.default_identity and cfg.edge_secret is None:
         return cfg.default_identity
     raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
@@ -214,7 +216,8 @@ def check_principal_config() -> None:
     ``NEXTEXT_SERVICE_TOKENS`` stop the backend before it serves a request.
     In the production shape (no ``NEXTEXT_DEFAULT_IDENTITY``) without an edge
     secret, it also logs one warning: the trusted header is then believed
-    from any caller.
+    from any caller. With both an edge secret and a default identity set, it
+    warns that the default identity is ignored.
 
     Raises:
         PrincipalConfigError: When the identity configuration is malformed.
@@ -225,6 +228,11 @@ def check_principal_config() -> None:
             "NEXTEXT_EDGE_SECRET is unset: the {} identity header is trusted from any caller that "
             "can reach the backend. Set NEXTEXT_EDGE_SECRET (see edge-plane docs/identity-contract.md).",
             cfg.header_name,
+        )
+    if cfg.edge_secret is not None and cfg.default_identity is not None:
+        logger.warning(
+            "NEXTEXT_DEFAULT_IDENTITY is ignored while NEXTEXT_EDGE_SECRET is set: a request without a "
+            "verified identity gets 401. Unset NEXTEXT_DEFAULT_IDENTITY in this setup."
         )
 
 

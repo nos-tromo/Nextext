@@ -283,10 +283,13 @@ jobs (`nextext/api/identity.py`):
    on any other request it is ignored as if absent, and a warning records the
    method and path — never a header value. A value starting with `service:` is
    ignored the same way on every request.
-3. **`NEXTEXT_DEFAULT_IDENTITY`**, the dev / header-less fallback. It may not
-   start with `service:` either; a value that does stops the backend at
-   startup. Production leaves it unset, so a request with none of the above
-   gets `401`.
+3. **`NEXTEXT_DEFAULT_IDENTITY`**, the dev / header-less fallback, honoured
+   only while `NEXTEXT_EDGE_SECRET` is unset. With both set it is ignored —
+   startup logs one warning naming both variables — so a request with neither
+   a service token nor an edge-verified header gets `401`. It may not start
+   with `service:` either; a value that does stops the backend at startup.
+   Production leaves it unset, so a request with none of the above gets
+   `401`.
 
 The `service:` namespace keeps services and users apart: a user called
 `docint` is a different principal from the docint service (`service:docint`)
@@ -314,8 +317,17 @@ the frontend — and startup logs a warning saying so, unless
 `NEXTEXT_DEFAULT_IDENTITY` marks a dev setup. With it set, only the gateway
 can assert a user: a request that reaches the frontend or the backend some
 other way (the SPA under `make up-dev`, say) carries no usable identity and
-gets `401` unless `NEXTEXT_DEFAULT_IDENTITY` is set. The gateway's side of
-the contract is edge-plane's `docs/identity-contract.md`.
+gets `401` — `NEXTEXT_DEFAULT_IDENTITY` does not apply while the secret is
+set, or it would authenticate every such request. Service tokens work the
+same either way. The gateway's side of the contract is edge-plane's
+`docs/identity-contract.md`.
+
+| `NEXTEXT_EDGE_SECRET` | `NEXTEXT_DEFAULT_IDENTITY` | A request without a token or a trusted header |
+|---|---|---|
+| unset | unset | `401` |
+| unset | set | the default identity (dev) |
+| set | unset | `401` |
+| set | set | `401`; startup warns that the default identity is ignored |
 
 ### Service tokens
 
