@@ -5,8 +5,13 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
+from nextext.api.identity import EDGE_SECRET_HEADER
 from nextext.api.main import create_app
 from tests.test_api.conftest import ALICE_OWNER_ID, OWNER_HEADER
+
+# Invented credentials, long enough to pass validation.
+EDGE_SECRET = "edge-secret-for-tests-only-0123456789abcdef"
+DOCINT_TOKEN = "svc-token-docint-for-tests-only-0123456789"
 
 
 def test_whoami_returns_username_and_display_name(api_client: TestClient) -> None:
@@ -43,12 +48,44 @@ def test_whoami_fails_closed_without_header_or_default(monkeypatch: pytest.Monke
 def test_whoami_ignores_untrusted_owner_header_impersonation(monkeypatch: pytest.MonkeyPatch) -> None:
     """A caller cannot spoof another owner merely by sending a different header value.
 
-    This just re-confirms resolve_principal's normal behavior (the header
-    value *is* the principal) — there is no separate trust boundary to break
-    here, but it documents that /whoami echoes exactly what identity.py
-    resolved, not anything else client-supplied.
+    This just re-confirms resolve_principal's behavior without an edge secret
+    (the header value *is* the principal) — the edge-secret tests cover the
+    trust boundary — and documents that /whoami echoes exactly what
+    identity.py resolved, not anything else client-supplied.
     """
     with TestClient(create_app()) as client:
         response = client.get("/api/v1/whoami", headers={OWNER_HEADER: "  bob  "})
     assert response.status_code == 200
     assert response.json()["username"] == "bob"
+
+
+def test_whoami_shows_display_name_on_edge_verified_request(monkeypatch: pytest.MonkeyPatch) -> None:
+    """With the edge secret set, a verified request gets both fields."""
+    monkeypatch.setenv("NEXTEXT_EDGE_SECRET", EDGE_SECRET)
+    headers = {OWNER_HEADER: "alice", "X-Auth-Name": "Alice Example", EDGE_SECRET_HEADER: EDGE_SECRET}
+    with TestClient(create_app()) as client:
+        response = client.get("/api/v1/whoami", headers=headers)
+    assert response.status_code == 200
+    assert response.json() == {"username": "alice", "display_name": "Alice Example"}
+
+
+def test_whoami_ignores_gateway_headers_without_edge_secret(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An unverified request gets neither the forged user nor the forged display name."""
+    monkeypatch.setenv("NEXTEXT_EDGE_SECRET", EDGE_SECRET)
+    monkeypatch.setenv("NEXTEXT_DEFAULT_IDENTITY", "service-account")
+    headers = {OWNER_HEADER: "forged-owner-for-tests", "X-Auth-Name": "Forged Name"}
+    with TestClient(create_app()) as client:
+        response = client.get("/api/v1/whoami", headers=headers)
+    assert response.status_code == 200
+    assert response.json() == {"username": "service-account", "display_name": None}
+
+
+def test_whoami_resolves_a_docint_style_service_call(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The docint client's headers (bearer token plus ``X-Auth-User: docint``) resolve to ``service:docint``."""
+    monkeypatch.setenv("NEXTEXT_EDGE_SECRET", EDGE_SECRET)
+    monkeypatch.setenv("NEXTEXT_SERVICE_TOKENS", f"docint={DOCINT_TOKEN}")
+    headers = {"Authorization": f"Bearer {DOCINT_TOKEN}", OWNER_HEADER: "docint"}
+    with TestClient(create_app()) as client:
+        response = client.get("/api/v1/whoami", headers=headers)
+    assert response.status_code == 200
+    assert response.json() == {"username": "service:docint", "display_name": None}

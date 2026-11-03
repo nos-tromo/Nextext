@@ -14,13 +14,16 @@ from nextext.utils.env_cfg import (
     DEFAULT_VAD_TIMEOUT,
     DEFAULT_VISUAL_SUMMARY_IMAGE_MAX_SIDE,
     DEFAULT_VISUAL_SUMMARY_MAX_FRAMES,
+    EDGE_SECRET_MIN_LENGTH,
     KEYFRAMES_MAX_CEILING,
+    PrincipalConfigError,
     load_diarization_env,
     load_hate_speech_env,
     load_inference_env,
     load_job_concurrency,
     load_language_env,
     load_ner_env,
+    load_principal_env,
     load_sentence_restore_env,
     load_summary_env,
     load_vad_env,
@@ -1218,3 +1221,183 @@ def test_load_visual_summary_env_clamps_frames_to_keyframe_ceiling(monkeypatch: 
     monkeypatch.delenv("NEXTEXT_VISUAL_SUMMARY", raising=False)
     monkeypatch.setenv("VISUAL_SUMMARY_MAX_FRAMES", "5000")
     assert load_visual_summary_env().max_frames == KEYFRAMES_MAX_CEILING
+
+
+# Invented credentials, long enough to pass validation; never real values.
+_EDGE_SECRET = "edge-secret-for-tests-only-0123456789abcdef"
+_DOCINT_TOKEN = "svc-token-docint-for-tests-only-0123456789"
+_OTHER_TOKEN = "svc-token-other-for-tests-only-0123456789ab"
+
+
+def test_load_principal_env_leaves_edge_secret_and_tokens_unset_by_default() -> None:
+    """Without the variables there is no edge secret and no service token."""
+    cfg = load_principal_env()
+    assert cfg.edge_secret is None
+    assert cfg.service_tokens == ()
+
+
+def test_load_principal_env_treats_blank_values_as_unset(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Whitespace-only values keep the legacy behaviour instead of failing.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): The pytest fixture for patching
+            environment variables.
+    """
+    monkeypatch.setenv("NEXTEXT_EDGE_SECRET", "   ")
+    monkeypatch.setenv("NEXTEXT_SERVICE_TOKENS", "  ")
+    cfg = load_principal_env()
+    assert cfg.edge_secret is None
+    assert cfg.service_tokens == ()
+
+
+def test_load_principal_env_strips_the_edge_secret(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Surrounding whitespace is not part of the secret.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): The pytest fixture for patching
+            environment variables.
+    """
+    monkeypatch.setenv("NEXTEXT_EDGE_SECRET", f"  {_EDGE_SECRET}  ")
+    assert load_principal_env().edge_secret == _EDGE_SECRET
+
+
+def test_load_principal_env_accepts_a_secret_of_exactly_the_minimum_length(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The length floor is inclusive.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): The pytest fixture for patching
+            environment variables.
+    """
+    secret = "s" * EDGE_SECRET_MIN_LENGTH
+    monkeypatch.setenv("NEXTEXT_EDGE_SECRET", secret)
+    assert load_principal_env().edge_secret == secret
+
+
+def test_load_principal_env_rejects_a_short_edge_secret_without_echoing_it(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A secret below 32 characters fails fast; the message omits the value.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): The pytest fixture for patching
+            environment variables.
+    """
+    short = "short-edge-secret-for-tests-001"
+    assert len(short) == EDGE_SECRET_MIN_LENGTH - 1
+    monkeypatch.setenv("NEXTEXT_EDGE_SECRET", short)
+    with pytest.raises(PrincipalConfigError, match="NEXTEXT_EDGE_SECRET") as excinfo:
+        load_principal_env()
+    assert short not in str(excinfo.value)
+
+
+def test_load_principal_env_parses_service_tokens(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Entries are stripped, empty entries skipped, and a token may contain ``=``.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): The pytest fixture for patching
+            environment variables.
+    """
+    monkeypatch.setenv(
+        "NEXTEXT_SERVICE_TOKENS",
+        f" docint = {_DOCINT_TOKEN} ,, other.svc_1-a={_OTHER_TOKEN}==, ",
+    )
+    assert load_principal_env().service_tokens == (
+        ("docint", _DOCINT_TOKEN),
+        ("other.svc_1-a", f"{_OTHER_TOKEN}=="),
+    )
+
+
+@pytest.mark.parametrize(
+    ("raw", "fragment"),
+    [
+        pytest.param(_DOCINT_TOKEN, "entry 1 is not a name=token pair", id="no-separator"),
+        pytest.param(f"={_DOCINT_TOKEN}", "entry 1: the name", id="empty-name"),
+        pytest.param(f"doc int={_DOCINT_TOKEN}", "entry 1: the name", id="space-in-name"),
+        pytest.param(f"docint/1={_DOCINT_TOKEN}", "entry 1: the name", id="slash-in-name"),
+        pytest.param("docint=too-short-token-for-tests", "entry 1: the token is shorter", id="short-token"),
+        pytest.param("docint=", "entry 1: the token is shorter", id="empty-token"),
+        pytest.param(
+            f"docint={_DOCINT_TOKEN},docint={_OTHER_TOKEN}",
+            "entries 1 and 2 use the same name",
+            id="duplicate-name",
+        ),
+        pytest.param(
+            f"docint={_DOCINT_TOKEN},other={_DOCINT_TOKEN}",
+            "entries 1 and 2 use the same token",
+            id="duplicate-token",
+        ),
+        pytest.param(f"docint={_DOCINT_TOKEN},,{_OTHER_TOKEN}", "entry 3 is not a name=token pair", id="position"),
+    ],
+)
+def test_load_principal_env_rejects_malformed_service_tokens(
+    monkeypatch: pytest.MonkeyPatch, raw: str, fragment: str
+) -> None:
+    """Malformed ``NEXTEXT_SERVICE_TOKENS`` fails fast, naming entries by position only.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): The pytest fixture for patching
+            environment variables.
+        raw (str): The malformed variable value.
+        fragment (str): Text the error message must contain.
+    """
+    monkeypatch.setenv("NEXTEXT_SERVICE_TOKENS", raw)
+    with pytest.raises(PrincipalConfigError) as excinfo:
+        load_principal_env()
+    message = str(excinfo.value)
+    assert fragment in message
+    for value in (_DOCINT_TOKEN, _OTHER_TOKEN, "too-short-token-for-tests", "docint", "doc int"):
+        assert value not in message
+
+
+def test_load_principal_env_rejects_a_service_token_equal_to_the_edge_secret(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A service holding the edge secret could assert any user, so reuse fails.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): The pytest fixture for patching
+            environment variables.
+    """
+    monkeypatch.setenv("NEXTEXT_EDGE_SECRET", _EDGE_SECRET)
+    monkeypatch.setenv("NEXTEXT_SERVICE_TOKENS", f"docint={_EDGE_SECRET}")
+    with pytest.raises(PrincipalConfigError, match="reuses NEXTEXT_EDGE_SECRET") as excinfo:
+        load_principal_env()
+    assert _EDGE_SECRET not in str(excinfo.value)
+
+
+def test_principal_config_repr_hides_the_secret_and_tokens(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Logging or printing the config cannot leak a credential.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): The pytest fixture for patching
+            environment variables.
+    """
+    monkeypatch.setenv("NEXTEXT_EDGE_SECRET", _EDGE_SECRET)
+    monkeypatch.setenv("NEXTEXT_SERVICE_TOKENS", f"docint={_DOCINT_TOKEN}")
+    text = repr(load_principal_env())
+    assert _EDGE_SECRET not in text
+    assert _DOCINT_TOKEN not in text
+
+
+def test_load_principal_env_rejects_a_default_identity_in_the_service_namespace(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``service:`` is reserved for service tokens, so the dev fallback cannot claim it.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): The pytest fixture for patching
+            environment variables.
+    """
+    monkeypatch.setenv("NEXTEXT_DEFAULT_IDENTITY", " service:docint-for-tests ")
+    with pytest.raises(PrincipalConfigError, match="NEXTEXT_DEFAULT_IDENTITY") as excinfo:
+        load_principal_env()
+    assert "docint-for-tests" not in str(excinfo.value)
+
+
+def test_load_principal_env_accepts_a_default_identity_outside_the_service_namespace(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Only the exact ``service:`` prefix is reserved.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): The pytest fixture for patching
+            environment variables.
+    """
+    monkeypatch.setenv("NEXTEXT_DEFAULT_IDENTITY", "service-account")
+    assert load_principal_env().default_identity == "service-account"
