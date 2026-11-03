@@ -9,6 +9,8 @@ message respectively.
 from __future__ import annotations
 
 import logging
+import subprocess
+import sys
 from typing import override
 
 import httpx
@@ -243,3 +245,32 @@ def test_setup_logging_scrubs_uvicorn_records_and_attaches_once() -> None:
     assert len(error_handler.lines) == 1
     assert "RuntimeError" in error_handler.lines[0]
     assert _ECHOED not in error_handler.lines[0]
+
+
+def test_setup_logging_moves_uvicorn_off_stdout() -> None:
+    """Uvicorn's default config logs access to stdout, which belongs to the audit log; setup moves it."""
+    assert LOGGING_CONFIG["handlers"]["access"]["stream"] == "ext://sys.stdout"
+    access = logging.getLogger("uvicorn.access")
+    handler = logging.StreamHandler(sys.stdout)
+    access.addHandler(handler)
+    try:
+        setup_logging()
+        assert handler.stream is sys.stderr
+    finally:
+        access.removeHandler(handler)
+
+
+def test_uvicorn_access_log_never_reaches_stdout_in_a_real_process() -> None:
+    """Under uvicorn's own default logging config, an access line lands on stderr and stdout stays empty."""
+    code = (
+        "import logging, logging.config\n"
+        "from uvicorn.config import LOGGING_CONFIG\n"
+        "logging.config.dictConfig(LOGGING_CONFIG)\n"
+        "from nextext.utils.log_cfg import setup_logging\n"
+        "setup_logging()\n"
+        "logging.getLogger('uvicorn.access').info("
+        "'%s - \"%s %s HTTP/%s\" %d', '10.0.0.2:51234', 'GET', '/api/v1/health', '1.1', 200)\n"
+    )
+    result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=120, check=True)
+    assert result.stdout == ""
+    assert '"GET /api/v1/health HTTP/1.1" 200' in result.stderr

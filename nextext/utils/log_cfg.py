@@ -7,6 +7,11 @@ status (``error_label``), an unexpected failure by class and traceback frames
 processed. The uvicorn access log drops the query string, which can carry the
 per-job media token.
 
+Operational logs go to stderr only: stdout belongs to the data-protection
+audit log, whose lines must never interleave with anything else
+(:mod:`nextext.audit`). uvicorn's default logging config sends its access log
+to stdout, so :func:`setup_logging` moves it.
+
 The container logging driver owns log retention and rotation
 (see ``docker/compose.yaml``).
 """
@@ -17,7 +22,7 @@ import logging
 import os
 import sys
 import traceback
-from typing import override
+from typing import Any, cast, override
 
 from loguru import logger
 
@@ -128,6 +133,42 @@ def _add_filter_once(logger_name: str, log_filter: logging.Filter) -> None:
         target.addFilter(log_filter)
 
 
+def _writes_to_stdout(handler: logging.Handler) -> bool:
+    """Report whether a stdlib handler writes to the process's stdout.
+
+    Args:
+        handler (logging.Handler): The handler to inspect.
+
+    Returns:
+        bool: ``True`` for a stream handler (not a file handler) on
+            ``sys.stdout``, ``sys.__stdout__`` or file descriptor 1.
+    """
+    if not isinstance(handler, logging.StreamHandler) or isinstance(handler, logging.FileHandler):
+        return False
+    stream = handler.stream
+    if stream is sys.stdout or stream is sys.__stdout__:
+        return True
+    try:
+        return stream.fileno() == 1
+    except (AttributeError, OSError, ValueError):
+        return False
+
+
+def _move_handlers_off_stdout() -> None:
+    """Point every stdlib log handler that writes to stdout at stderr instead.
+
+    uvicorn's default config (used by ``uvicorn`` on the command line, as the
+    container runs it) gives its access log a stdout handler; stdout carries
+    the audit log alone, so that handler and any other on stdout are moved.
+    """
+    loggers = [logging.getLogger()]
+    loggers += [entry for entry in logging.root.manager.loggerDict.values() if isinstance(entry, logging.Logger)]
+    for target in loggers:
+        for handler in target.handlers:
+            if _writes_to_stdout(handler):
+                cast(logging.StreamHandler[Any], handler).setStream(sys.stderr)
+
+
 def setup_logging(
     backtrace: bool = False,
     diagnose: bool = False,
@@ -137,7 +178,8 @@ def setup_logging(
     Installs a single loguru stderr sink. ``LOG_LEVEL`` selects the minimum
     level (default ``INFO``). Also attaches, once per process, the filters
     that keep query strings out of uvicorn's access log and exception messages
-    out of its error log (inert in the CLI, which runs no uvicorn).
+    out of its error log (inert in the CLI, which runs no uvicorn), and moves
+    every stdlib handler writing to stdout to stderr.
 
     Args:
         backtrace (bool, optional): Whether to include backtrace information. Defaults to False.
@@ -157,3 +199,4 @@ def setup_logging(
 
     _add_filter_once("uvicorn.access", _StripQueryString())
     _add_filter_once("uvicorn.error", _StripExceptionMessage())
+    _move_handlers_off_stdout()
