@@ -97,7 +97,7 @@ tmpfs and withhold bytes the player wants immediately.
 
 ## Jobs and identity
 
-Jobs live only in memory — there is no durable storage and no TTL, so a long-running job is never cut off and is retained until you delete it or the backend restarts. Without the edge gateway, identity is anonymous: the frontend mints a per-browser id and stamps it into the URL (`?owner=<id>`) on first visit, sending it to the backend as the trusted identity header (`X-Auth-User` by default) to scope your jobs. Because that id survives a refresh, reloading the page mid-run re-discovers your jobs and resumes the live progress view; closing the tab and reopening the bare host starts a fresh identity. Developers calling the API directly can skip the header and set `NEXTEXT_DEFAULT_IDENTITY` instead; it applies only while no edge secret is set. Behind the gateway, the header carries the signed-in user. With `NEXTEXT_EDGE_SECRET` set, the backend believes the header only on requests carrying the gateway's `X-Edge-Secret`; without it, it believes whoever can reach the backend. Services that call the API directly, such as docint, authenticate with a token of their own (`NEXTEXT_SERVICE_TOKENS`) and act only as themselves, under a `service:` principal no user can claim — see [configuration.md § Identity](configuration.md#identity).
+Jobs live only in memory — there is no durable storage and no TTL, so a long-running job is never cut off and is retained until you delete it or the backend restarts. Each upload's directory also holds a small owner record, so the uploads a crashed backend leaves behind are removed at the next startup and the removal is attributed to their owners (see [audit.md](audit.md#the-owner-record)). Without the edge gateway, identity is anonymous: the frontend mints a per-browser id and stamps it into the URL (`?owner=<id>`) on first visit, sending it to the backend as the trusted identity header (`X-Auth-User` by default) to scope your jobs. Because that id survives a refresh, reloading the page mid-run re-discovers your jobs and resumes the live progress view; closing the tab and reopening the bare host starts a fresh identity. Developers calling the API directly can skip the header and set `NEXTEXT_DEFAULT_IDENTITY` instead; it applies only while no edge secret is set. Behind the gateway, the header carries the signed-in user. With `NEXTEXT_EDGE_SECRET` set, the backend believes the header only on requests carrying the gateway's `X-Edge-Secret`; without it, it believes whoever can reach the backend. Services that call the API directly, such as docint, authenticate with a token of their own (`NEXTEXT_SERVICE_TOKENS`) and act only as themselves, under a `service:` principal no user can claim — see [configuration.md § Identity](configuration.md#identity).
 
 A job whose file held no processable speech still **completes** — it is a
 result, not a failure — and carries `skipped: true` with a typed
@@ -113,6 +113,15 @@ Cross-owner reads return `404` rather than `403`, so the existence of another
 owner's job never leaks. In production the `edge-plane` gateway is what injects
 the trusted header; see
 [configuration.md](configuration.md#production-sub-path).
+
+## Audit log
+
+The backend records every collection, query, download, combination and
+deletion of a job, and every transfer of job content to a model, in a
+hash-chained data-protection audit log on its stdout — one chain per process,
+with the CLI's runs writing their own. The log collector takes the lines to
+obs-plane's audit store. What each endpoint and stage records:
+[audit.md](audit.md).
 
 ## Image tagging
 

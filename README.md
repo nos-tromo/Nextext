@@ -70,7 +70,9 @@ Preload them on a connected host before shipping to a disconnected one — see
 
 `uv run nextext-cli -f <file> [ARGS]` runs the same pipeline in-process, with no
 backend container — the right tool for very large local files and directory
-batch loops. Flags and examples: [cli.md](docs/cli.md).
+batch loops. On a deployed host, `make cli ARGS='…'` runs it inside the
+backend, so its audit chain lands in the backend's log. Flags and examples:
+[cli.md](docs/cli.md).
 
 ## Operating
 
@@ -86,6 +88,7 @@ Topic-by-topic reference lives in [docs/](docs/README.md):
 - [architecture.md](docs/architecture.md) — the two-service split, the in-memory job and identity model, image tagging
 - [airgap.md](docs/airgap.md) — offline usage, `make bundle`, loading on a disconnected host
 - [cli.md](docs/cli.md) — `nextext-cli` flags and batch processing
+- [audit.md](docs/audit.md) — the data-protection audit log: what every endpoint, job stage and CLI run records
 
 ## Pointers
 
