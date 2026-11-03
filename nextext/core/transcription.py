@@ -221,6 +221,7 @@ class ExternalWhisperTranscriber:
         end_column: str = "end",
         speaker_column: str = "speaker",
         text_column: str = "text",
+        scratch_dir: Path | None = None,
     ) -> None:
         """Initialize the ExternalWhisperTranscriber.
 
@@ -234,8 +235,13 @@ class ExternalWhisperTranscriber:
             end_column (str): DataFrame column for segment end times.
             speaker_column (str): DataFrame column for speaker labels.
             text_column (str): DataFrame column for transcribed text.
+            scratch_dir (Path | None): Directory for the temporary FLAC
+                re-encode; ``None`` uses the system temp directory. The API
+                passes the job's own directory, so the copy goes wherever the
+                upload goes.
         """
         self.file_path = file_path
+        self.scratch_dir = scratch_dir
         self.src_lang = src_lang
         self.task = task
         self._model_id = model_id
@@ -306,7 +312,7 @@ class ExternalWhisperTranscriber:
             return
 
         provider = load_inference_env().provider
-        with normalize_for_transcription(self.file_path) as audio_path:
+        with normalize_for_transcription(self.file_path, scratch_dir=self.scratch_dir) as audio_path:
             file_size = audio_path.stat().st_size
             logger.info(
                 "External Whisper request: model='{}' task='{}' language='{}' "

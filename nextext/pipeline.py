@@ -86,6 +86,7 @@ def transcription_pipeline(
     file_path: Path,
     src_lang: str,
     diarize: bool,
+    scratch_dir: Path | None = None,
 ) -> TranscriptionOutcome:
     """Transcribe the audio file via the external Whisper API, optionally diarized.
 
@@ -122,6 +123,8 @@ def transcription_pipeline(
         file_path (Path): Path to the audio file.
         src_lang (str): Source language code.
         diarize (bool): Whether to run speaker diarization.
+        scratch_dir (Path | None): Directory for the temporary FLAC re-encode;
+            ``None`` uses the system temp directory.
 
     Returns:
         TranscriptionOutcome: The transcript, the resolved source language
@@ -133,6 +136,7 @@ def transcription_pipeline(
         file_path=file_path,
         src_lang=src_lang,
         model_id=config.model,
+        scratch_dir=scratch_dir,
     )
     transcriber.transcription()
 
