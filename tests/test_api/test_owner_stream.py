@@ -21,6 +21,7 @@ from fastapi.testclient import TestClient
 from nextext.api.jobs import JobManager, JobState
 from nextext.api.main import create_app
 from nextext.api.schemas import JobOptions, JobStatus
+from tests.audit_helpers import AuditCapture, edge_origin
 
 from .conftest import ALICE_OWNER_ID, BOB_OWNER_ID, stub_pipeline_runner
 
@@ -71,6 +72,7 @@ async def _create_job(manager: JobManager, owner_id: str, tmp_path: Path, name: 
         file_path=file_path,
         source_file_hash="sha256:0",
         options=JobOptions(),
+        origin=edge_origin(owner_id),
     )
 
 
@@ -104,7 +106,7 @@ async def _collect(agen: Any, want_completed: int, timeout: float = 5.0) -> list
 @pytest.mark.asyncio
 async def test_owner_stream_multiplexes_and_stays_open_across_completions(tmp_path: Path) -> None:
     """One owner stream carries events for two jobs and does not close on the first completion."""
-    manager = JobManager(pipeline_runner=stub_pipeline_runner, concurrency=2)
+    manager = JobManager(pipeline_runner=stub_pipeline_runner, concurrency=2, emitter=AuditCapture().started())
     try:
         job_a = await _create_job(manager, ALICE_OWNER_ID, tmp_path, "a")
         job_b = await _create_job(manager, ALICE_OWNER_ID, tmp_path, "b")
@@ -122,7 +124,7 @@ async def test_owner_stream_multiplexes_and_stays_open_across_completions(tmp_pa
 @pytest.mark.asyncio
 async def test_owner_stream_is_owner_scoped(tmp_path: Path) -> None:
     """Bob's stream never carries Alice's job events."""
-    manager = JobManager(pipeline_runner=stub_pipeline_runner, concurrency=2)
+    manager = JobManager(pipeline_runner=stub_pipeline_runner, concurrency=2, emitter=AuditCapture().started())
     try:
         alice_job = await _create_job(manager, ALICE_OWNER_ID, tmp_path, "alice")
         bob_job = await _create_job(manager, BOB_OWNER_ID, tmp_path, "bob")
@@ -139,7 +141,7 @@ async def test_owner_stream_is_owner_scoped(tmp_path: Path) -> None:
 @pytest.mark.asyncio
 async def test_owner_stream_replays_history_for_existing_jobs(tmp_path: Path) -> None:
     """A stream opened after a job finished still replays that job's full history."""
-    manager = JobManager(pipeline_runner=stub_pipeline_runner, concurrency=2)
+    manager = JobManager(pipeline_runner=stub_pipeline_runner, concurrency=2, emitter=AuditCapture().started())
     try:
         job = await _create_job(manager, ALICE_OWNER_ID, tmp_path, "done")
         # Let the worker run to completion before subscribing.
@@ -167,7 +169,7 @@ def test_owner_events_route_streams_via_subscribe_owner() -> None:
     the fan-out behaviour itself is covered by the async manager-level tests.
     """
     app = create_app()
-    manager = JobManager(pipeline_runner=stub_pipeline_runner)
+    manager = JobManager(pipeline_runner=stub_pipeline_runner, emitter=AuditCapture().started())
 
     async def _bounded(owner_id: str) -> AsyncIterator[bytes]:
         yield b'event: stage_started\ndata: {"job_id": "j0", "stage": "Transcribing"}\n\n'
@@ -190,7 +192,7 @@ def test_owner_events_route_streams_via_subscribe_owner() -> None:
 @pytest.mark.asyncio
 async def test_owner_stream_delivers_job_created_after_connect(tmp_path: Path) -> None:
     """A job created *after* the owner stream opens still streams its events."""
-    manager = JobManager(pipeline_runner=stub_pipeline_runner, concurrency=2)
+    manager = JobManager(pipeline_runner=stub_pipeline_runner, concurrency=2, emitter=AuditCapture().started())
     try:
         agen = manager.subscribe_owner(ALICE_OWNER_ID)
         collector = asyncio.create_task(_collect(agen, want_completed=1))

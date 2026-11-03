@@ -14,6 +14,7 @@ from fastapi.testclient import TestClient
 import nextext.api.jobs as jobs_module
 from nextext.api.jobs import PIPELINE_STAGE_LABELS, JobManager, JobState, PushEvent
 from nextext.api.schemas import JobOptions
+from tests.audit_helpers import AuditCapture, edge_origin
 
 from .conftest import ALICE_OWNER_ID
 
@@ -191,7 +192,7 @@ async def test_subscriber_attaching_as_job_finishes_still_gets_terminal_frame(
     metrics call runs inside that step, ahead of the emit, so wrapping it
     starts a subscriber there deterministically instead of by timing.
     """
-    manager = JobManager(pipeline_runner=runner)
+    manager = JobManager(pipeline_runner=runner, emitter=AuditCapture().started())
     record = getattr(jobs_module, metrics_hook)
     streams: list[asyncio.Task[bytes]] = []
 
@@ -227,6 +228,7 @@ async def test_subscriber_attaching_as_job_finishes_still_gets_terminal_frame(
             file_path=upload,
             source_file_hash="sha256:0",
             options=JobOptions(),
+            origin=edge_origin(ALICE_OWNER_ID),
         )
         assert job.task is not None
         await job.task

@@ -11,6 +11,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from nextext.api.jobs import JobManager
+from tests.audit_helpers import AuditCapture
 
 
 def _wait_for_status(
@@ -195,7 +196,7 @@ def test_job_manager_default_concurrency_is_serial(
     """
     monkeypatch.delenv("NEXTEXT_JOB_CONCURRENCY", raising=False)
 
-    manager = JobManager()
+    manager = JobManager(emitter=AuditCapture().started())
 
     assert manager._concurrency == 1
     assert manager._workers_semaphore._value == 1
@@ -203,7 +204,7 @@ def test_job_manager_default_concurrency_is_serial(
 
 def test_job_manager_concurrency_override_sizes_semaphore() -> None:
     """Passing concurrency=3 explicitly sizes the worker semaphore to 3."""
-    manager = JobManager(concurrency=3)
+    manager = JobManager(concurrency=3, emitter=AuditCapture().started())
 
     assert manager._concurrency == 3
     assert manager._workers_semaphore._value == 3

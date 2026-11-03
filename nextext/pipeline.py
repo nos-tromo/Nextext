@@ -286,6 +286,26 @@ def effective_text_column(df: pd.DataFrame) -> str:
     return "translation" if "translation" in df.columns else "text"
 
 
+def column_text(df: pd.DataFrame, column: str) -> str:
+    """Join one transcript column into a text, one row per line.
+
+    The canonical text of a transcript or its translation, which the audit
+    log hashes (``ai.output_sha256``) so a later copy of the result can be
+    matched without the log holding the text.
+
+    Args:
+        df (pd.DataFrame): Transcript DataFrame.
+        column (str): The column to join, e.g. ``"text"`` or ``"translation"``.
+
+    Returns:
+        str: The column's cells joined by newlines (missing cells as empty
+            lines); ``""`` when the column is absent or the frame is empty.
+    """
+    if column not in df.columns or df.empty:
+        return ""
+    return "\n".join(_clean_cell(value) for value in df[column].tolist())
+
+
 _TXT_BANNER_RULE = "=" * 40
 
 

@@ -15,6 +15,7 @@ from nextext.api import artifacts
 from nextext.api.jobs import JobState
 from nextext.api.schemas import JobOptions, JobStatus
 from nextext.core.visual_context import FrameCaption
+from tests.audit_helpers import job_audit
 
 
 def _job_with_keyframes(frames: list[bytes], times: list[float] | None = None) -> JobState:
@@ -30,6 +31,7 @@ def _job_with_keyframes(frames: list[bytes], times: list[float] | None = None) -
         options=JobOptions.model_validate({}),
         status=JobStatus.COMPLETED,
         result=result,
+        audit=job_audit(),
     )
 
 
@@ -182,6 +184,7 @@ def _job_with_captions(captions: list[FrameCaption]) -> JobState:
         options=JobOptions.model_validate({}),
         status=JobStatus.COMPLETED,
         result={"frame_captions": captions, "summary": "a summary"},
+        audit=job_audit(),
     )
 
 

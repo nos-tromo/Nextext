@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Iterator
-from contextlib import asynccontextmanager
+from collections.abc import Iterator
 from typing import Any
 
 import pandas as pd
@@ -11,6 +10,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from nextext.api import main as main_module
 from nextext.api.jobs import (
     PIPELINE_STAGE_LABELS,
     JobManager,
@@ -18,6 +18,7 @@ from nextext.api.jobs import (
     PushEvent,
 )
 from nextext.api.main import create_app
+from tests.audit_helpers import AuditCapture
 
 # Default trusted identity header (matches the backend's NEXTEXT_AUTH_HEADER
 # default). Tests send the owner id under this header on every request.
@@ -134,28 +135,23 @@ def stub_pipeline_runner(state: JobState, push: PushEvent) -> dict[str, Any]:
 
 
 @pytest.fixture
-def stub_app_client() -> Iterator[tuple[TestClient, JobManager]]:
+def stub_app_client(
+    monkeypatch: pytest.MonkeyPatch, audit_capture: AuditCapture
+) -> Iterator[tuple[TestClient, JobManager]]:
     """Spin up the FastAPI app with the stubbed pipeline runner.
+
+    The real lifespan runs — identity check, audit chain, job manager — with
+    the audit events going to ``audit_capture`` and the logging setup left
+    alone, so a test's log capture survives startup.
+
+    Args:
+        monkeypatch: Pytest patcher.
+        audit_capture: Where the app's audit events go.
 
     Yields:
         tuple[TestClient, JobManager]: The HTTP client and the manager it uses.
     """
-    app = create_app()
-    original_lifespan = app.router.lifespan_context
-
-    @asynccontextmanager
-    async def _patched_lifespan(_app: Any) -> AsyncIterator[None]:
-        manager = JobManager(pipeline_runner=stub_pipeline_runner)
-        await manager.start()
-        _app.state.job_manager = manager
-        try:
-            yield
-        finally:
-            await manager.stop()
-
-    app.router.lifespan_context = _patched_lifespan
-    try:
-        with _client_with_owner(app, ALICE_OWNER_ID) as client:
-            yield client, client.app.state.job_manager  # type: ignore[attr-defined]
-    finally:
-        app.router.lifespan_context = original_lifespan
+    monkeypatch.setattr(main_module, "setup_logging", lambda: None)
+    app = create_app(audit_emitter_factory=audit_capture.factory, pipeline_runner=stub_pipeline_runner)
+    with _client_with_owner(app, ALICE_OWNER_ID) as client:
+        yield client, client.app.state.job_manager  # type: ignore[attr-defined]

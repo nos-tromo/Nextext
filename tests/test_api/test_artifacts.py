@@ -15,6 +15,7 @@ from fastapi.testclient import TestClient
 from nextext.api.artifacts import render_artifact
 from nextext.api.jobs import JobManager, JobState
 from nextext.api.schemas import JobOptions, JobStatus
+from tests.audit_helpers import job_audit
 
 
 def _submit_and_wait(client: TestClient, options: dict[str, Any]) -> str:
@@ -272,6 +273,7 @@ def test_txt_artifacts_absent_for_empty_transcript() -> None:
         options=JobOptions.model_validate({}),
         status=JobStatus.COMPLETED,
         result={"transcript": pd.DataFrame(columns=pd.Index(["start", "end", "text"]))},
+        audit=job_audit(),
     )
     assert render_artifact(state, "transcript.txt") is None
     assert render_artifact(state, "translation.txt") is None

@@ -5,15 +5,15 @@ from __future__ import annotations
 import io
 import json
 import time
-from collections.abc import AsyncIterator, Iterator
-from contextlib import asynccontextmanager
+from collections.abc import Iterator
 from typing import Any, cast
 
 import pytest
 from fastapi.testclient import TestClient
 
-from nextext.api.jobs import JobManager
+from nextext.api import main as main_module
 from nextext.api.main import create_app
+from tests.audit_helpers import AuditCapture
 
 from .conftest import (
     ALICE_OWNER_ID,
@@ -24,37 +24,28 @@ from .conftest import (
 
 
 @pytest.fixture
-def dual_clients() -> Iterator[tuple[TestClient, TestClient]]:
+def dual_clients(
+    monkeypatch: pytest.MonkeyPatch, audit_capture: AuditCapture
+) -> Iterator[tuple[TestClient, TestClient]]:
     """Spin up one stubbed backend shared by two owner-scoped clients.
 
     The two clients model two separate browsers (distinct identities)
     talking to the same in-memory ``JobManager``.
 
+    Args:
+        monkeypatch: Pytest patcher.
+        audit_capture: Where the app's audit events go.
+
     Yields:
         tuple[TestClient, TestClient]: ``(alice, bob)`` clients.
     """
-    app = create_app()
-    original_lifespan = app.router.lifespan_context
-
-    @asynccontextmanager
-    async def _patched_lifespan(_app: Any) -> AsyncIterator[None]:
-        manager = JobManager(pipeline_runner=stub_pipeline_runner)
-        await manager.start()
-        _app.state.job_manager = manager
-        try:
-            yield
-        finally:
-            await manager.stop()
-
-    app.router.lifespan_context = _patched_lifespan
-    try:
-        with (
-            _client_with_owner(app, ALICE_OWNER_ID) as alice,
-            _client_with_owner(app, BOB_OWNER_ID) as bob,
-        ):
-            yield alice, bob
-    finally:
-        app.router.lifespan_context = original_lifespan
+    monkeypatch.setattr(main_module, "setup_logging", lambda: None)
+    app = create_app(audit_emitter_factory=audit_capture.factory, pipeline_runner=stub_pipeline_runner)
+    with (
+        _client_with_owner(app, ALICE_OWNER_ID) as alice,
+        _client_with_owner(app, BOB_OWNER_ID) as bob,
+    ):
+        yield alice, bob
 
 
 def _submit(client: TestClient, *, name: str = "clip.wav") -> str:

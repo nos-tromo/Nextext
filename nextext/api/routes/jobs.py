@@ -4,6 +4,12 @@ Per-route ownership checks enforce the privacy boundary established by
 :func:`nextext.api.identity.resolve_principal`: any read or mutation on a
 job other than the caller's own is reported as ``404 Not Found`` so the
 existence of the row never leaks across owners.
+
+Every route that hands out, stores or erases personal data writes one
+data-protection audit event (:mod:`nextext.api.audit`) once the data is
+fetched and before it is returned; an attempt on another owner's job is
+recorded as ``denied``. The progress streams carry no personal data and are
+not recorded. ``docs/audit.md`` lists every route and what it records.
 """
 
 from __future__ import annotations
@@ -39,7 +45,8 @@ from nextext.api.artifacts import (
     render_artifact,
     render_batch_artifact,
 )
-from nextext.api.identity import resolve_principal
+from nextext.api.audit import RequestAudit, audited, media_audit
+from nextext.api.identity import edge_secret_enforced, resolve_principal
 from nextext.api.jobs import JobManager, JobState
 from nextext.api.schemas import (
     JobCreateResponse,
@@ -49,8 +56,44 @@ from nextext.api.schemas import (
     JobSnapshot,
     JobStatus,
 )
+from nextext.utils.audit_event import Actor, Target
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
+
+# Job creation stores the upload and starts the model calls and the
+# combination of their results, so a purpose required for any of those
+# actions is required to create a job.
+_CREATE_AUDIT = audited("collect", "job.create", gate=("ai_call", "combine"))
+_LIST_AUDIT = audited("query", "job.list")
+_GET_AUDIT = audited("query", "job.get", deferred=True)
+_DELETE_AUDIT = audited("delete", "job.delete")
+_ARTIFACT_AUDIT = audited("disclose", "artifact.download", path_criteria={"name": "artifact"})
+_BATCH_AUDIT = audited("disclose", "artifact.download_batch", path_criteria={"name": "artifact"})
+
+
+def _download_recipient(name: str) -> str:
+    """Name where a downloaded artifact goes, by its format.
+
+    Args:
+        name: Artifact name, e.g. ``transcript.csv``.
+
+    Returns:
+        str: ``download:<extension>``, e.g. ``download:csv``.
+    """
+    return f"download:{name.rsplit('.', 1)[-1]}"
+
+
+def _job_target(job_id: str) -> Target:
+    """Reference one job as an audit target.
+
+    Args:
+        job_id: Job identifier.
+
+    Returns:
+        Target: ``kind="job"``, that id, count 1.
+    """
+    return Target(kind="job", ids=[job_id], count=1)
+
 
 _DEFAULT_MAX_UPLOAD_MB = 8192
 _CHUNK_SIZE = 1 << 20  # 1 MiB — mirrors the Streamlit upload hash loop.
@@ -185,14 +228,20 @@ async def create_job(
     ),
     manager: JobManager = Depends(get_job_manager),  # noqa: B008 — FastAPI dependency marker
     owner_id: str = Depends(resolve_principal),
+    audit: RequestAudit = Depends(_CREATE_AUDIT),  # noqa: B008 — FastAPI dependency marker
 ) -> JobCreateResponse:
     """Accept a multipart upload and queue a new pipeline job.
+
+    The manager records the upload (``collect`` / ``job.create``) before the
+    job exists; an upload rejected for its size, or failing while it is
+    stored, is removed and recorded with ``outcome="error"``.
 
     Args:
         file: Multipart audio/video upload.
         options: JSON-encoded ``JobOptions`` form field.
         manager: Job manager dependency.
         owner_id: Resolved principal (owner identifier).
+        audit: The request's audit context.
 
     Returns:
         JobCreateResponse: Identifier and timestamps for the new job.
@@ -203,9 +252,11 @@ async def create_job(
     file_path, _ = manager.allocate_tmpdir(suffix=suffix)
     try:
         digest = await _stream_upload_to_disk(file, file_path, _max_upload_bytes())
-    except HTTPException:
-        # Clean up the half-written file before re-raising.
+    except BaseException as exc:
+        # Remove the half-written file, then record the failed collection.
         manager._unlink_job_dir(file_path)
+        failure = "upload_too_large" if isinstance(exc, HTTPException) else "upload_failed"
+        audit.emit(outcome="error", criteria={"files": 1, "failure": failure})
         raise
     state = await manager.create_job(
         owner_id=owner_id,
@@ -213,6 +264,7 @@ async def create_job(
         file_path=file_path,
         source_file_hash=digest,
         options=parsed_options,
+        origin=audit.origin,
     )
     logger.info(
         "Accepted job {} ({} bytes).",
@@ -230,16 +282,19 @@ async def create_job(
 async def list_jobs(
     manager: JobManager = Depends(get_job_manager),  # noqa: B008 — FastAPI dependency marker
     owner_id: str = Depends(resolve_principal),
+    audit: RequestAudit = Depends(_LIST_AUDIT),  # noqa: B008 — FastAPI dependency marker
 ) -> JobListResponse:
     """Return the caller's in-memory jobs, newest first.
 
     Jobs live only in memory and are scoped by owner. The frontend calls
     this on load to re-discover its own jobs after a browser reload —
     re-attaching to any still running and re-rendering those finished.
+    Recorded as ``query`` / ``job.list`` naming every job listed.
 
     Args:
         manager: Job manager dependency.
         owner_id: Resolved principal (owner identifier).
+        audit: The request's audit context.
 
     Returns:
         JobListResponse: The caller's jobs.
@@ -263,6 +318,7 @@ async def list_jobs(
         )
         for state in states
     ]
+    audit.emit_ids("job", [state.job_id for state in states])
     return JobListResponse(jobs=items)
 
 
@@ -279,6 +335,7 @@ async def download_batch_artifact(
     name: str,
     manager: JobManager = Depends(get_job_manager),  # noqa: B008 — FastAPI dependency marker
     owner_id: str = Depends(resolve_principal),
+    audit: RequestAudit = Depends(_BATCH_AUDIT),  # noqa: B008 — FastAPI dependency marker
 ) -> Response:
     """Return one batch artifact spanning all of the caller's completed jobs.
 
@@ -286,12 +343,14 @@ async def download_batch_artifact(
     ``docint.jsonl`` concatenates each job's docint records; ``archive.zip``
     nests each job's outputs under its own folder. Owner-scoped — only the
     caller's own jobs are ever included, so the batch never leaks across
-    owners.
+    owners. Recorded as ``disclose`` / ``artifact.download_batch`` naming the
+    jobs the bundle was built from.
 
     Args:
         name: Batch artifact name (``docint.jsonl`` or ``archive.zip``).
         manager: Job manager dependency.
         owner_id: Resolved principal (owner identifier).
+        audit: The request's audit context.
 
     Returns:
         Response: Binary payload with the appropriate media type.
@@ -303,16 +362,24 @@ async def download_batch_artifact(
         )
     states = await manager.list_for_owner(owner_id)
     completed = [state for state in states if state.status == JobStatus.COMPLETED]
+    job_ids = [state.job_id for state in completed]
     # Assembling a multi-file batch ZIP is CPU-bound (openpyxl XLSX + nested
     # zips); render it off the event loop so a large bundle does not stall SSE
     # streams, health checks, or other downloads while it builds.
-    rendered = await run_in_threadpool(render_batch_artifact, completed, name)
+    try:
+        rendered = await run_in_threadpool(render_batch_artifact, completed, name)
+    except Exception:
+        audit.emit_ids(
+            "job", job_ids, outcome="error", criteria={"artifact": name}, recipient=_download_recipient(name)
+        )
+        raise
     if rendered is None:
         raise HTTPException(
             status_code=404,
             detail=f"No completed jobs produced '{name}'.",
         )
     payload, content_type = rendered
+    audit.emit_ids("job", job_ids, criteria={"artifact": name}, recipient=_download_recipient(name))
     download_name = _BATCH_DOWNLOAD_NAMES[name]
     quoted = urllib.parse.quote(download_name, safe="")
     return Response(
@@ -364,16 +431,22 @@ async def _require_job(
     job_id: str,
     manager: JobManager,
     owner_id: str,
+    audit: RequestAudit | None = None,
+    criteria: dict[str, object] | None = None,
 ) -> JobState:
     """Fetch a job and verify the caller owns it, or 404.
 
     Cross-owner access deliberately returns ``404`` rather than ``403``
-    so the existence of the row stays private.
+    so the existence of the row stays private. On an audited route the
+    attempt is recorded as refused (``outcome="denied"``, naming the job);
+    the caller cannot see that record.
 
     Args:
         job_id: Job identifier.
         manager: Job manager dependency.
         owner_id: Resolved principal (owner identifier).
+        audit: The route's audit context, if the route is audited.
+        criteria: The route's parameters, for the refusal.
 
     Returns:
         JobState: The matching state.
@@ -384,6 +457,8 @@ async def _require_job(
     """
     state = await manager.get(job_id)
     if state is None or state.owner_id != owner_id:
+        if state is not None and audit is not None:
+            audit.emit(outcome="denied", target=_job_target(job_id), criteria=criteria)
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Job '{job_id}' not found.",
@@ -396,19 +471,30 @@ async def get_job(
     job_id: str,
     manager: JobManager = Depends(get_job_manager),  # noqa: B008 — FastAPI dependency marker
     owner_id: str = Depends(resolve_principal),
+    audit: RequestAudit = Depends(_GET_AUDIT),  # noqa: B008 — FastAPI dependency marker
 ) -> JobSnapshot:
     """Return a point-in-time view of one job.
+
+    A finished job's snapshot carries its result — transcript, translation,
+    summary, entities, findings — and is recorded as ``query`` /
+    ``job.get``; until then the snapshot is a status poll (status, progress,
+    the caller's own options) and is not recorded.
 
     Args:
         job_id: Job identifier.
         manager: Job manager dependency.
         owner_id: Resolved principal (owner identifier).
+        audit: The request's audit context.
 
     Returns:
         JobSnapshot: Current job state.
     """
-    state = await _require_job(job_id, manager, owner_id)
-    return state.snapshot()
+    state = await _require_job(job_id, manager, owner_id, audit)
+    snapshot = state.snapshot()
+    if snapshot.result is not None:
+        audit.require_purpose()
+        audit.emit(target=_job_target(job_id))
+    return snapshot
 
 
 @router.delete("/{job_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -416,18 +502,24 @@ async def delete_job(
     job_id: str,
     manager: JobManager = Depends(get_job_manager),  # noqa: B008 — FastAPI dependency marker
     owner_id: str = Depends(resolve_principal),
+    audit: RequestAudit = Depends(_DELETE_AUDIT),  # noqa: B008 — FastAPI dependency marker
 ) -> Response:
     """Remove a job, its tempfile, and signal SSE subscribers.
+
+    The manager records the erasure (``delete`` / ``job.delete``). The SPA's
+    "clear" actions issue one such request per job.
 
     Args:
         job_id: Job identifier.
         manager: Job manager dependency.
         owner_id: Resolved principal (owner identifier).
+        audit: The request's audit context.
 
     Returns:
         Response: Empty 204 response.
     """
-    removed = await manager.delete(job_id, owner_id=owner_id)
+    await _require_job(job_id, manager, owner_id, audit)
+    removed = await manager.delete(job_id, origin=audit.origin, owner_id=owner_id)
     if not removed:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -496,8 +588,10 @@ def _media_type_for(file_name: str) -> str:
 @router.get("/{job_id}/media")
 async def stream_media(
     job_id: str,
+    request: Request,
     token: str = Query(..., description="Per-job media capability token."),
     manager: JobManager = Depends(get_job_manager),  # noqa: B008 — FastAPI dependency marker
+    audit: RequestAudit = Depends(media_audit),  # noqa: B008 — FastAPI dependency marker
 ) -> FileResponse:
     """Stream a job's original upload for in-browser playback.
 
@@ -516,22 +610,45 @@ async def stream_media(
     — that is what lets the player seek without re-fetching the whole
     recording.
 
+    Every request that streams bytes — each range a player fetches — is
+    recorded as ``query`` / ``media.stream`` (never with the token). The
+    actor is the resolved caller, marked as acting on the owner's data when
+    it is someone else. With ``NEXTEXT_EDGE_SECRET`` set, a request without a
+    verified identity did not come through the gateway and is refused; without
+    it, such a request is attributed to the job's creator, to whom the token
+    was issued.
+
     Args:
         job_id (str): Job identifier from the path.
+        request (Request): The incoming request, for its ``Range`` header.
         token (str): Capability token minted for this job.
         manager (JobManager): Injected job manager.
+        audit (RequestAudit): The request's audit context.
 
     Returns:
         FileResponse: The upload bytes, ranged on request.
 
     Raises:
-        HTTPException: 404 for an unknown job, a wrong token, or an upload
-            that is no longer on disk — never 403, so a bad token cannot be
-            used to probe which jobs exist.
+        HTTPException: 404 for an unknown job, a wrong token, an upload that
+            is no longer on disk, or (edge secret set) an unverified caller —
+            never 403, so a bad token cannot be used to probe which jobs
+            exist; 428 when a stated purpose is required and missing.
     """
     state = await manager.get_by_media_token(job_id, token)
     if state is None or not state.file_path.exists():
         raise HTTPException(status_code=404, detail="Media unavailable.")
+    caller = audit.actor
+    if caller is None:
+        if edge_secret_enforced():
+            raise HTTPException(status_code=404, detail="Media unavailable.")
+        actor = state.audit.origin.actor
+    elif caller.user == state.owner_id:
+        actor = caller
+    else:
+        actor = Actor(caller.user, caller.via, on_behalf_of=state.owner_id)
+    audit = audit.bind(actor)
+    audit.require_purpose()
+    audit.emit(target=_job_target(job_id), criteria={"ranged": "range" in request.headers})
     return FileResponse(
         state.file_path,
         media_type=_media_type_for(state.file_name),
@@ -548,14 +665,19 @@ async def download_artifact(
     name: str,
     manager: JobManager = Depends(get_job_manager),  # noqa: B008 — FastAPI dependency marker
     owner_id: str = Depends(resolve_principal),
+    audit: RequestAudit = Depends(_ARTIFACT_AUDIT),  # noqa: B008 — FastAPI dependency marker
 ) -> Response:
     """Return one artifact byte stream for a completed job.
+
+    Recorded as ``disclose`` / ``artifact.download`` to
+    ``download:<format>``.
 
     Args:
         job_id: Job identifier.
         name: Artifact name (e.g. ``transcript.csv``).
         manager: Job manager dependency.
         owner_id: Resolved principal (owner identifier).
+        audit: The request's audit context.
 
     Returns:
         Response: Binary payload with the appropriate media type.
@@ -565,7 +687,8 @@ async def download_artifact(
             status_code=404,
             detail=f"Unsupported artifact '{name}'.",
         )
-    state = await _require_job(job_id, manager, owner_id)
+    criteria: dict[str, object] = {"artifact": name}
+    state = await _require_job(job_id, manager, owner_id, audit, criteria)
     if state.status != JobStatus.COMPLETED:
         raise HTTPException(
             status_code=409,
@@ -573,13 +696,18 @@ async def download_artifact(
         )
     # Rendering (esp. archive.zip / XLSX) is CPU-bound; keep it off the event
     # loop so a large artifact does not block concurrent requests.
-    rendered = await run_in_threadpool(render_artifact, state, name)
+    try:
+        rendered = await run_in_threadpool(render_artifact, state, name)
+    except Exception:
+        audit.emit(outcome="error", target=_job_target(job_id), criteria=criteria, recipient=_download_recipient(name))
+        raise
     if rendered is None:
         raise HTTPException(
             status_code=404,
             detail=f"Artifact '{name}' was not produced by job '{job_id}'.",
         )
     payload, content_type = rendered
+    audit.emit(target=_job_target(job_id), criteria=criteria, recipient=_download_recipient(name))
     safe_stem = _sanitize_filename(Path(state.file_name).stem)
     download_name = f"{safe_stem}_{name}"
     quoted = urllib.parse.quote(download_name, safe="")

@@ -12,6 +12,8 @@ from collections.abc import Iterator
 import pytest
 from loguru import logger
 
+from tests.audit_helpers import AuditCapture
+
 
 @pytest.fixture(autouse=True)
 def _hermetic_response_language_env(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -62,6 +64,33 @@ def _hermetic_identity_env(monkeypatch: pytest.MonkeyPatch) -> None:
         "NEXTEXT_SERVICE_TOKENS",
     ):
         monkeypatch.delenv(name, raising=False)
+
+
+@pytest.fixture(autouse=True)
+def _hermetic_audit_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Clear the audit-log variables before every test.
+
+    A local ``.env`` that routes the audit stream to the container's stdout,
+    requires a purpose, or names a CLI user or purpose would otherwise change
+    what every test writes and refuses; tests that need one set it
+    explicitly.
+
+    Args:
+        monkeypatch: Fixture for patching environment variables.
+    """
+    for name in ("AUDIT_OUTPUT", "AUDIT_REQUIRE_PURPOSE", "AUDIT_CLI_USER", "AUDIT_CASE_REF", "AUDIT_REASON"):
+        monkeypatch.delenv(name, raising=False)
+
+
+@pytest.fixture
+def audit_capture() -> AuditCapture:
+    """Provide an audit emitter that writes to a buffer.
+
+    Returns:
+        AuditCapture: The capture; pass ``audit_capture.factory`` wherever the
+            app or the CLI builds its emitter.
+    """
+    return AuditCapture()
 
 
 @pytest.fixture

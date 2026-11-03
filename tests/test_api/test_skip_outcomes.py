@@ -13,23 +13,23 @@ from __future__ import annotations
 import io
 import json
 import time
-from collections.abc import AsyncIterator, Iterator
-from contextlib import asynccontextmanager
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
 import pandas as pd
 import pytest
-from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from loguru import logger
 
 from nextext.api import jobs as jobs_module
-from nextext.api.jobs import JobManager, JobState, PushEvent, _run_pipeline_blocking, _serialize_result
+from nextext.api import main as main_module
+from nextext.api.jobs import JobState, PushEvent, _run_pipeline_blocking, _serialize_result
 from nextext.api.main import create_app
 from nextext.api.schemas import JobOptions, JobStatus
 from nextext.core.audio import AudioDecodeError
 from nextext.pipeline import TranscriptionOutcome
+from tests.audit_helpers import AuditCapture, job_audit
 
 OWNER_HEADER = "X-Auth-User"
 OWNER_ID = "c" * 32
@@ -108,27 +108,16 @@ def _app_client_with_runner(runner: Any) -> Iterator[tuple[TestClient, list[str]
     """
     records: list[str] = []
     sink_id = logger.add(lambda m: records.append(str(m)), level="DEBUG")
-    app = create_app()
-    original_lifespan = app.router.lifespan_context
-
-    @asynccontextmanager
-    async def _patched_lifespan(_app: FastAPI) -> AsyncIterator[None]:
-        manager = JobManager(pipeline_runner=runner)
-        await manager.start()
-        _app.state.job_manager = manager
-        try:
-            yield
-        finally:
-            await manager.stop()
-
-    app.router.lifespan_context = _patched_lifespan
+    app = create_app(audit_emitter_factory=AuditCapture().factory, pipeline_runner=runner)
     client = TestClient(app, raise_server_exceptions=False)
     client.headers[OWNER_HEADER] = OWNER_ID
     try:
-        with client:
-            yield client, records
+        # The app's logging setup would remove the log capture.
+        with pytest.MonkeyPatch.context() as patch:
+            patch.setattr(main_module, "setup_logging", lambda: None)
+            with client:
+                yield client, records
     finally:
-        app.router.lifespan_context = original_lifespan
         logger.remove(sink_id)
 
 
@@ -224,6 +213,7 @@ def test_pipeline_records_skip_reason_code_from_transcription(monkeypatch: pytes
         source_file_hash="sha256:x",
         options=JobOptions.model_validate({"task": "transcribe"}),
         status=JobStatus.QUEUED,
+        audit=job_audit(),
     )
 
     result = _run_pipeline_blocking(state, lambda *a, **k: None)
@@ -258,6 +248,7 @@ def test_pipeline_logs_the_skipped_outcome(monkeypatch: pytest.MonkeyPatch, tmp_
         source_file_hash="sha256:x",
         options=JobOptions.model_validate({"task": "transcribe"}),
         status=JobStatus.QUEUED,
+        audit=job_audit(),
     )
 
     records: list[str] = []
