@@ -31,10 +31,14 @@ from pathlib import Path
 import httpx as httpx  # explicit re-export so tests can monkeypatch vad.httpx
 from loguru import logger
 
+from nextext.core.inference_trace import correlation_headers, record_inference
 from nextext.utils.env_cfg import load_vad_env
 from nextext.utils.log_cfg import error_label
 
-__all__ = ["has_speech"]
+__all__ = ["VAD_MODEL_ALIAS", "has_speech"]
+
+# The /vad service takes no model field; the audit log names it by its endpoint.
+VAD_MODEL_ALIAS = "vad"
 
 
 def has_speech(file_path: Path) -> bool:
@@ -58,7 +62,7 @@ def has_speech(file_path: Path) -> bool:
     if not config.api_base:
         return True
 
-    headers: dict[str, str] = {}
+    headers: dict[str, str] = correlation_headers()
     if config.api_key:
         headers["Authorization"] = f"Bearer {config.api_key}"
 
@@ -74,18 +78,22 @@ def has_speech(file_path: Path) -> bool:
         response.raise_for_status()
         payload = response.json()
     except (httpx.HTTPError, ValueError, OSError) as exc:
+        record_inference("vad", VAD_MODEL_ALIAS, ok=False)
         logger.warning("VAD request to {} failed: {}; assuming speech.", url, error_label(exc))
         return True
 
     if not isinstance(payload, dict):
+        record_inference("vad", VAD_MODEL_ALIAS, ok=False)
         logger.warning("VAD response from {} was not a JSON object; assuming speech.", url)
         return True
 
     speech = payload.get("has_speech")
     if not isinstance(speech, bool):
+        record_inference("vad", VAD_MODEL_ALIAS, ok=False)
         logger.warning("VAD response from {} lacked a boolean 'has_speech'; assuming speech.", url)
         return True
 
+    record_inference("vad", VAD_MODEL_ALIAS, ok=True)
     if not speech:
         logger.info("VAD service reported no speech in '{}'.", file_path.name)
     return speech
