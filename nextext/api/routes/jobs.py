@@ -55,6 +55,7 @@ from nextext.api.schemas import (
     JobOptions,
     JobSnapshot,
     JobStatus,
+    MediaGrantResponse,
 )
 from nextext.utils.audit_event import Actor, Target
 
@@ -69,6 +70,9 @@ _GET_AUDIT = audited("query", "job.get", deferred=True)
 _DELETE_AUDIT = audited("delete", "job.delete")
 _ARTIFACT_AUDIT = audited("disclose", "artifact.download", path_criteria={"name": "artifact"})
 _BATCH_AUDIT = audited("disclose", "artifact.download_batch", path_criteria={"name": "artifact"})
+# A grant is what lets a media element stream the upload, so it needs the
+# purpose a query needs; only its refusals are recorded.
+_GRANT_AUDIT = audited("query", "media.grant")
 
 
 def _download_recipient(name: str) -> str:
@@ -585,43 +589,197 @@ def _media_type_for(file_name: str) -> str:
     return guessed or "application/octet-stream"
 
 
+def _media_unavailable() -> HTTPException:
+    """Return the one answer every refused media request gets.
+
+    Returns:
+        HTTPException: 404 with a generic detail — never 403, so a wrong
+            token or grant cannot be used to probe which jobs exist.
+    """
+    return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Media unavailable.")
+
+
+def _media_actor(caller: Actor | None, holder: Actor, owner_id: str) -> Actor:
+    """Return whom an authorized media request is recorded as.
+
+    Args:
+        caller: The request's resolved caller, if any.
+        holder: Whom the capability was issued to: the job's creator for the
+            per-job token, the requester for a grant.
+        owner_id: The job's owner.
+
+    Returns:
+        Actor: The caller, marked as acting on the owner's data when it is
+            someone else; the holder when no caller resolved.
+    """
+    if caller is None:
+        return holder
+    if caller.user == owner_id:
+        return caller
+    return Actor(caller.user, caller.via, on_behalf_of=owner_id)
+
+
+@router.post(
+    "/{job_id}/media-grant",
+    response_model=MediaGrantResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_media_grant(
+    job_id: str,
+    response: Response,
+    manager: JobManager = Depends(get_job_manager),  # noqa: B008 — FastAPI dependency marker
+    owner_id: str = Depends(resolve_principal),
+    audit: RequestAudit = Depends(_GRANT_AUDIT),  # noqa: B008 — FastAPI dependency marker
+) -> MediaGrantResponse:
+    """Issue a playback grant for a job's upload.
+
+    A media element sends neither the identity header nor ``X-Audit-Purpose``,
+    so the SPA asks for a grant first, through its purpose wrapper, and plays
+    the URL it gets back. The grant binds this request's caller, stated
+    purpose and request id to a fresh token, which every range request of the
+    playback presents until it expires (``NEXTEXT_MEDIA_GRANT_TTL_S``); each
+    stream is recorded with that purpose (``query`` / ``media.stream``).
+
+    Owner-scoped like the snapshot: another owner's job answers 404 and the
+    attempt is recorded as denied (``query`` / ``media.grant``), as is a
+    request that lacks the purpose ``AUDIT_REQUIRE_PURPOSE`` asks for (428).
+    Issuing the grant hands out no personal data and is not recorded.
+
+    Args:
+        job_id: Job identifier.
+        response: The response, to keep the token out of any cache.
+        manager: Job manager dependency.
+        owner_id: Resolved principal (owner identifier).
+        audit: The request's audit context.
+
+    Returns:
+        MediaGrantResponse: The media URL carrying the grant, and its expiry.
+
+    Raises:
+        HTTPException: 404 for an unknown or foreign job, or an upload that is
+            no longer on disk.
+    """
+    state = await _require_job(job_id, manager, owner_id, audit)
+    if not state.file_path.exists():
+        raise _media_unavailable()
+    token, grant = manager.issue_media_grant(state, audit.origin)
+    response.headers["Cache-Control"] = "no-store"
+    return MediaGrantResponse(media_url=f"/api/v1/jobs/{job_id}/media?grant={token}", expires_at=grant.expires_at)
+
+
+async def _authorize_token(
+    job_id: str, token: str, manager: JobManager, audit: RequestAudit
+) -> tuple[JobState, RequestAudit]:
+    """Authorize a media request by the job's own capability token.
+
+    Args:
+        job_id: Job identifier from the path.
+        token: The presented per-job token.
+        manager: The job manager.
+        audit: The request's audit context.
+
+    Returns:
+        tuple[JobState, RequestAudit]: The job, and the audit context with the
+            actor bound.
+
+    Raises:
+        HTTPException: 404 for an unknown job or wrong token, a missing upload,
+            or (edge secret set) a caller without a verified identity.
+    """
+    state = await manager.get_by_media_token(job_id, token)
+    if state is None or not state.file_path.exists():
+        raise _media_unavailable()
+    if audit.actor is None and edge_secret_enforced():
+        raise _media_unavailable()
+    return state, audit.bind(_media_actor(audit.actor, state.audit.origin.actor, state.owner_id))
+
+
+async def _authorize_grant(
+    job_id: str, token: str, manager: JobManager, audit: RequestAudit, criteria: dict[str, object]
+) -> tuple[JobState, RequestAudit]:
+    """Authorize a media request by a playback grant.
+
+    Adds the grant's id to ``criteria``. With the edge secret set, the request
+    must come from the identity the grant was issued to: another verified
+    identity is refused and recorded as denied; a request without a verified
+    identity is refused unrecorded, like an unknown or expired grant.
+
+    Args:
+        job_id: Job identifier from the path.
+        token: The presented grant token.
+        manager: The job manager.
+        audit: The request's audit context.
+        criteria: The event's criteria, extended in place.
+
+    Returns:
+        tuple[JobState, RequestAudit]: The job, and the audit context carrying
+            the actor and the grant request's purpose and request id.
+
+    Raises:
+        HTTPException: 404 for an unknown, expired or foreign grant, a missing
+            upload, or (edge secret set) a caller who is not the grant's.
+    """
+    found = await manager.get_by_media_grant(job_id, token)
+    if found is None or not found[0].file_path.exists():
+        raise _media_unavailable()
+    state, grant = found
+    criteria["grant"] = grant.grant_id
+    holder = grant.origin.actor
+    caller = audit.actor
+    if edge_secret_enforced():
+        if caller is None:
+            raise _media_unavailable()
+        if (caller.user, caller.via) != (holder.user, holder.via):
+            audit.emit(outcome="denied", target=_job_target(job_id), criteria=criteria)
+            raise _media_unavailable()
+    return state, audit.authorized_by(grant.origin, _media_actor(caller, holder, state.owner_id))
+
+
 @router.get("/{job_id}/media")
 async def stream_media(
     job_id: str,
     request: Request,
-    token: str = Query(..., description="Per-job media capability token."),
+    token: str | None = Query(None, description="Per-job media capability token (the snapshot's `media_url`)."),
+    grant: str | None = Query(None, description="Playback grant from `POST /jobs/{id}/media-grant`."),
     manager: JobManager = Depends(get_job_manager),  # noqa: B008 — FastAPI dependency marker
     audit: RequestAudit = Depends(media_audit),  # noqa: B008 — FastAPI dependency marker
 ) -> FileResponse:
     """Stream a job's original upload for in-browser playback.
 
     Deliberately **not** principal-scoped: a ``<video>`` / ``<audio>`` element
-    cannot attach the trusted identity header, so the unguessable ``token`` in
-    the URL is the authorization instead. The URL is handed out only on the
-    owner-scoped job snapshot, grants read of media that owner already
-    uploaded, and dies with the job.
+    cannot attach the trusted identity header, so an unguessable value in the
+    URL is the authorization instead — exactly one of:
 
-    The token rides in the query string; the app's own nginx and uvicorn
-    access logs drop the query string, so neither records it, though nginx's
-    error log still does when it logs an error for the request. It is
-    per-job, unguessable, and revoked by ``DELETE /jobs/{id}``.
+    * ``grant``: a playback grant (``POST /jobs/{id}/media-grant``), issued to
+      a request that stated its purpose and valid for
+      ``NEXTEXT_MEDIA_GRANT_TTL_S``. The SPA plays with these.
+    * ``token``: the per-job capability from the owner-scoped snapshot
+      (``JobResult.media_url``). It names no purpose, so it is refused with
+      428 while ``AUDIT_REQUIRE_PURPOSE`` lists ``query``.
+
+    Both die with the job (``DELETE /jobs/{id}``). They ride in the query
+    string; the app's own nginx and uvicorn access logs drop the query string,
+    so neither records them, though nginx's error log still does when it logs
+    an error for the request.
 
     Served via ``FileResponse``, which answers ``Range`` requests with ``206``
     — that is what lets the player seek without re-fetching the whole
     recording.
 
     Every request that streams bytes — each range a player fetches — is
-    recorded as ``query`` / ``media.stream`` (never with the token). The
-    actor is the resolved caller, marked as acting on the owner's data when
-    it is someone else. With ``NEXTEXT_EDGE_SECRET`` set, a request without a
-    verified identity did not come through the gateway and is refused; without
-    it, such a request is attributed to the job's creator, to whom the token
-    was issued.
+    recorded as ``query`` / ``media.stream``, never with the token or grant;
+    a grant's id and purpose are recorded instead. The actor is the resolved
+    caller, marked as acting on the owner's data when it is someone else.
+    With ``NEXTEXT_EDGE_SECRET`` set, a request without a verified identity
+    did not come through the gateway and is refused, and a grant plays only
+    for the identity it was issued to; without it, a request without an
+    identity is attributed to whom the token or grant was issued.
 
     Args:
         job_id (str): Job identifier from the path.
         request (Request): The incoming request, for its ``Range`` header.
-        token (str): Capability token minted for this job.
+        token (str | None): Capability token minted for this job.
+        grant (str | None): Playback grant token.
         manager (JobManager): Injected job manager.
         audit (RequestAudit): The request's audit context.
 
@@ -629,26 +787,21 @@ async def stream_media(
         FileResponse: The upload bytes, ranged on request.
 
     Raises:
-        HTTPException: 404 for an unknown job, a wrong token, an upload that
-            is no longer on disk, or (edge secret set) an unverified caller —
-            never 403, so a bad token cannot be used to probe which jobs
-            exist; 428 when a stated purpose is required and missing.
+        HTTPException: 404 for an unknown job, a wrong token, an unknown or
+            expired grant, neither or both given, an upload that is no longer
+            on disk, or (edge secret set) an unverified caller or one the
+            grant was not issued to; 428 when a stated purpose is required
+            and missing.
     """
-    state = await manager.get_by_media_token(job_id, token)
-    if state is None or not state.file_path.exists():
-        raise HTTPException(status_code=404, detail="Media unavailable.")
-    caller = audit.actor
-    if caller is None:
-        if edge_secret_enforced():
-            raise HTTPException(status_code=404, detail="Media unavailable.")
-        actor = state.audit.origin.actor
-    elif caller.user == state.owner_id:
-        actor = caller
+    criteria: dict[str, object] = {"ranged": "range" in request.headers}
+    if grant is not None and token is None:
+        state, audit = await _authorize_grant(job_id, grant, manager, audit, criteria)
+    elif token is not None and grant is None:
+        state, audit = await _authorize_token(job_id, token, manager, audit)
     else:
-        actor = Actor(caller.user, caller.via, on_behalf_of=state.owner_id)
-    audit = audit.bind(actor)
+        raise _media_unavailable()
     audit.require_purpose()
-    audit.emit(target=_job_target(job_id), criteria={"ranged": "range" in request.headers})
+    audit.emit(target=_job_target(job_id), criteria=criteria)
     return FileResponse(
         state.file_path,
         media_type=_media_type_for(state.file_name),

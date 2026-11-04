@@ -1,6 +1,11 @@
+import { PURPOSE_REQUIRED_STATUS } from '@infra/ui'
 import { ApiError } from './client'
 
-export type ErrorKey = 'common.error_request' | 'common.error_unknown' | 'common.error_network'
+export type ErrorKey =
+  | 'common.error_request'
+  | 'common.error_unknown'
+  | 'common.error_network'
+  | 'common.error_purpose_required'
 
 export type ErrorDescriptor = {
   key: ErrorKey
@@ -13,6 +18,9 @@ export function describeError(err: unknown): ErrorDescriptor {
   if (err instanceof ApiError) {
     // Dev-only visibility; the body is generic post-backend-fix anyway.
     console.debug('API error detail', err.status, err.detail)
+    // The request needed a stated purpose and the user dismissed the prompt:
+    // say what is missing rather than "something went wrong".
+    if (err.status === PURPOSE_REQUIRED_STATUS) return { key: 'common.error_purpose_required' }
     return { key: 'common.error_request', vars: { status: err.status } }
   }
   if (err instanceof TypeError) {

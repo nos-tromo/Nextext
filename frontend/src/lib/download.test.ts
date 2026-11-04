@@ -1,5 +1,9 @@
+import { createElement } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { ApiError, API_BASE, OWNER_HEADER } from '../api/client'
+import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { clearAllPurposes, encodePurpose, PURPOSE_HEADER, PurposeBar, setPurpose } from '@infra/ui'
+import { ApiError, API_BASE, OWNER_HEADER, PURPOSE_SCOPE } from '../api/client'
 import {
   fetchArtifact,
   fetchArtifactObjectUrl,
@@ -152,5 +156,60 @@ describe('downloadBatchArtifact', () => {
     expect(anchor.download).toBe('nextext_batch.zip')
     expect(anchor.click).toHaveBeenCalledOnce()
     expect(revokeObjectUrl).toHaveBeenCalledWith('blob:mock-url')
+  })
+})
+
+describe('downloads and the stated purpose', () => {
+  // The anchor a download clicks, read off the real element rather than a
+  // mocked document.createElement, which React needs for the purpose bar.
+  let clicked: { href: string; download: string }[]
+  beforeEach(() => {
+    clicked = []
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:mock-url')
+    vi.spyOn(URL, 'revokeObjectURL').mockReturnValue(undefined)
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) {
+      clicked.push({ href: this.href, download: this.download })
+    })
+  })
+  afterEach(() => {
+    clearAllPurposes()
+    sessionStorage.clear()
+    vi.restoreAllMocks()
+  })
+
+  it('sends the stated purpose with an artifact download and keeps its file name', async () => {
+    setPurpose(PURPOSE_SCOPE, { caseRef: 'case-0001' })
+    const fetchMock = vi.fn(async () => makeResponse(true))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await downloadArtifact('job1', 'transcript.csv', 'clip_transcript.csv')
+
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit]
+    expect(url).toBe(`${API_BASE}/jobs/job1/artifacts/transcript.csv`)
+    expect((init.headers as Record<string, string>)[PURPOSE_HEADER]).toBe(encodePurpose({ caseRef: 'case-0001' }))
+    expect(clicked).toEqual([{ href: 'blob:mock-url', download: 'clip_transcript.csv' }])
+  })
+
+  it('asks for a purpose when a batch download is refused with 428, then downloads', async () => {
+    render(createElement(PurposeBar, { scope: PURPOSE_SCOPE, required: true }))
+    const statuses = [428, 200]
+    const fetchMock = vi.fn(async () => {
+      const status = statuses.shift() ?? 200
+      return makeResponse(status === 200, status)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const user = userEvent.setup()
+
+    const pending = downloadBatchArtifact('archive.zip', 'nextext_batch.zip')
+    await screen.findByRole('dialog')
+    await user.type(screen.getByLabelText('Case reference'), 'case-0001')
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+    await pending
+
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    const [url, init] = fetchMock.mock.calls[1] as unknown as [string, RequestInit]
+    expect(url).toBe(`${API_BASE}/jobs/batch/archive.zip`)
+    expect((init.headers as Record<string, string>)[PURPOSE_HEADER]).toBe(encodePurpose({ caseRef: 'case-0001' }))
+    expect(clicked).toEqual([{ href: 'blob:mock-url', download: 'nextext_batch.zip' }])
   })
 })

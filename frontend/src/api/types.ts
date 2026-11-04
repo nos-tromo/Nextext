@@ -213,8 +213,18 @@ export interface LanguagesResponse {
   default_target: string
 }
 
+/** `POST /jobs/{id}/media-grant`: a URL to play the upload with, and when it stops working. */
+export interface MediaGrantResponse {
+  /** Server-relative media URL carrying the grant (`…/media?grant=…`). */
+  media_url: string
+  /** ISO timestamp; the next range request after it fails. */
+  expires_at: string
+}
+
 export interface AppConfig {
   language: 'en' | 'de'
+  /** Audit actions that need a stated purpose (`AUDIT_REQUIRE_PURPOSE`), sorted. */
+  require_purpose: string[]
 }
 
 export interface WhoamiResponse {

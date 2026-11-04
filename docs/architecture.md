@@ -66,15 +66,30 @@ back. `GET /jobs/{id}/media` streams it through Starlette's `FileResponse`,
 which answers `Range` requests with `206`; that is what lets the player jump to
 a timestamp without re-fetching the whole recording.
 
-The route is authorized by a per-job capability token in the URL rather than by
-the request principal. A `<video>`/`<audio>` element cannot attach the trusted
-identity header, and the blob-URL workaround used for the word cloud would
-buffer the entire recording in memory and forfeit seeking. The token is minted
-at job creation, handed out only on the owner-scoped snapshot, never listed,
-and dies with the job; every failure answers `404`, so a wrong token cannot be
-used to probe which jobs exist. It travels in the query string, which the app's
-own access logs — the frontend's nginx and the backend's uvicorn — drop; nginx's
-error log still records it when it logs an error for the request (see
+The route is authorized by a capability in the URL rather than by the request
+principal. A `<video>`/`<audio>` element can attach neither the trusted identity
+header nor the stated purpose, and the blob-URL workaround used for the word
+cloud would buffer the entire recording in memory and forfeit seeking. So
+before the player sets `src`, it asks for a playback grant
+(`POST /jobs/{id}/media-grant`): an ordinary, owner-scoped request through the
+SPA's API client, which states the purpose like any other. The grant is a fresh
+random token, bound in the backend's memory to the job and to that request's
+caller, purpose and request id, and usable for every range request of the
+playback until it expires (`NEXTEXT_MEDIA_GRANT_TTL_S`, 900 s by default); each
+streamed range is recorded with that purpose
+([audit.md](audit.md#playback)). When a grant expires mid-playback, the element
+fails on its next range request; the player then asks for a fresh grant once
+and resumes where it stopped. With the edge secret set, a grant plays only for
+the identity it was issued to.
+
+The job's own token — minted at job creation, handed out on the owner-scoped
+snapshot as `media_url`, never listed — still plays, but it states no purpose,
+so it is refused while `AUDIT_REQUIRE_PURPOSE` lists `query`, as a deployment's
+default does; the SPA no longer plays it. Grants and token die with the job,
+and every failure answers `404`, so neither can be used to probe which jobs
+exist. Both travel in the query string, which the app's own access logs — the
+frontend's nginx and the backend's uvicorn — drop; nginx's error log still
+records it when it logs an error for the request (see
 [configuration.md](configuration.md#logs)).
 
 In the SPA, the transcript row (or frame caption) under the playhead is

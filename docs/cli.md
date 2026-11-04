@@ -98,7 +98,17 @@ in the backend's own log:
 
 ```bash
 docker compose --env-file .env -f docker/compose.yaml cp recording.mp4 backend:/tmp/
-make cli ARGS='-f /tmp/recording.mp4 -w -sum' CASE_REF=case-0001 REASON='…'
+make cli ARGS='-f /tmp/recording.mp4 -w -sum' CASE_REF=case-0001 REASON='Review of a reported clip'
+```
+
+A deployment requires a stated purpose for queries and disclosures
+(`AUDIT_REQUIRE_PURPOSE=query,disclose`, the `docker/compose.yaml` default),
+and every run writes output files, so `make cli` needs `CASE_REF=` or
+`REASON=` — either is enough. Without one, the run records the refusal, prints
+one line and exits `2` before it reads the file:
+
+```text
+nextext-cli: this run needs a stated purpose: set AUDIT_CASE_REF and/or AUDIT_REASON.
 ```
 
 `make cli` runs `docker compose exec` with `/tmp` (the writable scratch

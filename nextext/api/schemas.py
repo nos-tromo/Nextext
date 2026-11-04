@@ -168,6 +168,16 @@ class JobSnapshot(BaseModel):
     result: JobResult | None = None
 
 
+class MediaGrantResponse(BaseModel):
+    """Response body of ``POST /jobs/{id}/media-grant``."""
+
+    # Server-relative URL of the upload, carrying the grant in its query
+    # string: what a media element's ``src`` is set to.
+    media_url: str
+    # When the grant stops working; ask for a new one after that.
+    expires_at: datetime
+
+
 class StageEvent(BaseModel):
     """SSE event payload describing a pipeline stage transition."""
 
@@ -198,6 +208,10 @@ class ConfigResponse(BaseModel):
     """Client bootstrap config for the SPA."""
 
     language: str
+    # The audit actions that need a stated purpose (``AUDIT_REQUIRE_PURPOSE``),
+    # sorted: the SPA's purpose bar warns while none is stated when any is
+    # listed, and refuses to save a blank one.
+    require_purpose: list[str] = Field(default_factory=list)
 
 
 class WhoamiResponse(BaseModel):

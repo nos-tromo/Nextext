@@ -172,6 +172,18 @@ def test_access_filter_drops_the_query_string() -> None:
     assert "?" not in line
 
 
+def test_access_filter_drops_a_playback_grant() -> None:
+    """A playback grant rides in the query string like the token, and is dropped the same way."""
+    grant = "invented-playback-grant-91c2"
+    record = _access_record(f"{_MEDIA_PATH}?grant={grant}")
+
+    assert log_cfg._StripQueryString().filter(record) is True
+    line = _access_formatter().format(record)
+
+    assert f'"GET {_MEDIA_PATH} HTTP/1.1" 206' in line
+    assert grant not in line
+
+
 def test_access_filter_leaves_other_records_alone() -> None:
     """A path without a query, or a record of another shape, passes unchanged."""
     plain = _access_record(_MEDIA_PATH)

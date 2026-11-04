@@ -42,6 +42,7 @@ from loguru import logger
 from matplotlib.figure import Figure
 
 from nextext.api.job_record import JobRecord, read_job_record, write_job_record
+from nextext.api.media_grants import MediaGrant, MediaGrants
 from nextext.api.metrics import record_completed, record_failed, record_skipped
 from nextext.api.schemas import (
     FrameCaptionOut,
@@ -75,7 +76,7 @@ from nextext.core.inference_trace import correlate
 from nextext.core.keyframes import extract_keyframe_samples
 from nextext.core.outcomes import FailureCode, SkipReason, skip_reason_text
 from nextext.utils.audit_event import Actor, AuditEmitter, Target
-from nextext.utils.env_cfg import load_job_concurrency, load_visual_summary_env
+from nextext.utils.env_cfg import load_job_concurrency, load_media_grant_ttl, load_visual_summary_env
 from nextext.utils.log_cfg import error_label, exception_frames
 
 _TERMINAL_EVENT_NAMES: frozenset[str] = frozenset({"job_completed", "job_failed", "job_cancelled"})
@@ -852,6 +853,9 @@ class JobManager:
     directories a previous process left behind and records their deletion,
     attributed through those records; :meth:`stop` removes every job's
     directory and records that too.
+
+    It also holds the media playback grants (:mod:`nextext.api.media_grants`),
+    which die with their job and with the process.
     """
 
     def __init__(
@@ -893,6 +897,9 @@ class JobManager:
         # Held while the manager runs, so a second manager on the same
         # directory (another process) never sweeps this one's live uploads.
         self._root_lock_fd: int | None = None
+        # Playback grants (``POST /jobs/{id}/media-grant``): in memory like the
+        # jobs, revoked with them.
+        self.media_grants = MediaGrants(load_media_grant_ttl())
 
     async def start(self) -> None:
         """Take the job directory and remove what a previous process left in it.
@@ -923,6 +930,7 @@ class JobManager:
         self._sink.seal()
         states = list(self._jobs.values())
         self._jobs.clear()
+        self.media_grants.clear()
         for state in states:
             await self._delete_state(state)
         removals: list[tuple[JobRecord | None, bool]] = [
@@ -1123,6 +1131,43 @@ class JobManager:
             return None
         return state
 
+    def issue_media_grant(self, state: JobState, origin: Origin) -> tuple[str, MediaGrant]:
+        """Issue a playback grant for a job's upload to the request described by ``origin``.
+
+        The caller has already checked that the requester owns the job and
+        that the upload is on disk.
+
+        Args:
+            state: The job.
+            origin: The requesting caller, its stated purpose and request id,
+                which every stream played with the grant is recorded with.
+
+        Returns:
+            tuple[str, MediaGrant]: The token, for the media URL, and the grant.
+        """
+        return self.media_grants.issue(state.job_id, origin)
+
+    async def get_by_media_grant(self, job_id: str, token: str) -> tuple[JobState, MediaGrant] | None:
+        """Return a job and the grant ``token`` names for it, if both are live.
+
+        Args:
+            job_id: Job identifier from the URL path.
+            token: Candidate grant token from the query string.
+
+        Returns:
+            tuple[JobState, MediaGrant] | None: The job and its grant, or
+                ``None`` for an unknown, expired or foreign grant, or a job
+                that is gone.
+        """
+        grant = self.media_grants.resolve(job_id, token)
+        if grant is None:
+            return None
+        async with self._lock:
+            state = self._jobs.get(job_id)
+        if state is None or state.deleted:
+            return None
+        return state, grant
+
     async def get(self, job_id: str) -> JobState | None:
         """Return the in-memory state for a job, or ``None`` if absent.
 
@@ -1158,6 +1203,7 @@ class JobManager:
             if state is None or (owner_id is not None and state.owner_id != owner_id):
                 return False
             self._jobs.pop(job_id, None)
+        self.media_grants.revoke_job(job_id)
         status_at_delete = state.status
         state.deleted = True
         task = state.task

@@ -309,6 +309,8 @@ KEYFRAMES_MAX_CEILING: int = 200
 DEFAULT_VISUAL_SUMMARY_MAX_FRAMES: int = 12
 DEFAULT_VISUAL_SUMMARY_IMAGE_MAX_SIDE: int = 1024
 DEFAULT_JOB_CONCURRENCY: int = 1
+DEFAULT_MEDIA_GRANT_TTL_S: int = 900
+MEDIA_GRANT_TTL_CEILING_S: int = 86400
 
 
 def _parse_tristate_bool(name: str) -> bool | None:
@@ -773,6 +775,25 @@ def load_job_concurrency(default: int = DEFAULT_JOB_CONCURRENCY) -> int:
         logger.warning("NEXTEXT_JOB_CONCURRENCY {} is < 1; clamping to 1.", value)
         return 1
     return value
+
+
+def load_media_grant_ttl() -> int:
+    """Seconds a media playback grant stays usable (``NEXTEXT_MEDIA_GRANT_TTL_S``).
+
+    A grant is the bearer capability a media element plays a recording with
+    (``POST /jobs/{id}/media-grant``), so it is short-lived: 900 seconds by
+    default, at most a day. Unparseable or non-positive values fall back to
+    the default and larger ones clamp to the ceiling, both with a warning.
+
+    Returns:
+        int: The lifetime in seconds, between 1 and
+            :data:`MEDIA_GRANT_TTL_CEILING_S`.
+    """
+    return _load_positive_int(
+        "NEXTEXT_MEDIA_GRANT_TTL_S",
+        DEFAULT_MEDIA_GRANT_TTL_S,
+        ceiling=MEDIA_GRANT_TTL_CEILING_S,
+    )
 
 
 @dataclass(frozen=True)

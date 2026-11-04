@@ -1,3 +1,4 @@
+import { withPurpose } from '@infra/ui'
 import { resolveOwnerId } from '../identity/owner'
 
 /** API base derived from Vite's base path so the SPA works under its
@@ -9,6 +10,8 @@ export function apiBase(base: string = import.meta.env.BASE_URL): string {
 export const API_BASE = apiBase()
 /** Trusted identity header; mirrors the backend default NEXTEXT_AUTH_HEADER. */
 export const OWNER_HEADER = 'X-Auth-User'
+/** The app's purpose scope: the compose project name, shared with its PurposeBar. */
+export const PURPOSE_SCOPE = 'nextext'
 
 export class ApiError extends Error {
   readonly status: number
@@ -25,7 +28,32 @@ function identityHeaders(): Record<string, string> {
   return { [OWNER_HEADER]: resolveOwnerId() }
 }
 
-async function parse<T>(res: Response): Promise<T> {
+/** Fetch options for {@link apiRequest}; headers are a plain record, merged with the app's own. */
+export type ApiRequestInit = Omit<RequestInit, 'headers'> & { headers?: Record<string, string> }
+
+/**
+ * Send a request to the backend: the one place every API call goes through.
+ *
+ * Adds the identity header and the purpose stated in the header's
+ * `PurposeBar` (`X-Audit-Purpose`); when the backend answers `428` — the
+ * request needs a stated purpose — the bar asks for one and the request is
+ * sent once more with it. `init` may therefore be used twice, so its body
+ * must be one that can be sent again (a string or `FormData`).
+ *
+ * @param path - Path relative to {@link API_BASE}, e.g. `/jobs`.
+ * @param init - Fetch options.
+ * @returns The raw response, whatever its status.
+ */
+export function apiRequest(path: string, init: ApiRequestInit = {}): Promise<Response> {
+  return withPurpose(PURPOSE_SCOPE, (purpose) =>
+    fetch(`${API_BASE}${path}`, {
+      ...init,
+      headers: { ...identityHeaders(), ...init.headers, ...purpose },
+    }),
+  )
+}
+
+async function errorFrom(res: Response): Promise<ApiError> {
   const text = await res.text()
   let body: unknown = text
   try {
@@ -33,19 +61,38 @@ async function parse<T>(res: Response): Promise<T> {
   } catch {
     /* keep raw text */
   }
-  if (!res.ok) {
-    const detail =
-      body && typeof body === 'object' && 'detail' in body
-        ? (body as { detail: unknown }).detail
-        : body
-    throw new ApiError(res.status, detail)
+  const detail =
+    body && typeof body === 'object' && 'detail' in body
+      ? (body as { detail: unknown }).detail
+      : body
+  return new ApiError(res.status, detail)
+}
+
+async function parse<T>(res: Response): Promise<T> {
+  if (!res.ok) throw await errorFrom(res)
+  const text = await res.text()
+  try {
+    return (text ? JSON.parse(text) : null) as T
+  } catch {
+    return text as T
   }
-  return body as T
+}
+
+/**
+ * Fetch a backend path and hand back the response for the caller to read —
+ * a download's blob, say — throwing {@link ApiError} on a non-2xx.
+ *
+ * @param path - Path relative to {@link API_BASE}.
+ * @returns The successful response, its body unread.
+ */
+export async function apiFetch(path: string): Promise<Response> {
+  const res = await apiRequest(path)
+  if (!res.ok) throw await errorFrom(res)
+  return res
 }
 
 export async function apiGet<T>(path: string, signal?: AbortSignal): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, { headers: identityHeaders(), signal })
-  return parse<T>(res)
+  return parse<T>(await apiRequest(path, { signal }))
 }
 
 type SendOpts = { json?: unknown; form?: FormData; signal?: AbortSignal }
@@ -55,7 +102,7 @@ export async function apiSend<T>(
   path: string,
   opts: SendOpts = {},
 ): Promise<T> {
-  const headers: Record<string, string> = { ...identityHeaders() }
+  const headers: Record<string, string> = {}
   let body: BodyInit | undefined
   if (opts.form) {
     body = opts.form // browser sets multipart content-type + boundary
@@ -63,6 +110,5 @@ export async function apiSend<T>(
     headers['content-type'] = 'application/json'
     body = JSON.stringify(opts.json)
   }
-  const res = await fetch(`${API_BASE}${path}`, { method, headers, body, signal: opts.signal })
-  return parse<T>(res)
+  return parse<T>(await apiRequest(path, { method, headers, body, signal: opts.signal }))
 }

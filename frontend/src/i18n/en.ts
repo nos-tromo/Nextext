@@ -6,6 +6,7 @@ export const en = {
   'common.error_request': 'Something went wrong ({status}). Please try again or contact support.',
   'common.error_unknown': 'Something went wrong. Please try again or contact support.',
   'common.error_network': 'Service unreachable. Please check your connection or try again later.',
+  'common.error_purpose_required': 'This action needs a stated purpose. Please state one in the header and try again.',
   'common.file_count_one': '{count} file',
   'common.file_count_other': '{count} files',
   'common.jobs_processing': '{count} processing',
@@ -21,6 +22,24 @@ export const en = {
   'header.theme_light': 'light',
   'header.theme_dark': 'dark',
   'header.sign_out': 'Sign out',
+
+  // purpose (PurposeBar in the header; `{max}` is filled in by the bar)
+  'purpose.purpose': 'Purpose',
+  'purpose.empty': 'No purpose stated',
+  'purpose.required': 'Purpose required',
+  'purpose.title': 'Purpose',
+  'purpose.description':
+    'Sent with each request you make in this app until you change or clear it, or the session ends.',
+  'purpose.requested': 'This action needs a stated purpose.',
+  'purpose.case_ref': 'Case reference',
+  'purpose.reason': 'Reason',
+  'purpose.save': 'Save',
+  'purpose.cancel': 'Cancel',
+  'purpose.clear': 'Clear',
+  'purpose.error_length': 'At most {max} characters.',
+  'purpose.error_control': 'Remove line breaks, tabs and other control characters.',
+  'purpose.error_header': 'Too long to send together. Shorten one of the fields.',
+  'purpose.error_empty': 'Enter a case reference or a reason.',
 
   // page
   'page.title': 'Audio & Video Analysis',
@@ -98,6 +117,9 @@ export const en = {
   'player.title': 'Media player',
   'player.close': 'Close player',
   'player.open': 'Open player',
+  'player.loading': 'Loading the recording…',
+  'player.purpose_needed':
+    'Playing this recording needs a stated purpose. Please state one in the header and it starts.',
   'player.play_from': 'Play from {time}',
   'player.unplayable': 'This file can’t be played in the browser. Download it to play it locally.',
   'results.no_summary': 'No summary produced for this job.',

@@ -1,11 +1,38 @@
-import { useEffect, useRef, useState } from 'react'
-import { IconButton, XIcon } from '@infra/ui'
+import { useCallback, useEffect, useRef, useState, type SyntheticEvent } from 'react'
+import { IconButton, PURPOSE_REQUIRED_STATUS, Spinner, XIcon, subscribePurpose } from '@infra/ui'
+import { ApiError, PURPOSE_SCOPE } from '../../api/client'
+import { requestMediaGrant } from '../../api/jobs'
+import { describeError, type ErrorDescriptor } from '../../api/errorMessage'
 import { useMediaPlayerStore } from '../../lib/mediaPlayerStore'
 import { mediaSrcUrl } from '../../lib/mediaSrc'
 import { useT } from '../../i18n/LanguageContext'
 
 /** Upload extensions that carry a picture and therefore need a `<video>`. */
 const VIDEO_EXTENSIONS = new Set(['mp4', 'mkv', 'webm', 'mov', 'avi', 'm4v'])
+
+/**
+ * Least time between two grants asked for because the element failed.
+ *
+ * A grant expires once per lifetime, so an error soon after a fresh grant is
+ * the file's (a container the browser cannot decode, say), not the grant's:
+ * the player then reports it instead of asking for grants in a loop.
+ */
+export const REGRANT_INTERVAL_MS = 30_000
+
+/** `HTMLMediaElement.HAVE_METADATA`, spelled out: not every DOM implementation defines the static. */
+const HAVE_METADATA = 1
+
+/** The grant the element plays, for the job it was issued for. */
+interface Grant {
+  jobId: string
+  src: string
+}
+
+/** Where to pick playback up once a fresh grant replaced an expired one. */
+interface Resume {
+  time: number
+  play: boolean
+}
 
 /**
  * Decide whether a recording needs a video surface.
@@ -41,6 +68,14 @@ function isVideoFile(fileName: string): boolean {
  * The element stays mounted while closed so the slide has something to
  * animate; `aria-hidden` plus `inert` keep it out of the accessibility tree
  * and the tab order in that state.
+ *
+ * A media element can send neither the identity nor the stated purpose, so
+ * the panel asks for a playback grant first — an ordinary API request, which
+ * states the purpose like any other — and only then sets `src`. A grant
+ * expires; when the element fails, the panel asks for a fresh one once and
+ * picks playback up where it stopped ({@link REGRANT_INTERVAL_MS}). A grant
+ * refused because no purpose is stated leaves the panel saying so, and it
+ * plays as soon as a purpose is stated in the header.
  */
 export function MediaPanel() {
   const t = useT()
@@ -52,12 +87,64 @@ export function MediaPanel() {
   const mediaRef = useRef<HTMLVideoElement | HTMLAudioElement | null>(null)
   const panelRef = useRef<HTMLElement | null>(null)
   const openerRef = useRef<HTMLElement | null>(null)
+  const [grant, setGrant] = useState<Grant | null>(null)
+  const [grantError, setGrantError] = useState<ErrorDescriptor | null>(null)
+  // The grant was refused (428) and the user declined to state a purpose.
+  const [purposeNeeded, setPurposeNeeded] = useState(false)
   const [failed, setFailed] = useState(false)
+  // Bumped per grant request and when the recording changes, so a reply that
+  // is no longer wanted is dropped.
+  const requestSeqRef = useRef(0)
+  const lastRegrantAtRef = useRef<number | null>(null)
+  // The `src` a fresh grant was already asked for, so a second error from the
+  // same element does not count twice.
+  const regrantedSrcRef = useRef<string | null>(null)
+  const resumeAtRef = useRef<Resume | null>(null)
 
   const open = session !== null
-  // The store holds the backend's server-relative URL; the element needs one
+  const jobId = session?.jobId ?? null
+  // The backend hands out a server-relative URL; the element needs one
   // resolved against the sub-path the SPA is mounted under.
-  const src = session ? mediaSrcUrl(session.mediaUrl) : undefined
+  const src = grant !== null && grant.jobId === jobId ? grant.src : undefined
+
+  const fetchGrant = useCallback(async (id: string) => {
+    const seq = ++requestSeqRef.current
+    try {
+      const { media_url } = await requestMediaGrant(id)
+      if (seq === requestSeqRef.current) setGrant({ jobId: id, src: mediaSrcUrl(media_url) })
+    } catch (err) {
+      if (seq !== requestSeqRef.current) return
+      if (err instanceof ApiError && err.status === PURPOSE_REQUIRED_STATUS) setPurposeNeeded(true)
+      else setGrantError(describeError(err))
+    }
+  }, [])
+
+  // A new recording starts clean — last one's grant and playback error are
+  // not this one's — and asks for its own grant.
+  useEffect(() => {
+    setGrant(null)
+    setGrantError(null)
+    setPurposeNeeded(false)
+    setFailed(false)
+    lastRegrantAtRef.current = null
+    regrantedSrcRef.current = null
+    resumeAtRef.current = null
+    if (jobId === null) return
+    void fetchGrant(jobId)
+    return () => {
+      requestSeqRef.current += 1
+    }
+  }, [jobId, fetchGrant])
+
+  // Waiting for a purpose: the moment one is stated in the header, ask again.
+  useEffect(() => {
+    if (!purposeNeeded || jobId === null) return
+    return subscribePurpose(PURPOSE_SCOPE, (purpose) => {
+      if (!purpose) return
+      setPurposeNeeded(false)
+      void fetchGrant(jobId)
+    })
+  }, [purposeNeeded, jobId, fetchGrant])
 
   // Escape to close, plus focus return — the docint PreviewDialog contract
   // minus the modal parts.
@@ -77,15 +164,54 @@ export function MediaPanel() {
     }
   }, [open, close])
 
-  // A new recording starts clean: last one's playback error is not this one's.
-  useEffect(() => setFailed(false), [session?.mediaUrl])
+  // The element failed: most often because its grant expired and the next
+  // range request was refused. Ask for a fresh grant — once: an error soon
+  // after the last fresh grant is the file's, and is reported.
+  const onError = (event: SyntheticEvent<HTMLMediaElement>) => {
+    if (jobId === null || src === undefined || regrantedSrcRef.current === src) return
+    const element = event.currentTarget
+    const now = performance.now()
+    if (lastRegrantAtRef.current !== null && now - lastRegrantAtRef.current < REGRANT_INTERVAL_MS) {
+      setFailed(true)
+      return
+    }
+    lastRegrantAtRef.current = now
+    regrantedSrcRef.current = src
+    // Mid-playback, pick up where it stopped; before metadata, a pending
+    // timestamp seek still applies.
+    resumeAtRef.current =
+      element.readyState >= HAVE_METADATA ? { time: element.currentTime, play: !element.paused } : null
+    void fetchGrant(jobId)
+  }
+
+  const onLoadedMetadata = (event: SyntheticEvent<HTMLMediaElement>) => {
+    const element = event.currentTarget
+    const resume = resumeAtRef.current
+    resumeAtRef.current = null
+    if (resume) {
+      element.currentTime = resume.time
+      if (resume.play) void element.play?.()?.catch?.(() => {})
+    } else if (seekRequest) {
+      // A timestamp clicked before the media was ready — the element only
+      // exists once its grant is there — seeks and plays, as a click on a
+      // ready player does.
+      element.currentTime = seekRequest.seconds
+      void element.play?.()?.catch?.(() => {
+        // Autoplay can be refused; the seek still landed.
+      })
+    }
+  }
 
   // Apply seeks. Setting `currentTime` before metadata is loaded is discarded
   // by the browser, so a request that arrives early is re-applied on
-  // `loadedmetadata` (see `onLoadedMetadata` below).
+  // `loadedmetadata` (see `onLoadedMetadata`).
   useEffect(() => {
+    if (!seekRequest) return
+    // A timestamp clicked while a fresh grant loads outranks picking up where
+    // the expired one stopped.
+    resumeAtRef.current = null
     const element = mediaRef.current
-    if (!element || !seekRequest) return
+    if (!element) return
     element.currentTime = seekRequest.seconds
     void element.play?.()?.catch?.(() => {
       // Autoplay can be refused until the user interacts with the page; the
@@ -126,6 +252,15 @@ export function MediaPanel() {
         {session &&
           (failed ? (
             <p className="text-sm text-muted-foreground">{t('player.unplayable')}</p>
+          ) : purposeNeeded ? (
+            <p className="text-sm text-muted-foreground">{t('player.purpose_needed')}</p>
+          ) : grantError ? (
+            <p className="text-sm text-danger">{t(grantError.key, grantError.vars)}</p>
+          ) : src === undefined ? (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Spinner label={t('player.loading')} />
+              <span aria-hidden>{t('player.loading')}</span>
+            </div>
           ) : isVideoFile(session.fileName) ? (
             <video
               ref={mediaRef as React.RefObject<HTMLVideoElement>}
@@ -135,12 +270,9 @@ export function MediaPanel() {
               playsInline
               preload="metadata"
               className="w-full rounded-md bg-black"
-              onLoadedMetadata={(e) => {
-                // Re-apply a seek requested before the media was ready.
-                if (seekRequest) e.currentTarget.currentTime = seekRequest.seconds
-              }}
+              onLoadedMetadata={onLoadedMetadata}
               onTimeUpdate={(e) => setCurrentTime(e.currentTarget.currentTime)}
-              onError={() => setFailed(true)}
+              onError={onError}
             />
           ) : (
             <audio
@@ -150,11 +282,9 @@ export function MediaPanel() {
               controls
               preload="metadata"
               className="w-full"
-              onLoadedMetadata={(e) => {
-                if (seekRequest) e.currentTarget.currentTime = seekRequest.seconds
-              }}
+              onLoadedMetadata={onLoadedMetadata}
               onTimeUpdate={(e) => setCurrentTime(e.currentTarget.currentTime)}
-              onError={() => setFailed(true)}
+              onError={onError}
             />
           ))}
       </div>
