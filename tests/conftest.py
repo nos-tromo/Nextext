@@ -71,14 +71,21 @@ def _hermetic_audit_env(monkeypatch: pytest.MonkeyPatch) -> None:
     """Clear the audit-log variables before every test.
 
     A local ``.env`` that routes the audit stream to the container's stdout,
-    requires a purpose, or names a CLI user or purpose would otherwise change
-    what every test writes and refuses; tests that need one set it
-    explicitly.
+    requires a purpose, names a CLI user or purpose, or changes how long a
+    playback grant lives would otherwise change what every test writes and
+    refuses; tests that need one set it explicitly.
 
     Args:
         monkeypatch: Fixture for patching environment variables.
     """
-    for name in ("AUDIT_OUTPUT", "AUDIT_REQUIRE_PURPOSE", "AUDIT_CLI_USER", "AUDIT_CASE_REF", "AUDIT_REASON"):
+    for name in (
+        "AUDIT_OUTPUT",
+        "AUDIT_REQUIRE_PURPOSE",
+        "AUDIT_CLI_USER",
+        "AUDIT_CASE_REF",
+        "AUDIT_REASON",
+        "NEXTEXT_MEDIA_GRANT_TTL_S",
+    ):
         monkeypatch.delenv(name, raising=False)
 
 

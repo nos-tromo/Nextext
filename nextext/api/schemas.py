@@ -168,6 +168,16 @@ class JobSnapshot(BaseModel):
     result: JobResult | None = None
 
 
+class MediaGrantResponse(BaseModel):
+    """Response body of ``POST /jobs/{id}/media-grant``."""
+
+    # Server-relative URL of the upload, carrying the grant in its query
+    # string: what a media element's ``src`` is set to.
+    media_url: str
+    # When the grant stops working; ask for a new one after that.
+    expires_at: datetime
+
+
 class StageEvent(BaseModel):
     """SSE event payload describing a pipeline stage transition."""
 

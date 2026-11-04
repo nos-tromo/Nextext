@@ -79,6 +79,24 @@ class RequestAudit:
         """
         return replace(self, actor=actor)
 
+    def authorized_by(self, origin: Origin, actor: Actor) -> RequestAudit:
+        """Return a copy recording a request that an earlier request authorized.
+
+        A media element cannot state a purpose, so it plays a recording with
+        a grant issued to an earlier request that did
+        (:mod:`nextext.api.media_grants`); the streams the grant authorizes
+        are recorded with that request's purpose and request id.
+
+        Args:
+            origin: The request the grant was issued to.
+            actor: The caller to record.
+
+        Returns:
+            RequestAudit: The copy, with ``actor`` bound and the purpose and
+                request id taken from ``origin``.
+        """
+        return replace(self, actor=actor, purpose=origin.purpose, request_id=origin.request_id)
+
     @property
     def origin(self) -> Origin:
         """The request as the origin of the background work it starts.

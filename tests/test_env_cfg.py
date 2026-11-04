@@ -9,6 +9,7 @@ from nextext.utils.env_cfg import (
     DEFAULT_HATE_SPEECH_CONTEXT_TOKENS,
     DEFAULT_HATE_SPEECH_WINDOW_TOKENS,
     DEFAULT_JOB_CONCURRENCY,
+    DEFAULT_MEDIA_GRANT_TTL_S,
     DEFAULT_NER_TIMEOUT,
     DEFAULT_SUMMARY_MAX_INPUT_TOKENS,
     DEFAULT_VAD_TIMEOUT,
@@ -16,12 +17,14 @@ from nextext.utils.env_cfg import (
     DEFAULT_VISUAL_SUMMARY_MAX_FRAMES,
     EDGE_SECRET_MIN_LENGTH,
     KEYFRAMES_MAX_CEILING,
+    MEDIA_GRANT_TTL_CEILING_S,
     PrincipalConfigError,
     load_diarization_env,
     load_hate_speech_env,
     load_inference_env,
     load_job_concurrency,
     load_language_env,
+    load_media_grant_ttl,
     load_ner_env,
     load_principal_env,
     load_sentence_restore_env,
@@ -1401,3 +1404,36 @@ def test_load_principal_env_accepts_a_default_identity_outside_the_service_names
     """
     monkeypatch.setenv("NEXTEXT_DEFAULT_IDENTITY", "service-account")
     assert load_principal_env().default_identity == "service-account"
+
+
+# ---------------------------------------------------------------------------
+# load_media_grant_ttl
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("raw_value", "expected"),
+    [
+        pytest.param(None, DEFAULT_MEDIA_GRANT_TTL_S, id="unset"),
+        pytest.param("120", 120, id="valid"),
+        pytest.param("abc", DEFAULT_MEDIA_GRANT_TTL_S, id="unparseable"),
+        pytest.param("0", DEFAULT_MEDIA_GRANT_TTL_S, id="zero"),
+        pytest.param("-5", DEFAULT_MEDIA_GRANT_TTL_S, id="negative"),
+        pytest.param("999999", MEDIA_GRANT_TTL_CEILING_S, id="over-the-ceiling"),
+    ],
+)
+def test_load_media_grant_ttl(monkeypatch: pytest.MonkeyPatch, raw_value: str | None, expected: int) -> None:
+    """A playback grant lives 900 s by default, at most a day; bad values fall back.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Fixture for patching environment variables.
+        raw_value (str | None): The ``NEXTEXT_MEDIA_GRANT_TTL_S`` value, or ``None`` for unset.
+        expected (int): The resolved lifetime in seconds.
+    """
+    if raw_value is None:
+        monkeypatch.delenv("NEXTEXT_MEDIA_GRANT_TTL_S", raising=False)
+    else:
+        monkeypatch.setenv("NEXTEXT_MEDIA_GRANT_TTL_S", raw_value)
+
+    assert load_media_grant_ttl() == expected
+    assert DEFAULT_MEDIA_GRANT_TTL_S == 900
