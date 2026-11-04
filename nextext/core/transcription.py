@@ -15,6 +15,7 @@ from loguru import logger
 from openai import APIStatusError, OpenAI
 
 from nextext.core.audio import normalize_for_transcription
+from nextext.core.inference_trace import correlation_headers, record_inference, reply_usage
 from nextext.core.outcomes import SkipReason
 from nextext.core.vad import has_speech
 from nextext.utils.env_cfg import load_inference_env, load_whisper_env
@@ -221,6 +222,7 @@ class ExternalWhisperTranscriber:
         end_column: str = "end",
         speaker_column: str = "speaker",
         text_column: str = "text",
+        scratch_dir: Path | None = None,
     ) -> None:
         """Initialize the ExternalWhisperTranscriber.
 
@@ -234,8 +236,13 @@ class ExternalWhisperTranscriber:
             end_column (str): DataFrame column for segment end times.
             speaker_column (str): DataFrame column for speaker labels.
             text_column (str): DataFrame column for transcribed text.
+            scratch_dir (Path | None): Directory for the temporary FLAC
+                re-encode; ``None`` uses the system temp directory. The API
+                passes the job's own directory, so the copy goes wherever the
+                upload goes.
         """
         self.file_path = file_path
+        self.scratch_dir = scratch_dir
         self.src_lang = src_lang
         self.task = task
         self._model_id = model_id
@@ -294,6 +301,10 @@ class ExternalWhisperTranscriber:
         is exposed by OpenAI-compatible servers as a separate
         ``/v1/audio/translations`` endpoint. ``task`` itself is not
         accepted on either endpoint.
+
+        The request is reported to the open inference trace (task ``asr``)
+        for the audit log and carries the work's ``X-Request-ID`` when one is
+        set (:mod:`nextext.core.inference_trace`).
         """
         self.skip_reason = None
         if not has_speech(self.file_path):
@@ -306,7 +317,7 @@ class ExternalWhisperTranscriber:
             return
 
         provider = load_inference_env().provider
-        with normalize_for_transcription(self.file_path) as audio_path:
+        with normalize_for_transcription(self.file_path, scratch_dir=self.scratch_dir) as audio_path:
             file_size = audio_path.stat().st_size
             logger.info(
                 "External Whisper request: model='{}' task='{}' language='{}' "
@@ -329,14 +340,18 @@ class ExternalWhisperTranscriber:
                     "(e.g. the vllm-service audio container)."
                 )
             client = self._get_client
-            try:
-                with open(audio_path, "rb") as f:
+            headers = correlation_headers()
+            with open(audio_path, "rb") as f:
+                try:
                     if self.task == "translate":
-                        response = client.audio.translations.create(
-                            model=self._model_id,
-                            file=f,
-                            response_format="verbose_json",
-                        )
+                        translate_kwargs: dict[str, Any] = {
+                            "model": self._model_id,
+                            "file": f,
+                            "response_format": "verbose_json",
+                        }
+                        if headers:
+                            translate_kwargs["extra_headers"] = headers
+                        response = client.audio.translations.create(**translate_kwargs)
                     else:
                         kwargs: dict[str, Any] = {
                             "model": self._model_id,
@@ -346,10 +361,18 @@ class ExternalWhisperTranscriber:
                         }
                         if self.src_lang:
                             kwargs["language"] = self.src_lang
+                        if headers:
+                            kwargs["extra_headers"] = headers
                         response = client.audio.transcriptions.create(**kwargs)
-            except APIStatusError as exc:
-                logger.error("External Whisper API error: {}", error_label(exc))
-                raise
+                except APIStatusError as exc:
+                    record_inference("asr", self._model_id, ok=False)
+                    logger.error("External Whisper API error: {}", error_label(exc))
+                    raise
+                except Exception:
+                    record_inference("asr", self._model_id, ok=False)
+                    raise
+        input_tokens, output_tokens = reply_usage(response)
+        record_inference("asr", self._model_id, ok=True, input_tokens=input_tokens, output_tokens=output_tokens)
         raw_segments = [
             {
                 "start": seg.start,

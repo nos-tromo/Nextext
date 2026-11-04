@@ -21,6 +21,7 @@ import pytest
 
 from nextext.api.jobs import JobManager, JobState, PushEvent
 from nextext.api.schemas import JobOptions, JobStatus
+from tests.audit_helpers import AuditCapture, edge_origin
 
 from .conftest import ALICE_OWNER_ID
 
@@ -46,6 +47,7 @@ async def _create_job(manager: JobManager, tmp_path: Path, name: str) -> JobStat
         file_path=file_path,
         source_file_hash="sha256:0",
         options=JobOptions(),
+        origin=edge_origin(ALICE_OWNER_ID),
     )
 
 
@@ -82,7 +84,7 @@ async def test_delete_queued_job_never_runs_its_pipeline(tmp_path: Path) -> None
         assert release_first_job.wait(timeout=5.0)
         return {}
 
-    manager = JobManager(pipeline_runner=runner, concurrency=1)
+    manager = JobManager(pipeline_runner=runner, concurrency=1, emitter=AuditCapture().started())
     try:
         job_a = await _create_job(manager, tmp_path, "a")
         await asyncio.to_thread(first_job_started.wait, 5.0)
@@ -90,7 +92,7 @@ async def test_delete_queued_job_never_runs_its_pipeline(tmp_path: Path) -> None
         job_b = await _create_job(manager, tmp_path, "b")
         assert job_b.status is JobStatus.QUEUED
 
-        assert await manager.delete(job_b.job_id) is True
+        assert await manager.delete(job_b.job_id, origin=edge_origin(ALICE_OWNER_ID)) is True
         assert not job_b.file_path.parent.exists()
 
         release_first_job.set()
@@ -125,13 +127,13 @@ async def test_delete_running_job_defers_dir_cleanup_until_worker_finishes(
             raise
         return {}
 
-    manager = JobManager(pipeline_runner=runner, concurrency=1)
+    manager = JobManager(pipeline_runner=runner, concurrency=1, emitter=AuditCapture().started())
     try:
         job = await _create_job(manager, tmp_path, "running")
         await asyncio.to_thread(job_started.wait, 5.0)
         assert job.status is JobStatus.RUNNING
 
-        assert await manager.delete(job.job_id) is True
+        assert await manager.delete(job.job_id, origin=edge_origin(ALICE_OWNER_ID)) is True
         # The upload must survive while the pipeline thread still uses it.
         assert job.file_path.exists()
 

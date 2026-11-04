@@ -11,6 +11,7 @@ import requests
 from dotenv import load_dotenv
 from loguru import logger
 
+from nextext.core.inference_trace import correlation_headers, record_inference, reply_usage
 from nextext.utils.env_cfg import (
     DEFAULT_PROMPT_LANGUAGE,
     load_inference_env,
@@ -419,7 +420,10 @@ class InferencePipeline:
         The shared core behind :meth:`call_model` (plain string content) and
         :meth:`call_vision` (multimodal content parts): health gate, message
         assembly, request kwargs, ``extra_body`` think handling, and response
-        unwrapping all live here so the two entry points cannot drift.
+        unwrapping all live here so the two entry points cannot drift. Every
+        request is reported to the open inference trace (task ``chat``) for the
+        audit log, and carries the work's ``X-Request-ID`` when one is set
+        (:mod:`nextext.core.inference_trace`).
 
         Args:
             user_content (str | list[dict[str, Any]]): The user message body —
@@ -476,8 +480,26 @@ class InferencePipeline:
         effective_think = think if think is not None else load_inference_env().think
         if effective_think is not None:
             request_kwargs["extra_body"] = {"think": effective_think}
+        headers = correlation_headers()
+        if headers:
+            request_kwargs["extra_headers"] = headers
 
-        response = self.client.chat.completions.create(**request_kwargs)
+        requested_model = str(request_kwargs["model"])
+        try:
+            response = self.client.chat.completions.create(**request_kwargs)
+        except Exception:
+            record_inference("chat", requested_model, ok=False)
+            raise
+        input_tokens, output_tokens = reply_usage(response)
+        served_model = getattr(response, "model", None)
+        record_inference(
+            "chat",
+            requested_model,
+            ok=True,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            served_model=served_model if isinstance(served_model, str) else None,
+        )
         choice = response.choices[0]
         content = choice.message.content
         finish_reason = getattr(choice, "finish_reason", None)

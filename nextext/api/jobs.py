@@ -11,13 +11,22 @@ The blocking pipeline runs on a worker thread via
 ``anyio.to_thread.run_sync``. Stage transitions are published to a per-job
 list of subscriber queues so any number of SSE clients can attach to the
 same job and receive the same events.
+
+The manager also writes the job's data-protection audit events
+(:mod:`nextext.audit`): the upload's ``collect``, one ``ai_call`` per
+inference task of every stage, the result's ``combine``, and every
+``delete`` — by the owner, at shutdown, and of the uploads a previous process
+left behind, which it attributes through the owner record kept next to each
+upload (:mod:`nextext.api.job_record`).
 """
 
 from __future__ import annotations
 
 import asyncio
 import contextlib
+import fcntl
 import json
+import os
 import secrets
 import shutil
 import tempfile
@@ -32,6 +41,7 @@ import pandas as pd
 from loguru import logger
 from matplotlib.figure import Figure
 
+from nextext.api.job_record import JobRecord, read_job_record, write_job_record
 from nextext.api.metrics import record_completed, record_failed, record_skipped
 from nextext.api.schemas import (
     FrameCaptionOut,
@@ -44,10 +54,27 @@ from nextext.api.schemas import (
     TranscriptSegment,
     WordCount,
 )
+from nextext.audit import (
+    CAPTION_STAGE,
+    FRAME_HATE_SPEECH_STAGE,
+    HATE_SPEECH_STAGE,
+    SUMMARY_STAGE,
+    TRANSCRIPTION_STAGE,
+    TRANSLATION_STAGE,
+    VISUAL_SUMMARY_STAGE,
+    WORDLEVEL_STAGE,
+    AuditSink,
+    JobAudit,
+    Origin,
+    emit_with_ids,
+    joined_analyses,
+)
 from nextext.core.audio import AudioDecodeError
 from nextext.core.docint_transcript import parse_hhmmss_to_seconds
+from nextext.core.inference_trace import correlate
 from nextext.core.keyframes import extract_keyframe_samples
 from nextext.core.outcomes import FailureCode, SkipReason, skip_reason_text
+from nextext.utils.audit_event import Actor, AuditEmitter, Target
 from nextext.utils.env_cfg import load_job_concurrency, load_visual_summary_env
 from nextext.utils.log_cfg import error_label, exception_frames
 
@@ -134,6 +161,9 @@ class JobState:
     # owns the tempdir cleanup (in its finally block) and suppresses further
     # event dispatch for the no-longer-listed job.
     deleted: bool = False
+    # The job's audit trail: every event of the job carries the actor,
+    # purpose and request id of the request that created it.
+    audit: JobAudit = field(kw_only=True, repr=False)
 
     @property
     def media_url(self) -> str | None:
@@ -369,7 +399,95 @@ def _serialize_result(result: dict[str, Any], media_url: str | None = None) -> J
     )
 
 
+def _requested_analyses(options: JobOptions) -> list[str]:
+    """Name the analyses a job asked for, for its ``collect`` event.
+
+    Args:
+        options: The job's options.
+
+    Returns:
+        list[str]: Transcription always, then each opt-in analysis requested.
+    """
+    requested = ["transcription"]
+    for name, wanted in (
+        ("diarization", options.diarize),
+        ("translation", options.task == "translate"),
+        ("word_level", options.words),
+        ("summary", options.summarization),
+        ("hate_speech", options.hate_speech),
+        ("keyframes", options.keyframes),
+    ):
+        if wanted:
+            requested.append(name)
+    return requested
+
+
+def _collect_criteria(file_path: Path, source_file_hash: str, options: JobOptions) -> dict[str, object]:
+    """Describe an upload for its ``collect`` event: size, hash, what was asked.
+
+    Never the file name, which can name the people in the recording.
+
+    Args:
+        file_path: The stored upload.
+        source_file_hash: Its ``sha256:...`` digest.
+        options: The job's options.
+
+    Returns:
+        dict[str, object]: The event's criteria.
+    """
+    return {
+        "files": 1,
+        "bytes": file_path.stat().st_size,
+        "source_sha256": source_file_hash.removeprefix("sha256:"),
+        "analyses": _requested_analyses(options),
+        "options": options.model_dump(mode="json"),
+    }
+
+
+def _is_filled_frame(value: Any) -> bool:
+    """Report whether a result entry is a non-empty DataFrame.
+
+    Args:
+        value: A result entry.
+
+    Returns:
+        bool: ``True`` for a DataFrame with rows.
+    """
+    return isinstance(value, pd.DataFrame) and not value.empty
+
+
+def _joined_analyses(result: dict[str, Any], options: JobOptions) -> tuple[list[str], bool]:
+    """Name the analyses a finished job's result joins, for its ``combine`` event.
+
+    Each analysis is listed when the result carries its output — except
+    hate-speech detection, listed whenever it ran (see
+    :func:`nextext.audit.joined_analyses`).
+
+    Args:
+        result: The finished job's result payload.
+        options: The job's options.
+
+    Returns:
+        tuple[list[str], bool]: The analyses, and whether the results carry
+            speaker labels.
+    """
+    transcript = result.get("transcript")
+    columns = list(transcript.columns) if _is_filled_frame(transcript) and isinstance(transcript, pd.DataFrame) else []
+    has_captions = bool(result.get("frame_captions"))
+    return joined_analyses(
+        transcript_columns=columns,
+        word_counts=_is_filled_frame(result.get("word_counts")),
+        named_entities=_is_filled_frame(result.get("named_entities")),
+        summary=bool(result.get("summary")),
+        frame_captions=has_captions,
+        hate_speech=options.hate_speech and (bool(columns) or has_captions),
+    )
+
+
 PushEvent = Callable[[str, dict[str, Any]], None]
+
+# How the summarizer's transcript input is named in its audit event.
+_SUMMARY_INPUT: dict[str, str] = {"text": "transcript", "translation": "translation"}
 
 
 def _run_pipeline_blocking(state: JobState, push_event: PushEvent) -> dict[str, Any]:
@@ -392,6 +510,7 @@ def _run_pipeline_blocking(state: JobState, push_event: PushEvent) -> dict[str, 
     from nextext.core.openai_cfg import InferencePipeline
     from nextext.core.visual_context import FrameCaption, describe_keyframes, format_visual_context
     from nextext.pipeline import (
+        column_text,
         effective_text_column,
         frame_hate_speech_pipeline,
         hate_speech_pipeline,
@@ -477,13 +596,23 @@ def _run_pipeline_blocking(state: JobState, push_event: PushEvent) -> dict[str, 
             inference_pipeline = candidate
         return inference_pipeline
 
+    # Every inference request a stage makes is tallied per task and recorded
+    # as one ai_call event per task when the stage ends (nextext.audit). A
+    # failed audit write raises out of the stage and fails the job.
+    audit = state.audit
+
     # Transcription -----------------------------------------------------------
     _notify(0)
-    outcome = transcription_pipeline(
-        file_path=state.file_path,
-        src_lang=file_opts["src_lang"] or "",
-        diarize=file_opts["diarize"],
-    )
+    with audit.stage(TRANSCRIPTION_STAGE) as notes:
+        outcome = transcription_pipeline(
+            file_path=state.file_path,
+            src_lang=file_opts["src_lang"] or "",
+            diarize=file_opts["diarize"],
+            # The FLAC re-encode sits next to the upload, so a crash leaves no
+            # copy of the audio outside the job directory.
+            scratch_dir=state.file_path.parent,
+        )
+        notes.result("asr", text=column_text(outcome.transcript, "text"), segments=len(outcome.transcript))
     df = outcome.transcript
     file_opts["src_lang"] = outcome.src_lang
     # A file with no processable speech is a completed job, not a failure: the
@@ -540,16 +669,18 @@ def _run_pipeline_blocking(state: JobState, push_event: PushEvent) -> dict[str, 
             # captioning — and asks for no other model-backed stage — never
             # touches the chat provider and cannot lose its transcript to one.
             caption_pipeline = _ensure_inference()
-            try:
-                captions = describe_keyframes(
-                    keyframe_samples,
-                    caption_pipeline,
-                    max_frames=visual_cfg.max_frames,
-                    max_side=visual_cfg.max_side,
-                )
-            except Exception as exc:
-                logger.warning("Job {} visual context unavailable: {}", state.job_id, error_label(exc))
-                captions = []
+            with audit.stage(CAPTION_STAGE) as notes:
+                try:
+                    captions = describe_keyframes(
+                        keyframe_samples,
+                        caption_pipeline,
+                        max_frames=visual_cfg.max_frames,
+                        max_side=visual_cfg.max_side,
+                    )
+                except Exception as exc:
+                    logger.warning("Job {} visual context unavailable: {}", state.job_id, error_label(exc))
+                    captions = []
+                notes.result("chat", text=format_visual_context(captions) if captions else None)
         _complete(1, {"keyframes": len(keyframes), "frame_captions": len(captions)})
     else:
         logger.info("Job {} keyframes not requested.", state.job_id)
@@ -564,17 +695,21 @@ def _run_pipeline_blocking(state: JobState, push_event: PushEvent) -> dict[str, 
         visual_summary: str | None = None
         if file_opts["summarization"] and visual_context:
             _notify(4)
-            visual_summary = summarization_pipeline(
-                "",
-                inference_pipeline=_ensure_inference(),
-                visual_context=visual_context,
-            )
+            with audit.stage(VISUAL_SUMMARY_STAGE) as notes:
+                visual_summary = summarization_pipeline(
+                    "",
+                    inference_pipeline=_ensure_inference(),
+                    visual_context=visual_context,
+                )
+                notes.result("chat", text=visual_summary, inputs=["visual_context"])
             _complete(4, {"summary": bool(visual_summary)})
         # Likewise the captions can show hate a silent clip never speaks.
         frame_findings: list[dict[str, Any]] | None = None
         if file_opts["hate_speech"] and captions:
             _notify(5)
-            frame_findings = frame_hate_speech_pipeline(captions, inference_pipeline=_ensure_inference())
+            with audit.stage(FRAME_HATE_SPEECH_STAGE) as notes:
+                frame_findings = frame_hate_speech_pipeline(captions, inference_pipeline=_ensure_inference())
+                notes.result("chat", frames=len(captions))
             _complete(5, {"flagged": len(frame_findings)})
         return {
             "transcript": df,
@@ -603,12 +738,19 @@ def _run_pipeline_blocking(state: JobState, push_event: PushEvent) -> dict[str, 
     _notify(2)
     needs_translation = should_translate(file_opts["task"], file_opts["src_lang"], file_opts["trg_lang"])
     if needs_translation:
-        df = translation_pipeline(
-            df,
-            file_opts["trg_lang"],
-            src_lang=file_opts["src_lang"],
-            inference_pipeline=_ensure_inference(),
-        )
+        with audit.stage(TRANSLATION_STAGE) as notes:
+            df = translation_pipeline(
+                df,
+                file_opts["trg_lang"],
+                src_lang=file_opts["src_lang"],
+                inference_pipeline=_ensure_inference(),
+            )
+            notes.result(
+                "chat",
+                text=column_text(df, "translation"),
+                src_lang=file_opts["src_lang"],
+                trg_lang=file_opts["trg_lang"],
+            )
         _complete(2, {"translated": True})
     else:
         _complete(2, {"translated": False})
@@ -633,10 +775,11 @@ def _run_pipeline_blocking(state: JobState, push_event: PushEvent) -> dict[str, 
     # Word-level analysis -----------------------------------------------------
     _notify(3)
     if file_opts["words"]:
-        wc, ner, cloud = wordlevel_pipeline(
-            df,
-            normalize_language_code(transcript_language) or "en",
-        )
+        with audit.stage(WORDLEVEL_STAGE):
+            wc, ner, cloud = wordlevel_pipeline(
+                df,
+                normalize_language_code(transcript_language) or "en",
+            )
         result["word_counts"] = wc
         result["named_entities"] = ner
         result["wordcloud"] = cloud
@@ -659,11 +802,17 @@ def _run_pipeline_blocking(state: JobState, push_event: PushEvent) -> dict[str, 
     _notify(4)
     if file_opts["summarization"]:
         summary_text_column = effective_text_column(df)
-        result["summary"] = summarization_pipeline(
-            " ".join(df[summary_text_column].astype(str).tolist()),
-            inference_pipeline=_ensure_inference(),
-            visual_context=visual_context,
-        )
+        with audit.stage(SUMMARY_STAGE) as notes:
+            result["summary"] = summarization_pipeline(
+                " ".join(df[summary_text_column].astype(str).tolist()),
+                inference_pipeline=_ensure_inference(),
+                visual_context=visual_context,
+            )
+            notes.result(
+                "chat",
+                text=result["summary"],
+                inputs=[_SUMMARY_INPUT[summary_text_column], *(["visual_context"] if visual_context else [])],
+            )
         _complete(4, {"summary": bool(result["summary"])})
     else:
         _complete(4, {"skipped": True})
@@ -671,10 +820,14 @@ def _run_pipeline_blocking(state: JobState, push_event: PushEvent) -> dict[str, 
     # Hate-speech detection ---------------------------------------------------
     _notify(5)
     if file_opts["hate_speech"]:
-        findings = hate_speech_pipeline(
-            df=df, inference_pipeline=_ensure_inference(), src_lang=file_opts["src_lang"] or None
-        )
-        findings += frame_hate_speech_pipeline(captions, inference_pipeline=_ensure_inference())
+        # Recorded by what was judged, never by what was found: the findings
+        # can amount to special categories of personal data.
+        with audit.stage(HATE_SPEECH_STAGE) as notes:
+            findings = hate_speech_pipeline(
+                df=df, inference_pipeline=_ensure_inference(), src_lang=file_opts["src_lang"] or None
+            )
+            findings += frame_hate_speech_pipeline(captions, inference_pipeline=_ensure_inference())
+            notes.result("chat", segments=len(df), frames=len(captions))
         result["hate_speech_findings"] = findings
         _complete(5, {"flagged": len(findings)})
     else:
@@ -693,6 +846,12 @@ class JobManager:
     reloads mid-run re-attaches and resumes the live view. There is no
     durable storage and no TTL: a job is retained until its owner deletes it
     or the process exits.
+
+    Each upload lives in a job directory under ``tmp_root``, next to a small
+    owner record (:mod:`nextext.api.job_record`). :meth:`start` removes the
+    directories a previous process left behind and records their deletion,
+    attributed through those records; :meth:`stop` removes every job's
+    directory and records that too.
     """
 
     def __init__(
@@ -700,6 +859,8 @@ class JobManager:
         tmp_root: Path | None = None,
         pipeline_runner: Callable[[JobState, PushEvent], dict[str, Any]] | None = None,
         concurrency: int | None = None,
+        *,
+        emitter: AuditEmitter,
     ) -> None:
         """Initialize the manager.
 
@@ -711,6 +872,8 @@ class JobManager:
             concurrency: Optional override for the worker semaphore size.
                 Defaults to :func:`nextext.utils.env_cfg.load_job_concurrency`
                 (``NEXTEXT_JOB_CONCURRENCY``, itself defaulting to ``1``).
+            emitter: The process's started audit emitter, which every job
+                event is written to.
         """
         resolved = concurrency if concurrency is not None else load_job_concurrency()
         self._jobs: dict[str, JobState] = {}
@@ -726,20 +889,154 @@ class JobManager:
         self.tmp_root = tmp_root or Path(tempfile.gettempdir()) / "nextext-jobs"
         self.tmp_root.mkdir(parents=True, exist_ok=True)
         self._pipeline_runner = pipeline_runner or _run_pipeline_blocking
+        self._sink = AuditSink(emitter)
+        # Held while the manager runs, so a second manager on the same
+        # directory (another process) never sweeps this one's live uploads.
+        self._root_lock_fd: int | None = None
 
     async def start(self) -> None:
-        """Lifecycle hook retained for the app startup contract (no-op)."""
-        return None
+        """Take the job directory and remove what a previous process left in it.
+
+        Uploads outlive a process that dies without :meth:`stop`; nothing in
+        memory points at them any more. They are removed here, before the API
+        serves a request, and their deletion is recorded (``delete`` /
+        ``job.sweep_orphans``, by the system). When another live manager holds
+        the directory, nothing is removed.
+
+        Raises:
+            AuditWriteError: If the deletion cannot be recorded; startup fails.
+        """
+        if not self._lock_root():
+            logger.warning("Another Nextext process is using the job directory; skipped the leftover-upload sweep.")
+            return
+        swept = await asyncio.to_thread(self._remove_leftovers)
+        self._record_removals("job.sweep_orphans", swept, trigger="startup")
 
     async def stop(self) -> None:
-        """Clean up per-job tempdirs and close owner streams on shutdown."""
-        for state in list(self._jobs.values()):
+        """Remove every job and its upload, record it, and close owner streams.
+
+        Job events are refused from here on (a pipeline thread still running
+        fails its job instead of writing past the chain's end); the deletion
+        of the remaining jobs is recorded as one ``delete`` / ``job.purge``
+        per owner, by the system.
+        """
+        self._sink.seal()
+        states = list(self._jobs.values())
+        self._jobs.clear()
+        for state in states:
             await self._delete_state(state)
-        async with self._lock:
-            for queues in self._owner_subscribers.values():
-                for queue in queues:
-                    queue.put_nowait(None)
-            self._owner_subscribers.clear()
+        removals: list[tuple[JobRecord | None, bool]] = [
+            (
+                JobRecord(job_id=state.job_id, owner_id=state.owner_id, created_at=state.created_at.isoformat()),
+                not state.file_path.parent.exists(),
+            )
+            for state in states
+        ]
+        try:
+            self._record_removals("job.purge", removals, trigger="shutdown")
+        finally:
+            async with self._lock:
+                for queues in self._owner_subscribers.values():
+                    for queue in queues:
+                        queue.put_nowait(None)
+                self._owner_subscribers.clear()
+            self._release_root()
+
+    def _lock_root(self) -> bool:
+        """Take the job directory's lock for the manager's lifetime.
+
+        Returns:
+            bool: ``True`` when this manager now holds it, ``False`` when
+                another live manager does.
+        """
+        if self._root_lock_fd is not None:
+            return True
+        fd = os.open(self.tmp_root / ".lock", os.O_RDWR | os.O_CREAT | os.O_CLOEXEC, 0o600)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            os.close(fd)
+            return False
+        self._root_lock_fd = fd
+        return True
+
+    def _release_root(self) -> None:
+        """Release the job directory's lock, if held."""
+        if self._root_lock_fd is not None:
+            os.close(self._root_lock_fd)
+            self._root_lock_fd = None
+
+    def _remove_leftovers(self) -> list[tuple[JobRecord | None, bool]]:
+        """Remove every job directory under ``tmp_root``.
+
+        Called only while no job is live in this process and no other manager
+        holds the directory, so every job directory found is a leftover.
+
+        Returns:
+            list[tuple[JobRecord | None, bool]]: Per directory, its owner
+                record (``None`` when it had no valid one) and whether it is
+                gone.
+        """
+        removed: list[tuple[JobRecord | None, bool]] = []
+        for entry in sorted(self.tmp_root.iterdir()):
+            if not entry.name.startswith("job-") or entry.is_symlink() or not entry.is_dir():
+                continue
+            record = read_job_record(entry)
+            shutil.rmtree(entry, ignore_errors=True)
+            removed.append((record, not entry.exists()))
+        if removed:
+            logger.info("Removed {} leftover job director(ies) from a previous process.", len(removed))
+        return removed
+
+    def _record_removals(
+        self,
+        operation: str,
+        removals: list[tuple[JobRecord | None, bool]],
+        *,
+        trigger: str,
+    ) -> None:
+        """Record the system's removal of job directories, one event per owner.
+
+        Jobs are named by id, their owner as the target's container
+        (``owner:<id>``); directories without an owner record are counted on
+        an event of their own (``kind="upload"``). A directory that could not
+        be removed is recorded with ``outcome="error"``.
+
+        Args:
+            operation: ``job.sweep_orphans`` or ``job.purge``.
+            removals: Per directory, its owner record and whether it is gone.
+            trigger: ``startup`` or ``shutdown``.
+        """
+        system = Actor(None, "system")
+        by_owner: dict[tuple[str, bool], list[str]] = {}
+        unrecorded: dict[bool, int] = {}
+        for record, gone in removals:
+            if record is None:
+                unrecorded[gone] = unrecorded.get(gone, 0) + 1
+            else:
+                by_owner.setdefault((record.owner_id, gone), []).append(record.job_id)
+        emitter = self._sink.emitter
+        for (owner_id, gone), job_ids in by_owner.items():
+            emit_with_ids(
+                emitter,
+                "delete",
+                operation,
+                system,
+                kind="job",
+                ids=job_ids,
+                container=f"owner:{owner_id}",
+                outcome="ok" if gone else "error",
+                criteria={"trigger": trigger},
+            )
+        for gone, count in unrecorded.items():
+            emitter.emit(
+                "delete",
+                operation,
+                system,
+                outcome="ok" if gone else "error",
+                target=Target(kind="upload", count=count),
+                criteria={"trigger": trigger, "owner_recorded": False},
+            )
 
     async def create_job(
         self,
@@ -749,8 +1046,14 @@ class JobManager:
         file_path: Path,
         source_file_hash: str,
         options: JobOptions,
+        origin: Origin,
     ) -> JobState:
-        """Register a new job and dispatch its async worker.
+        """Register a new job, record its upload, and dispatch its async worker.
+
+        The owner record is written next to the upload and the upload's
+        ``collect`` event is recorded before the job exists; if either fails,
+        the upload is removed and the error propagates, so no job runs whose
+        upload is unrecorded.
 
         Args:
             owner_id: Principal resolved by
@@ -759,11 +1062,25 @@ class JobManager:
             file_path: Path to the streamed upload on disk.
             source_file_hash: ``sha256:...`` digest of the upload.
             options: Parsed pipeline options.
+            origin: The creating request's actor, purpose and request id,
+                which every event of the job carries.
 
         Returns:
             JobState: The newly registered state.
         """
         job_id = uuid.uuid4().hex
+        created_at = _utcnow()
+        audit = JobAudit(self._sink, job_id, origin)
+        try:
+            await asyncio.to_thread(
+                write_job_record,
+                file_path.parent,
+                JobRecord(job_id=job_id, owner_id=owner_id, created_at=created_at.isoformat()),
+            )
+            audit.collect(_collect_criteria(file_path, source_file_hash, options))
+        except BaseException:
+            await asyncio.to_thread(self._unlink_job_dir, file_path)
+            raise
         state = JobState(
             job_id=job_id,
             owner_id=owner_id,
@@ -771,6 +1088,8 @@ class JobManager:
             file_path=file_path,
             source_file_hash=source_file_hash,
             options=options,
+            created_at=created_at,
+            audit=audit,
         )
         async with self._lock:
             self._jobs[job_id] = state
@@ -816,11 +1135,17 @@ class JobManager:
         async with self._lock:
             return self._jobs.get(job_id)
 
-    async def delete(self, job_id: str, owner_id: str | None = None) -> bool:
+    async def delete(self, job_id: str, *, origin: Origin, owner_id: str | None = None) -> bool:
         """Remove a job, its tempfile, and signal any SSE subscribers to close.
+
+        The erasure is recorded (``delete`` / ``job.delete``) once the job is
+        gone from memory and its upload removed — or, for a running job, once
+        its removal is handed to the worker, which removes the upload when the
+        pipeline step that holds it returns.
 
         Args:
             job_id: Job identifier.
+            origin: The deleting request's actor, purpose and request id.
             owner_id: When provided, the deletion only succeeds if the job
                 belongs to ``owner_id``. Allows the routes to enforce the
                 ownership boundary without re-fetching the state.
@@ -833,6 +1158,7 @@ class JobManager:
             if state is None or (owner_id is not None and state.owner_id != owner_id):
                 return False
             self._jobs.pop(job_id, None)
+        status_at_delete = state.status
         state.deleted = True
         task = state.task
         if task is not None and not task.done() and state.status is JobStatus.QUEUED:
@@ -851,6 +1177,15 @@ class JobManager:
             state.subscribers.clear()
         else:
             await self._delete_state(state)
+        self._sink.emit(
+            "delete",
+            "job.delete",
+            origin.actor,
+            request_id=origin.request_id,
+            purpose=origin.purpose,
+            target=state.audit.target,
+            criteria={"status": status_at_delete.value},
+        )
         return True
 
     async def _delete_state(self, state: JobState) -> None:
@@ -1031,7 +1366,15 @@ class JobManager:
                 self._dispatch_event(state, event_name, tagged, _format_sse(event_name, tagged))
 
             try:
-                result = await asyncio.to_thread(self._pipeline_runner, state, _push)
+                # The creating request's id rides along on every inference
+                # request the job makes (X-Request-ID), for correlation.
+                with correlate(state.audit.origin.request_id):
+                    result = await asyncio.to_thread(self._pipeline_runner, state, _push)
+                if not state.deleted:
+                    # A job deleted mid-run discards its result instead of
+                    # storing the joined analyses; its transfers are recorded.
+                    analyses, speaker_attributed = _joined_analyses(result, state.options)
+                    state.audit.combine(analyses, speaker_attributed=speaker_attributed)
                 state.result = result
                 state.finished_at = _utcnow()
                 state.status = JobStatus.COMPLETED

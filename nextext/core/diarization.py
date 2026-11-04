@@ -19,10 +19,12 @@ from typing import Any
 import httpx as httpx  # explicit re-export so tests can monkeypatch diarization.httpx
 from loguru import logger
 
+from nextext.core.inference_trace import correlation_headers, record_inference
 from nextext.utils.env_cfg import load_diarization_env
 from nextext.utils.log_cfg import error_label
 
 __all__ = [
+    "DIARIZE_MODEL_ALIAS",
     "SPEAKER_LABEL_PREFIX",
     "assign_speakers_by_overlap",
     "build_speaker_segments",
@@ -33,6 +35,8 @@ __all__ = [
 ]
 
 SPEAKER_LABEL_PREFIX = "Speaker"
+# The /diarize service takes no model field; the audit log names it by its endpoint.
+DIARIZE_MODEL_ALIAS = "diarize"
 
 
 def canonicalize_speaker_labels(turns: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -145,7 +149,7 @@ def diarize_file(
     if max_speakers is not None:
         data["max_speakers"] = max_speakers
 
-    headers: dict[str, str] = {}
+    headers: dict[str, str] = correlation_headers()
     if config.api_key:
         headers["Authorization"] = f"Bearer {config.api_key}"
 
@@ -162,13 +166,16 @@ def diarize_file(
         response.raise_for_status()
         payload = response.json()
     except (httpx.HTTPError, ValueError, OSError) as exc:
+        record_inference("diarize", DIARIZE_MODEL_ALIAS, ok=False)
         logger.error("Diarization request to {} failed: {}", url, error_label(exc))
         return []
 
     if not isinstance(payload, dict):
+        record_inference("diarize", DIARIZE_MODEL_ALIAS, ok=False)
         logger.error("Diarization response from {} was not a JSON object; ignoring.", url)
         return []
 
+    record_inference("diarize", DIARIZE_MODEL_ALIAS, ok=True)
     segments = list(payload.get("segments", []))
     logger.info("Diarization complete: {} speaker turns from '{}'.", len(segments), file_path.name)
     return segments

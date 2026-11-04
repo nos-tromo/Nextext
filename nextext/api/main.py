@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import os
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
-from importlib.metadata import PackageNotFoundError, version
+from collections.abc import AsyncIterator, Callable
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
+from typing import Any
 
 from fastapi import FastAPI
 from loguru import logger
@@ -13,45 +13,103 @@ from prometheus_fastapi_instrumentator import Instrumentator
 
 from nextext.api.errors import install_error_handlers
 from nextext.api.identity import check_principal_config
-from nextext.api.jobs import JobManager
+from nextext.api.jobs import JobManager, JobState, PushEvent
 from nextext.api.routes import router as api_router
+from nextext.audit import build_emitter, emit_config_event, service_version
+from nextext.utils.audit_event import AuditEmitter
+from nextext.utils.env_cfg import load_audit_env, load_principal_env
 from nextext.utils.log_cfg import setup_logging
 
-try:
-    _APP_VERSION = version("nextext")
-except PackageNotFoundError:  # running from source without an installed dist
-    _APP_VERSION = "0+unknown"
+_APP_VERSION = service_version()
+
+#: Builds the process's audit emitter from the ``AUDIT_OUTPUT`` mode.
+EmitterFactory = Callable[[str | None], AuditEmitter]
+#: The blocking pipeline a job runs (see :class:`nextext.api.jobs.JobManager`).
+PipelineRunner = Callable[[JobState, PushEvent], dict[str, Any]]
 
 
-@asynccontextmanager
-async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    """Configure logging, check the identity config, and run the job manager.
+def _lifespan(
+    emitter_factory: EmitterFactory,
+    pipeline_runner: PipelineRunner | None,
+) -> Callable[[FastAPI], AbstractAsyncContextManager[None]]:
+    """Build the app's lifespan around an emitter factory and a pipeline runner.
 
     Args:
-        app: The FastAPI application instance.
+        emitter_factory: Creates the process's audit emitter.
+        pipeline_runner: The job pipeline; ``None`` runs the real one.
 
-    Yields:
-        None: Control is yielded after startup configuration completes.
-
-    Raises:
-        PrincipalConfigError: When the identity configuration is malformed,
-            so the backend refuses to start.
+    Returns:
+        Callable[[FastAPI], AbstractAsyncContextManager[None]]: The lifespan.
     """
-    setup_logging()
-    check_principal_config()
-    job_manager = JobManager()
-    await job_manager.start()
-    app.state.job_manager = job_manager
-    logger.info("Nextext API started")
-    try:
-        yield
-    finally:
-        logger.info("Nextext API shutting down.")
-        await job_manager.stop()
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        """Configure logging, open the audit chain, and run the job manager.
+
+        The audit chain opens before the job manager starts — whose first act
+        is to remove, and record removing, the uploads a previous process
+        left behind — and closes after it stops.
+
+        Args:
+            app: The FastAPI application instance.
+
+        Yields:
+            None: Control is yielded after startup configuration completes.
+
+        Raises:
+            PrincipalConfigError: When the identity configuration is malformed,
+                so the backend refuses to start.
+            ValueError: When ``AUDIT_REQUIRE_PURPOSE`` or ``AUDIT_OUTPUT``
+                names something unknown.
+            OSError: When the audit stream cannot be opened.
+        """
+        setup_logging()
+        check_principal_config()
+        audit_cfg = load_audit_env()
+        principal_cfg = load_principal_env()
+        emitter = emitter_factory(audit_cfg.output)
+        emitter.start()
+        try:
+            # The federation-wide keys, plus how many services may call as
+            # themselves (a count — names and tokens stay out).
+            emit_config_event(
+                emitter,
+                {
+                    "edge_secret_enforced": principal_cfg.edge_secret is not None,
+                    "default_identity_enabled": principal_cfg.default_identity is not None
+                    and principal_cfg.edge_secret is None,
+                    "require_purpose": sorted(audit_cfg.require_purpose),
+                    "service_tokens": len(principal_cfg.service_tokens),
+                },
+            )
+            job_manager = JobManager(pipeline_runner=pipeline_runner, emitter=emitter)
+            await job_manager.start()
+            app.state.audit_emitter = emitter
+            app.state.audit_required = audit_cfg.require_purpose
+            app.state.job_manager = job_manager
+            logger.info("Nextext API started")
+            try:
+                yield
+            finally:
+                logger.info("Nextext API shutting down.")
+                await job_manager.stop()
+        finally:
+            emitter.close()
+
+    return lifespan
 
 
-def create_app() -> FastAPI:
+def create_app(
+    *,
+    audit_emitter_factory: EmitterFactory = build_emitter,
+    pipeline_runner: PipelineRunner | None = None,
+) -> FastAPI:
     """Build the FastAPI application, mount routers, and return it.
+
+    Args:
+        audit_emitter_factory: Creates the process's audit emitter from the
+            ``AUDIT_OUTPUT`` mode; tests pass one writing to a buffer.
+        pipeline_runner: The job pipeline; ``None`` runs the real one.
 
     Returns:
         FastAPI: A configured application ready to be served by uvicorn.
@@ -60,11 +118,11 @@ def create_app() -> FastAPI:
         title="Nextext API",
         description=(
             "Backend for the Nextext audio transcription, translation, and "
-            "analysis toolkit. The Streamlit frontend in this repository is "
+            "analysis toolkit. The React frontend in this repository is "
             "one consumer; any HTTP client can use the documented endpoints."
         ),
         version=_APP_VERSION,
-        lifespan=lifespan,
+        lifespan=_lifespan(audit_emitter_factory, pipeline_runner),
     )
     install_error_handlers(application)
     application.include_router(api_router)

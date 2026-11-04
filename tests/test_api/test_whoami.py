@@ -70,14 +70,22 @@ def test_whoami_shows_display_name_on_edge_verified_request(monkeypatch: pytest.
 
 
 def test_whoami_ignores_gateway_headers_without_edge_secret(monkeypatch: pytest.MonkeyPatch) -> None:
-    """An unverified request gets neither the forged user nor the forged display name."""
+    """An unverified request gets neither the forged user nor the forged display name.
+
+    Without a verified identity it gets 401 (the default identity does not
+    apply while the edge secret is set); a request that resolves another way —
+    a service token — still never echoes the forged display name.
+    """
     monkeypatch.setenv("NEXTEXT_EDGE_SECRET", EDGE_SECRET)
     monkeypatch.setenv("NEXTEXT_DEFAULT_IDENTITY", "service-account")
+    monkeypatch.setenv("NEXTEXT_SERVICE_TOKENS", f"docint={DOCINT_TOKEN}")
     headers = {OWNER_HEADER: "forged-owner-for-tests", "X-Auth-Name": "Forged Name"}
     with TestClient(create_app()) as client:
-        response = client.get("/api/v1/whoami", headers=headers)
-    assert response.status_code == 200
-    assert response.json() == {"username": "service-account", "display_name": None}
+        unverified = client.get("/api/v1/whoami", headers=headers)
+        service = client.get("/api/v1/whoami", headers={**headers, "Authorization": f"Bearer {DOCINT_TOKEN}"})
+    assert unverified.status_code == 401
+    assert service.status_code == 200
+    assert service.json() == {"username": "service:docint", "display_name": None}
 
 
 def test_whoami_resolves_a_docint_style_service_call(monkeypatch: pytest.MonkeyPatch) -> None:

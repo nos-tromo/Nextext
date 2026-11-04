@@ -3,7 +3,8 @@
 `nextext-cli` runs the same pipeline as the backend, but in-process: it imports
 `nextext.pipeline` directly and needs no backend container. It ships inside the
 backend image alongside the API, and is the right tool for very large local
-files, since it reads from disk instead of streaming an upload.
+files, since it reads from disk instead of streaming an upload. Every run
+writes its own [audit chain](#audit-log).
 
 > `uv run nextext-cli --help` is the authoritative flag list — `nextext/cli.py`
 > is the source of truth, and the listing below is a snapshot of it.
@@ -53,7 +54,7 @@ they also feed the summary.
 |------|---------|
 | `0`  | The run produced a transcript. |
 | `1`  | The run failed (unhandled error, e.g. an undecodable file or an unreachable endpoint). |
-| `2`  | Command-line usage error — argparse's own code (unknown flag, missing `-f`). Not a pipeline outcome. |
+| `2`  | Command-line usage error — argparse's own code (unknown flag, missing `-f`) — or a refusal before any processing: a malformed `AUDIT_*` setting, or a stated purpose that `AUDIT_REQUIRE_PURPOSE` requires and the run lacks. Not a pipeline outcome. |
 | `3`  | The file held no processable speech: nothing was transcribed and the text analysis stages were skipped. An empty transcript is still written, and the warning names which of the three causes fired (`vad_no_speech`, `asr_empty_transcript`, `asr_all_segments_filtered`). `-kf` still runs, so a silent video still yields its keyframes and their descriptions, plus a summary written from them with `-sum` and hate-speech findings judged from them with `-hs`. |
 
 Exit `3` is what lets a batch loop tell "nothing to transcribe" apart from a
@@ -82,6 +83,32 @@ for file in path/to/your/directory/*; do
     esac
 done
 ```
+
+## Audit log
+
+Every run that processes a file writes its own data-protection audit chain,
+attributed to `AUDIT_CLI_USER` (via `cli`): the file's intake (its size and
+hash, never its name or path), each model call, the joined result, and each
+output file it writes (`file:transcript`, `file:summary`, …). The stated
+purpose comes from `AUDIT_CASE_REF` / `AUDIT_REASON`. What is recorded:
+[audit.md](audit.md#command-line).
+
+On the production host, run it inside the running backend, so the chain lands
+in the backend's own log:
+
+```bash
+docker compose --env-file .env -f docker/compose.yaml cp recording.mp4 backend:/tmp/
+make cli ARGS='-f /tmp/recording.mp4 -w -sum' CASE_REF=case-0001 REASON='…'
+```
+
+`make cli` runs `docker compose exec` with `/tmp` (the writable scratch
+volume) as the working directory, so the outputs land under
+`/tmp/output/<stem>/`; it names the host account that ran it as
+`AUDIT_CLI_USER`. The input file and the outputs stay on the scratch volume
+until you remove them — copy the outputs out with `docker compose … cp`, then
+`docker compose … exec backend rm -r /tmp/<file> /tmp/output/<stem>`; the
+backend's startup sweep removes only its own job directories. Run directly with `uv run nextext-cli`, the chain goes to
+stdout, which the CLI uses for nothing else (its logs go to stderr).
 
 ## Related
 

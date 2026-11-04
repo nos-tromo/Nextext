@@ -8,6 +8,9 @@ from typing import Literal
 from dotenv import load_dotenv
 from loguru import logger
 
+from nextext.utils.audit_event import ACTIONS
+from nextext.utils.audit_runtime import parse_required_actions
+
 load_dotenv()
 
 
@@ -1024,3 +1027,49 @@ def load_principal_env(
         edge_secret=edge_secret,
         service_tokens=_load_service_tokens(edge_secret),
     )
+
+
+@dataclass(frozen=True)
+class AuditConfig:
+    """Dataclass for the data-protection audit-log settings.
+
+    Attributes:
+        output: ``AUDIT_OUTPUT`` — where audit lines go: unset or ``stdout``
+            for the process's own stdout, ``container`` for the container's
+            main stdout under a container-wide lock
+            (:func:`nextext.utils.audit_runtime.open_audit_stream`).
+        require_purpose: ``AUDIT_REQUIRE_PURPOSE`` — the actions that need a
+            stated purpose; empty by default.
+    """
+
+    output: str | None
+    require_purpose: frozenset[str]
+
+
+def load_audit_env() -> AuditConfig:
+    """Loads the audit-log settings from environment variables.
+
+    Call it once at startup: an unknown action in ``AUDIT_REQUIRE_PURPOSE``
+    stops the process instead of silently switching a requirement off.
+
+    Returns:
+        AuditConfig: The output mode and the actions that need a purpose.
+
+    Raises:
+        ValueError: When ``AUDIT_REQUIRE_PURPOSE`` names an unknown action.
+    """
+    required = parse_required_actions(os.getenv("AUDIT_REQUIRE_PURPOSE"), known=ACTIONS - {"lifecycle"})
+    output = os.getenv("AUDIT_OUTPUT", "").strip() or None
+    return AuditConfig(output=output, require_purpose=required)
+
+
+def load_cli_audit_user() -> str | None:
+    """Loads the operator a command-line run is attributed to (``AUDIT_CLI_USER``).
+
+    ``make cli`` passes the host account that ran it (``SUDO_USER`` or
+    ``id -un``) into the container.
+
+    Returns:
+        str | None: The stripped account name, or ``None`` when unset or blank.
+    """
+    return os.getenv("AUDIT_CLI_USER", "").strip() or None

@@ -63,3 +63,16 @@ def test_backend_cache_env_vars_point_at_writable_mounts() -> None:
         assert any(expected == root or expected.startswith(root + "/") for root in _WRITABLE_ROOTS), (
             f"{name}={expected!r} is not under a writable mount {_WRITABLE_ROOTS}."
         )
+
+
+def test_backend_writes_its_audit_chain_to_the_container_stdout() -> None:
+    """The backend's processes share the container's stdout, so CLI runs land in its log.
+
+    ``AUDIT_OUTPUT: container`` makes every process in the backend container —
+    the API and any ``docker compose exec`` CLI run — write its audit chain to
+    the container's main stdout under one lock; ``AUDIT_REQUIRE_PURPOSE`` is
+    passed through from ``.env``.
+    """
+    compose = _COMPOSE.read_text(encoding="utf-8")
+    assert _env_value(compose, "AUDIT_OUTPUT") == "container"
+    assert _env_value(compose, "AUDIT_REQUIRE_PURPOSE") == "${AUDIT_REQUIRE_PURPOSE:-}"

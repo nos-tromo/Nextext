@@ -22,6 +22,7 @@ from nextext.core.keyframes import Keyframe
 from nextext.core.outcomes import SkipReason
 from nextext.core.visual_context import FrameCaption
 from nextext.pipeline import TranscriptionOutcome
+from tests.audit_helpers import job_audit
 
 
 class _SpyProcessor:
@@ -79,7 +80,7 @@ def test_run_main_saves_transcript_via_write_transcript_output(monkeypatch: pyte
         cli, "transcription_pipeline", lambda **kwargs: TranscriptionOutcome(transcript=df, src_lang="en")
     )
 
-    cli._run_main(_args(tmp_path / "clip.wav"))
+    cli._run_main(_args(tmp_path / "clip.wav"), job_audit())
 
     (processor,) = created
     assert len(processor.transcript_writes) == 1
@@ -104,7 +105,7 @@ def test_run_main_no_speech_saves_via_write_transcript_output(monkeypatch: pytes
         lambda **kwargs: TranscriptionOutcome(transcript=empty, src_lang="en", skip_reason="vad_no_speech"),
     )
 
-    cli._run_main(_args(tmp_path / "clip.wav"))
+    cli._run_main(_args(tmp_path / "clip.wav"), job_audit())
 
     (processor,) = created
     assert len(processor.transcript_writes) == 1
@@ -149,7 +150,7 @@ def test_run_main_returns_nonzero_exit_code_when_nothing_was_transcribed(
     monkeypatch.setattr(cli, "FileProcessor", lambda *a, **k: _SpyProcessor())
     monkeypatch.setattr(cli, "transcription_pipeline", lambda **kwargs: _skipping_outcome())
 
-    assert cli._run_main(_args(tmp_path / "clip.wav")) == 3
+    assert cli._run_main(_args(tmp_path / "clip.wav"), job_audit()) == 3
 
 
 def test_run_main_returns_zero_for_a_normal_run(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -165,7 +166,7 @@ def test_run_main_returns_zero_for_a_normal_run(monkeypatch: pytest.MonkeyPatch,
         cli, "transcription_pipeline", lambda **kwargs: TranscriptionOutcome(transcript=df, src_lang="en")
     )
 
-    assert cli._run_main(_args(tmp_path / "clip.wav")) == 0
+    assert cli._run_main(_args(tmp_path / "clip.wav"), job_audit()) == 0
 
 
 def test_run_main_logs_the_typed_skip_reason(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -181,7 +182,7 @@ def test_run_main_logs_the_typed_skip_reason(monkeypatch: pytest.MonkeyPatch, tm
     records: list[str] = []
     sink_id = logger.add(lambda message: records.append(str(message)), level="DEBUG")
     try:
-        cli._run_main(_args(tmp_path / "clip.wav"))
+        cli._run_main(_args(tmp_path / "clip.wav"), job_audit())
     finally:
         logger.remove(sink_id)
 
@@ -203,7 +204,7 @@ def test_run_main_still_reports_docint_export_when_skipped(monkeypatch: pytest.M
     monkeypatch.setattr(cli, "transcription_pipeline", lambda **kwargs: _skipping_outcome())
     monkeypatch.setattr(cli, "_emit_docint_jsonl", lambda **kwargs: calls.append(kwargs["output_path"]))
 
-    cli._run_main(_args(tmp_path / "clip.wav", emit_docint_jsonl=tmp_path / "out.jsonl"))
+    cli._run_main(_args(tmp_path / "clip.wav", emit_docint_jsonl=tmp_path / "out.jsonl"), job_audit())
 
     assert calls == [tmp_path / "out.jsonl"]
 
@@ -277,7 +278,7 @@ def test_cli_summary_includes_visual_context_for_video(monkeypatch: pytest.Monke
 
     monkeypatch.setattr(cli, "summarization_pipeline", _fake_summary)
 
-    cli._run_main(_args(tmp_path / "clip.mp4", summarize=True, keyframes=True))
+    cli._run_main(_args(tmp_path / "clip.mp4", summarize=True, keyframes=True), job_audit())
 
     (processor,) = created
     assert seen["visual_context"] == "[00:00] a hallway"
@@ -304,7 +305,7 @@ def test_cli_audio_only_summary_writes_no_visual_context(monkeypatch: pytest.Mon
 
     monkeypatch.setattr(cli, "summarization_pipeline", _fake_summary)
 
-    cli._run_main(_args(tmp_path / "clip.wav", summarize=True, keyframes=True))
+    cli._run_main(_args(tmp_path / "clip.wav", summarize=True, keyframes=True), job_audit())
 
     (processor,) = created
     assert seen["visual_context"] is None
@@ -335,7 +336,7 @@ def test_cli_summary_without_keyframes_samples_nothing(monkeypatch: pytest.Monke
 
     monkeypatch.setattr(cli, "summarization_pipeline", _fake_summary)
 
-    cli._run_main(_args(tmp_path / "clip.mp4", summarize=True, keyframes=False))
+    cli._run_main(_args(tmp_path / "clip.mp4", summarize=True, keyframes=False), job_audit())
 
     (processor,) = created
     assert sampled == []
@@ -360,7 +361,7 @@ def test_cli_keyframes_without_a_summary(monkeypatch: pytest.MonkeyPatch, tmp_pa
     calls: list[Any] = []
     monkeypatch.setattr(cli, "summarization_pipeline", lambda **kw: calls.append(kw) or "never")
 
-    assert cli._run_main(_args(tmp_path / "clip.mp4", keyframes=True)) == 0
+    assert cli._run_main(_args(tmp_path / "clip.mp4", keyframes=True), job_audit()) == 0
 
     (processor,) = created
     assert calls == []
@@ -385,7 +386,7 @@ def test_cli_keyframes_env_kill_switch_still_writes_the_frames(monkeypatch: pyte
     captioned: list[Any] = []
     monkeypatch.setattr(cli, "describe_keyframes", lambda s, p, **kw: captioned.append(s) or [])
 
-    cli._run_main(_args(tmp_path / "clip.mp4", keyframes=True))
+    cli._run_main(_args(tmp_path / "clip.mp4", keyframes=True), job_audit())
 
     (processor,) = created
     assert captioned == []
@@ -424,7 +425,7 @@ def test_cli_silent_video_summarizes_its_captions(monkeypatch: pytest.MonkeyPatc
 
     monkeypatch.setattr(cli, "summarization_pipeline", _fake_summary)
 
-    assert cli._run_main(_args(tmp_path / "clip.mp4", summarize=True, keyframes=True)) == 3
+    assert cli._run_main(_args(tmp_path / "clip.mp4", summarize=True, keyframes=True), job_audit()) == 3
 
     (processor,) = created
     assert seen == {"text": "", "visual_context": "[00:00] a hallway"}
@@ -456,7 +457,7 @@ def test_cli_silent_video_judges_its_captions_for_hate_speech(monkeypatch: pytes
 
     monkeypatch.setattr(cli, "frame_hate_speech_pipeline", _fake_frames)
 
-    assert cli._run_main(_args(tmp_path / "clip.mp4", hate_speech=True, keyframes=True)) == 3
+    assert cli._run_main(_args(tmp_path / "clip.mp4", hate_speech=True, keyframes=True), job_audit()) == 3
 
     (processor,) = created
     assert judged == [[caption]]
@@ -480,7 +481,7 @@ def test_cli_spoken_video_judges_transcript_and_captions(monkeypatch: pytest.Mon
         lambda captions, inference_pipeline: [{"hate_speech": True, "text": captions[0].caption, "source": "frame"}],
     )
 
-    cli._run_main(_args(tmp_path / "clip.mp4", hate_speech=True, keyframes=True))
+    cli._run_main(_args(tmp_path / "clip.mp4", hate_speech=True, keyframes=True), job_audit())
 
     (processor,) = created
     assert "hate_speech" in processor.file_output_labels
@@ -514,7 +515,7 @@ def test_cli_hate_speech_uses_the_resolved_source_language(monkeypatch: pytest.M
 
     monkeypatch.setattr(cli, "hate_speech_pipeline", _fake_hate_speech)
 
-    cli._run_main(_args(tmp_path / "clip.wav", src_lang=None, hate_speech=True))
+    cli._run_main(_args(tmp_path / "clip.wav", src_lang=None, hate_speech=True), job_audit())
 
     (processor,) = created
     assert seen["src_lang"] == "de"

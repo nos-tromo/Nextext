@@ -283,10 +283,13 @@ jobs (`nextext/api/identity.py`):
    on any other request it is ignored as if absent, and a warning records the
    method and path — never a header value. A value starting with `service:` is
    ignored the same way on every request.
-3. **`NEXTEXT_DEFAULT_IDENTITY`**, the dev / header-less fallback. It may not
-   start with `service:` either; a value that does stops the backend at
-   startup. Production leaves it unset, so a request with none of the above
-   gets `401`.
+3. **`NEXTEXT_DEFAULT_IDENTITY`**, the dev / header-less fallback, honoured
+   only while `NEXTEXT_EDGE_SECRET` is unset. With both set it is ignored —
+   startup logs one warning naming both variables — so a request with neither
+   a service token nor an edge-verified header gets `401`. It may not start
+   with `service:` either; a value that does stops the backend at startup.
+   Production leaves it unset, so a request with none of the above gets
+   `401`.
 
 The `service:` namespace keeps services and users apart: a user called
 `docint` is a different principal from the docint service (`service:docint`)
@@ -314,8 +317,17 @@ the frontend — and startup logs a warning saying so, unless
 `NEXTEXT_DEFAULT_IDENTITY` marks a dev setup. With it set, only the gateway
 can assert a user: a request that reaches the frontend or the backend some
 other way (the SPA under `make up-dev`, say) carries no usable identity and
-gets `401` unless `NEXTEXT_DEFAULT_IDENTITY` is set. The gateway's side of
-the contract is edge-plane's `docs/identity-contract.md`.
+gets `401` — `NEXTEXT_DEFAULT_IDENTITY` does not apply while the secret is
+set, or it would authenticate every such request. Service tokens work the
+same either way. The gateway's side of the contract is edge-plane's
+`docs/identity-contract.md`.
+
+| `NEXTEXT_EDGE_SECRET` | `NEXTEXT_DEFAULT_IDENTITY` | A request without a token or a trusted header |
+|---|---|---|
+| unset | unset | `401` |
+| unset | set | the default identity (dev) |
+| set | unset | `401` |
+| set | set | `401`; startup warns that the default identity is ignored |
 
 ### Service tokens
 
@@ -357,6 +369,23 @@ Each step must not lock out a caller that is still on the old path:
 Without a matching token, docint's calls fall back to the trusted header,
 which the backend ignores once the edge secret is set — they then get `401`.
 
+## Data-protection audit log
+
+The backend and every `nextext-cli` run record who collected, queried,
+downloaded, combined or deleted which job, and every transfer of job content
+to a model, as hash-chained JSON lines on stdout — see
+[audit.md](audit.md) for what each endpoint, stage and CLI run records. The
+store, its retention and who may read it are obs-plane's.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `AUDIT_OUTPUT` | `stdout` | `container` writes to the container's main stdout under a container-wide lock, so a `make cli` run lands in the backend's log; `docker/compose.yaml` sets it for the backend |
+| `AUDIT_REQUIRE_PURPOSE` | empty | Comma-separated actions that need a stated purpose (`X-Audit-Purpose`; `AUDIT_CASE_REF` / `AUDIT_REASON` for the CLI). Without one a request gets `428` and a CLI run exits `2`; an unknown action stops startup |
+| `AUDIT_CLI_USER`, `AUDIT_CASE_REF`, `AUDIT_REASON` | unset | CLI only, set per run by `make cli`: the operator and the stated purpose |
+
+A failed audit write fails the operation: a request answers the generic `500`
+without its data, a job fails, a CLI run exits non-zero.
+
 ## Metrics
 
 `GET /metrics` (app root, not under `/api/v1`) serves a Prometheus exposition
@@ -381,9 +410,12 @@ containers PyAV cannot decode. Both are visible without reading logs.
 
 ## Logs
 
-Both containers log to stdout/stderr for the container logging driver. Those
-operational logs carry no upstream error bodies or transcript text, and the
-access logs no query strings:
+The backend logs to stderr for the container logging driver — its stdout
+carries the [audit log](audit.md) alone, so uvicorn's access log, which its
+default configuration sends to stdout, is moved to stderr at startup. The
+frontend's nginx logs to stdout/stderr. Those operational logs carry no
+upstream error bodies or transcript text, and the access logs no query
+strings:
 
 - A failed call to an inference endpoint — Whisper, `/vad`, `/diarize`,
   `/gliner`, or the chat model — is logged by exception class and HTTP status,

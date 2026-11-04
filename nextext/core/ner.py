@@ -20,10 +20,11 @@ import httpx as httpx  # explicit re-export so tests can monkeypatch ner.httpx
 import pandas as pd
 from loguru import logger
 
+from nextext.core.inference_trace import correlation_headers, record_inference
 from nextext.utils.env_cfg import load_ner_env
 from nextext.utils.log_cfg import error_label
 
-__all__ = ["extract_entities"]
+__all__ = ["NER_MODEL_ALIAS", "extract_entities"]
 
 _NER_LABELS = [
     "date",
@@ -37,6 +38,8 @@ _NER_LABELS = [
     "time",
 ]
 _NER_THRESHOLD = 0.3
+# The /gliner service takes no model field; the audit log names it by its endpoint.
+NER_MODEL_ALIAS = "gliner"
 _NER_WORD_BUDGET = 512
 _SENTENCE_RE = re.compile(
     r".+?(?:[.!?]+[\"')\]]*(?=\s+|$)|\n{2,}|$)",
@@ -110,7 +113,7 @@ def extract_entities(text: str, columns: list[str] | None = None) -> pd.DataFram
     if not text or not text.strip():
         return empty
 
-    headers: dict[str, str] = {}
+    headers: dict[str, str] = correlation_headers()
     if config.api_key:
         headers["Authorization"] = f"Bearer {config.api_key}"
 
@@ -127,13 +130,16 @@ def extract_entities(text: str, columns: list[str] | None = None) -> pd.DataFram
             response.raise_for_status()
             payload = response.json()
         except (httpx.HTTPError, ValueError, OSError) as exc:
+            record_inference("ner", NER_MODEL_ALIAS, ok=False)
             logger.error("NER request to {} failed: {}", url, error_label(exc))
             continue
 
         if not isinstance(payload, dict):
+            record_inference("ner", NER_MODEL_ALIAS, ok=False)
             logger.error("NER response from {} was not a JSON object; ignoring.", url)
             continue
 
+        record_inference("ner", NER_MODEL_ALIAS, ok=True)
         for entity in payload.get("entities", []):
             text_val = str(entity.get("text", "")).strip()
             label = str(entity.get("label", "")).strip()

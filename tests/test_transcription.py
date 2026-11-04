@@ -22,11 +22,12 @@ from nextext.core.transcription import (
 
 
 @contextmanager
-def _passthrough_normalize(file_path: Path) -> Iterator[Path]:
+def _passthrough_normalize(file_path: Path, scratch_dir: Path | None = None) -> Iterator[Path]:
     """Stand-in for normalize_for_transcription that yields the input unchanged.
 
     Args:
         file_path (Path): The path passed through verbatim.
+        scratch_dir (Path | None): Ignored.
 
     Yields:
         Path: ``file_path`` unchanged.
@@ -268,6 +269,7 @@ def test_external_transcriber_transcription_populates_src_lang(
     transcriber.task = "transcribe"
     transcriber._model_id = "whisper-1"
     transcriber._client = None
+    transcriber.scratch_dir = None
     transcriber.transcription_result = None
 
     # Bypass lazy client creation
@@ -313,6 +315,7 @@ def test_external_transcriber_populates_src_lang_from_empty_string(
     transcriber.task = "transcribe"
     transcriber._model_id = "whisper-1"
     transcriber._client = None
+    transcriber.scratch_dir = None
     transcriber.transcription_result = None
 
     # Bypass lazy client creation
@@ -352,6 +355,7 @@ def test_external_transcriber_normalizes_full_language_name(
     transcriber.task = "transcribe"
     transcriber._model_id = "whisper-1"
     transcriber._client = None
+    transcriber.scratch_dir = None
     transcriber.transcription_result = None
 
     monkeypatch.setattr(
@@ -390,6 +394,7 @@ def _make_external_transcriber() -> ExternalWhisperTranscriber:
     transcriber.task = "transcribe"
     transcriber._model_id = "whisper-1"
     transcriber._client = None
+    transcriber.scratch_dir = None
     transcriber.start_column = "start"
     transcriber.end_column = "end"
     transcriber.speaker_column = "speaker"
@@ -583,6 +588,7 @@ def test_transcription_normalizes_before_upload(
     transcriber.task = "transcribe"
     transcriber._model_id = "whisper-1"
     transcriber._client = None
+    transcriber.scratch_dir = None
     transcriber.transcription_result = None
 
     monkeypatch.setattr(type(transcriber), "_get_client", property(lambda self: fake_client))
@@ -591,7 +597,7 @@ def test_transcription_normalizes_before_upload(
     seen: list[Path] = []
 
     @contextmanager
-    def _spy(file_path: Path) -> Iterator[Path]:
+    def _spy(file_path: Path, scratch_dir: Path | None = None) -> Iterator[Path]:
         seen.append(file_path)
         yield file_path
 
@@ -624,6 +630,7 @@ def test_transcription_requests_word_granularity_and_captures_words(
     transcriber.task = "transcribe"
     transcriber._model_id = "whisper-1"
     transcriber._client = None
+    transcriber.scratch_dir = None
     transcriber.transcription_result = None
 
     monkeypatch.setattr(type(transcriber), "_get_client", property(lambda self: fake_client))
@@ -658,6 +665,7 @@ def test_transcription_defaults_words_to_empty_when_response_omits_them(
     transcriber.task = "transcribe"
     transcriber._model_id = "whisper-1"
     transcriber._client = None
+    transcriber.scratch_dir = None
     transcriber.transcription_result = None
 
     monkeypatch.setattr(type(transcriber), "_get_client", property(lambda self: fake_client))
@@ -687,13 +695,14 @@ def test_transcription_raises_on_undecodable_audio(
     transcriber.task = "transcribe"
     transcriber._model_id = "whisper-1"
     transcriber._client = None
+    transcriber.scratch_dir = None
     transcriber.transcription_result = None
 
     monkeypatch.setattr(type(transcriber), "_get_client", property(lambda self: fake_client))
     monkeypatch.setattr(transcription, "has_speech", lambda _path: True)
 
     @contextmanager
-    def _raise(file_path: Path) -> Iterator[Path]:
+    def _raise(file_path: Path, scratch_dir: Path | None = None) -> Iterator[Path]:
         raise audio.AudioDecodeError(f"Could not decode '{file_path.name}'.")
         yield file_path  # unreachable; only here so @contextmanager treats this as a generator
 
@@ -831,6 +840,7 @@ def test_transcription_logs_a_whisper_rejection_by_class_and_status(
     transcriber.task = "transcribe"
     transcriber._model_id = "whisper-1"
     transcriber._client = None
+    transcriber.scratch_dir = None
     transcriber.transcription_result = None
 
     monkeypatch.setattr(type(transcriber), "_get_client", property(lambda self: fake_client))

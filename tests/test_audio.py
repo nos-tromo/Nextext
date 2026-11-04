@@ -133,3 +133,15 @@ def test_normalize_raises_on_undecodable_input(tmp_path: Path, monkeypatch: pyte
 
     # fail-closed must still clean up the temp FLAC it created
     assert list(spool.glob("*.flac")) == []
+
+
+def test_normalize_writes_its_copy_into_the_scratch_dir(tmp_path: Path) -> None:
+    """With a scratch dir the FLAC copy lives there — the API passes the job's directory."""
+    src = tmp_path / "upload.wav"
+    _write_stereo_wav(src)
+    scratch = tmp_path / "job-dir"
+    scratch.mkdir()
+    with audio.normalize_for_transcription(src, scratch_dir=scratch) as flac_path:
+        assert flac_path.parent == scratch
+        assert flac_path.exists()
+    assert list(scratch.iterdir()) == []

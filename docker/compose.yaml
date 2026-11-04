@@ -75,11 +75,19 @@ services:
       dockerfile: docker/Dockerfile.backend
     logging: *default-logging
     # /tmp holds per-job media workspaces (multi-GB uploads get normalized
-    # there), so it is a disk-backed scratch volume rather than a RAM tmpfs;
-    # `down -v` may delete it — it never holds durable state.
+    # there, next to a small owner record per job), so it is a disk-backed
+    # scratch volume rather than a RAM tmpfs; `down -v` may delete it — it
+    # never holds durable state. The backend removes the job directories a
+    # crashed process left behind at startup, and records doing so.
     read_only: true
     environment:
       <<: *no-proxy-env
+      # Data-protection audit log: every process in this container (the API
+      # and any `make cli` run) writes its chain to the container's own
+      # stdout, under one lock, so it reaches the audit store. Nothing else
+      # writes to stdout here; operational logs go to stderr.
+      AUDIT_OUTPUT: container
+      AUDIT_REQUIRE_PURPOSE: ${AUDIT_REQUIRE_PURPOSE:-}
       DIARIZE_API_BASE: ${DIARIZE_API_BASE:-}
       DIARIZE_TIMEOUT: ${DIARIZE_TIMEOUT:-}
       INFERENCE_PROVIDER: ${INFERENCE_PROVIDER:-ollama}

@@ -10,8 +10,7 @@ from __future__ import annotations
 import io
 import json
 import time
-from collections.abc import AsyncIterator, Iterator
-from contextlib import asynccontextmanager
+from collections.abc import Iterator
 from typing import Any
 
 import pytest
@@ -19,8 +18,10 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from loguru import logger
 
-from nextext.api.jobs import JobManager, JobState, PushEvent
+from nextext.api import main as main_module
+from nextext.api.jobs import JobState, PushEvent
 from nextext.api.main import create_app
+from tests.audit_helpers import AuditCapture
 
 # Matches the backend's NEXTEXT_AUTH_HEADER default; every request below
 # carries the owner id under this header.
@@ -113,33 +114,27 @@ def _boom_pipeline_runner(state: JobState, push: PushEvent) -> dict[str, Any]:
 
 
 @pytest.fixture
-def boom_app_client() -> Iterator[tuple[TestClient, list[str]]]:
+def boom_app_client(
+    monkeypatch: pytest.MonkeyPatch, audit_capture: AuditCapture
+) -> Iterator[tuple[TestClient, list[str]]]:
     """Spin up the FastAPI app with a pipeline runner that always raises.
+
+    Args:
+        monkeypatch: Pytest patcher; keeps the app's logging setup from
+            removing the log capture.
+        audit_capture: Where the app's audit events go.
 
     Yields:
         tuple[TestClient, list[str]]: The HTTP client and the captured log
             records list.
     """
+    monkeypatch.setattr(main_module, "setup_logging", lambda: None)
     records, sink_id = _capture_logs()
-    app = create_app()
-    original_lifespan = app.router.lifespan_context
-
-    @asynccontextmanager
-    async def _patched_lifespan(_app: Any) -> AsyncIterator[None]:
-        manager = JobManager(pipeline_runner=_boom_pipeline_runner)
-        await manager.start()
-        _app.state.job_manager = manager
-        try:
-            yield
-        finally:
-            await manager.stop()
-
-    app.router.lifespan_context = _patched_lifespan
+    app = create_app(audit_emitter_factory=audit_capture.factory, pipeline_runner=_boom_pipeline_runner)
     try:
         with _client_with_owner(app) as client:
             yield client, records
     finally:
-        app.router.lifespan_context = original_lifespan
         logger.remove(sink_id)
 
 

@@ -13,6 +13,7 @@ from nextext.api.schemas import JobOptions, JobStatus
 from nextext.core.keyframes import Keyframe
 from nextext.core.visual_context import FrameCaption
 from nextext.pipeline import TranscriptionOutcome
+from tests.audit_helpers import job_audit
 
 
 def test_worker_passes_the_resolved_language_and_stores_findings(
@@ -59,6 +60,7 @@ def test_worker_passes_the_resolved_language_and_stores_findings(
         source_file_hash="sha256:x",
         options=JobOptions.model_validate({"task": "transcribe", "hate_speech": True}),
         status=JobStatus.QUEUED,
+        audit=job_audit(),
     )
 
     result = _run_pipeline_blocking(state, lambda *a, **k: None)
@@ -111,6 +113,7 @@ def test_hate_speech_csv_carries_speaker_and_translation_columns() -> None:
         options=JobOptions.model_validate({}),
         status=JobStatus.COMPLETED,
         result={"hate_speech_findings": [dict(_DIARIZED_FINDING)]},
+        audit=job_audit(),
     )
 
     rendered = render_artifact(state, "hate_speech.csv")
@@ -176,6 +179,7 @@ def _captioned_video(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, transcript
         source_file_hash="sha256:x",
         options=JobOptions.model_validate({"task": "transcribe", "hate_speech": True, "keyframes": True}),
         status=JobStatus.QUEUED,
+        audit=job_audit(),
     )
 
 
@@ -244,6 +248,7 @@ def test_hate_speech_csv_appends_the_source_column() -> None:
         options=JobOptions.model_validate({}),
         status=JobStatus.COMPLETED,
         result={"hate_speech_findings": [{**_DIARIZED_FINDING, "source": "transcript"}, dict(_FRAME_FINDING)]},
+        audit=job_audit(),
     )
 
     rendered = render_artifact(state, "hate_speech.csv")

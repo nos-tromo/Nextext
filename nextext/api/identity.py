@@ -12,8 +12,15 @@ Identity is resolved per request, in this order:
    is ignored, with a warning, as if it were absent. A value in the service
    namespace (``service:…``) is ignored the same way on every request.
 3. ``NEXTEXT_DEFAULT_IDENTITY``, the dev / header-less fallback, which may not
-   lie in the service namespace either.
+   lie in the service namespace either. It is honoured only while no edge
+   secret is set: with both set it is ignored (startup warns once), so in the
+   production shape a request without a verified identity gets 401.
 4. Otherwise fail closed with HTTP 401.
+
+Each source also says how the identity was established — ``service``,
+``edge`` (the trusted header) or ``system`` (the default identity) — which
+the data-protection audit log records as the actor's ``via``
+(:class:`Caller`).
 
 The React frontend carries a stable per-browser identifier in its URL
 (``?owner=<id>``) and sends it under the trusted header, so two browsers stay
@@ -38,14 +45,39 @@ logged.
 from __future__ import annotations
 
 import hmac
+from dataclasses import dataclass
 from urllib.parse import quote
 
-from fastapi import HTTPException, Request, status
+from fastapi import Depends, HTTPException, Request, status
 from loguru import logger
 
+from nextext.utils.audit_event import Actor
 from nextext.utils.env_cfg import SERVICE_PRINCIPAL_PREFIX, PrincipalConfig, load_principal_env
 
 EDGE_SECRET_HEADER = "X-Edge-Secret"
+
+
+@dataclass(frozen=True)
+class Caller:
+    """The principal a request resolved to, and how it was established.
+
+    Attributes:
+        principal: The owner id that scopes the caller's jobs.
+        via: ``service`` (a service token), ``edge`` (the trusted header) or
+            ``system`` (``NEXTEXT_DEFAULT_IDENTITY``, the dev fallback).
+    """
+
+    principal: str
+    via: str
+
+    @property
+    def actor(self) -> Actor:
+        """The caller as the audit log records it.
+
+        Returns:
+            Actor: ``Actor(principal, via)``.
+        """
+        return Actor(self.principal, self.via)
 
 
 def _matches(received: str, expected: str) -> bool:
@@ -96,6 +128,15 @@ def identity_headers_trusted(request: Request) -> bool:
             is edge-verified.
     """
     return _headers_trusted(request, load_principal_env())
+
+
+def edge_secret_enforced() -> bool:
+    """Report whether the trusted header counts only from the edge gateway.
+
+    Returns:
+        bool: ``True`` when ``NEXTEXT_EDGE_SECRET`` is set.
+    """
+    return load_principal_env().edge_secret is not None
 
 
 def _bearer_token(request: Request) -> str | None:
@@ -156,34 +197,31 @@ def _log_path(request: Request) -> str:
     return quote(str(request.scope.get("path", "")))
 
 
-def resolve_principal(request: Request) -> str:
-    """FastAPI dependency that resolves the calling principal (owner id).
+def _resolve(request: Request) -> Caller | None:
+    """Resolve the calling principal without failing.
 
     Resolution order:
 
     1. A matching service token (``Authorization: Bearer``) →
-       ``service:<name>``.
+       ``service:<name>``, via ``service``.
     2. The trusted header, if present and non-blank — only on an
        edge-verified request when ``NEXTEXT_EDGE_SECRET`` is set, and never
        with a value in the service namespace; otherwise it is ignored and the
-       method and path are logged.
-    3. The configured default identity.
-    4. Otherwise fail closed with HTTP 401.
+       method and path are logged. Via ``edge``.
+    3. The configured default identity, only while no edge secret is set.
+       Via ``system``.
 
     Args:
         request: The incoming FastAPI/Starlette request.
 
     Returns:
-        str: The resolved principal identifier used to scope owned jobs.
-
-    Raises:
-        HTTPException: 401 when neither a service token, a trusted header,
-            nor a configured default identity is available.
+        Caller | None: The resolved caller, or ``None`` when none of the
+            sources applies.
     """
     cfg = load_principal_env()
     service = _service_principal(request, cfg)
     if service is not None:
-        return service
+        return Caller(principal=service, via="service")
     header_value = (request.headers.get(cfg.header_name) or "").strip()
     if header_value:
         if not _headers_trusted(request, cfg):
@@ -191,7 +229,7 @@ def resolve_principal(request: Request) -> str:
         elif header_value.startswith(SERVICE_PRINCIPAL_PREFIX):
             reason = "its value lies in the reserved service namespace"
         else:
-            return header_value
+            return Caller(principal=header_value, via="edge")
         logger.warning(
             "Ignored the {} header on {} {}: {}.",
             cfg.header_name,
@@ -199,12 +237,61 @@ def resolve_principal(request: Request) -> str:
             _log_path(request),
             reason,
         )
-    if cfg.default_identity:
-        return cfg.default_identity
-    raise HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Missing authenticated principal.",
-    )
+    if cfg.default_identity and cfg.edge_secret is None:
+        return Caller(principal=cfg.default_identity, via="system")
+    return None
+
+
+def resolve_caller(request: Request) -> Caller:
+    """FastAPI dependency that resolves the calling principal, or fails with 401.
+
+    See :func:`_resolve` for the resolution order.
+
+    Args:
+        request: The incoming FastAPI/Starlette request.
+
+    Returns:
+        Caller: The principal and how it was established.
+
+    Raises:
+        HTTPException: 401 when neither a service token, a trusted header,
+            nor a usable default identity is available.
+    """
+    caller = _resolve(request)
+    if caller is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing authenticated principal.",
+        )
+    return caller
+
+
+def resolve_caller_optional(request: Request) -> Caller | None:
+    """FastAPI dependency that resolves the calling principal, if there is one.
+
+    For the media route, which a ``<video>`` element reaches without the
+    trusted header and which is authorized by its capability token instead.
+
+    Args:
+        request: The incoming FastAPI/Starlette request.
+
+    Returns:
+        Caller | None: The resolved caller, or ``None``.
+    """
+    return _resolve(request)
+
+
+def resolve_principal(caller: Caller = Depends(resolve_caller)) -> str:  # noqa: B008 — FastAPI dependency marker
+    """FastAPI dependency that resolves the calling principal (owner id).
+
+    Args:
+        caller: The resolved caller (:func:`resolve_caller`); FastAPI resolves
+            it once per request, however many dependencies ask for it.
+
+    Returns:
+        str: The resolved principal identifier used to scope owned jobs.
+    """
+    return caller.principal
 
 
 def check_principal_config() -> None:
@@ -214,7 +301,8 @@ def check_principal_config() -> None:
     ``NEXTEXT_SERVICE_TOKENS`` stop the backend before it serves a request.
     In the production shape (no ``NEXTEXT_DEFAULT_IDENTITY``) without an edge
     secret, it also logs one warning: the trusted header is then believed
-    from any caller.
+    from any caller. With both an edge secret and a default identity set, it
+    warns that the default identity is ignored.
 
     Raises:
         PrincipalConfigError: When the identity configuration is malformed.
@@ -226,6 +314,20 @@ def check_principal_config() -> None:
             "can reach the backend. Set NEXTEXT_EDGE_SECRET (see edge-plane docs/identity-contract.md).",
             cfg.header_name,
         )
+    if cfg.edge_secret is not None and cfg.default_identity is not None:
+        logger.warning(
+            "NEXTEXT_DEFAULT_IDENTITY is ignored while NEXTEXT_EDGE_SECRET is set: a request without a "
+            "verified identity gets 401. Unset NEXTEXT_DEFAULT_IDENTITY in this setup."
+        )
 
 
-__all__ = ["EDGE_SECRET_HEADER", "check_principal_config", "identity_headers_trusted", "resolve_principal"]
+__all__ = [
+    "EDGE_SECRET_HEADER",
+    "Caller",
+    "check_principal_config",
+    "edge_secret_enforced",
+    "identity_headers_trusted",
+    "resolve_caller",
+    "resolve_caller_optional",
+    "resolve_principal",
+]

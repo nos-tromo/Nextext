@@ -18,6 +18,7 @@ from nextext.api.schemas import JobOptions, JobStatus
 from nextext.core.keyframes import Keyframe
 from nextext.core.visual_context import FrameCaption
 from nextext.pipeline import TranscriptionOutcome
+from tests.audit_helpers import job_audit
 
 
 def test_pipeline_populates_keyframes(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -50,6 +51,7 @@ def test_pipeline_populates_keyframes(monkeypatch: pytest.MonkeyPatch, tmp_path:
         source_file_hash="sha256:x",
         options=JobOptions.model_validate({"task": "transcribe", "keyframes": True}),
         status=JobStatus.QUEUED,
+        audit=job_audit(),
     )
     result = _run_pipeline_blocking(state, lambda *a, **k: None)
     assert result["keyframes"] == [b"\xff\xd8\xff0", b"\xff\xd8\xff1"]
@@ -93,6 +95,7 @@ def test_pipeline_empty_transcript_still_sets_keyframes(monkeypatch: pytest.Monk
         source_file_hash="sha256:x",
         options=JobOptions.model_validate({"task": "transcribe", "keyframes": True}),
         status=JobStatus.QUEUED,
+        audit=job_audit(),
     )
     result = _run_pipeline_blocking(state, lambda *a, **k: None)
     assert result["skipped"] is True
@@ -162,6 +165,7 @@ def _video_state(job_id: str, media: Path, **option_overrides: Any) -> JobState:
         source_file_hash="sha256:x",
         options=JobOptions.model_validate(options),
         status=JobStatus.QUEUED,
+        audit=job_audit(),
     )
 
 

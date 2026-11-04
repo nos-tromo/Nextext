@@ -127,7 +127,7 @@ def _transcode_to_flac(src: Path, dst: Path) -> None:
 
 
 @contextmanager
-def normalize_for_transcription(file_path: Path) -> Iterator[Path]:
+def normalize_for_transcription(file_path: Path, scratch_dir: Path | None = None) -> Iterator[Path]:
     """Yield a 16 kHz mono FLAC re-encode of ``file_path``; delete it on exit.
 
     Decodes ``file_path`` with PyAV regardless of its container/codec and
@@ -137,6 +137,10 @@ def normalize_for_transcription(file_path: Path) -> Iterator[Path]:
 
     Args:
         file_path (Path): Path to the source upload (any decodable format).
+        scratch_dir (Path | None): Directory for the temporary FLAC; ``None``
+            uses the system temp directory. The API passes the job's own
+            directory, so a copy a crash leaves behind is removed with the
+            upload.
 
     Yields:
         Path: Path to the temporary 16 kHz mono FLAC file.
@@ -144,7 +148,11 @@ def normalize_for_transcription(file_path: Path) -> Iterator[Path]:
     Raises:
         AudioDecodeError: If ``file_path`` cannot be decoded.
     """
-    fd, tmp_name = tempfile.mkstemp(suffix=".flac", prefix=f"{file_path.stem}-")
+    fd, tmp_name = tempfile.mkstemp(
+        suffix=".flac",
+        prefix=f"{file_path.stem}-",
+        dir=None if scratch_dir is None else str(scratch_dir),
+    )
     os.close(fd)
     tmp_path = Path(tmp_name)
     try:
