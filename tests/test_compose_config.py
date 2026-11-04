@@ -70,9 +70,21 @@ def test_backend_writes_its_audit_chain_to_the_container_stdout() -> None:
 
     ``AUDIT_OUTPUT: container`` makes every process in the backend container —
     the API and any ``docker compose exec`` CLI run — write its audit chain to
-    the container's main stdout under one lock; ``AUDIT_REQUIRE_PURPOSE`` is
-    passed through from ``.env``.
+    the container's main stdout under one lock.
     """
     compose = _COMPOSE.read_text(encoding="utf-8")
     assert _env_value(compose, "AUDIT_OUTPUT") == "container"
-    assert _env_value(compose, "AUDIT_REQUIRE_PURPOSE") == "${AUDIT_REQUIRE_PURPOSE:-}"
+
+
+def test_a_deployment_requires_a_purpose_for_queries_and_disclosures() -> None:
+    """The production shape requires a stated purpose for query and disclose unless .env says otherwise.
+
+    The default must be colon-less: ``${VAR-default}`` applies it only while the
+    variable is unset, so ``AUDIT_REQUIRE_PURPOSE=`` (empty) in ``.env`` turns
+    the requirement off. ``${VAR:-default}`` would apply it to an empty value
+    too, leaving no way to switch it off. The code default stays empty.
+    """
+    compose = _COMPOSE.read_text(encoding="utf-8")
+    assert _env_value(compose, "AUDIT_REQUIRE_PURPOSE") == "${AUDIT_REQUIRE_PURPOSE-query,disclose}"
+    overlay = (_COMPOSE.parent / "compose.override.yaml").read_text(encoding="utf-8")
+    assert "AUDIT_REQUIRE_PURPOSE" not in overlay

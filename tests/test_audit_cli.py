@@ -171,6 +171,25 @@ def test_a_required_purpose_refuses_the_run_with_exit_2(
     audit_capture.assert_chain_ok()
 
 
+def test_the_deployment_default_needs_a_purpose_for_every_run(
+    monkeypatch: pytest.MonkeyPatch, media: Path, stub_models: list[str], audit_capture: AuditCapture
+) -> None:
+    """docker/compose.yaml requires query and disclose; a run writes output files, so it needs a purpose.
+
+    Refused without one (exit 2); with a reason alone it runs, and every event carries it.
+    """
+    monkeypatch.setenv("AUDIT_REQUIRE_PURPOSE", "query,disclose")
+    assert cli.run_cli(cli.parse_arguments(["-f", str(media)]), emitter_factory=audit_capture.factory) == 2
+    assert stub_models == []
+
+    monkeypatch.setenv("AUDIT_REASON", "Review of a reported clip")
+    assert cli.run_cli(cli.parse_arguments(["-f", str(media)]), emitter_factory=audit_capture.factory) == 0
+    written = audit_capture.of("disclose", "output.write")
+    assert written
+    assert all(event["purpose"] == {"reason": "Review of a reported clip"} for event in written)
+    audit_capture.assert_chain_ok()
+
+
 @pytest.mark.parametrize(
     ("name", "value"),
     [

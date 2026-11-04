@@ -87,7 +87,12 @@ services:
       # stdout, under one lock, so it reaches the audit store. Nothing else
       # writes to stdout here; operational logs go to stderr.
       AUDIT_OUTPUT: container
-      AUDIT_REQUIRE_PURPOSE: ${AUDIT_REQUIRE_PURPOSE:-}
+      # Queries and disclosures need a stated purpose (§76 BDSG Abs. 2 asks
+      # the reason for both): without one a request gets 428 and a CLI run
+      # exits 2. Colon-less on purpose: the default applies only while the
+      # variable is unset, so `AUDIT_REQUIRE_PURPOSE=` (empty) in .env turns
+      # the requirement off.
+      AUDIT_REQUIRE_PURPOSE: ${AUDIT_REQUIRE_PURPOSE-query,disclose}
       DIARIZE_API_BASE: ${DIARIZE_API_BASE:-}
       DIARIZE_TIMEOUT: ${DIARIZE_TIMEOUT:-}
       INFERENCE_PROVIDER: ${INFERENCE_PROVIDER:-ollama}
