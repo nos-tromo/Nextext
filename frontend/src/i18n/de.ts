@@ -119,6 +119,9 @@ export const de: Strings = {
   'player.title': 'Medienplayer',
   'player.close': 'Player schließen',
   'player.open': 'Player öffnen',
+  'player.loading': 'Aufnahme wird geladen…',
+  'player.purpose_needed':
+    'Zum Abspielen dieser Aufnahme muss ein Zweck angegeben werden – Bitte geben Sie ihn oben in der Kopfzeile an, dann startet die Wiedergabe.',
   'player.play_from': 'Ab {time} abspielen',
   'player.unplayable': 'Diese Datei kann im Browser nicht abgespielt werden. Lade sie herunter, um sie lokal abzuspielen.',
   'results.no_summary': 'Keine Zusammenfassung für diesen Auftrag erstellt.',

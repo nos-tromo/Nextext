@@ -5,7 +5,11 @@ export interface MediaSession {
   jobId: string
   /** Original upload name — the panel's accessible label and visible title. */
   fileName: string
-  /** Capability URL from the job result; carries its own auth token. */
+  /**
+   * The job result's `media_url`: advertised only while the upload is on
+   * disk. The player does not play it — it asks for a grant that carries the
+   * stated purpose (`POST /jobs/{id}/media-grant`) and plays that.
+   */
   mediaUrl: string
 }
 

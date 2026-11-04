@@ -117,6 +117,9 @@ export const en = {
   'player.title': 'Media player',
   'player.close': 'Close player',
   'player.open': 'Open player',
+  'player.loading': 'Loading the recording…',
+  'player.purpose_needed':
+    'Playing this recording needs a stated purpose. Please state one in the header and it starts.',
   'player.play_from': 'Play from {time}',
   'player.unplayable': 'This file can’t be played in the browser. Download it to play it locally.',
   'results.no_summary': 'No summary produced for this job.',

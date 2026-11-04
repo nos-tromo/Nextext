@@ -1,5 +1,11 @@
 import { apiGet, apiSend } from './client'
-import type { JobCreateResponse, JobListResponse, JobOptions, JobSnapshot } from './types'
+import type {
+  JobCreateResponse,
+  JobListResponse,
+  JobOptions,
+  JobSnapshot,
+  MediaGrantResponse,
+} from './types'
 
 /** SSE event-stream path for a job (relative to API_BASE). */
 export function jobEventsPath(jobId: string): string {
@@ -40,4 +46,15 @@ export function getJob(jobId: string, signal?: AbortSignal): Promise<JobSnapshot
 /** Delete a job (204 No Content). */
 export function deleteJob(jobId: string): Promise<void> {
   return apiSend<void>('DELETE', `/jobs/${jobId}`)
+}
+
+/**
+ * Ask for a playback grant: the media URL a `<video>`/`<audio>` element plays.
+ *
+ * The element itself can send neither the identity nor the stated purpose,
+ * so this ordinary request states them and the grant it returns carries them
+ * to every range the player fetches, until it expires.
+ */
+export function requestMediaGrant(jobId: string): Promise<MediaGrantResponse> {
+  return apiSend<MediaGrantResponse>('POST', `/jobs/${jobId}/media-grant`)
 }
