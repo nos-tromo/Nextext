@@ -1,5 +1,4 @@
-import { API_BASE, OWNER_HEADER } from './client'
-import { resolveOwnerId } from '../identity/owner'
+import { apiRequest } from './client'
 
 export interface SseFrame {
   event: string
@@ -44,15 +43,16 @@ export function parseSseFrames() {
  * Open a GET SSE stream at `${API_BASE}${path}` and yield parsed frames until
  * the stream closes or `signal` aborts. The backend replays history on connect,
  * so a fresh call after a drop resumes from the beginning (caller dedupes).
+ *
+ * Read through `fetch` rather than `EventSource`, which cannot send headers:
+ * the stream goes through {@link apiRequest} like every other request, with
+ * the identity and the stated purpose.
  */
 export async function* streamSse(
   path: string,
   signal?: AbortSignal,
 ): AsyncGenerator<SseFrame> {
-  const res = await fetch(`${API_BASE}${path}`, {
-    headers: { [OWNER_HEADER]: resolveOwnerId(), accept: 'text/event-stream' },
-    signal,
-  })
+  const res = await apiRequest(path, { headers: { accept: 'text/event-stream' }, signal })
   if (!res.ok || !res.body) {
     throw new Error(`SSE ${res.status} for ${path}`)
   }

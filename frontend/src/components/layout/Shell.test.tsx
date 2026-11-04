@@ -2,9 +2,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, render, screen } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { Shell } from './Shell'
+import { LanguageContext } from '../../i18n/LanguageContext'
 import { useJobProgressStore } from '../../lib/jobProgressStore'
 import { useMediaPlayerStore } from '../../lib/mediaPlayerStore'
-import type { JobListItem } from '../../api/types'
+import type { AppConfig, JobListItem } from '../../api/types'
 
 // The Shell mounts the single owner-multiplexed SSE stream; mock it so the
 // stream stays open (never yields) and never touches the network in Shell tests.
@@ -14,12 +15,19 @@ vi.mock('../../api/sse', () => ({ streamSse: streamSseMock }))
 function stubJobs(
   jobs: JobListItem[],
   whoami: { username: string; display_name: string | null } | null = null,
+  config: AppConfig = { language: 'en', require_purpose: [] },
 ): void {
   const jobsUrl = '/jobs'
   vi.stubGlobal(
     'fetch',
     vi.fn(async (input: RequestInfo | URL) => {
       const url = typeof input === 'string' ? input : input.toString()
+      if (url.includes('/config')) {
+        return new Response(JSON.stringify(config), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        })
+      }
       if (url.includes('/version')) {
         return new Response(JSON.stringify({ version: '1.2.3' }), {
           status: 200,
@@ -130,6 +138,38 @@ describe('Shell', () => {
     expect(canvas).toHaveClass('min-h-full', 'p-8')
     expect(canvas).not.toHaveClass('h-full')
     expect(canvas).not.toHaveClass('min-h-0')
+  })
+})
+
+describe('Shell purpose bar', () => {
+  it('sits in the header, quiet while the backend requires no purpose', async () => {
+    stubJobs([])
+    mountShell()
+    const bar = await screen.findByRole('button', { name: 'No purpose stated' })
+    expect(bar).toHaveAttribute('data-state', 'empty')
+    expect(screen.getByRole('banner')).toContainElement(bar)
+  })
+
+  it('warns while none is stated when the config says the backend requires one', async () => {
+    stubJobs([], null, { language: 'en', require_purpose: ['disclose', 'query'] })
+    mountShell()
+    const bar = await screen.findByRole('button', { name: 'Purpose required' })
+    expect(bar).toHaveAttribute('data-state', 'required')
+  })
+
+  it('speaks the UI language', async () => {
+    stubJobs([], null, { language: 'de', require_purpose: ['query'] })
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(
+      <QueryClientProvider client={qc}>
+        <LanguageContext value="de">
+          <Shell>
+            <div>page-body</div>
+          </Shell>
+        </LanguageContext>
+      </QueryClientProvider>,
+    )
+    expect(await screen.findByRole('button', { name: 'Zweck erforderlich' })).toBeInTheDocument()
   })
 })
 

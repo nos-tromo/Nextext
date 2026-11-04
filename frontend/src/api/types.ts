@@ -215,6 +215,8 @@ export interface LanguagesResponse {
 
 export interface AppConfig {
   language: 'en' | 'de'
+  /** Audit actions that need a stated purpose (`AUDIT_REQUIRE_PURPOSE`), sorted. */
+  require_purpose: string[]
 }
 
 export interface WhoamiResponse {

@@ -1,7 +1,6 @@
 import { createContext, use, useEffect } from 'react'
-import { useQuery } from '@tanstack/react-query'
 import { Spinner } from '@infra/ui'
-import { getConfig } from '../api/meta'
+import { useAppConfig } from '../hooks/useAppConfig'
 import { catalogs, format } from './index'
 import type { Lang, Strings } from './index'
 
@@ -9,13 +8,7 @@ import type { Lang, Strings } from './index'
 const LanguageContext = createContext<Lang>('en')
 
 export function LanguageProvider({ children }: { children: React.ReactNode }) {
-  const { data, isLoading } = useQuery({
-    queryKey: ['app-config'],
-    queryFn: getConfig,
-    staleTime: Infinity,
-    gcTime: Infinity,
-    retry: 1,
-  })
+  const { data, isLoading } = useAppConfig()
   const language: Lang = data?.language === 'de' ? 'de' : 'en'
   // Keep the document's lang attribute in sync so a de deployment never
   // renders German text inside a lang="en" document.

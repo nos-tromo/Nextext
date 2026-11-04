@@ -1,44 +1,9 @@
-import { API_BASE, ApiError, OWNER_HEADER } from '../api/client'
-import { resolveOwnerId } from '../identity/owner'
+import { apiFetch } from '../api/client'
 
-/** Artifact URL for a given job and artifact name. */
-function artifactUrl(jobId: string, name: string): string {
-  return `${API_BASE}/jobs/${jobId}/artifacts/${name}`
-}
-
-/** Batch artifact URL spanning all of the caller's completed jobs. */
-function batchArtifactUrl(name: string): string {
-  return `${API_BASE}/jobs/batch/${name}`
-}
-
-/**
- * Fetch a backend URL with the owner identity header.
- *
- * Throws {@link ApiError} on non-2xx, decoding a `{ detail }` body when present.
- *
- * @param url - The fully-qualified backend URL to fetch.
- * @returns The raw `Response` so callers can consume the body as needed.
- */
-async function fetchWithOwner(url: string): Promise<Response> {
-  const res = await fetch(url, {
-    headers: { [OWNER_HEADER]: resolveOwnerId() },
-  })
-  if (!res.ok) {
-    let detail: unknown
-    const text = await res.text()
-    try {
-      const parsed = JSON.parse(text) as unknown
-      detail =
-        parsed && typeof parsed === 'object' && 'detail' in parsed
-          ? (parsed as { detail: unknown }).detail
-          : parsed
-    } catch {
-      detail = text
-    }
-    throw new ApiError(res.status, detail)
-  }
-  return res
-}
+// Every download is fetched and handed to the browser as a blob, never linked
+// to directly: an `<a href>` to the backend could carry neither the identity
+// header nor the stated purpose (`X-Audit-Purpose`) a disclosure needs, so the
+// bytes come through the API client like any other request.
 
 /**
  * Trigger a browser file download from a blob object URL.
@@ -66,14 +31,15 @@ function triggerDownload(url: string, fileName: string): void {
 /**
  * Fetch a job artifact from the backend.
  *
- * Sends the owner identity header and throws {@link ApiError} on non-2xx.
+ * Goes through the API client, so it carries the identity and the stated
+ * purpose; throws `ApiError` on non-2xx.
  *
  * @param jobId - The job identifier.
  * @param name - The artifact name (e.g. `transcript.csv`).
  * @returns The raw `Response` so callers can consume the body as needed.
  */
 export async function fetchArtifact(jobId: string, name: string): Promise<Response> {
-  return fetchWithOwner(artifactUrl(jobId, name))
+  return apiFetch(`/jobs/${jobId}/artifacts/${name}`)
 }
 
 /**
@@ -83,7 +49,7 @@ export async function fetchArtifact(jobId: string, name: string): Promise<Respon
  * @returns The raw `Response` so callers can consume the body as needed.
  */
 export async function fetchBatchArtifact(name: string): Promise<Response> {
-  return fetchWithOwner(batchArtifactUrl(name))
+  return apiFetch(`/jobs/batch/${name}`)
 }
 
 /**

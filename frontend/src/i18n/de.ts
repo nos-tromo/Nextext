@@ -8,6 +8,8 @@ export const de: Strings = {
   'common.error_request': 'Etwas ist schiefgelaufen ({status}) – Bitte versuchen Sie es erneut oder kontaktieren Sie den Support.',
   'common.error_unknown': 'Etwas ist schiefgelaufen – Bitte versuchen Sie es erneut oder kontaktieren Sie den Support.',
   'common.error_network': 'Dienst nicht erreichbar – Bitte prüfen Sie Ihre Verbindung oder versuchen Sie es später erneut.',
+  'common.error_purpose_required':
+    'Für diese Aktion muss ein Zweck angegeben werden – Bitte geben Sie ihn oben in der Kopfzeile an und versuchen Sie es erneut.',
   'common.file_count_one': '{count} Datei',
   'common.file_count_other': '{count} Dateien',
   'common.jobs_processing': '{count} in Verarbeitung',
@@ -23,6 +25,24 @@ export const de: Strings = {
   'header.theme_light': 'Hell',
   'header.theme_dark': 'Dunkel',
   'header.sign_out': 'Abmelden',
+
+  // purpose (PurposeBar in der Kopfzeile; `{max}` setzt die Leiste selbst ein)
+  'purpose.purpose': 'Zweck',
+  'purpose.empty': 'Kein Zweck angegeben',
+  'purpose.required': 'Zweck erforderlich',
+  'purpose.title': 'Zweck',
+  'purpose.description':
+    'Wird mit jeder Ihrer Anfragen in dieser App gesendet, bis Sie ihn ändern oder entfernen oder die Sitzung endet.',
+  'purpose.requested': 'Für diese Aktion muss ein Zweck angegeben werden.',
+  'purpose.case_ref': 'Aktenzeichen',
+  'purpose.reason': 'Begründung',
+  'purpose.save': 'Speichern',
+  'purpose.cancel': 'Abbrechen',
+  'purpose.clear': 'Entfernen',
+  'purpose.error_length': 'Höchstens {max} Zeichen.',
+  'purpose.error_control': 'Bitte entfernen Sie Zeilenumbrüche, Tabulatoren und andere Steuerzeichen.',
+  'purpose.error_header': 'Zusammen zu lang zum Senden. Bitte kürzen Sie eines der Felder.',
+  'purpose.error_empty': 'Bitte geben Sie ein Aktenzeichen oder eine Begründung an.',
 
   // page
   'page.title': 'Audio- und Videoanalyse',

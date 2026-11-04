@@ -1,8 +1,11 @@
 import type { ReactNode } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { AppShell } from '@infra/ui'
+import { AppShell, PurposeBar, type PurposeBarLabels } from '@infra/ui'
 import { getVersion } from '../../api/meta'
+import { PURPOSE_SCOPE } from '../../api/client'
+import { purposeRequired, useAppConfig } from '../../hooks/useAppConfig'
 import { useOwnerJobStream } from '../../hooks/useOwnerJobStream'
+import { useRetryOnPurpose } from '../../hooks/useRetryOnPurpose'
 import { MediaPanel } from '../player/MediaPanel'
 import { useMediaPlayerStore } from '../../lib/mediaPlayerStore'
 import { useWhoami } from '../../hooks/useWhoami'
@@ -17,6 +20,13 @@ import { useT } from '../../i18n/LanguageContext'
  * The global job status bar now lives in the jobs column on Home rather
  * than in the shell chrome.
  *
+ * The header's `PurposeBar` is where the user states the purpose every
+ * request then carries (`X-Audit-Purpose`, sent by the API client); it warns
+ * while none is stated when `GET /config` says the backend requires one, and
+ * the client opens it when a request is refused for lacking one. A query
+ * refused that way is refetched once a purpose is stated
+ * ({@link useRetryOnPurpose}).
+ *
  * Mounts {@link useOwnerJobStream} once here so the whole session shares a
  * single owner-multiplexed SSE connection feeding every job's live progress —
  * job cards read that shared store instead of each opening their own stream.
@@ -28,6 +38,7 @@ import { useT } from '../../i18n/LanguageContext'
  */
 export function Shell({ children }: { children: ReactNode }) {
   useOwnerJobStream()
+  useRetryOnPurpose()
   const t = useT()
   const playerOpen = useMediaPlayerStore((s) => s.session !== null)
   const { data } = useQuery({
@@ -36,6 +47,24 @@ export function Shell({ children }: { children: ReactNode }) {
     staleTime: Infinity,
   })
   const { data: whoami } = useWhoami()
+  const { data: config } = useAppConfig()
+  const purposeLabels: PurposeBarLabels = {
+    purpose: t('purpose.purpose'),
+    empty: t('purpose.empty'),
+    required: t('purpose.required'),
+    title: t('purpose.title'),
+    description: t('purpose.description'),
+    requested: t('purpose.requested'),
+    caseRef: t('purpose.case_ref'),
+    reason: t('purpose.reason'),
+    save: t('purpose.save'),
+    cancel: t('purpose.cancel'),
+    clear: t('purpose.clear'),
+    errorLength: t('purpose.error_length'),
+    errorControl: t('purpose.error_control'),
+    errorHeader: t('purpose.error_header'),
+    errorEmpty: t('purpose.error_empty'),
+  }
   return (
     <>
       <AppShell
@@ -49,6 +78,9 @@ export function Shell({ children }: { children: ReactNode }) {
           dark: t('header.theme_dark'),
         }}
         signOutLabel={t('header.sign_out')}
+        headerActions={
+          <PurposeBar scope={PURPOSE_SCOPE} required={purposeRequired(config)} labels={purposeLabels} />
+        }
       >
         <div
           data-testid="shell-canvas"
