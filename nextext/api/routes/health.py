@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from importlib.metadata import PackageNotFoundError, version
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from loguru import logger
 
 from nextext.api.schemas import (
@@ -57,9 +57,22 @@ def get_version() -> VersionResponse:
 
 
 @router.get("/config", response_model=ConfigResponse)
-def get_config() -> ConfigResponse:
-    """Return the SPA bootstrap config (UI language). Unauthenticated, like /health."""
-    return ConfigResponse(language=load_language_env().code)
+def get_config(request: Request) -> ConfigResponse:
+    """Return the SPA bootstrap config. Unauthenticated and not audited, like /health.
+
+    Args:
+        request: The incoming request, for the purpose requirement the
+            lifespan parsed from ``AUDIT_REQUIRE_PURPOSE``.
+
+    Returns:
+        ConfigResponse: The UI language and the audit actions that need a
+            stated purpose, sorted (empty when none do).
+    """
+    required = getattr(request.app.state, "audit_required", None)
+    return ConfigResponse(
+        language=load_language_env().code,
+        require_purpose=sorted(required) if isinstance(required, frozenset) else [],
+    )
 
 
 def _mapping_to_entries(mapping: dict[str, str]) -> list[LanguageEntry]:

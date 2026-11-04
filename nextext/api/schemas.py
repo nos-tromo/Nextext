@@ -198,6 +198,10 @@ class ConfigResponse(BaseModel):
     """Client bootstrap config for the SPA."""
 
     language: str
+    # The audit actions that need a stated purpose (``AUDIT_REQUIRE_PURPOSE``),
+    # sorted: the SPA's purpose bar warns while none is stated when any is
+    # listed, and refuses to save a blank one.
+    require_purpose: list[str] = Field(default_factory=list)
 
 
 class WhoamiResponse(BaseModel):
