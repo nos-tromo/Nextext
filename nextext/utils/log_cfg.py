@@ -5,7 +5,7 @@ the operational logs: an upstream or model error is logged by class and HTTP
 status (``error_label``), an unexpected failure by class and traceback frames
 (``exception_frames``) — never by message, which can quote the data being
 processed. The uvicorn access log drops the query string, which can carry the
-per-job media token.
+per-job media token or a playback grant.
 
 Operational logs go to stderr only: stdout belongs to the data-protection
 audit log, whose lines must never interleave with anything else
@@ -71,7 +71,7 @@ class _StripQueryString(logging.Filter):
 
     uvicorn logs each request with ``record.args == (client_addr, method,
     path_with_query, http_version, status)``. The query string can carry the
-    per-job media token, so only the path is kept.
+    per-job media token or a playback grant, so only the path is kept.
     """
 
     @override

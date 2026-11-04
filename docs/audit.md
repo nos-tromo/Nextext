@@ -16,15 +16,17 @@ verified are obs-plane's (`docs/audit.md` there) and are not repeated here.
 
 Events carry **references, counts and parameters — never content**: no media,
 transcript, translation, summary, caption, prompt, model reply, entity,
-hate-speech finding, file name or path, and never the media token. Where a
-model produced text, its SHA-256 is recorded (`ai.output_sha256`), so a later
-copy of the result can be matched without the log holding it.
+hate-speech finding, file name or path, and never the media token or a
+playback grant. Where a model produced text, its SHA-256 is recorded
+(`ai.output_sha256`), so a later copy of the result can be matched without the
+log holding it.
 
 ## Requests
 
 The backend writes one event per audited request, once the data is fetched and
 before the response is returned (`nextext/api/audit.py`). Every such event
-carries the actor, the stated purpose and the gateway's `X-Request-ID`.
+carries the actor, the stated purpose and the gateway's `X-Request-ID` — for a
+stream played with a grant, those of the request the grant was issued to.
 
 | Endpoint | Action / operation | Target | Recorded |
 |---|---|---|---|
@@ -34,11 +36,13 @@ carries the actor, the stated purpose and the gateway's `X-Request-ID`.
 | `DELETE /api/v1/jobs/{id}` | `delete` / `job.delete` | the job | the job's `status` when it was deleted. The SPA's "Clear" actions send one such request per job |
 | `GET /api/v1/jobs/{id}/artifacts/{name}` | `disclose` / `artifact.download` | the job | `recipient="download:<format>"` (`csv`, `xlsx`, `txt`, `png`, `jsonl`, `zip`), the `artifact` name |
 | `GET /api/v1/jobs/batch/{name}` | `disclose` / `artifact.download_batch` | the completed jobs the bundle was built from | as above |
-| `GET /api/v1/jobs/{id}/media` | `query` / `media.stream` | the job | one event per request that streams bytes — a player fetches several ranges — with `ranged` |
+| `GET /api/v1/jobs/{id}/media` | `query` / `media.stream` | the job | one event per request that streams bytes — a player fetches several ranges — with `ranged`. Played with a grant (`?grant=`, see [Playback](#playback)), the event carries the purpose and request id of the request the grant was issued to, and the grant's id as `grant` — never the grant itself |
+| `POST /api/v1/jobs/{id}/media-grant` | `query` / `media.grant` | the job | refusals only: another owner's job, or a purpose `AUDIT_REQUIRE_PURPOSE` asks for and the request lacks (`428`) |
 
-An attempt on another owner's job on `job.get`, `job.delete` or
-`artifact.download` still answers `404` (existence never leaks), but is
-recorded with `outcome="denied"`, naming the caller and the job.
+An attempt on another owner's job on `job.get`, `job.delete`,
+`artifact.download` or `media.grant` still answers `404` (existence never
+leaks), but is recorded with `outcome="denied"`, naming the caller and the
+job.
 
 Not recorded, because they carry no personal data or touch none:
 
@@ -47,6 +51,8 @@ Not recorded, because they carry no personal data or touch none:
 | `GET /api/v1/health`, `/version`, `/config`, `/languages`; `GET /metrics` | health, configuration, static mappings, aggregate counters |
 | `GET /api/v1/whoami` | echoes the caller's own identity |
 | `GET /api/v1/jobs/events`, `GET /api/v1/jobs/{id}/events` | progress streams: stage names, progress, counts and typed codes |
+| `POST /api/v1/jobs/{id}/media-grant` answered `201` | the grant hands out no personal data; each stream it opens is recorded when it is played |
+| a media request with an unknown or expired grant, or one issued for another job (`404`) | it names no one |
 | a request answered `401` | it has no actor; recording it would let anyone on the networks flood the trail |
 | `404` for an unknown job, an unsupported or unproduced artifact; `409` for an unfinished job | no data was touched |
 
@@ -136,40 +142,128 @@ process on the same directory sweeps nothing.
 | A CLI run | `{"user": AUDIT_CLI_USER or null, "via": "cli"}` |
 | Startup sweep, shutdown purge | `{"user": null, "via": "system"}` |
 
-The media route is authorized by its capability token, not by the caller. A
-request that resolves to an identity other than the job's owner is recorded
-with `on_behalf_of: <owner>`. With `NEXTEXT_EDGE_SECRET` set, a media request
-without a verified identity did not come through the gateway and is refused
-(`404`, not recorded). Without the secret — where every identity is unverified
-anyway — a header-less `<video>` request is attributed to the job's creator,
-to whom the token was issued.
+The media route is authorized by what its URL carries — a playback grant or
+the job's own token — not by the caller. A request that resolves to an
+identity other than the job's owner is recorded with `on_behalf_of: <owner>`.
+With `NEXTEXT_EDGE_SECRET` set, a media request without a verified identity
+did not come through the gateway and is refused (`404`, not recorded), and a
+grant plays only for the identity it was issued to: another verified identity
+is refused (`404`) and recorded with `outcome="denied"`. Without the secret —
+where every identity is unverified anyway — a header-less `<video>` request is
+attributed to whom the grant or token was issued: the grant's requester, or
+the job's creator.
 
 ## Purpose
 
 A caller states its purpose in the `X-Audit-Purpose` header: the URL-encoded
 form of up to two fields, `case_ref` and `reason` — what
 `new URLSearchParams({case_ref, reason}).toString()` produces. It is recorded
-on the request's event and on every event of a job the request created. A
-malformed value (repeated or oversized fields, control characters, non-ASCII,
-not form-encoded) is answered `400` with a generic message and nothing is
-recorded. The purpose goes into the audit log only, never into the
-operational logs.
+on the request's event, on every event of a job the request created, and on
+every stream played with a grant issued to it. A malformed value (repeated or
+oversized fields, control characters, non-ASCII, not form-encoded) is answered
+`400` with a generic message and nothing is recorded. The purpose goes into
+the audit log only, never into the operational logs.
 
 `AUDIT_REQUIRE_PURPOSE` lists the actions that need a stated purpose. A request
 whose action is listed but states none is refused with `428`, and the refusal
 is recorded with `outcome="denied"`. Creating a job counts as `collect`,
 `ai_call` and `combine`, since the job will call the models and join their
 results; a job snapshot needs the purpose only once it carries the result.
-The list is empty by default, and an unknown action stops the backend at
-startup.
+An unknown action stops the backend at startup.
 
-A `<video>`/`<audio>` element cannot send the header, so with `query` listed,
-media playback is refused.
+A deployment requires `query,disclose`: `docker/compose.yaml` sets that
+default while the variable is unset, since §76 BDSG Abs. 2 asks the reason for
+queries and disclosures. Under it:
+
+| Needs a stated purpose | Needs none |
+|---|---|
+| listing jobs; a finished job's result; a playback grant; every download, the word-cloud image included; every CLI run, since it writes output files | uploading (`collect`); deleting; polling an unfinished job; the progress streams; the configuration and identity endpoints |
+
+Playing with the job's own token (`?token=`) is refused while `query` is
+listed, since a media element states no purpose; the SPA plays with a grant
+instead ([Playback](#playback)). `AUDIT_REQUIRE_PURPOSE=` (empty) in `.env`
+switches the requirement off; outside compose — bare `uvicorn`, the tests — the
+list is empty unless set. `GET /api/v1/config` reports the parsed list as
+`require_purpose`, so the SPA knows a purpose is required.
+
+Machine clients state a purpose like anyone else. A service that calls with
+its own token (`NEXTEXT_SERVICE_TOKENS`) sends `X-Audit-Purpose` on its
+`query` and `disclose` requests, and under the default is refused (`428`)
+without one. docint's media ingest is the example: creating the job needs no
+purpose (`collect`), but reading the finished job's snapshot and downloading
+its `docint.jsonl` and `keyframes.zip` do, and docint states the purpose of the
+docint job that started the ingest — or `reason="docint ingest"` when no
+request did.
+
+## The purpose in the SPA
+
+The SPA's header carries a purpose bar (`@infra/ui`'s `PurposeBar`, scope
+`nextext`), where the user states a case reference, a reason, or both, once
+per browser tab. Every request the SPA makes goes through one function
+(`apiRequest` in `frontend/src/api/client.ts`), which sends the stated purpose
+as `X-Audit-Purpose`; when the backend answers `428`, the bar's dialog opens
+and the request is sent once more with what the user saved there. A declined
+prompt leaves the request refused, with its own message ("This action needs a
+stated purpose…") rather than a generic error. A refused query — the job list,
+a result — loads by itself once a purpose is stated; a refused download stays
+refused until it is clicked again; the player says that playing needs a
+purpose, and starts once one is stated. No request times out while the dialog
+is open. While `require_purpose` is non-empty, the empty bar is a warning and
+a blank purpose cannot be saved. Signing out through the header's account
+menu clears it.
+
+Every request to an audited endpoint, and how it carries the purpose:
+
+| What the SPA does | Endpoint | Recorded as | Carries the purpose |
+|---|---|---|---|
+| list the jobs, on load and after a change | `GET /jobs` | `query` / `job.list` | header, through the API client |
+| show a finished job's result | `GET /jobs/{id}` | `query` / `job.get` | header, through the API client |
+| upload a file | `POST /jobs` | `collect` / `job.create` | header, through the API client (not required by default) |
+| delete a job, "Clear" | `DELETE /jobs/{id}` | `delete` / `job.delete` | header, through the API client (not required by default) |
+| download an artifact | `GET /jobs/{id}/artifacts/{name}` | `disclose` / `artifact.download` | header: fetched through the API client and saved from a blob, never an `<a href>` to the backend |
+| show the word cloud | `GET /jobs/{id}/artifacts/wordcloud.png` | `disclose` / `artifact.download` | header: fetched through the API client; the `<img>` shows a blob URL |
+| download all jobs | `GET /jobs/batch/{name}` | `disclose` / `artifact.download_batch` | header: fetched and saved from a blob, as above |
+| open the player | `POST /jobs/{id}/media-grant` | refusals only | header, through the API client |
+| play a recording | `GET /jobs/{id}/media?grant=…` | `query` / `media.stream` | the grant: the `<video>`/`<audio>` element sends no header |
+
+The progress streams are read with `fetch`, not `EventSource`, through the same
+client. Nothing else reaches the backend around it: there is no `<a href>`,
+`<img src>`, `window.open` or form post to the backend, and the media element
+is the one request the browser makes on its own — which is why it plays a
+grant.
+
+## Playback
+
+A `<video>`/`<audio>` element sends neither the identity header nor
+`X-Audit-Purpose`. Before the player sets `src`, the SPA therefore asks for a
+playback grant, `POST /api/v1/jobs/{id}/media-grant`: an ordinary request,
+owner-scoped like the snapshot, which states the purpose and needs the one a
+query needs. It returns a media URL carrying a fresh random token
+(`secrets.token_urlsafe(32)`), bound in the backend's memory to the job and to
+that request's caller, purpose and request id, until it expires
+(`NEXTEXT_MEDIA_GRANT_TTL_S`, 900 s by default). Every range request of the
+playback presents it, and each is recorded as `query` / `media.stream` with
+the grant request's purpose and request id and the grant's own random id in
+`criteria.grant`, which ties the ranges of one playback together.
+
+When a grant expires mid-playback, the next range request is refused (`404`,
+not recorded), the element fails, and the SPA asks for a fresh grant once and
+picks playback up where it stopped; an error soon after a fresh grant is the
+file's and is reported as unplayable. Grants live in memory like the jobs:
+deleting a job revokes its grants, a restart ends them all, and a job keeps
+at most 16. Only a hash of each token is kept.
+
+The grant rides in the query string, like the token: the backend's and the
+frontend's access logs drop the query string, and obs-plane redacts every
+query value before operational logs are stored; nginx's error log, whose
+format is fixed, still carries the request line when it logs an error for
+the request. It never appears in an event.
 
 ## Correlation
 
 The gateway's `X-Request-ID` is recorded as `request_id` on every request
-event and on the job events it caused, and is forwarded as `X-Request-ID` on
+event and on the job events it caused — and on the streams a grant opened, as
+the request id of the grant's request — and is forwarded as `X-Request-ID` on
 every inference request the job makes — Whisper, `/vad`, `/diarize`,
 `/gliner` and the chat model — so the router's logs can be matched with the
 trail. No identity and no purpose are sent to the router.
@@ -197,7 +291,9 @@ The purpose comes from `AUDIT_CASE_REF` / `AUDIT_REASON` (`make cli` passes
 `CASE_REF` / `REASON`). When `AUDIT_REQUIRE_PURPOSE` lists one of a run's
 actions (`collect`, `ai_call`, `combine`, `disclose`) and no purpose is set,
 the run records the refusal and exits `2` with a one-line message; a malformed
-purpose or requirement exits `2` before anything is recorded. Run on a host
+purpose or requirement exits `2` before anything is recorded. Every run writes
+output files, a disclosure, so under the deployment default (`query,disclose`)
+every `make cli` run needs `CASE_REF=` or `REASON=` (either is enough). Run on a host
 with `uv run nextext-cli`, the chain goes to the CLI's stdout, which carries
 nothing else. `load-models` (`make preload`) reads no personal data and writes
 no chain.
@@ -224,7 +320,8 @@ default configuration sends to stdout, is moved to stderr at startup.
 | Variable | Default | Meaning |
 |---|---|---|
 | `AUDIT_OUTPUT` | `stdout` | Where the lines go: the process's stdout, or `container` — the container's main stdout under a container-wide lock, so every process in it (the API, `make cli` runs) reaches the container's log without interleaving. `docker/compose.yaml` sets `container` for the backend |
-| `AUDIT_REQUIRE_PURPOSE` | empty | Comma-separated actions that need a stated purpose (`collect`, `query`, `disclose`, `combine`, `delete`, `ai_call`, `modify`, `auth`, `admin`) |
+| `AUDIT_REQUIRE_PURPOSE` | `query,disclose` in `docker/compose.yaml` while unset; empty outside compose | Comma-separated actions that need a stated purpose (`collect`, `query`, `disclose`, `combine`, `delete`, `ai_call`, `modify`, `auth`, `admin`); empty switches the requirement off |
+| `NEXTEXT_MEDIA_GRANT_TTL_S` | `900` | Seconds a playback grant stays usable, at most 86400 |
 | `AUDIT_CLI_USER` | unset | CLI only: the operator a run is attributed to; `make cli` sets the host account |
 | `AUDIT_CASE_REF`, `AUDIT_REASON` | unset | CLI only: the run's stated purpose |
 

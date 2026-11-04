@@ -70,8 +70,9 @@ Preload them on a connected host before shipping to a disconnected one — see
 
 `uv run nextext-cli -f <file> [ARGS]` runs the same pipeline in-process, with no
 backend container — the right tool for very large local files and directory
-batch loops. On a deployed host, `make cli ARGS='…'` runs it inside the
-backend, so its audit chain lands in the backend's log. Flags and examples:
+batch loops. On a deployed host, `make cli ARGS='…' CASE_REF=… REASON=…` runs
+it inside the backend, so its audit chain lands in the backend's log; the
+deployment requires the stated purpose by default. Flags and examples:
 [cli.md](docs/cli.md).
 
 ## Operating

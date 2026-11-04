@@ -13,7 +13,7 @@ quick start, and first run) with topic-by-topic deep dives.
 | [architecture.md](architecture.md) | The backend/frontend service split, the in-memory job and identity model, image tagging |
 | [airgap.md](airgap.md) | Offline behaviour, preloading the language caches, `make bundle`, loading the tarballs on a disconnected host |
 | [cli.md](cli.md) | `nextext-cli` — flags and directory batch processing |
-| [audit.md](audit.md) | The data-protection audit log: what every endpoint, job stage and CLI run records, the purpose header and `AUDIT_REQUIRE_PURPOSE`, the owner record and the startup sweep, the fail-closed rule |
+| [audit.md](audit.md) | The data-protection audit log: what every endpoint, job stage and CLI run records, the purpose header, the SPA's purpose bar and `AUDIT_REQUIRE_PURPOSE`, playback grants, the owner record and the startup sweep, the fail-closed rule |
 
 Design history (dated plans and specs for individual features) lives alongside
 this manual under `superpowers/`; those files record how a decision was made at

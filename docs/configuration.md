@@ -369,6 +369,13 @@ Each step must not lock out a caller that is still on the old path:
 Without a matching token, docint's calls fall back to the trusted header,
 which the backend ignores once the edge secret is set — they then get `401`.
 
+A service states its purpose like any caller: under the deployment default
+`AUDIT_REQUIRE_PURPOSE=query,disclose`, docint's reads of a finished job's
+snapshot and of its artifacts carry `X-Audit-Purpose` — the purpose of the
+docint job that started the ingest. A docint release that does not send it
+yet gets `428` on those reads, so upgrade docint before Nextext, or switch the
+requirement off until then (see [audit.md](audit.md#purpose)).
+
 ## Data-protection audit log
 
 The backend and every `nextext-cli` run record who collected, queried,
@@ -380,8 +387,24 @@ store, its retention and who may read it are obs-plane's.
 | Variable | Default | Meaning |
 |---|---|---|
 | `AUDIT_OUTPUT` | `stdout` | `container` writes to the container's main stdout under a container-wide lock, so a `make cli` run lands in the backend's log; `docker/compose.yaml` sets it for the backend |
-| `AUDIT_REQUIRE_PURPOSE` | empty | Comma-separated actions that need a stated purpose (`X-Audit-Purpose`; `AUDIT_CASE_REF` / `AUDIT_REASON` for the CLI). Without one a request gets `428` and a CLI run exits `2`; an unknown action stops startup |
+| `AUDIT_REQUIRE_PURPOSE` | `query,disclose` (`docker/compose.yaml`, while unset); empty outside compose | Comma-separated actions that need a stated purpose (`X-Audit-Purpose`, which the SPA sends from its header's purpose bar; `AUDIT_CASE_REF` / `AUDIT_REASON` for the CLI). Without one a request gets `428` and a CLI run exits `2`; an unknown action stops startup. Set it empty (`AUDIT_REQUIRE_PURPOSE=`) to switch the requirement off |
 | `AUDIT_CLI_USER`, `AUDIT_CASE_REF`, `AUDIT_REASON` | unset | CLI only, set per run by `make cli`: the operator and the stated purpose |
+| `NEXTEXT_MEDIA_GRANT_TTL_S` | `900` | Seconds a media playback grant stays usable (at most `86400`); invalid values fall back to the default |
+
+Under the deployment default, listing jobs, reading a finished job's result,
+playing a recording, every download and every CLI run need a stated purpose;
+uploads and deletes do not ([audit.md](audit.md#purpose) has the full list).
+To see what the backend gets:
+
+```bash
+docker compose --env-file .env -f docker/compose.yaml config backend | grep AUDIT_REQUIRE_PURPOSE
+#       AUDIT_REQUIRE_PURPOSE: query,disclose   (unset in .env)
+#       AUDIT_REQUIRE_PURPOSE: ""               (AUDIT_REQUIRE_PURPOSE= in .env: off)
+```
+
+A recording plays through a short-lived grant that carries the purpose,
+because a media element cannot send the header
+([audit.md](audit.md#playback)).
 
 A failed audit write fails the operation: a request answers the generic `500`
 without its data, a job fails, a CLI run exits non-zero.
@@ -425,7 +448,8 @@ strings:
   traceback frames, without the message.
 - The backend's uvicorn access log and the frontend's nginx access log record
   the request path without its query string, which can carry the per-job
-  media token (see [architecture.md](architecture.md#playback)). An nginx
+  media token or a playback grant (see
+  [architecture.md](architecture.md#playback)). An nginx
   access line reads `time "METHOD path protocol" status bytes request-time
   "X-Request-Id"` — no referer or client address.
 
