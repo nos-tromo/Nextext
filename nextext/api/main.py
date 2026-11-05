@@ -20,6 +20,7 @@ from nextext.api.identity import check_principal_config
 from nextext.api.jobs import JobManager, JobState, PushEvent
 from nextext.api.routes import router as api_router
 from nextext.audit import build_emitter, emit_config_event, service_version
+from nextext.cli_clean import legacy_inputs
 from nextext.utils.audit_event import AuditEmitter, AuditWriteError
 from nextext.utils.env_cfg import CliRetentionConfig, load_audit_env, load_cli_retention_env, load_principal_env
 from nextext.utils.log_cfg import setup_logging
@@ -148,6 +149,13 @@ def _lifespan(
             await job_manager.start()
             cli_sweep: asyncio.Task[None] | None = None
             if job_manager.holds_root_lock and cli_retention.days is not None:
+                legacy = len(legacy_inputs())
+                if legacy:
+                    logger.warning(
+                        "{} file(s) left directly in /tmp by earlier releases' make cli are not swept; "
+                        "list them with make cli-clean LEGACY=1 DRY=1, delete them with make cli-clean LEGACY=1.",
+                        legacy,
+                    )
                 sweeper = _cli_sweeper(cli_retention)
                 await asyncio.to_thread(_sweep_cli_files, sweeper, emitter)
                 cli_sweep = asyncio.create_task(_cli_sweep_loop(sweeper, emitter))

@@ -858,6 +858,8 @@ def load_cli_retention_env() -> CliRetentionConfig:
     notice = _whole_days(
         "RETENTION_NOTICE_DAYS", DEFAULT_RETENTION_NOTICE_DAYS, MAX_RETENTION_NOTICE_DAYS, allow_off=False
     )
+    if days is None:
+        logger.warning("NEXTEXT_CLI_RETENTION_DAYS=off: what CLI runs leave is never deleted (development only).")
     return CliRetentionConfig(days=days, notice_days=DEFAULT_RETENTION_NOTICE_DAYS if notice is None else notice)
 
 

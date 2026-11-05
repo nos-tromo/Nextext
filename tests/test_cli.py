@@ -549,3 +549,32 @@ def test_cli_says_when_its_outputs_are_deleted(
     monkeypatch.setenv("NEXTEXT_CLI_RETENTION_DAYS", "off")
     assert cli._run_main(_args(tmp_path / "clip.wav"), job_audit()) == 0
     assert "deleted on" not in capsys.readouterr().err
+
+
+def test_the_cli_keeps_its_temporary_audio_in_its_own_directory(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Run in /tmp/nextext-cli (``make cli``), the re-encoded audio goes there, where the sweep reaches it.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Overrides the processor, the pipeline and the directory.
+        tmp_path (Path): Temporary working directory.
+    """
+    from nextext.api import cli_files
+
+    seen: dict[str, Any] = {}
+    df = pd.DataFrame({"start": ["0:00:00"], "end": ["0:00:02"], "text": ["Hello."]})
+
+    def pipeline(**kwargs: Any) -> TranscriptionOutcome:
+        seen.update(kwargs)
+        return TranscriptionOutcome(transcript=df, src_lang="en")
+
+    monkeypatch.setattr(cli, "FileProcessor", lambda *a, **k: _SpyProcessor())
+    monkeypatch.setattr(cli, "transcription_pipeline", pipeline)
+    cli_files.CLI_ROOT.mkdir(parents=True, exist_ok=True)
+    monkeypatch.chdir(cli_files.CLI_ROOT)
+    assert cli._run_main(_args(tmp_path / "clip.wav"), job_audit()) == 0
+    assert seen["scratch_dir"] == cli_files.CLI_ROOT
+    monkeypatch.chdir(tmp_path)
+    assert cli._run_main(_args(tmp_path / "clip.wav"), job_audit()) == 0
+    assert seen["scratch_dir"] is None

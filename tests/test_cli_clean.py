@@ -85,3 +85,15 @@ def test_nothing_to_clean_records_nothing(monkeypatch: pytest.MonkeyPatch) -> No
     capture = AuditCapture()
     assert cli_clean.main([], emitter_factory=capture.factory) == 0
     assert capture.of("delete") == []
+
+
+def test_dry_run_lists_counts_and_deletes_nothing(scratch: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """``--dry-run`` says how many entries (and legacy inputs) there are, deletes and records nothing."""
+    capture = AuditCapture()
+    assert cli_clean.main(["--dry-run", "--legacy"], emitter_factory=capture.factory) == 0
+    err = capsys.readouterr().err
+    assert "would delete 4 CLI file(s), 1 of them left directly in /tmp" in err
+    assert (scratch / "old-input.wav").exists()
+    assert (cli_files.CLI_ROOT / "clip.mp4").exists()
+    assert capture.events == []
+    assert "old-input" not in err

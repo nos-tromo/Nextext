@@ -10,6 +10,7 @@ from typing import override
 
 import pytest
 
+from nextext.api import cli_files
 from nextext.api.cli_files import CliFileSweeper, entry_reference
 from nextext.utils.audit_event import AuditEmitter, AuditWriteError
 from tests.audit_helpers import AuditCapture
@@ -46,6 +47,16 @@ def _run(root: Path, name: str, days: float) -> Path:
     _age(run / "summary.txt", days)
     _age(run, days)
     return run
+
+
+@pytest.fixture(autouse=True)
+def _age_by_mtime(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Tests age entries by backdating mtime; the real clock also counts ctime, which no test can backdate.
+
+    Args:
+        monkeypatch: Replaces the clock for the tests that use :func:`_age`.
+    """
+    monkeypatch.setattr(cli_files, "_stored_at", lambda path: os.lstat(path).st_mtime)
 
 
 @pytest.fixture
@@ -262,3 +273,41 @@ def test_missing_root_is_created_for_the_state(tmp_path: Path) -> None:
     emitter, _ = _emitter()
     assert CliFileSweeper(root, legacy, days=30, notice_days=30).sweep(NOW, emitter).removed == []
     assert (root / ".retention-since").exists()
+
+
+def test_a_file_copied_in_with_an_old_mtime_is_young(roots: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch) -> None:
+    """``docker compose cp`` keeps the source's mtime: the time it reached the volume (ctime) counts too."""
+    root, _ = roots
+    clip = root / "clip.mp4"
+    clip.write_bytes(b"x")
+    old = NOW - 400 * DAY
+    os.utime(clip, (old, old))
+    assert cli_files.stored_at(clip) == os.lstat(clip).st_ctime > old
+
+
+def test_a_linked_root_is_not_followed(tmp_path: Path) -> None:
+    """A /tmp/nextext-cli that is a symbolic link is never swept: its target's files stay."""
+    target = tmp_path / "elsewhere"
+    target.mkdir()
+    (target / "keep.txt").write_text("x", encoding="utf-8")
+    _age(target / "keep.txt", 400)
+    root = tmp_path / "nextext-cli"
+    root.symlink_to(target)
+    sweeper = CliFileSweeper(root, tmp_path / "output", days=30, notice_days=30)
+    assert sweeper.scan(NOW) == []
+
+
+def test_off_is_logged_as_a_warning(monkeypatch: pytest.MonkeyPatch) -> None:
+    """NEXTEXT_CLI_RETENTION_DAYS=off says so at startup."""
+    from loguru import logger
+
+    from nextext.utils import env_cfg
+
+    lines: list[str] = []
+    sink = logger.add(lines.append, level="WARNING")
+    monkeypatch.setenv("NEXTEXT_CLI_RETENTION_DAYS", "off")
+    try:
+        assert env_cfg.load_cli_retention_env().days is None
+    finally:
+        logger.remove(sink)
+    assert any("NEXTEXT_CLI_RETENTION_DAYS=off" in line for line in lines)

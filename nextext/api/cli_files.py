@@ -15,8 +15,10 @@ An entry is one of:
 * a run's directory in ``/tmp/nextext-cli/output/``;
 * a run's directory in ``/tmp/output/``, where releases before this one wrote.
 
-Its age is its own modification time; a directory's is the newest anywhere
-below it, so a run that is still writing is young. Symbolic links are never
+Its age is the later of its modification and change times (``docker compose
+cp`` keeps a source's old mtime, but the change time is when it reached the
+volume and cannot be set back); a directory's is the newest anywhere below it,
+so a run that is still writing is young. Symbolic links are never
 followed: a link is removed itself. ``/tmp/nextext-jobs`` (the job manager's)
 and anything else in ``/tmp`` is never touched.
 
@@ -97,6 +99,23 @@ class CliSweep:
     waiting_until: float | None = None
 
 
+def stored_at(path: Path) -> float:
+    """Return when a path was last written to the volume: the later of its mtime and ctime (not following links).
+
+    Args:
+        path: The path.
+
+    Returns:
+        float: Seconds since the epoch.
+    """
+    info = os.lstat(path)
+    return max(info.st_mtime, info.st_ctime)
+
+
+#: The clock :func:`_newest` reads; tests that backdate mtimes replace it.
+_stored_at = stored_at
+
+
 def _newest(path: Path) -> float:
     """Return the newest modification time of a path and, for a directory, of everything below it.
 
@@ -106,12 +125,12 @@ def _newest(path: Path) -> float:
     Returns:
         float: Seconds since the epoch.
     """
-    newest = os.lstat(path).st_mtime
+    newest = _stored_at(path)
     if path.is_dir() and not path.is_symlink():
         for directory, dirs, files in os.walk(path, followlinks=False):
             for name in (*dirs, *files):
                 try:
-                    newest = max(newest, os.lstat(os.path.join(directory, name)).st_mtime)
+                    newest = max(newest, _stored_at(Path(directory, name)))
                 except FileNotFoundError:
                     continue
     return newest
@@ -152,7 +171,7 @@ class CliFileSweeper:
         """
         period = (self.days or 0) * 86_400
         candidates: list[tuple[str, Path]] = []
-        if self.root.is_dir():
+        if self.root.is_dir() and not self.root.is_symlink():
             for child in self.root.iterdir():
                 if child.name in {STATE_NAME, "output"}:
                     continue

@@ -24,6 +24,7 @@ import pandas as pd
 from loguru import logger
 from matplotlib.figure import Figure
 
+from nextext.api import cli_files
 from nextext.audit import (
     CAPTION_STAGE,
     FRAME_HATE_SPEECH_STAGE,
@@ -548,6 +549,19 @@ def _keyframe_step(
     return captions
 
 
+def _scratch_dir() -> Path | None:
+    """Return where the temporary audio re-encode goes: the CLI's own directory under ``make cli``.
+
+    In ``/tmp/nextext-cli`` the backend's sweep (and ``make cli-clean``) reach
+    the copy if a run dies; anywhere else it is the system's temp directory.
+
+    Returns:
+        Path | None: The directory, or ``None`` for the default.
+    """
+    root = cli_files.CLI_ROOT
+    return root if Path.cwd() == root else None
+
+
 def _utc_now() -> datetime:
     """Return the current time in UTC (a seam for tests).
 
@@ -717,6 +731,7 @@ def _run_main(args: argparse.Namespace, audit: JobAudit) -> int:
                 file_path=args.file_path,
                 src_lang=args.src_lang,
                 diarize=args.diarize,
+                scratch_dir=_scratch_dir(),
             )
             notes.result("asr", text=column_text(outcome.transcript, "text"), segments=len(outcome.transcript))
         transcript_df = outcome.transcript

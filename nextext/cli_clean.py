@@ -39,7 +39,7 @@ from nextext.utils.env_cfg import load_audit_env, load_cli_audit_user
 KEEP: frozenset[str] = frozenset({Path(CONTAINER_LOCK).name})
 
 
-def _legacy_inputs() -> list[tuple[str, Path]]:
+def legacy_inputs() -> list[tuple[str, Path]]:
     """List the regular files directly in the scratch volume an earlier release's runs may have read.
 
     Returns:
@@ -70,16 +70,25 @@ def main(
     parser = argparse.ArgumentParser(prog="nextext-cli-clean", description=__doc__.splitlines()[0])
     parser.add_argument("--run", metavar="NAME", help="delete one entry, e.g. output/<stem>")
     parser.add_argument("--legacy", action="store_true", help="also inputs left directly in /tmp")
+    parser.add_argument("--dry-run", action="store_true", help="say how many would go; delete and record nothing")
     args = parser.parse_args(argv)
     sweeper = cli_files.CliFileSweeper(cli_files.CLI_ROOT, cli_files.LEGACY_OUTPUT, days=0, notice_days=1)
     entries = [(entry.name, entry.path) for entry in sweeper.scan(time.time())]
     if args.legacy:
-        entries += _legacy_inputs()
+        entries += legacy_inputs()
     if args.run is not None:
         entries = [entry for entry in entries if entry[0] == args.run]
         if not entries:
             print(f"nextext-cli-clean: no CLI file named {args.run!r}; nothing was deleted.", file=sys.stderr)
             return 1
+    if args.dry_run:
+        legacy = sum(name.startswith("tmp:") for name, _ in entries)
+        print(
+            f"nextext-cli-clean: would delete {len(entries)} CLI file(s), {legacy} of them left directly in /tmp;"
+            " nothing was deleted or recorded.",
+            file=sys.stderr,
+        )
+        return 0
     if not entries:
         print("nextext-cli-clean: nothing to delete.", file=sys.stderr)
         return 0
