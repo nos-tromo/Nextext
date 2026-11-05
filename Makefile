@@ -53,10 +53,13 @@ preload:
 # attributed to the host account that started it; CASE_REF / REASON state its
 # purpose. Every run writes output files (a disclosure), so under the compose
 # default AUDIT_REQUIRE_PURPOSE=query,disclose a run without either exits 2.
-# The file must be inside the container: /tmp is the writable scratch volume,
-# and outputs land under /tmp/output/<stem>/.
+# The file must be inside the container, in /tmp/nextext-cli on the writable
+# scratch volume; outputs land under /tmp/nextext-cli/output/<stem>/. The
+# backend deletes what runs leave there once NEXTEXT_CLI_RETENTION_DAYS (365)
+# have passed, and make cli-clean deletes it now, both recorded.
 cli:
-	$(COMPOSE) exec -w /tmp \
+	$(COMPOSE) exec backend mkdir -p /tmp/nextext-cli
+	$(COMPOSE) exec -w /tmp/nextext-cli \
 		-e AUDIT_CLI_USER="$${SUDO_USER:-$$(id -un)}" \
 		-e AUDIT_CASE_REF="$(CASE_REF)" -e AUDIT_REASON="$(REASON)" \
 		backend nextext-cli $(ARGS)

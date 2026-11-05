@@ -17,6 +17,7 @@ import os
 import sys
 import uuid
 from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pandas as pd
@@ -68,7 +69,9 @@ from nextext.utils.audit_runtime import purpose_from_env
 from nextext.utils.env_cfg import (
     load_audit_env,
     load_cli_audit_user,
+    load_cli_retention_env,
     load_keyframe_defaults,
+    load_language_env,
     load_visual_summary_env,
 )
 from nextext.utils.log_cfg import setup_logging
@@ -545,6 +548,34 @@ def _keyframe_step(
     return captions
 
 
+def _utc_now() -> datetime:
+    """Return the current time in UTC (a seam for tests).
+
+    Returns:
+        datetime: Now.
+    """
+    return datetime.now(UTC)
+
+
+def _deletion_notice() -> str | None:
+    """Say when this run's outputs are deleted, in the response language.
+
+    The backend deletes what CLI runs left on the scratch volume once the
+    retention period (``NEXTEXT_CLI_RETENTION_DAYS``) has passed; this line is
+    the notice to the person who ran it.
+
+    Returns:
+        str | None: The sentence, or ``None`` when retention is off.
+    """
+    config = load_cli_retention_env()
+    if config.days is None:
+        return None
+    day = (_utc_now() + timedelta(days=config.days)).date().isoformat()
+    if load_language_env().code == "de":
+        return f"Die Ausgaben werden am {day} gelöscht (Aufbewahrungsfrist {config.days} Tage)."
+    return f"Outputs are deleted on {day} (retention period {config.days} days)."
+
+
 def _write_output(
     file_processor: FileProcessor,
     audit: JobAudit,
@@ -862,6 +893,9 @@ def _run_main(args: argparse.Namespace, audit: JobAudit) -> int:
     _write_docint(args, audit, transcript_df, detected_src_lang)
 
     logger.info("The end of our elaborate plans, the end of everything that stands.")
+    notice = _deletion_notice()
+    if notice is not None:
+        print(notice, file=sys.stderr)
     return 0
 
 

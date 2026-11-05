@@ -104,6 +104,12 @@ services:
       NEXTEXT_DEFAULT_IDENTITY: ${NEXTEXT_DEFAULT_IDENTITY:-}
       NEXTEXT_EDGE_SECRET: ${NEXTEXT_EDGE_SECRET:-}
       NEXTEXT_MAX_UPLOAD_MB: ${NEXTEXT_MAX_UPLOAD_MB:-8192}
+      # What `make cli` leaves in /tmp/nextext-cli (and /tmp/output from
+      # before) is deleted this many days after it was written, recorded;
+      # `off` keeps it (development only). A new or changed period deletes
+      # nothing for RETENTION_NOTICE_DAYS after it took effect.
+      NEXTEXT_CLI_RETENTION_DAYS: ${NEXTEXT_CLI_RETENTION_DAYS:-365}
+      RETENTION_NOTICE_DAYS: ${RETENTION_NOTICE_DAYS:-30}
       NEXTEXT_OFFLINE: ${NEXTEXT_OFFLINE:-1}
       NEXTEXT_SERVICE_TOKENS: ${NEXTEXT_SERVICE_TOKENS:-}
       OPENAI_API_BASE: ${OPENAI_API_BASE}

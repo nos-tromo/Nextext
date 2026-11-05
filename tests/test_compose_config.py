@@ -88,3 +88,20 @@ def test_a_deployment_requires_a_purpose_for_queries_and_disclosures() -> None:
     assert _env_value(compose, "AUDIT_REQUIRE_PURPOSE") == "${AUDIT_REQUIRE_PURPOSE-query,disclose}"
     overlay = (_COMPOSE.parent / "compose.override.yaml").read_text(encoding="utf-8")
     assert "AUDIT_REQUIRE_PURPOSE" not in overlay
+
+
+_MAKEFILE = Path(__file__).resolve().parents[1] / "Makefile"
+
+
+def test_make_cli_runs_in_its_own_directory() -> None:
+    """``make cli`` works in /tmp/nextext-cli, which the backend sweeps, never in /tmp itself."""
+    recipe = _MAKEFILE.read_text(encoding="utf-8").split("\ncli:\n", 1)[1].split("\n\n", 1)[0]
+    assert "/tmp/nextext-cli" in recipe
+    assert "-w /tmp " not in recipe
+
+
+def test_cli_retention_defaults_in_compose() -> None:
+    """The backend keeps CLI files 365 days by default; a new or changed period waits 30 days."""
+    text = _COMPOSE.read_text(encoding="utf-8")
+    assert "NEXTEXT_CLI_RETENTION_DAYS: ${NEXTEXT_CLI_RETENTION_DAYS:-365}" in text
+    assert "RETENTION_NOTICE_DAYS: ${RETENTION_NOTICE_DAYS:-30}" in text

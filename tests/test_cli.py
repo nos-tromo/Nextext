@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 from collections.abc import Sequence
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -520,3 +521,31 @@ def test_cli_hate_speech_uses_the_resolved_source_language(monkeypatch: pytest.M
     (processor,) = created
     assert seen["src_lang"] == "de"
     assert "hate_speech" in processor.file_output_labels
+
+
+def test_cli_says_when_its_outputs_are_deleted(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A finished run names the day its outputs are deleted, in the response language.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Overrides the processor, the pipeline and the clock.
+        tmp_path (Path): Temporary working directory.
+        capsys (pytest.CaptureFixture[str]): Captures stderr.
+    """
+    monkeypatch.setattr(cli, "FileProcessor", lambda *a, **k: _SpyProcessor())
+    df = pd.DataFrame({"start": ["0:00:00"], "end": ["0:00:02"], "text": ["Hello."]})
+    monkeypatch.setattr(
+        cli, "transcription_pipeline", lambda **kwargs: TranscriptionOutcome(transcript=df, src_lang="en")
+    )
+    monkeypatch.setattr(cli, "_utc_now", lambda: datetime(2026, 11, 5, 12, 0, tzinfo=UTC))
+    monkeypatch.setenv("NEXTEXT_CLI_RETENTION_DAYS", "365")
+    monkeypatch.setenv("RESPONSE_LANGUAGE", "en")
+    assert cli._run_main(_args(tmp_path / "clip.wav"), job_audit()) == 0
+    assert "Outputs are deleted on 2027-11-05 (retention period 365 days)." in capsys.readouterr().err
+    monkeypatch.setenv("RESPONSE_LANGUAGE", "de")
+    assert cli._run_main(_args(tmp_path / "clip.wav"), job_audit()) == 0
+    assert "Die Ausgaben werden am 2027-11-05 gelöscht (Aufbewahrungsfrist 365 Tage)." in capsys.readouterr().err
+    monkeypatch.setenv("NEXTEXT_CLI_RETENTION_DAYS", "off")
+    assert cli._run_main(_args(tmp_path / "clip.wav"), job_audit()) == 0
+    assert "deleted on" not in capsys.readouterr().err
