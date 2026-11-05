@@ -6,6 +6,7 @@ import hashlib
 import io
 import os
 from pathlib import Path
+from typing import override
 
 import pytest
 
@@ -211,6 +212,7 @@ def test_record_failure_deletes_nothing(roots: tuple[Path, Path]) -> None:
     run = _run(root, "old", 400)
 
     class Broken(io.StringIO):
+        @override
         def write(self, s: str) -> int:
             if '"delete"' in s:
                 raise OSError("log pipe closed")

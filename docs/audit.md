@@ -113,6 +113,19 @@ the owner as the target's `container` (`owner:<id>`):
   shutting down leaves uploads on the `tmp-jobs` volume that nothing in memory
   points at; the next startup removes them before it serves a request.
 
+What `make cli` runs leave in `/tmp/nextext-cli` (and `/tmp/output` from
+earlier releases) is erased too, recorded *before* it goes, naming each entry
+as `path-sha256:<hex>` of its path (a file name can name a person), with
+`kind: cli_file`:
+
+- `cli.sweep` (by the system, `period_days`): at startup and then daily, what
+  is older than `NEXTEXT_CLI_RETENTION_DAYS`, once a new or changed period's
+  notice (`RETENTION_NOTICE_DAYS`) has passed;
+- `cli.clean` (by the operator, via `cli`, with any stated purpose):
+  `make cli-clean`.
+
+An entry that could not be removed is recorded again with `outcome: error`.
+
 ## The owner record
 
 Jobs live in memory, so a restart would lose whose upload a leftover directory
@@ -283,8 +296,8 @@ backend's own log (`AUDIT_OUTPUT=container`), attributed to the host account
 that ran it — a one-off container can exit before the log collector sees it:
 
 ```bash
-docker compose --env-file .env -f docker/compose.yaml cp recording.mp4 backend:/tmp/
-make cli ARGS='-f /tmp/recording.mp4 -sum' CASE_REF=case-0001 REASON='…'
+docker compose --env-file .env -f docker/compose.yaml cp recording.mp4 backend:/tmp/nextext-cli/
+make cli ARGS='-f /tmp/nextext-cli/recording.mp4 -sum' CASE_REF=case-0001 REASON='…'
 ```
 
 The purpose comes from `AUDIT_CASE_REF` / `AUDIT_REASON` (`make cli` passes

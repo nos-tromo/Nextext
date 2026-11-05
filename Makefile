@@ -15,7 +15,7 @@ NETWORKS := inference-net edge-net
 VOLUMES  := spacy-cache
 include make/common.mk
 
-.PHONY: help preload cli
+.PHONY: help preload cli cli-clean
 
 help:
 	@echo "nextext — build-host helpers"
@@ -32,12 +32,14 @@ help:
 	@echo "  make down       stop + remove the containers"
 	@echo "  make logs       tail combined logs"
 	@echo "  make preload    fill the spacy-cache volume (connected host, one-off container)"
-	@echo "  make cli ARGS='-f /tmp/<file> ...' CASE_REF=... REASON=..."
+	@echo "  make cli ARGS='-f /tmp/nextext-cli/<file> ...' CASE_REF=... REASON=..."
 	@echo "                  run nextext-cli inside the running backend (audited; the backend must be up;"
-	@echo "                  copy the file in first: docker compose --env-file .env -f docker/compose.yaml cp <file> backend:/tmp/)."
+	@echo "                  copy the file in first: docker compose --env-file .env -f docker/compose.yaml cp <file> backend:/tmp/nextext-cli/)."
 	@echo "                  CASE_REF and/or REASON state the run's purpose, which the default"
 	@echo "                  AUDIT_REQUIRE_PURPOSE=query,disclose requires (without one the run exits 2), e.g."
 	@echo "                  make cli ARGS='-f /tmp/clip.mp4 -sum' CASE_REF=case-0001 REASON='Review of a reported clip'"
+	@echo "  make cli-clean [RUN=output/<stem>] [LEGACY=1]"
+	@echo "                  delete what CLI runs left now (else after NEXTEXT_CLI_RETENTION_DAYS), recorded"
 	@echo "  make pre-commit run pre-commit hooks (ruff + pyrefly)"
 	@echo "  make verify     pre-push gate: pre-commit + frontend lint/build; mirrors CI's lint gate"
 	@echo "  make test       run pytest + vitest (test-backend / test-frontend for one)"
@@ -63,3 +65,12 @@ cli:
 		-e AUDIT_CLI_USER="$${SUDO_USER:-$$(id -un)}" \
 		-e AUDIT_CASE_REF="$(CASE_REF)" -e AUDIT_REASON="$(REASON)" \
 		backend nextext-cli $(ARGS)
+
+# Delete what make cli left in /tmp/nextext-cli (and /tmp/output from earlier
+# releases) now, recorded with the host account that ran it; RUN=<name> one
+# entry, LEGACY=1 also inputs earlier releases read from /tmp itself.
+cli-clean:
+	$(COMPOSE) exec \
+		-e AUDIT_CLI_USER="$${SUDO_USER:-$$(id -un)}" \
+		-e AUDIT_CASE_REF="$(CASE_REF)" -e AUDIT_REASON="$(REASON)" \
+		backend nextext-cli-clean $(if $(RUN),--run '$(RUN)') $(if $(LEGACY),--legacy)

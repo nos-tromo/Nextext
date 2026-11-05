@@ -52,7 +52,8 @@ make preload
 
 # Run nextext-cli inside the running backend (its audit chain lands in the backend's log;
 # the compose default AUDIT_REQUIRE_PURPOSE=query,disclose makes CASE_REF or REASON required)
-make cli ARGS='-f /tmp/<file> -sum' CASE_REF=… REASON=…
+make cli ARGS='-f /tmp/nextext-cli/<file> -sum' CASE_REF=… REASON=…
+make cli-clean [RUN=output/<stem>] [LEGACY=1]   # delete what CLI runs left now, recorded (else after NEXTEXT_CLI_RETENTION_DAYS)
 
 # Tests
 uv run pytest              # run full test suite
@@ -246,6 +247,7 @@ Key env vars (see `.env.example`):
 - `AUDIT_REQUIRE_PURPOSE` (backend + CLI) — comma-separated audit actions that need a stated purpose. Empty in code (tests, bare `uvicorn`); `docker/compose.yaml` defaults it to `query,disclose` while unset (`${AUDIT_REQUIRE_PURPOSE-query,disclose}`, colon-less so `AUDIT_REQUIRE_PURPOSE=` empty switches it off). A request without one gets `428`, a CLI run exits `2`; an unknown action stops startup. Job creation counts as `collect`, `ai_call` and `combine`; a CLI run as those plus `disclose`, so under the default every run needs a purpose. Exposed to the SPA as `GET /config`'s `require_purpose`.
 - `NEXTEXT_MEDIA_GRANT_TTL_S` (backend only) — seconds a media playback grant stays usable; default `900`, at most `86400`, invalid values fall back. Resolved once per `JobManager` by `load_media_grant_ttl`.
 - `AUDIT_CLI_USER` / `AUDIT_CASE_REF` / `AUDIT_REASON` (CLI only) — the operator a run is attributed to and its stated purpose; `make cli` sets them (`CASE_REF=… REASON=…`).
+- `NEXTEXT_CLI_RETENTION_DAYS` / `RETENTION_NOTICE_DAYS` (backend + CLI) — what `make cli` leaves in `/tmp/nextext-cli` (and `/tmp/output` of earlier releases) is deleted that many days after it was written (365; `off` keeps it, development only), by `nextext/api/cli_files.py` at startup and daily, recorded (`cli.sweep`); a new or changed period waits the notice (30 days, state in `/tmp/nextext-cli/.retention-since`). `make cli-clean` (`nextext/cli_clean.py`) deletes now (`cli.clean`). Invalid values stop startup. Each CLI run prints its outputs' deletion date.
 
 ## Docker
 

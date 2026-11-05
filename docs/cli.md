@@ -97,8 +97,8 @@ On the production host, run it inside the running backend, so the chain lands
 in the backend's own log:
 
 ```bash
-docker compose --env-file .env -f docker/compose.yaml cp recording.mp4 backend:/tmp/
-make cli ARGS='-f /tmp/recording.mp4 -w -sum' CASE_REF=case-0001 REASON='Review of a reported clip'
+docker compose --env-file .env -f docker/compose.yaml cp recording.mp4 backend:/tmp/nextext-cli/
+make cli ARGS='-f /tmp/nextext-cli/recording.mp4 -w -sum' CASE_REF=case-0001 REASON='Review of a reported clip'
 ```
 
 A deployment requires a stated purpose for queries and disclosures
@@ -111,13 +111,24 @@ one line and exits `2` before it reads the file:
 nextext-cli: this run needs a stated purpose: set AUDIT_CASE_REF and/or AUDIT_REASON.
 ```
 
-`make cli` runs `docker compose exec` with `/tmp` (the writable scratch
-volume) as the working directory, so the outputs land under
-`/tmp/output/<stem>/`; it names the host account that ran it as
-`AUDIT_CLI_USER`. The input file and the outputs stay on the scratch volume
-until you remove them — copy the outputs out with `docker compose … cp`, then
-`docker compose … exec backend rm -r /tmp/<file> /tmp/output/<stem>`; the
-backend's startup sweep removes only its own job directories. Run directly with `uv run nextext-cli`, the chain goes to
+`make cli` runs `docker compose exec` with `/tmp/nextext-cli` (on the writable
+scratch volume) as the working directory, so the outputs land under
+`/tmp/nextext-cli/output/<stem>/`; it names the host account that ran it as
+`AUDIT_CLI_USER`. Each run ends by saying when its outputs are deleted. Copy
+the outputs out with `docker compose … cp` before then.
+
+- **Automatically:** the backend deletes what runs left there, inputs and
+  outputs, `NEXTEXT_CLI_RETENTION_DAYS` (default 365) after it was written, at
+  startup and then daily, recorded (`delete` / `cli.sweep`, naming each entry by
+  a hash of its path, never by name). Outputs earlier releases wrote under
+  `/tmp/output/` follow the same rule. A new or changed period deletes nothing
+  for `RETENTION_NOTICE_DAYS` (30) after it took effect.
+- **Now:** `make cli-clean` deletes all of it, `RUN=output/<stem>` one run,
+  recorded with your account (`delete` / `cli.clean`). `LEGACY=1` also removes
+  the inputs earlier releases read from `/tmp` itself (regular files directly in
+  `/tmp`, never the backend's own lock file or directories).
+
+Run directly with `uv run nextext-cli`, the chain goes to
 stdout, which the CLI uses for nothing else (its logs go to stderr).
 
 ## Related

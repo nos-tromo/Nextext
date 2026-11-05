@@ -390,6 +390,8 @@ store, its retention and who may read it are obs-plane's.
 | `AUDIT_REQUIRE_PURPOSE` | `query,disclose` (`docker/compose.yaml`, while unset); empty outside compose | Comma-separated actions that need a stated purpose (`X-Audit-Purpose`, which the SPA sends from its header's purpose bar; `AUDIT_CASE_REF` / `AUDIT_REASON` for the CLI). Without one a request gets `428` and a CLI run exits `2`; an unknown action stops startup. Set it empty (`AUDIT_REQUIRE_PURPOSE=`) to switch the requirement off |
 | `AUDIT_CLI_USER`, `AUDIT_CASE_REF`, `AUDIT_REASON` | unset | CLI only, set per run by `make cli`: the operator and the stated purpose |
 | `NEXTEXT_MEDIA_GRANT_TTL_S` | `900` | Seconds a media playback grant stays usable (at most `86400`); invalid values fall back to the default |
+| `NEXTEXT_CLI_RETENTION_DAYS` | `365` | Days after which what `make cli` left in `/tmp/nextext-cli` (and `/tmp/output` from earlier releases) is deleted by the backend, recorded; `off` keeps it (development only). Anything else stops startup |
+| `RETENTION_NOTICE_DAYS` | `30` | Days a new or changed `NEXTEXT_CLI_RETENTION_DAYS` deletes nothing after it took effect (1–365) |
 
 Under the deployment default, listing jobs, reading a finished job's result,
 playing a recording, every download and every CLI run need a stated purpose;

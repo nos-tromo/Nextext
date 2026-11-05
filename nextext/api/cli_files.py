@@ -42,6 +42,8 @@ from loguru import logger
 from nextext.audit import emit_with_ids
 from nextext.utils.audit_event import Actor, AuditEmitter
 
+#: The scratch volume (``tmp-jobs``), the backend's ``/tmp``.
+SCRATCH: Final = Path("/tmp")
 #: Where ``make cli`` runs.
 CLI_ROOT: Final = Path("/tmp/nextext-cli")
 #: Where releases before this one wrote the CLI's outputs.

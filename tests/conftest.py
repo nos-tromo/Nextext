@@ -104,6 +104,7 @@ def _hermetic_cli_retention(monkeypatch: pytest.MonkeyPatch, tmp_path_factory: p
     base = tmp_path_factory.mktemp("cli-scratch")
     monkeypatch.setattr(cli_files, "CLI_ROOT", base / "nextext-cli")
     monkeypatch.setattr(cli_files, "LEGACY_OUTPUT", base / "output")
+    monkeypatch.setattr(cli_files, "SCRATCH", base)
     monkeypatch.delenv("NEXTEXT_CLI_RETENTION_DAYS", raising=False)
     monkeypatch.delenv("RETENTION_NOTICE_DAYS", raising=False)
 

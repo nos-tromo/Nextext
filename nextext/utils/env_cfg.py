@@ -854,9 +854,7 @@ def load_cli_retention_env() -> CliRetentionConfig:
     Raises:
         ValueError: If either is not a valid period.
     """
-    days = _whole_days(
-        "NEXTEXT_CLI_RETENTION_DAYS", DEFAULT_CLI_RETENTION_DAYS, MAX_CLI_RETENTION_DAYS, allow_off=True
-    )
+    days = _whole_days("NEXTEXT_CLI_RETENTION_DAYS", DEFAULT_CLI_RETENTION_DAYS, MAX_CLI_RETENTION_DAYS, allow_off=True)
     notice = _whole_days(
         "RETENTION_NOTICE_DAYS", DEFAULT_RETENTION_NOTICE_DAYS, MAX_RETENTION_NOTICE_DAYS, allow_off=False
     )

@@ -20,8 +20,7 @@ from nextext.api.identity import check_principal_config
 from nextext.api.jobs import JobManager, JobState, PushEvent
 from nextext.api.routes import router as api_router
 from nextext.audit import build_emitter, emit_config_event, service_version
-from nextext.utils.audit_event import AuditEmitter
-from nextext.utils.audit_event import AuditWriteError
+from nextext.utils.audit_event import AuditEmitter, AuditWriteError
 from nextext.utils.env_cfg import CliRetentionConfig, load_audit_env, load_cli_retention_env, load_principal_env
 from nextext.utils.log_cfg import setup_logging
 
