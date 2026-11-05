@@ -12,6 +12,7 @@ from collections.abc import Iterator
 import pytest
 from loguru import logger
 
+from nextext.api import cli_files
 from tests.audit_helpers import AuditCapture
 
 
@@ -87,6 +88,24 @@ def _hermetic_audit_env(monkeypatch: pytest.MonkeyPatch) -> None:
         "NEXTEXT_MEDIA_GRANT_TTL_S",
     ):
         monkeypatch.delenv(name, raising=False)
+
+
+@pytest.fixture(autouse=True)
+def _hermetic_cli_retention(monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory) -> None:
+    """Point the CLI-file sweep at a throwaway directory and clear its variables.
+
+    The backend's lifespan sweeps ``/tmp/nextext-cli`` and ``/tmp/output``;
+    a test must never touch the machine's real ones.
+
+    Args:
+        monkeypatch: Fixture for patching modules and the environment.
+        tmp_path_factory: Makes the throwaway directory.
+    """
+    base = tmp_path_factory.mktemp("cli-scratch")
+    monkeypatch.setattr(cli_files, "CLI_ROOT", base / "nextext-cli")
+    monkeypatch.setattr(cli_files, "LEGACY_OUTPUT", base / "output")
+    monkeypatch.delenv("NEXTEXT_CLI_RETENTION_DAYS", raising=False)
+    monkeypatch.delenv("RETENTION_NOTICE_DAYS", raising=False)
 
 
 @pytest.fixture

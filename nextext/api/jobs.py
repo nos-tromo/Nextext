@@ -950,6 +950,11 @@ class JobManager:
                 self._owner_subscribers.clear()
             self._release_root()
 
+    @property
+    def holds_root_lock(self) -> bool:
+        """Whether this manager holds the scratch directory (no other live process sweeps it)."""
+        return self._root_lock_fd is not None
+
     def _lock_root(self) -> bool:
         """Take the job directory's lock for the manager's lifetime.
 
