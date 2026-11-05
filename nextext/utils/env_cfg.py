@@ -796,6 +796,73 @@ def load_media_grant_ttl() -> int:
     )
 
 
+DEFAULT_CLI_RETENTION_DAYS: int = 365
+MAX_CLI_RETENTION_DAYS: int = 3650
+DEFAULT_RETENTION_NOTICE_DAYS: int = 30
+MAX_RETENTION_NOTICE_DAYS: int = 365
+
+
+@dataclass(frozen=True)
+class CliRetentionConfig:
+    """How long what ``make cli`` leaves on the scratch volume is kept.
+
+    Attributes:
+        days: Days after it was written at which a CLI run's files are
+            deleted; ``None`` keeps them (development only).
+        notice_days: Days a new or changed period deletes nothing after it
+            took effect.
+    """
+
+    days: int | None
+    notice_days: int
+
+
+def _whole_days(name: str, default: int, maximum: int, *, allow_off: bool) -> int | None:
+    """Read a period in whole days, fail-closed.
+
+    Args:
+        name: The environment variable.
+        default: The value when unset or blank.
+        maximum: The longest period accepted.
+        allow_off: Whether ``off`` (``None``) is accepted.
+
+    Returns:
+        int | None: The days, or ``None`` for ``off``.
+
+    Raises:
+        ValueError: If the value is neither a whole number from 1 to
+            ``maximum`` nor an allowed ``off``; a typo must never pick a
+            period nobody chose.
+    """
+    raw = os.getenv(name, "").strip().lower()
+    if not raw:
+        return default
+    if raw == "off" and allow_off:
+        return None
+    if raw.isascii() and raw.isdigit() and 1 <= int(raw) <= maximum:
+        return int(raw)
+    off = " or off" if allow_off else ""
+    raise ValueError(f"{name} must be whole days from 1 to {maximum}{off}, not {raw!r}")
+
+
+def load_cli_retention_env() -> CliRetentionConfig:
+    """Load ``NEXTEXT_CLI_RETENTION_DAYS`` and ``RETENTION_NOTICE_DAYS``.
+
+    Returns:
+        CliRetentionConfig: 365 and 30 days unless configured.
+
+    Raises:
+        ValueError: If either is not a valid period.
+    """
+    days = _whole_days("NEXTEXT_CLI_RETENTION_DAYS", DEFAULT_CLI_RETENTION_DAYS, MAX_CLI_RETENTION_DAYS, allow_off=True)
+    notice = _whole_days(
+        "RETENTION_NOTICE_DAYS", DEFAULT_RETENTION_NOTICE_DAYS, MAX_RETENTION_NOTICE_DAYS, allow_off=False
+    )
+    if days is None:
+        logger.warning("NEXTEXT_CLI_RETENTION_DAYS=off: what CLI runs leave is never deleted (development only).")
+    return CliRetentionConfig(days=days, notice_days=DEFAULT_RETENTION_NOTICE_DAYS if notice is None else notice)
+
+
 @dataclass(frozen=True)
 class WhisperClientConfig:
     """Dataclass for the external Whisper transcription client.

@@ -4,6 +4,7 @@ import io
 
 import pytest
 
+from nextext.utils import env_cfg
 from nextext.utils.env_cfg import (
     DEFAULT_DIARIZE_TIMEOUT,
     DEFAULT_HATE_SPEECH_CONTEXT_TOKENS,
@@ -1437,3 +1438,49 @@ def test_load_media_grant_ttl(monkeypatch: pytest.MonkeyPatch, raw_value: str | 
 
     assert load_media_grant_ttl() == expected
     assert DEFAULT_MEDIA_GRANT_TTL_S == 900
+
+
+def test_cli_retention_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
+    """CLI files are kept 365 days; a new or changed period waits 30 days.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Clears the variables.
+    """
+    monkeypatch.delenv("NEXTEXT_CLI_RETENTION_DAYS", raising=False)
+    monkeypatch.delenv("RETENTION_NOTICE_DAYS", raising=False)
+    config = env_cfg.load_cli_retention_env()
+    assert (config.days, config.notice_days) == (365, 30)
+
+
+def test_cli_retention_off(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``off`` keeps CLI files (development only).
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Sets the variable.
+    """
+    monkeypatch.setenv("NEXTEXT_CLI_RETENTION_DAYS", "OFF")
+    assert env_cfg.load_cli_retention_env().days is None
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        ("NEXTEXT_CLI_RETENTION_DAYS", "0"),
+        ("NEXTEXT_CLI_RETENTION_DAYS", "3651"),
+        ("NEXTEXT_CLI_RETENTION_DAYS", "a year"),
+        ("RETENTION_NOTICE_DAYS", "0"),
+        ("RETENTION_NOTICE_DAYS", "366"),
+        ("RETENTION_NOTICE_DAYS", "off"),
+    ],
+)
+def test_cli_retention_rejects_garbage(monkeypatch: pytest.MonkeyPatch, name: str, value: str) -> None:
+    """A value that is no period stops startup instead of falling back silently.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Sets the variable.
+        name (str): The variable.
+        value (str): Its invalid value.
+    """
+    monkeypatch.setenv(name, value)
+    with pytest.raises(ValueError, match=name):
+        env_cfg.load_cli_retention_env()

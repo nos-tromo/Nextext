@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import os
+import time
 from collections.abc import AsyncIterator, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from typing import Any
@@ -11,13 +14,15 @@ from fastapi import FastAPI
 from loguru import logger
 from prometheus_fastapi_instrumentator import Instrumentator
 
+from nextext.api import cli_files
 from nextext.api.errors import install_error_handlers
 from nextext.api.identity import check_principal_config
 from nextext.api.jobs import JobManager, JobState, PushEvent
 from nextext.api.routes import router as api_router
 from nextext.audit import build_emitter, emit_config_event, service_version
-from nextext.utils.audit_event import AuditEmitter
-from nextext.utils.env_cfg import load_audit_env, load_principal_env
+from nextext.cli_clean import legacy_inputs
+from nextext.utils.audit_event import AuditEmitter, AuditWriteError
+from nextext.utils.env_cfg import CliRetentionConfig, load_audit_env, load_cli_retention_env, load_principal_env
 from nextext.utils.log_cfg import setup_logging
 
 _APP_VERSION = service_version()
@@ -26,6 +31,61 @@ _APP_VERSION = service_version()
 EmitterFactory = Callable[[str | None], AuditEmitter]
 #: The blocking pipeline a job runs (see :class:`nextext.api.jobs.JobManager`).
 PipelineRunner = Callable[[JobState, PushEvent], dict[str, Any]]
+
+
+#: How often the backend sweeps what CLI runs left, after the sweep at startup.
+CLI_SWEEP_EVERY_S = 86_400.0
+
+
+def _cli_sweeper(config: CliRetentionConfig) -> cli_files.CliFileSweeper:
+    """Build the sweeper of CLI runs' files (paths read now, so tests can point them elsewhere).
+
+    Args:
+        config: The retention settings.
+
+    Returns:
+        cli_files.CliFileSweeper: The sweeper.
+    """
+    return cli_files.CliFileSweeper(
+        cli_files.CLI_ROOT, cli_files.LEGACY_OUTPUT, days=config.days, notice_days=config.notice_days
+    )
+
+
+def _sweep_cli_files(sweeper: cli_files.CliFileSweeper, emitter: AuditEmitter) -> None:
+    """Sweep once; a damaged state or an unreadable directory is logged and retried next time.
+
+    Args:
+        sweeper: The sweeper.
+        emitter: The backend's audit emitter.
+
+    Raises:
+        AuditWriteError: If a deletion's record cannot be written; nothing was deleted.
+    """
+    try:
+        result = sweeper.sweep(time.time(), emitter)
+    except (OSError, ValueError) as exc:
+        logger.error("CLI-file retention could not run ({}); nothing was deleted.", type(exc).__name__)
+        return
+    if result.waiting_until is not None:
+        logger.info(
+            "CLI-file retention takes effect on {}; until then nothing is deleted.",
+            time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(result.waiting_until)),
+        )
+
+
+async def _cli_sweep_loop(sweeper: cli_files.CliFileSweeper, emitter: AuditEmitter) -> None:
+    """Sweep CLI runs' files daily until cancelled.
+
+    Args:
+        sweeper: The sweeper.
+        emitter: The backend's audit emitter.
+    """
+    while True:
+        await asyncio.sleep(CLI_SWEEP_EVERY_S)
+        try:
+            await asyncio.to_thread(_sweep_cli_files, sweeper, emitter)
+        except AuditWriteError:
+            logger.error("A CLI-file deletion could not be recorded; nothing was deleted.")
 
 
 def _lifespan(
@@ -67,6 +127,7 @@ def _lifespan(
         check_principal_config()
         audit_cfg = load_audit_env()
         principal_cfg = load_principal_env()
+        cli_retention = load_cli_retention_env()
         emitter = emitter_factory(audit_cfg.output)
         emitter.start()
         try:
@@ -80,10 +141,24 @@ def _lifespan(
                     and principal_cfg.edge_secret is None,
                     "require_purpose": sorted(audit_cfg.require_purpose),
                     "service_tokens": len(principal_cfg.service_tokens),
+                    "cli_retention_days": cli_retention.days,
+                    "retention_notice_days": cli_retention.notice_days,
                 },
             )
             job_manager = JobManager(pipeline_runner=pipeline_runner, emitter=emitter)
             await job_manager.start()
+            cli_sweep: asyncio.Task[None] | None = None
+            if job_manager.holds_root_lock and cli_retention.days is not None:
+                legacy = len(legacy_inputs())
+                if legacy:
+                    logger.warning(
+                        "{} file(s) left directly in /tmp by earlier releases' make cli are not swept; "
+                        "list them with make cli-clean LEGACY=1 DRY=1, delete them with make cli-clean LEGACY=1.",
+                        legacy,
+                    )
+                sweeper = _cli_sweeper(cli_retention)
+                await asyncio.to_thread(_sweep_cli_files, sweeper, emitter)
+                cli_sweep = asyncio.create_task(_cli_sweep_loop(sweeper, emitter))
             app.state.audit_emitter = emitter
             app.state.audit_required = audit_cfg.require_purpose
             app.state.job_manager = job_manager
@@ -92,6 +167,10 @@ def _lifespan(
                 yield
             finally:
                 logger.info("Nextext API shutting down.")
+                if cli_sweep is not None:
+                    cli_sweep.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await cli_sweep
                 await job_manager.stop()
         finally:
             emitter.close()

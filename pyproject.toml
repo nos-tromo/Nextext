@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "nextext"
-version = "1.15.1"
+version = "1.16.0"
 description = "Audio/video transcription, translation and analysis toolkit — FastAPI + React + CLI over external inference"
 authors = [
     { name = "nos-tromo" }
@@ -49,6 +49,7 @@ Repository = "https://github.com/nos-tromo/Nextext.git"
 load-models = "nextext.utils.model_loader:main"
 nextext-api = "nextext.api.main:run"
 nextext-cli = "nextext.cli:main"
+nextext-cli-clean = "nextext.cli_clean:main"
 
 [dependency-groups]
 dev = [

@@ -192,6 +192,8 @@ def test_startup_records_the_operating_mode(app_factory: Any, audit_capture: Aud
         "edge_secret_enforced": False,
         "require_purpose": [],
         "service_tokens": 0,
+        "cli_retention_days": 365,
+        "retention_notice_days": 30,
     }
     assert events[1]["service"] == "nextext"
     assert (events[-1]["action"], events[-1]["operation"]) == ("lifecycle", "shutdown")
