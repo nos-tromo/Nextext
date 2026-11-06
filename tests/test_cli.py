@@ -606,3 +606,18 @@ def test_the_cli_keeps_its_temporary_audio_in_its_own_directory(
     monkeypatch.chdir(tmp_path)
     assert cli._run_main(_args(tmp_path / "clip.wav"), job_audit()) == 0
     assert seen["scratch_dir"] is None
+
+
+def test_a_notice_that_cannot_be_given_never_changes_the_runs_result(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A broken retention setting skips the notice; the run still ends with its own exit code.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Overrides the processor and the pipeline.
+        tmp_path (Path): Temporary working directory.
+    """
+    monkeypatch.setattr(cli, "FileProcessor", lambda *a, **k: _SpyProcessor())
+    monkeypatch.setattr(cli, "transcription_pipeline", lambda **kwargs: _skipping_outcome())
+    monkeypatch.setenv("NEXTEXT_CLI_RETENTION_DAYS", "a year")
+    assert cli._run_main(_args(tmp_path / "clip.wav"), job_audit()) == 3

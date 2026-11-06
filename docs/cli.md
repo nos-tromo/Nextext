@@ -123,17 +123,17 @@ the outputs out with `docker compose … cp` before then.
   a hash of its path, never by name). Outputs earlier releases wrote under
   `/tmp/output/` follow the same rule. A new period deletes nothing for
   `RETENTION_NOTICE_DAYS` (30) after it took effect. A changed period never
-  postpones what the period in force already made due, and never deletes sooner
-  than announced: a longer one applies at once (within a running first notice,
-  at its end), and a shorter one gives the notice only to what it makes due
+  deletes sooner than announced: a longer one applies at once (within a running
+  first notice, at its end), also to what was due under the shorter one but not
+  yet deleted; a shorter one gives the notice only to what it makes due
   sooner, never ending before a notice already running. Changing
   `RETENTION_NOTICE_DAYS` alone moves nothing. The state of the release before
   is rewritten with its notice's end; a state with impossible values is
   refused. Switching retention off forgets when it took effect, so switching it
   on again gives a fresh notice.
-- **The notice:** every run, however it ends, prints the earliest day its
-  outputs are deleted; the daily sweep can land a day later. A rerun into an
-  existing output directory makes it young again.
+- **The notice:** a run that started prints the earliest day its outputs are
+  deleted, also when it found no speech or failed; the daily sweep can land a
+  day later. A rerun into an existing output directory makes it young again.
 - **Now:** `make cli-clean` deletes all of it, `RUN=output/<stem>` one run,
   recorded with your account (`delete` / `cli.clean`). `LEGACY=1` also removes
   the inputs earlier releases read from `/tmp` itself (regular files directly in

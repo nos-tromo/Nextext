@@ -148,3 +148,44 @@ def test_the_daily_sweep_survives_an_unexpected_error(
         while calls["n"] < 3 and time.monotonic() < deadline:
             time.sleep(0.01)
     assert calls["n"] >= 3
+
+
+def test_a_state_that_cannot_be_forgotten_never_stops_startup(
+    monkeypatch: pytest.MonkeyPatch, audit_capture: AuditCapture
+) -> None:
+    """Switching retention off on a volume where the state cannot be removed logs it and starts anyway."""
+    monkeypatch.setattr(main_module, "setup_logging", lambda: None)
+    monkeypatch.setenv("NEXTEXT_CLI_RETENTION_DAYS", "off")
+
+    def refuse(root: object) -> None:
+        raise PermissionError("read-only")
+
+    monkeypatch.setattr(cli_files, "forget_rule", refuse)
+    with TestClient(create_app(audit_emitter_factory=audit_capture.factory)):
+        pass
+
+
+def test_a_sweep_failing_at_shutdown_is_logged(monkeypatch: pytest.MonkeyPatch, audit_capture: AuditCapture) -> None:
+    """A sweep that fails while shutdown waits for it leaves a log line, not silence."""
+    from loguru import logger
+
+    monkeypatch.setattr(main_module, "setup_logging", lambda: None)
+    monkeypatch.setattr(main_module, "CLI_SWEEP_EVERY_S", 0.0)
+    calls = {"n": 0}
+
+    def sweep(sweeper: object, emitter: object) -> None:
+        calls["n"] += 1
+        if calls["n"] == 2:
+            time.sleep(0.2)
+            raise RuntimeError("disk gone")
+
+    monkeypatch.setattr(main_module, "_sweep_cli_files", sweep)
+    lines: list[str] = []
+    sink = logger.add(lines.append, level="ERROR")
+    try:
+        with TestClient(create_app(audit_emitter_factory=audit_capture.factory)):
+            while calls["n"] < 2:
+                time.sleep(0.01)
+    finally:
+        logger.remove(sink)
+    assert any("sweep" in line.lower() and "shutdown" in line.lower() for line in lines)

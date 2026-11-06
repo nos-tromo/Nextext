@@ -696,9 +696,13 @@ def _run_main(args: argparse.Namespace, audit: JobAudit) -> int:
     try:
         return _run_steps(args, audit)
     finally:
-        notice = _deletion_notice()
-        if notice is not None:
-            print(notice, file=sys.stderr)
+        # The notice never changes how the run ended.
+        try:
+            notice = _deletion_notice()
+            if notice is not None:
+                print(notice, file=sys.stderr)
+        except Exception as exc:
+            logger.warning("No deletion notice could be given ({}).", type(exc).__name__)
 
 
 def _run_steps(args: argparse.Namespace, audit: JobAudit) -> int:

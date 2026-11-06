@@ -108,7 +108,7 @@ services:
       # before) is deleted this many days after it was written, recorded;
       # `off` keeps it (development only). A new period deletes nothing for
       # RETENTION_NOTICE_DAYS after it took effect; a changed one never
-      # postpones what was already due.
+      # deletes sooner than announced.
       NEXTEXT_CLI_RETENTION_DAYS: ${NEXTEXT_CLI_RETENTION_DAYS:-365}
       RETENTION_NOTICE_DAYS: ${RETENTION_NOTICE_DAYS:-30}
       NEXTEXT_OFFLINE: ${NEXTEXT_OFFLINE:-1}

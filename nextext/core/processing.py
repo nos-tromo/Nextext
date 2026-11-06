@@ -67,7 +67,7 @@ class FileProcessor:
         else:
             # A rerun makes the directory young at once: retention judges a
             # run by its newest write, and must not sweep it mid-run.
-            os.utime(output_path)
+            os.utime(output_path, follow_symlinks=False)
             logger.info("Output directory {} already exists.", output_path)
         return filename, output_path
 

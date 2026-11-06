@@ -88,8 +88,10 @@ async def _cli_sweep_loop(sweeper: cli_files.CliFileSweeper, emitter: AuditEmitt
         try:
             await asyncio.shield(work)
         except asyncio.CancelledError:
-            with contextlib.suppress(Exception):
+            try:
                 await work
+            except Exception:
+                logger.exception("The CLI-file sweep running at shutdown failed.")
             raise
         except AuditWriteError:
             logger.error("A CLI-file deletion could not be recorded; nothing was deleted.")
@@ -159,7 +161,10 @@ def _lifespan(
             cli_sweep: asyncio.Task[None] | None = None
             try:
                 if job_manager.holds_root_lock and cli_retention.days is None:
-                    cli_files.forget_rule(cli_files.CLI_ROOT)
+                    try:
+                        cli_files.forget_rule(cli_files.CLI_ROOT)
+                    except OSError as exc:
+                        logger.warning("CLI-file retention could not forget its state ({}).", type(exc).__name__)
                 if job_manager.holds_root_lock and cli_retention.days is not None:
                     legacy = len(legacy_inputs())
                     if legacy:

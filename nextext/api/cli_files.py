@@ -23,9 +23,10 @@ followed: a link is removed itself. ``/tmp/nextext-jobs`` (the job manager's)
 and anything else in ``/tmp`` is never touched.
 
 A period that is new deletes nothing for ``RETENTION_NOTICE_DAYS`` after it
-took effect. A changed period never postpones what the period in force
-already made due: a longer one applies at once, and a shorter one gives the
-notice period only to what it makes due sooner. Changing the notice alone moves
+took effect. A changed period never deletes sooner than announced: a longer
+one applies at once (also to what was due under the shorter one but not yet
+deleted), and a shorter one gives the notice period only to what it makes due
+sooner while the rule in force keeps deleting. Changing the notice alone moves
 nothing. The state is ``/tmp/nextext-cli/.retention-since``: ``<since> <days>
 <grace until> [<days in force> <their grace until>]`` in epoch seconds (the
 ``<since> <days>`` of the release before is read as a grace that started at
