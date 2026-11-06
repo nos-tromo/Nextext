@@ -22,9 +22,14 @@ so a run that is still writing is young. Symbolic links are never
 followed: a link is removed itself. ``/tmp/nextext-jobs`` (the job manager's)
 and anything else in ``/tmp`` is never touched.
 
-A period that is new or changed deletes nothing for ``RETENTION_NOTICE_DAYS``
-after it took effect, kept in ``/tmp/nextext-cli/.retention-since``
-(``<epoch> <days>``). Every deletion is recorded first (``delete`` /
+A period that is new deletes nothing for ``RETENTION_NOTICE_DAYS`` after it
+took effect. A changed period never postpones what the period in force
+already made due: a longer one applies at once, and a shorter one gives the
+notice period only to what it makes due sooner. Changing the notice alone moves
+nothing. The state is ``/tmp/nextext-cli/.retention-since``: ``<since> <days>
+<grace until> [<days in force> <their grace until>]`` in epoch seconds (the
+``<since> <days>`` of the release before is read as a grace that started at
+``<since>``). Switching retention off forgets it. Every deletion is recorded first (``delete`` /
 ``cli.sweep``, by the system), naming each entry by the SHA-256 of its path
 below the scratch volume, never by name: a file name can name a person. An
 entry that cannot be removed is recorded again with ``outcome="error"``.
@@ -42,7 +47,7 @@ from typing import Final
 from loguru import logger
 
 from nextext.audit import emit_with_ids
-from nextext.utils.audit_event import Actor, AuditEmitter
+from nextext.utils.audit_event import Actor, AuditEmitter, AuditWriteError
 
 #: The scratch volume (``tmp-jobs``), the backend's ``/tmp``.
 SCRATCH: Final = Path("/tmp")
@@ -91,7 +96,7 @@ class CliSweep:
     Attributes:
         removed: The entries deleted, by name.
         failed: The entries that could not be deleted.
-        waiting_until: When deletion starts, while the period's notice runs.
+        waiting_until: When the period takes full effect, while its notice runs.
     """
 
     removed: list[str] = field(default_factory=list)
@@ -136,6 +141,173 @@ def _newest(path: Path) -> float:
     return newest
 
 
+@dataclass(frozen=True)
+class RetentionRule:
+    """When what CLI runs leave may be deleted.
+
+    Attributes:
+        days: The period.
+        grace_until: Until when the period does not delete on its own.
+        in_force_days: The period in force before a change, deleting meanwhile.
+        in_force_grace: Since when that period deletes.
+    """
+
+    days: int
+    grace_until: float
+    in_force_days: int | None = None
+    in_force_grace: float | None = None
+
+    def deletable(self, written: float, now: float) -> bool:
+        """Whether something stored at ``written`` may go at ``now``.
+
+        Args:
+            written: When it was stored.
+            now: The current time.
+
+        Returns:
+            bool: ``True`` once the period has passed and the rule allows it.
+        """
+        if written + self.days * 86_400 > now:
+            return False
+        if now >= self.grace_until:
+            return True
+        return (
+            self.in_force_days is not None
+            and self.in_force_grace is not None
+            and now >= self.in_force_grace
+            and written + self.in_force_days * 86_400 <= now
+        )
+
+    def deadline(self, written: float) -> float:
+        """When something stored at ``written`` is due.
+
+        Args:
+            written: When it was stored.
+
+        Returns:
+            float: Seconds since the epoch.
+        """
+        own = written + self.days * 86_400
+        if self.in_force_days is None or self.in_force_grace is None:
+            return max(own, self.grace_until)
+        in_force = max(written + self.in_force_days * 86_400, self.in_force_grace)
+        return max(own, min(self.grace_until, in_force))
+
+
+#: The longest notice a state may record, in days (as ``RETENTION_NOTICE_DAYS``).
+_MAX_NOTICE_DAYS: Final = 365
+
+
+def _parse_state(text: str, notice_days: int) -> tuple[float, int, float, int | None, float | None, bool]:
+    """Read and check the state file's fields.
+
+    Args:
+        text: Its content.
+        notice_days: The notice, for the two-field form of the release before.
+
+    Returns:
+        The time it took effect, the period, the grace end, the rule in force,
+        and whether the state is the release before's two-field form.
+
+    Raises:
+        ValueError: If it holds no time and period, or impossible values.
+    """
+    parts = text.split()
+    if len(parts) not in (2, 3, 5) or not all(part.isdigit() and len(part) <= 11 for part in parts):
+        raise ValueError("the CLI retention state holds no time and period")
+    since, days = float(parts[0]), int(parts[1])
+    legacy = len(parts) == 2
+    grace = since + notice_days * 86_400 if legacy else float(parts[2])
+    in_force, in_force_grace = (int(parts[3]), float(parts[4])) if len(parts) == 5 else (None, None)
+    if days < 1 or not since <= grace <= since + _MAX_NOTICE_DAYS * 86_400:
+        raise ValueError("the CLI retention state holds impossible values")
+    if in_force is not None and in_force_grace is not None and (in_force < 1 or in_force_grace > grace):
+        raise ValueError("the CLI retention state holds an impossible period in force")
+    return since, days, grace, in_force, in_force_grace, legacy
+
+
+def _write_state(root: Path, since: float, rule: RetentionRule) -> None:
+    """Write the state (a temporary file renamed into place).
+
+    Args:
+        root: The CLI root.
+        since: When the period took effect.
+        rule: The rule.
+    """
+    root.mkdir(parents=True, exist_ok=True)
+    fields = [int(since), rule.days, int(rule.grace_until)]
+    if rule.in_force_days is not None and rule.in_force_grace is not None:
+        fields += [rule.in_force_days, int(rule.in_force_grace)]
+    state = root / STATE_NAME
+    temp = state.with_name(f"{STATE_NAME}.tmp")
+    temp.write_text(" ".join(str(field) for field in fields) + "\n", encoding="utf-8")
+    temp.replace(state)
+
+
+def read_rule(root: Path, *, days: int, notice_days: int, now: float, record: bool = False) -> RetentionRule:
+    """Return the rule in force, moving to ``days`` when it is new or changed.
+
+    A longer period applies at once (within a running first grace, at its
+    end). A shorter one gives the notice only to what it makes due sooner,
+    never ending before a grace already running; meanwhile the rule actually
+    in force before the change still deletes.
+
+    Args:
+        root: The CLI root holding the state.
+        days: The configured period.
+        notice_days: The configured notice.
+        now: The current time.
+        record: Write a new, changed or upgraded state; without it the state is only read.
+
+    Returns:
+        RetentionRule: The rule.
+
+    Raises:
+        OSError: If the state cannot be read or written.
+        ValueError: If the state file is damaged.
+    """
+    state = root / STATE_NAME
+    fresh = RetentionRule(days, now + notice_days * 86_400)
+    if not state.exists():
+        rule, since = fresh, now
+    else:
+        since, recorded, grace, in_force, in_force_grace, legacy = _parse_state(
+            state.read_text(encoding="utf-8"), notice_days
+        )
+        if since > now:
+            logger.warning("The CLI retention state is dated in the future; the grace starts again now.")
+            rule, since = fresh, now
+        elif recorded == days:
+            rule = RetentionRule(days, grace, in_force, in_force_grace)
+            if legacy and record:
+                # Fixed now, so a later change of the notice moves nothing.
+                _write_state(root, since, rule)
+            return rule
+        else:
+            if now >= grace or in_force is None or in_force_grace is None:
+                effective, effective_grace = recorded, grace
+            else:
+                effective, effective_grace = max(in_force, recorded), in_force_grace
+            since = now
+            if days >= effective:
+                rule = RetentionRule(days, max(now, effective_grace))
+            else:
+                running = grace if grace > now else now
+                rule = RetentionRule(days, max(fresh.grace_until, running), effective, effective_grace)
+    if record:
+        _write_state(root, since, rule)
+    return rule
+
+
+def forget_rule(root: Path) -> None:
+    """Forget the state (retention switched off), so switching on gives a fresh notice.
+
+    Args:
+        root: The CLI root.
+    """
+    (root / STATE_NAME).unlink(missing_ok=True)
+
+
 class CliFileSweeper:
     """Deletes what CLI runs left once the retention period has passed."""
 
@@ -153,7 +325,7 @@ class CliFileSweeper:
             root: The CLI's working directory.
             legacy: The output directory of earlier releases.
             days: The period; ``None`` is off.
-            notice_days: How long a new or changed period deletes nothing.
+            notice_days: How long a new period deletes nothing (and a changed one nothing sooner).
         """
         self.root = root
         self.legacy = legacy
@@ -190,33 +362,6 @@ class CliFileSweeper:
             entries.append(CliEntry(name, path, written, written + period))
         return sorted(entries, key=lambda entry: entry.name)
 
-    def _since(self, now: float) -> float:
-        """Return when the period in force took effect, recording ``now`` for a new or changed one.
-
-        Args:
-            now: The current time.
-
-        Returns:
-            float: Seconds since the epoch.
-
-        Raises:
-            OSError: If the state cannot be read or written.
-            ValueError: If the state file holds no time and period.
-        """
-        state = self.root / STATE_NAME
-        if state.exists():
-            parts = state.read_text(encoding="utf-8").split()
-            if len(parts) != 2 or not all(part.isdigit() for part in parts):
-                raise ValueError(f"{state} holds no time and period")
-            since, recorded = int(parts[0]), int(parts[1])
-            if recorded == self.days:
-                return float(since)
-        self.root.mkdir(parents=True, exist_ok=True)
-        temp = state.with_name(f"{STATE_NAME}.tmp")
-        temp.write_text(f"{int(now)} {self.days}\n", encoding="utf-8")
-        temp.replace(state)
-        return now
-
     def _remove(self, path: Path) -> None:
         """Remove one entry, never following a link.
 
@@ -249,12 +394,10 @@ class CliFileSweeper:
         result = CliSweep()
         if self.days is None:
             return result
-        since = self._since(now)
-        start = since + self.notice_days * 86_400
-        if now < start:
-            result.waiting_until = start
-            return result
-        due = [entry for entry in self.scan(now) if entry.due_at <= now]
+        rule = read_rule(self.root, days=self.days, notice_days=self.notice_days, now=now, record=True)
+        if now < rule.grace_until:
+            result.waiting_until = rule.grace_until
+        due = [entry for entry in self.scan(now) if rule.deletable(entry.written_at, now)]
         if not due:
             return result
         criteria = {"period_days": self.days, "trigger": "schedule"}
@@ -276,15 +419,23 @@ class CliFileSweeper:
             else:
                 result.removed.append(entry.name)
         if result.failed:
-            emit_with_ids(
-                emitter,
-                "delete",
-                "cli.sweep",
-                SYSTEM,
-                kind="cli_file",
-                ids=[entry_reference(name) for name in result.failed],
-                outcome="error",
-                criteria=criteria,
-            )
+            try:
+                emit_with_ids(
+                    emitter,
+                    "delete",
+                    "cli.sweep",
+                    SYSTEM,
+                    kind="cli_file",
+                    ids=[entry_reference(name) for name in result.failed],
+                    outcome="error",
+                    criteria=criteria,
+                )
+            except AuditWriteError:
+                logger.error(
+                    "{} deleted, {} could not be; the failure record could not be written.",
+                    len(result.removed),
+                    len(result.failed),
+                )
+                return result
         logger.info("Deleted {} CLI run file(s) past the retention period.", len(result.removed))
         return result

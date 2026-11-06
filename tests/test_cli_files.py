@@ -176,20 +176,86 @@ def test_grace_before_the_rule_took_effect(roots: tuple[Path, Path]) -> None:
     emitter, _ = _emitter()
     sweeper = _sweeper(root, legacy, since_days=None)
     assert sweeper.sweep(NOW, emitter).removed == []
-    assert (root / ".retention-since").read_text(encoding="utf-8").split() == [str(int(NOW)), "30"]
+    assert (root / ".retention-since").read_text(encoding="utf-8").split() == [
+        str(int(NOW)),
+        "30",
+        str(int(NOW + 30 * DAY)),
+    ]
     assert sweeper.sweep(NOW + 29 * DAY, emitter).removed == []
     assert old.exists()
     assert sweeper.sweep(NOW + 30 * DAY, emitter).removed == ["output/old"]
 
 
-def test_a_changed_period_restarts_the_grace(roots: tuple[Path, Path]) -> None:
-    """Lowering the period deletes nothing more before its notice has passed."""
+def _state(root: Path) -> list[str]:
+    return (root / ".retention-since").read_text(encoding="utf-8").split()
+
+
+def test_shortening_spares_only_what_falls_due_sooner(roots: tuple[Path, Path]) -> None:
+    """A shorter period: what the period in force made due still goes; nothing goes sooner than announced."""
     root, legacy = roots
     (root / ".retention-since").write_text(f"{int(NOW - 400 * DAY)} 365\n", encoding="utf-8")
-    run = _run(root, "run", 40)
+    due, newly = _run(root, "due", 370), _run(root, "newly", 40)
     emitter, _ = _emitter()
-    assert CliFileSweeper(root, legacy, days=30, notice_days=30).sweep(NOW, emitter).removed == []
+    sweeper = CliFileSweeper(root, legacy, days=30, notice_days=30)
+    assert sweeper.sweep(NOW, emitter).removed == ["output/due"]
+    assert _state(root) == [str(int(NOW)), "30", str(int(NOW + 30 * DAY)), "365", str(int(NOW - 370 * DAY))]
+    assert sweeper.sweep(NOW + 29 * DAY, emitter).removed == []
+    assert newly.exists() and not due.exists()
+    assert sweeper.sweep(NOW + 30 * DAY, emitter).removed == ["output/newly"]
+
+
+def test_lengthening_takes_effect_at_once(roots: tuple[Path, Path]) -> None:
+    """A longer period never pauses deletion."""
+    root, legacy = roots
+    (root / ".retention-since").write_text(f"{int(NOW - 400 * DAY)} 30\n", encoding="utf-8")
+    _run(root, "old", 400)
+    _run(root, "young", 40)
+    emitter, _ = _emitter()
+    assert CliFileSweeper(root, legacy, days=365, notice_days=30).sweep(NOW, emitter).removed == ["output/old"]
+
+
+def test_a_change_during_the_first_grace_keeps_its_announced_end(roots: tuple[Path, Path]) -> None:
+    """Changing the period before the first grace ended never moves that end later."""
+    root, legacy = roots
+    _run(root, "old", 400)
+    emitter, _ = _emitter()
+    CliFileSweeper(root, legacy, days=365, notice_days=30).sweep(NOW, emitter)
+    sweeper = CliFileSweeper(root, legacy, days=30, notice_days=30)
+    assert sweeper.sweep(NOW + 20 * DAY, emitter).removed == []
+    assert sweeper.sweep(NOW + 30 * DAY, emitter).removed == ["output/old"]
+
+
+def test_a_notice_change_alone_moves_nothing(roots: tuple[Path, Path]) -> None:
+    """Lowering RETENTION_NOTICE_DAYS during the grace never ends it sooner than announced."""
+    root, legacy = roots
+    run = _run(root, "old", 400)
+    emitter, _ = _emitter()
+    CliFileSweeper(root, legacy, days=30, notice_days=30).sweep(NOW, emitter)
+    assert CliFileSweeper(root, legacy, days=30, notice_days=7).sweep(NOW + 10 * DAY, emitter).removed == []
     assert run.exists()
+
+
+def test_a_state_dated_in_the_future_restarts_the_grace(roots: tuple[Path, Path]) -> None:
+    """A state ahead of the clock never blocks deletion for long: the grace starts again now."""
+    root, legacy = roots
+    (root / ".retention-since").write_text(f"{int(NOW + 100 * DAY)} 30\n", encoding="utf-8")
+    _run(root, "old", 400)
+    emitter, _ = _emitter()
+    sweeper = CliFileSweeper(root, legacy, days=30, notice_days=30)
+    assert sweeper.sweep(NOW, emitter).removed == []
+    assert _state(root)[:3] == [str(int(NOW)), "30", str(int(NOW + 30 * DAY))]
+    assert sweeper.sweep(NOW + 30 * DAY, emitter).removed == ["output/old"]
+
+
+def test_the_announced_date_follows_the_rule(roots: tuple[Path, Path]) -> None:
+    """The date a run's notice names is the one the sweep keeps: never sooner, read without writing."""
+    root, _legacy = roots
+    rule = cli_files.read_rule(root, days=365, notice_days=30, now=NOW)
+    assert rule.deadline(NOW) == NOW + 365 * DAY
+    assert not (root / ".retention-since").exists()
+    (root / ".retention-since").write_text(f"{int(NOW)} 7 {int(NOW + 30 * DAY)}\n", encoding="utf-8")
+    rule = cli_files.read_rule(root, days=7, notice_days=30, now=NOW)
+    assert rule.deadline(NOW) == NOW + 30 * DAY
 
 
 def test_symlink_is_not_followed(roots: tuple[Path, Path], tmp_path: Path) -> None:
@@ -267,6 +333,18 @@ def test_off_does_nothing(roots: tuple[Path, Path]) -> None:
     assert capture.of("delete") == []
 
 
+def test_switching_off_forgets_the_state(roots: tuple[Path, Path]) -> None:
+    """Off forgets when the period took effect, so switching on again gives a fresh notice."""
+    root, legacy = roots
+    (root / ".retention-since").write_text(f"{int(NOW - 400 * DAY)} 30\n", encoding="utf-8")
+    cli_files.forget_rule(root)
+    assert not (root / ".retention-since").exists()
+    run = _run(root, "old", 400)
+    emitter, _ = _emitter()
+    assert CliFileSweeper(root, legacy, days=30, notice_days=30).sweep(NOW, emitter).removed == []
+    assert run.exists()
+
+
 def test_missing_root_is_created_for_the_state(tmp_path: Path) -> None:
     """On a fresh volume the root does not exist yet: the sweep creates it, deletes nothing."""
     root, legacy = tmp_path / "nextext-cli", tmp_path / "output"
@@ -311,3 +389,100 @@ def test_off_is_logged_as_a_warning(monkeypatch: pytest.MonkeyPatch) -> None:
     finally:
         logger.remove(sink)
     assert any("NEXTEXT_CLI_RETENTION_DAYS=off" in line for line in lines)
+
+
+def test_a_failure_record_that_cannot_be_written_is_said_so(
+    roots: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Deletions that happened are not reported as none when only the follow-up error record fails."""
+    from loguru import logger
+
+    root, legacy = roots
+    _run(root, "gone", 400)
+    _run(root, "stuck", 400)
+    real_remove = CliFileSweeper._remove
+
+    def remove(self: CliFileSweeper, path: Path) -> None:
+        if path.name == "stuck":
+            raise PermissionError("read-only")
+        real_remove(self, path)
+
+    real_emit = cli_files.emit_with_ids
+    calls = {"n": 0}
+
+    def emit(*args: object, **kwargs: object) -> None:
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise AuditWriteError("trail unwritable")
+        real_emit(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(CliFileSweeper, "_remove", remove)
+    monkeypatch.setattr(cli_files, "emit_with_ids", emit)
+    lines: list[str] = []
+    sink = logger.add(lines.append, level="ERROR")
+    try:
+        emitter, _ = _emitter()
+        result = _sweeper(root, legacy).sweep(NOW, emitter)
+    finally:
+        logger.remove(sink)
+    assert (result.removed, result.failed) == (["output/gone"], ["output/stuck"])
+    assert any("1 deleted" in line and "could not be written" in line for line in lines)
+
+
+def test_raising_then_lowering_gives_the_notice(roots: tuple[Path, Path]) -> None:
+    """7 → 30 → 7: the 30 days were in force, so what they keep gets the full notice."""
+    root, legacy = roots
+    (root / ".retention-since").write_text(f"{int(NOW - 400 * DAY)} 7\n", encoding="utf-8")
+    emitter, _ = _emitter()
+    CliFileSweeper(root, legacy, days=30, notice_days=30).sweep(NOW, emitter)
+    run = _run(root, "run", -1)
+    sweeper = CliFileSweeper(root, legacy, days=7, notice_days=30)
+    assert sweeper.sweep(NOW + 10 * DAY, emitter).removed == []
+    assert sweeper.sweep(NOW + 30 * DAY, emitter).removed == []
+    assert run.exists()
+    # Due when the 30 days in force said: at day 31, not on the change at day 10.
+    assert sweeper.sweep(NOW + 31 * DAY, emitter).removed == ["output/run"]
+
+
+def test_a_lower_notice_never_ends_a_running_grace_sooner(roots: tuple[Path, Path]) -> None:
+    """Changing the period and lowering the notice together keeps the grace already announced."""
+    root, legacy = roots
+    _run(root, "old", 400)
+    emitter, _ = _emitter()
+    CliFileSweeper(root, legacy, days=30, notice_days=30).sweep(NOW, emitter)
+    sweeper = CliFileSweeper(root, legacy, days=7, notice_days=7)
+    assert sweeper.sweep(NOW + DAY, emitter).removed == []
+    assert sweeper.sweep(NOW + 8 * DAY, emitter).removed == []
+    assert sweeper.sweep(NOW + 30 * DAY, emitter).removed == ["output/old"]
+
+
+def test_an_old_state_is_upgraded_so_the_notice_moves_nothing(roots: tuple[Path, Path]) -> None:
+    """A state of the release before is rewritten with its grace end on the first sweep."""
+    root, legacy = roots
+    (root / ".retention-since").write_text(f"{int(NOW - 5 * DAY)} 30\n", encoding="utf-8")
+    run = _run(root, "old", 400)
+    emitter, _ = _emitter()
+    CliFileSweeper(root, legacy, days=30, notice_days=30).sweep(NOW, emitter)
+    assert _state(root) == [str(int(NOW - 5 * DAY)), "30", str(int(NOW + 25 * DAY))]
+    assert CliFileSweeper(root, legacy, days=30, notice_days=1).sweep(NOW + 2 * DAY, emitter).removed == []
+    assert run.exists()
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        f"{int(NOW - 400 * DAY)} 0",
+        f"{int(NOW - 400 * DAY)} 30 {int(NOW)} 0 {int(NOW - 400 * DAY)}",
+        f"{int(NOW - 40 * DAY)} 30 {int(NOW - 400 * DAY)}",
+        f"{int(NOW - 40 * DAY)} 30 {int(NOW)} 7",
+    ],
+)
+def test_a_state_with_impossible_values_is_refused(roots: tuple[Path, Path], line: str) -> None:
+    """Zero days or a grace before its start delete nothing."""
+    root, legacy = roots
+    (root / ".retention-since").write_text(line + "\n", encoding="utf-8")
+    run = _run(root, "old", 400)
+    emitter, _ = _emitter()
+    with pytest.raises(ValueError):
+        CliFileSweeper(root, legacy, days=30, notice_days=30).sweep(NOW, emitter)
+    assert run.exists()

@@ -119,8 +119,8 @@ as `path-sha256:<hex>` of its path (a file name can name a person), with
 `kind: cli_file`:
 
 - `cli.sweep` (by the system, `period_days`): at startup and then daily, what
-  is older than `NEXTEXT_CLI_RETENTION_DAYS`, once a new or changed period's
-  notice (`RETENTION_NOTICE_DAYS`) has passed;
+  is older than `NEXTEXT_CLI_RETENTION_DAYS`, by the rule in
+  [cli.md](cli.md) (a new period's notice, `RETENTION_NOTICE_DAYS`, first);
 - `cli.clean` (by the operator, via `cli`, with any stated purpose):
   `make cli-clean`.
 

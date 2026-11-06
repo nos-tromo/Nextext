@@ -17,7 +17,7 @@ import os
 import sys
 import uuid
 from collections.abc import Callable
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pandas as pd
@@ -575,19 +575,25 @@ def _deletion_notice() -> str | None:
     """Say when this run's outputs are deleted, in the response language.
 
     The backend deletes what CLI runs left on the scratch volume once the
-    retention period (``NEXTEXT_CLI_RETENTION_DAYS``) has passed; this line is
-    the notice to the person who ran it.
+    retention period (``NEXTEXT_CLI_RETENTION_DAYS``) has passed, by the rule
+    its state records (read here, never written); this line is the notice to
+    the person who ran it. The daily sweep can land up to a day later.
 
     Returns:
-        str | None: The sentence, or ``None`` when retention is off.
+        str | None: The sentence, or ``None`` when retention is off or its state cannot be read.
     """
     config = load_cli_retention_env()
     if config.days is None:
         return None
-    day = (_utc_now() + timedelta(days=config.days)).date().isoformat()
+    now = _utc_now().timestamp()
+    try:
+        rule = cli_files.read_rule(cli_files.CLI_ROOT, days=config.days, notice_days=config.notice_days, now=now)
+    except (OSError, ValueError):
+        return None
+    day = datetime.fromtimestamp(rule.deadline(now), UTC).date().isoformat()
     if load_language_env().code == "de":
-        return f"Die Ausgaben werden am {day} gelöscht (Aufbewahrungsfrist {config.days} Tage)."
-    return f"Outputs are deleted on {day} (retention period {config.days} days)."
+        return f"Die Ausgaben werden frühestens am {day} gelöscht (Aufbewahrungsfrist {config.days} Tage)."
+    return f"Outputs are deleted not before {day} (retention period {config.days} days)."
 
 
 def _write_output(
@@ -677,6 +683,25 @@ def _record_combination(
 
 
 def _run_main(args: argparse.Namespace, audit: JobAudit) -> int:
+    """Execute the pipeline, then say when what it left is deleted, however it ended.
+
+    Args:
+        args (argparse.Namespace): Parsed CLI arguments from
+            :func:`parse_arguments`.
+        audit (JobAudit): The run's audit trail.
+
+    Returns:
+        int: As :func:`_run_steps`.
+    """
+    try:
+        return _run_steps(args, audit)
+    finally:
+        notice = _deletion_notice()
+        if notice is not None:
+            print(notice, file=sys.stderr)
+
+
+def _run_steps(args: argparse.Namespace, audit: JobAudit) -> int:
     """Execute the main Nextext pipeline on the parsed CLI arguments.
 
     Args:
@@ -908,9 +933,6 @@ def _run_main(args: argparse.Namespace, audit: JobAudit) -> int:
     _write_docint(args, audit, transcript_df, detected_src_lang)
 
     logger.info("The end of our elaborate plans, the end of everything that stands.")
-    notice = _deletion_notice()
-    if notice is not None:
-        print(notice, file=sys.stderr)
     return 0
 
 

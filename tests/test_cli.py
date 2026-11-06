@@ -542,13 +542,41 @@ def test_cli_says_when_its_outputs_are_deleted(
     monkeypatch.setenv("NEXTEXT_CLI_RETENTION_DAYS", "365")
     monkeypatch.setenv("RESPONSE_LANGUAGE", "en")
     assert cli._run_main(_args(tmp_path / "clip.wav"), job_audit()) == 0
-    assert "Outputs are deleted on 2027-11-05 (retention period 365 days)." in capsys.readouterr().err
+    assert "Outputs are deleted not before 2027-11-05 (retention period 365 days)." in capsys.readouterr().err
     monkeypatch.setenv("RESPONSE_LANGUAGE", "de")
     assert cli._run_main(_args(tmp_path / "clip.wav"), job_audit()) == 0
-    assert "Die Ausgaben werden am 2027-11-05 gelöscht (Aufbewahrungsfrist 365 Tage)." in capsys.readouterr().err
+    assert (
+        "Die Ausgaben werden frühestens am 2027-11-05 gelöscht (Aufbewahrungsfrist 365 Tage)."
+        in capsys.readouterr().err
+    )
     monkeypatch.setenv("NEXTEXT_CLI_RETENTION_DAYS", "off")
     assert cli._run_main(_args(tmp_path / "clip.wav"), job_audit()) == 0
-    assert "deleted on" not in capsys.readouterr().err
+    assert "deleted" not in capsys.readouterr().err
+
+
+def test_the_notice_names_the_date_the_sweep_keeps(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """While a new period's notice runs, the date is the notice's end, not today plus the period.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Overrides the processor, the pipeline and the clock.
+        tmp_path (Path): Temporary working directory.
+        capsys (pytest.CaptureFixture[str]): Captures stderr.
+    """
+    from nextext.api import cli_files
+
+    monkeypatch.setattr(cli, "FileProcessor", lambda *a, **k: _SpyProcessor())
+    monkeypatch.setattr(cli, "transcription_pipeline", lambda **kwargs: _skipping_outcome())
+    moment = datetime(2026, 11, 5, 12, 0, tzinfo=UTC)
+    monkeypatch.setattr(cli, "_utc_now", lambda: moment)
+    monkeypatch.setenv("NEXTEXT_CLI_RETENTION_DAYS", "7")
+    monkeypatch.setenv("RESPONSE_LANGUAGE", "en")
+    cli_files.CLI_ROOT.mkdir(parents=True, exist_ok=True)
+    stamp = int(moment.timestamp())
+    (cli_files.CLI_ROOT / ".retention-since").write_text(f"{stamp} 7 {stamp + 30 * 86_400}\n", encoding="utf-8")
+    assert cli._run_main(_args(tmp_path / "clip.wav"), job_audit()) == 3
+    assert "Outputs are deleted not before 2026-12-05 (retention period 7 days)." in capsys.readouterr().err
 
 
 def test_the_cli_keeps_its_temporary_audio_in_its_own_directory(
