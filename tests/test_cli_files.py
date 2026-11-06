@@ -486,3 +486,15 @@ def test_a_state_with_impossible_values_is_refused(roots: tuple[Path, Path], lin
     with pytest.raises(ValueError):
         CliFileSweeper(root, legacy, days=30, notice_days=30).sweep(NOW, emitter)
     assert run.exists()
+
+
+def test_a_clock_stepped_back_keeps_what_is_due(roots: tuple[Path, Path]) -> None:
+    """A clock set back a few seconds after a change caps the state at now; it never restarts the notice."""
+    root, legacy = roots
+    (root / ".retention-since").write_text(f"{int(NOW)} 30 {int(NOW)}\n", encoding="utf-8")
+    _run(root, "old", 400)
+    emitter, _ = _emitter()
+    sweeper = CliFileSweeper(root, legacy, days=30, notice_days=30)
+    sweeper.sweep(NOW - 5, emitter)
+    assert _state(root) == [str(int(NOW - 5)), "30", str(int(NOW))]
+    assert sweeper.sweep(NOW, emitter).removed == ["output/old"]

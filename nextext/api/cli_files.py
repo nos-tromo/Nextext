@@ -275,12 +275,16 @@ def read_rule(root: Path, *, days: int, notice_days: int, now: float, record: bo
         since, recorded, grace, in_force, in_force_grace, legacy = _parse_state(
             state.read_text(encoding="utf-8"), notice_days
         )
-        if since > now:
-            logger.warning("The CLI retention state is dated in the future; the grace starts again now.")
-            rule, since = fresh, now
-        elif recorded == days:
+        dated_ahead = since > now
+        if dated_ahead:
+            # A clock set back: keep the rule, its dates never more than a notice ahead.
+            logger.warning("The CLI retention state is dated in the future; its dates are capped at now.")
+            since, grace = now, min(grace, fresh.grace_until)
+            if in_force_grace is not None:
+                in_force_grace = min(in_force_grace, grace)
+        if recorded == days:
             rule = RetentionRule(days, grace, in_force, in_force_grace)
-            if legacy and record:
+            if (legacy or dated_ahead) and record:
                 # Fixed now, so a later change of the notice moves nothing.
                 _write_state(root, since, rule)
             return rule
