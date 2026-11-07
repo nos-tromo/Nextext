@@ -10,7 +10,8 @@ The endpoint is resolved by :func:`nextext.utils.env_cfg.load_faces_env`:
 ``/v1`` stripped) by default, or empty when ``FACES_API_BASE`` is an explicit off
 token. Both calls are **fail-soft**: no endpoint, a transport or HTTP error, or a
 reply that breaks the contract return ``None``, so the face stage degrades
-instead of failing the job. Errors are logged by class and status only — never
+instead of failing the job. A ``503`` whose ``Retry-After`` asks for at most
+:data:`RETRY_AFTER_MAX_S` seconds is waited out and retried once. Errors are logged by class and status only — never
 a response body, never an image.
 
 Request/response contract::
@@ -49,6 +50,7 @@ from __future__ import annotations
 import base64
 import json
 import math
+import time
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -74,6 +76,10 @@ __all__ = [
 FACES_MODEL_ALIAS = "faces"
 # Largest request body sent; the service itself refuses bodies over 32 MiB.
 MAX_REQUEST_BYTES = 16 * 2**20
+# A busy service (503) that asks to wait at most this long gets one retry.
+RETRY_AFTER_MAX_S = 10.0
+# What _post returns when no usable reply came back.
+_FAILED = object()
 
 Point = tuple[float, float]
 
@@ -134,6 +140,62 @@ def _headers(config: FacesConfig) -> dict[str, str]:
     if config.api_key:
         headers["Authorization"] = f"Bearer {config.api_key}"
     return headers
+
+
+def _retry_after(response: httpx.Response) -> float | None:
+    """Read how long a busy service asks to wait, when it is short enough to wait.
+
+    Args:
+        response: The reply.
+
+    Returns:
+        float | None: Seconds for a ``503`` whose ``Retry-After`` is a number
+            of seconds up to :data:`RETRY_AFTER_MAX_S`; ``None`` otherwise.
+    """
+    if response.status_code != 503:
+        return None
+    try:
+        seconds = float(response.headers.get("Retry-After", "").strip())
+    except ValueError:
+        return None
+    if not math.isfinite(seconds) or not 0 <= seconds <= RETRY_AFTER_MAX_S:
+        return None
+    return seconds
+
+
+def _post(url: str, *, task: str, label: str, config: FacesConfig, **request: Any) -> object:
+    """POST to the faces service, retrying once when it is briefly busy.
+
+    Every request sent is recorded under ``task``: a failed one here, a
+    successful one by the caller once it has checked the reply.
+
+    Args:
+        url: The endpoint.
+        task: The inference task the request is recorded under.
+        label: How the request is named in the logs.
+        config: The faces configuration (timeout, bearer token).
+        **request: ``json=`` or ``content=`` and ``headers=`` for ``httpx.post``.
+
+    Returns:
+        object: The decoded JSON reply, or :data:`_FAILED`.
+    """
+    headers = {**_headers(config), **request.pop("headers", {})}
+    for attempt in range(2):
+        try:
+            response = httpx.post(url, headers=headers, timeout=config.timeout, **request)
+            wait = _retry_after(response) if attempt == 0 else None
+            if wait is not None:
+                record_inference(task, FACES_MODEL_ALIAS, ok=False)
+                logger.warning("{} at {} is busy (HTTP 503); retrying once in {}s.", label, url, wait)
+                time.sleep(wait)
+                continue
+            response.raise_for_status()
+            return response.json()
+        except (httpx.HTTPError, ValueError) as exc:
+            record_inference(task, FACES_MODEL_ALIAS, ok=False)
+            logger.warning("{} request to {} failed: {}.", label, url, error_label(exc))
+            return _FAILED
+    return _FAILED
 
 
 def _b64(data: bytes) -> str:
@@ -272,18 +334,14 @@ def detect_faces(
     if not images:
         return []
     url = f"{config.api_base}/faces/detect"
-    try:
-        response = httpx.post(
-            url,
-            json={"images": [_b64(image) for image in images], "min_score": min_score},
-            headers=_headers(config),
-            timeout=config.timeout,
-        )
-        response.raise_for_status()
-        payload = response.json()
-    except (httpx.HTTPError, ValueError) as exc:
-        record_inference("face_detect", FACES_MODEL_ALIAS, ok=False)
-        logger.warning("Face detection request to {} failed: {}.", url, error_label(exc))
+    payload = _post(
+        url,
+        task="face_detect",
+        label="Face detection",
+        config=config,
+        json={"images": [_b64(image) for image in images], "min_score": min_score},
+    )
+    if payload is _FAILED:
         return None
     parsed = _parse_results(payload, len(images))
     record_inference("face_detect", FACES_MODEL_ALIAS, ok=parsed is not None)
@@ -357,18 +415,15 @@ def group_faces(tracks: Sequence[GroupTrack], *, config: FacesConfig | None = No
         )
         return None
     url = f"{config.api_base}/faces/group"
-    try:
-        response = httpx.post(
-            url,
-            content=body,
-            headers={**_headers(config), "Content-Type": "application/json"},
-            timeout=config.timeout,
-        )
-        response.raise_for_status()
-        payload = response.json()
-    except (httpx.HTTPError, ValueError) as exc:
-        record_inference("face_group", FACES_MODEL_ALIAS, ok=False)
-        logger.warning("Face grouping request to {} failed: {}.", url, error_label(exc))
+    payload = _post(
+        url,
+        task="face_group",
+        label="Face grouping",
+        config=config,
+        content=body,
+        headers={"Content-Type": "application/json"},
+    )
+    if payload is _FAILED:
         return None
     labels = _parse_labels(payload, len(tracks))
     record_inference("face_group", FACES_MODEL_ALIAS, ok=labels is not None)
