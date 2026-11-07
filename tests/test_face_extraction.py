@@ -410,9 +410,9 @@ def test_crowd_is_capped_and_truncated(monkeypatch: pytest.MonkeyPatch) -> None:
     result = _run("group")
 
     assert result.truncated is True
-    assert len(fakes.group_calls[0]) <= 500
-    assert result.tracks_sent <= 500
-    assert len(result.entries) <= 100
+    assert len(fakes.group_calls[0]) == 500
+    assert result.tracks_sent == 500
+    assert len(result.entries) == 100
     per_time: dict[float, int] = {}
     for row in result.rows:
         per_time[row.time_sec] = per_time.get(row.time_sec, 0) + 1
@@ -681,3 +681,66 @@ def test_appearances_end_within_the_clip(monkeypatch: pytest.MonkeyPatch, durati
     result = _run("detect")
 
     assert [e.appearances for e in result.entries] == [((0.0, 1.0),), ((6.0, end),)]
+
+
+def _crowd(samples: int) -> tuple[list[int], list[list[DetectedFace] | None]]:
+    """Twenty faces a frame (within the per-frame cap) and a cut at every sample.
+
+    Args:
+        samples: How many samples.
+
+    Returns:
+        tuple[list[int], list[list[DetectedFace] | None]]: Scenes and faces.
+    """
+    cells = [(20 + 105 * column, 5 + 90 * row) for row in range(4) for column in range(5)]
+    planned: list[list[DetectedFace] | None] = [[_face((x, y, 64, 64)) for x, y in cells] for _ in range(samples)]
+    return [DARK if index % 2 == 0 else LIGHT for index in range(samples)], planned
+
+
+def test_track_cap_alone_truncates(monkeypatch: pytest.MonkeyPatch) -> None:
+    """More than 500 tracks are cut to 500, which alone marks the result truncated."""
+    monkeypatch.setattr(face_extraction, "MAX_ENTRIES", 10_000)
+    scenes, planned = _crowd(30)
+    _Fakes(scenes, planned).install(monkeypatch)
+
+    result = _run("detect")
+
+    assert len(result.entries) == 500
+    assert result.truncated is True
+
+
+def test_entry_cap_alone_truncates(monkeypatch: pytest.MonkeyPatch) -> None:
+    """More than 100 entries from fewer than 500 tracks are cut to 100, marking the result truncated."""
+    scenes, planned = _crowd(6)
+    _Fakes(scenes, planned).install(monkeypatch)
+
+    result = _run("detect")
+
+    assert len(result.entries) == 100
+    assert result.truncated is True
+
+
+def test_a_small_crowd_is_not_truncated(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Within every cap nothing is dropped and the result is not truncated."""
+    scenes, planned = _crowd(4)
+    _Fakes(scenes, planned).install(monkeypatch)
+
+    result = _run("detect")
+
+    assert len(result.entries) == 80
+    assert result.truncated is False
+
+
+def test_track_cap_at_the_end_truncates(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Tracks still open at the end count toward the cap too: 500 closed plus 10 open become 500."""
+    monkeypatch.setattr(face_extraction, "MAX_ENTRIES", 10_000)
+    scenes, planned = _crowd(26)
+    last = planned[-1]
+    assert last is not None
+    planned[-1] = last[:10]
+    _Fakes(scenes, planned).install(monkeypatch)
+
+    result = _run("detect")
+
+    assert len(result.entries) == 500
+    assert result.truncated is True
