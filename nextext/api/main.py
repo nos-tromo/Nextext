@@ -26,6 +26,7 @@ from nextext.utils.env_cfg import (
     CliRetentionConfig,
     load_audit_env,
     load_cli_retention_env,
+    load_faces_env,
     load_faces_mode,
     load_principal_env,
 )
@@ -146,6 +147,11 @@ def _lifespan(
         principal_cfg = load_principal_env()
         cli_retention = load_cli_retention_env()
         faces_mode = load_faces_mode()
+        if faces_mode != "off" and not load_faces_env().api_base:
+            logger.warning(
+                "NEXTEXT_FACES is on but no faces endpoint resolves (FACES_API_BASE, or OPENAI_API_BASE as "
+                "its fallback); jobs asking for faces will report them unavailable."
+            )
         emitter = emitter_factory(audit_cfg.output)
         emitter.start()
         try:

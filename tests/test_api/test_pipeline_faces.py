@@ -453,3 +453,52 @@ def test_manager_hands_its_switch_to_each_job(faces_app: Any) -> None:
         _wait_completed(client, job_id)
         assert manager.faces_mode == "detect"
         assert manager._jobs[job_id].faces_mode == "detect"
+
+
+def _endpoint_warnings(log_lines: list[str]) -> list[str]:
+    """Pick the startup warnings about a missing faces endpoint.
+
+    Args:
+        log_lines: Captured messages.
+
+    Returns:
+        list[str]: The matching messages.
+    """
+    return [line for line in log_lines if "NEXTEXT_FACES" in line and "FACES_API_BASE" in line]
+
+
+def test_faces_on_without_an_endpoint_warns_at_startup(
+    faces_app: Any, monkeypatch: pytest.MonkeyPatch, log_lines: list[str]
+) -> None:
+    """Switching faces on with no endpoint to send them to is named once at startup, without values."""
+    monkeypatch.setenv("FACES_API_BASE", "off")
+    monkeypatch.delenv("OPENAI_API_BASE", raising=False)
+
+    with faces_app("group"):
+        pass
+
+    (warning,) = _endpoint_warnings(log_lines)
+    assert "group" not in warning
+    assert "off" not in warning.split("(")[0]
+
+
+@pytest.mark.parametrize(("mode", "base"), [("detect", "http://faces.invalid"), (None, "off")])
+def test_no_endpoint_warning_when_it_resolves_or_faces_are_off(
+    faces_app: Any, monkeypatch: pytest.MonkeyPatch, log_lines: list[str], mode: str | None, base: str
+) -> None:
+    """No warning when the endpoint resolves, or when faces are off anyway.
+
+    Args:
+        faces_app: App factory.
+        monkeypatch: Pytest patcher.
+        log_lines: Captured messages.
+        mode: ``NEXTEXT_FACES``.
+        base: ``FACES_API_BASE``.
+    """
+    monkeypatch.setenv("FACES_API_BASE", base)
+    monkeypatch.delenv("OPENAI_API_BASE", raising=False)
+
+    with faces_app(mode):
+        pass
+
+    assert _endpoint_warnings(log_lines) == []
