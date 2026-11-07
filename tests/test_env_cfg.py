@@ -1484,3 +1484,120 @@ def test_cli_retention_rejects_garbage(monkeypatch: pytest.MonkeyPatch, name: st
     monkeypatch.setenv(name, value)
     with pytest.raises(ValueError, match=name):
         env_cfg.load_cli_retention_env()
+
+
+# ---------------------------------------------------------------------------
+# NEXTEXT_FACES / FACES_* (the face stage)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [("", "off"), ("off", "off"), ("0", "off"), ("detect", "detect"), ("GROUP", "group"), (" group ", "group")],
+)
+def test_faces_mode_values(monkeypatch: pytest.MonkeyPatch, raw: str, expected: str) -> None:
+    """NEXTEXT_FACES resolves to off, detect or group, case-insensitively.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Sets the variable.
+        raw (str): Its value.
+        expected (str): The resolved mode.
+    """
+    monkeypatch.setenv("NEXTEXT_FACES", raw)
+    assert env_cfg.load_faces_mode() == expected
+
+
+def test_faces_mode_unset_is_off(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Without NEXTEXT_FACES the face stage stays off.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Clears the variable.
+    """
+    monkeypatch.delenv("NEXTEXT_FACES", raising=False)
+    assert env_cfg.load_faces_mode() == "off"
+
+
+def test_faces_mode_unknown_value_warns_and_is_off(monkeypatch: pytest.MonkeyPatch, log_lines: list[str]) -> None:
+    """An unknown NEXTEXT_FACES value warns and keeps the stage off.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Sets the variable.
+        log_lines (list[str]): Captured loguru messages.
+    """
+    monkeypatch.setenv("NEXTEXT_FACES", "maybe")
+    assert env_cfg.load_faces_mode() == "off"
+    assert any("NEXTEXT_FACES" in line for line in log_lines)
+
+
+def test_load_faces_env_defaults_and_central_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The faces endpoint falls back to the central root, with the key and a 300 s timeout.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Sets the variables.
+    """
+    _clear_endpoint_env(monkeypatch)
+    monkeypatch.delenv("FACES_API_BASE", raising=False)
+    monkeypatch.delenv("FACES_TIMEOUT", raising=False)
+    monkeypatch.setenv("OPENAI_API_BASE", "http://vllm-router:4000/v1/")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+
+    config = env_cfg.load_faces_env()
+
+    assert config == env_cfg.FacesConfig(
+        api_base="http://vllm-router:4000", api_key="sk-test", timeout=env_cfg.DEFAULT_FACES_TIMEOUT
+    )
+    assert env_cfg.DEFAULT_FACES_TIMEOUT == 300.0
+
+
+@pytest.mark.parametrize("off_token", ["off", "false", "no", "0", "OFF"])
+def test_load_faces_env_off_token_disables_even_with_central(monkeypatch: pytest.MonkeyPatch, off_token: str) -> None:
+    """An off token switches the faces client off even with a central endpoint.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Sets the variables.
+        off_token (str): The token.
+    """
+    _clear_endpoint_env(monkeypatch)
+    monkeypatch.setenv("OPENAI_API_BASE", "http://vllm-router:4000/v1")
+    monkeypatch.setenv("FACES_API_BASE", off_token)
+    assert env_cfg.load_faces_env().api_base == ""
+
+
+def test_load_faces_env_dedicated_base_and_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A dedicated base wins over the central one; an invalid timeout falls back.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Sets the variables.
+    """
+    _clear_endpoint_env(monkeypatch)
+    monkeypatch.setenv("OPENAI_API_BASE", "http://vllm-router:4000/v1")
+    monkeypatch.setenv("FACES_API_BASE", "  http://faces-only:8009/ ")
+    monkeypatch.setenv("FACES_TIMEOUT", "45")
+    assert env_cfg.load_faces_env() == env_cfg.FacesConfig(api_base="http://faces-only:8009", api_key="", timeout=45.0)
+    monkeypatch.setenv("FACES_TIMEOUT", "-1")
+    assert env_cfg.load_faces_env().timeout == env_cfg.DEFAULT_FACES_TIMEOUT
+
+
+def test_faces_sampling_env_defaults_and_clamps(monkeypatch: pytest.MonkeyPatch, log_lines: list[str]) -> None:
+    """Sampling defaults to 1 s / 600 frames; a zero interval falls back, too many frames clamp.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Sets the variables.
+        log_lines (list[str]): Captured loguru messages.
+    """
+    monkeypatch.delenv("FACES_INTERVAL_S", raising=False)
+    monkeypatch.delenv("FACES_MAX_FRAMES", raising=False)
+    assert env_cfg.load_faces_sampling_env() == env_cfg.FacesSamplingConfig(interval_s=1.0, max_frames=600)
+
+    monkeypatch.setenv("FACES_INTERVAL_S", "0")
+    monkeypatch.setenv("FACES_MAX_FRAMES", "9999")
+    assert env_cfg.load_faces_sampling_env() == env_cfg.FacesSamplingConfig(interval_s=1.0, max_frames=3600)
+    assert any("FACES_INTERVAL_S" in line for line in log_lines)
+    assert any("FACES_MAX_FRAMES" in line for line in log_lines)
+
+    monkeypatch.setenv("FACES_INTERVAL_S", "0.5")
+    monkeypatch.setenv("FACES_MAX_FRAMES", "120")
+    assert env_cfg.load_faces_sampling_env() == env_cfg.FacesSamplingConfig(interval_s=0.5, max_frames=120)
+
+    monkeypatch.setenv("FACES_INTERVAL_S", "inf")
+    assert env_cfg.load_faces_sampling_env().interval_s == 1.0

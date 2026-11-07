@@ -16,7 +16,7 @@ from unittest.mock import MagicMock
 import httpx
 import pytest
 
-from nextext.core import diarization, ner, transcription, vad
+from nextext.core import diarization, faces, ner, transcription, vad
 from nextext.core.inference_trace import (
     REQUEST_ID_HEADER,
     correlate,
@@ -217,6 +217,15 @@ def test_whisper_request_is_reported_and_correlated(monkeypatch: pytest.MonkeyPa
             {"entities": [{"text": "Alice Example", "label": "person", "score": 0.9}]},
             id="ner",
         ),
+        pytest.param(
+            faces,
+            "FACES_API_BASE",
+            lambda path: faces.detect_faces([b"synthetic-image"]),
+            "face_detect",
+            "faces",
+            {"results": [{"faces": []}]},
+            id="faces",
+        ),
     ],
 )
 def test_service_clients_report_and_correlate(
@@ -229,7 +238,7 @@ def test_service_clients_report_and_correlate(
     alias: str,
     ok_payload: dict[str, Any],
 ) -> None:
-    """The /diarize, /vad and /gliner clients report each request and forward X-Request-ID.
+    """The /diarize, /vad, /gliner and /faces clients report each request and forward X-Request-ID.
 
     Args:
         monkeypatch: Pytest patcher.
