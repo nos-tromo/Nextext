@@ -1,5 +1,6 @@
 """Centralized environment-config dataclasses (every env var loader lives here)."""
 
+import math
 import os
 import re
 from dataclasses import dataclass, field
@@ -158,6 +159,45 @@ class VadConfig:
     timeout: float
 
 
+FacesMode = Literal["off", "detect", "group"]
+
+
+@dataclass(frozen=True)
+class FacesConfig:
+    """Dataclass for the faces service configuration (``/faces/detect``, ``/faces/group``).
+
+    Face detection and grouping run out-of-process (e.g. ``nos-tromo/vllm-service``);
+    Nextext holds no face model and never receives biometric features.
+
+    Attributes:
+        api_base: Root URL of the faces service (e.g. ``http://vllm-router:4000``);
+            the client appends ``/faces/detect`` or ``/faces/group``. Falls back to
+            the central endpoint when ``FACES_API_BASE`` is unset; an explicit
+            falsy ``FACES_API_BASE`` switches the client off (empty string).
+        api_key: Bearer token forwarded to the service, reused from
+            ``OPENAI_API_KEY``. An empty string sends no ``Authorization`` header.
+        timeout: Per-request timeout in seconds.
+    """
+
+    api_base: str
+    api_key: str
+    timeout: float
+
+
+@dataclass(frozen=True)
+class FacesSamplingConfig:
+    """How densely the face stage samples a video.
+
+    Attributes:
+        interval_s: Seconds between sampled frames; a clip longer than
+            ``max_frames`` intervals stretches it so the samples span the clip.
+        max_frames: Most frames sampled per video.
+    """
+
+    interval_s: float
+    max_frames: int
+
+
 @dataclass(frozen=True)
 class DiarizationConfig:
     """Dataclass for the speaker-diarization service configuration.
@@ -299,6 +339,10 @@ EXTERNAL_WHISPER_DEFAULTS: dict[str, str] = {
 DEFAULT_DIARIZE_TIMEOUT: float = 600.0
 DEFAULT_NER_TIMEOUT: float = 120.0
 DEFAULT_VAD_TIMEOUT: float = 60.0
+DEFAULT_FACES_TIMEOUT: float = 300.0
+DEFAULT_FACES_INTERVAL_S: float = 1.0
+DEFAULT_FACES_MAX_FRAMES: int = 600
+FACES_MAX_FRAMES_CEILING: int = 3600
 DEFAULT_SENTENCE_RESTORE_MIN_PUNCT_RATIO: float = 0.01
 DEFAULT_SUMMARY_MAX_INPUT_TOKENS: int = 6000
 DEFAULT_HATE_SPEECH_WINDOW_TOKENS: int = 1000
@@ -416,6 +460,99 @@ def load_vad_env() -> VadConfig:
             )
 
     return VadConfig(api_base=api_base, api_key=api_key, timeout=timeout)
+
+
+def _load_positive_float(name: str, default: float) -> float:
+    """Reads a positive, finite float from the environment, fail-soft.
+
+    Args:
+        name: Environment variable to read.
+        default: Value used when unset, unparseable, non-finite, or not positive.
+
+    Returns:
+        float: The resolved value, always positive and finite.
+    """
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return default
+    try:
+        parsed = float(raw)
+        if not math.isfinite(parsed) or parsed <= 0:
+            raise ValueError
+    except ValueError:
+        logger.warning("Invalid {} '{}'. Falling back to {}.", name, raw, default)
+        return default
+    return parsed
+
+
+def load_faces_mode() -> FacesMode:
+    """Resolve the operator switch for the face stage (``NEXTEXT_FACES``).
+
+    ``detect`` finds faces and cuts crops without any biometric processing;
+    ``group`` also groups them per person, which is biometric processing and
+    needs the controller's impact assessment first. Read once at startup.
+
+    Returns:
+        FacesMode: ``"off"`` (default; also for an off token such as ``0``),
+            ``"detect"`` or ``"group"``. An unknown value warns and stays
+            ``"off"``.
+    """
+    raw = os.getenv("NEXTEXT_FACES", "").strip().lower()
+    if not raw or raw in _FALSE_TOKENS:
+        return "off"
+    if raw == "detect":
+        return "detect"
+    if raw == "group":
+        return "group"
+    logger.warning("Unknown NEXTEXT_FACES '{}'. Face detection stays off.", raw)
+    return "off"
+
+
+def load_faces_env() -> FacesConfig:
+    """Loads the faces service configuration from environment variables.
+
+    Returns:
+        FacesConfig: Dataclass containing the resolved settings.
+        - api_base (str): The faces service root, resolved three ways from
+          ``FACES_API_BASE``: a URL is used as-is (trailing ``/`` removed); an
+          explicit falsy token (``off``/``false``/``no``/``0``) switches the
+          client off (empty string); unset/blank falls back to the central
+          endpoint (:func:`_central_endpoint_root`).
+        - api_key (str): ``OPENAI_API_KEY`` (the faces service shares the
+          inference router's credentials). Empty sends no bearer token.
+        - timeout (float): ``FACES_TIMEOUT`` seconds. Defaults to
+          :data:`DEFAULT_FACES_TIMEOUT`; invalid values warn and fall back.
+    """
+    raw_base = os.getenv("FACES_API_BASE", "").strip()
+    if raw_base.lower() in _FALSE_TOKENS:
+        api_base = ""
+    elif raw_base:
+        api_base = raw_base.rstrip("/")
+    else:
+        api_base = _central_endpoint_root()
+    return FacesConfig(
+        api_base=api_base,
+        api_key=os.getenv("OPENAI_API_KEY", "").strip(),
+        timeout=_load_positive_float("FACES_TIMEOUT", DEFAULT_FACES_TIMEOUT),
+    )
+
+
+def load_faces_sampling_env() -> FacesSamplingConfig:
+    """Loads how densely the face stage samples a video.
+
+    Returns:
+        FacesSamplingConfig: the resolved settings.
+        - interval_s (float): ``FACES_INTERVAL_S``; defaults to
+          :data:`DEFAULT_FACES_INTERVAL_S`. Values that are not positive and
+          finite warn and fall back.
+        - max_frames (int): ``FACES_MAX_FRAMES``; defaults to
+          :data:`DEFAULT_FACES_MAX_FRAMES` and is clamped to
+          :data:`FACES_MAX_FRAMES_CEILING`.
+    """
+    return FacesSamplingConfig(
+        interval_s=_load_positive_float("FACES_INTERVAL_S", DEFAULT_FACES_INTERVAL_S),
+        max_frames=_load_positive_int("FACES_MAX_FRAMES", DEFAULT_FACES_MAX_FRAMES, ceiling=FACES_MAX_FRAMES_CEILING),
+    )
 
 
 def load_diarization_env() -> DiarizationConfig:
