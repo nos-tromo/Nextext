@@ -12,6 +12,7 @@ from collections.abc import Callable, Iterator, Sequence
 from pathlib import Path
 from typing import Any, Literal
 
+import httpx
 import pytest
 from PIL import Image
 
@@ -99,13 +100,14 @@ class _Fakes:
             yield SampledFrame(index=index, time_sec=float(index), image=image, scale=self.scale)
 
     def detect_faces(
-        self, images: Sequence[bytes], *, min_score: float = 0.7
+        self, images: Sequence[bytes], *, min_score: float = 0.7, config: object = None
     ) -> list[list[DetectedFace] | None] | None:
         """Report the planned faces of the next samples.
 
         Args:
             images: The batch.
             min_score: Ignored.
+            config: Ignored.
 
         Returns:
             list[list[DetectedFace] | None] | None: The planned faces, or ``None``
@@ -119,11 +121,12 @@ class _Fakes:
             return None
         return [None if faces is None else list(faces) for faces in self.planned[start : start + len(images)]]
 
-    def group_faces(self, tracks: Sequence[GroupTrack]) -> list[int] | None:
+    def group_faces(self, tracks: Sequence[GroupTrack], *, config: object = None) -> list[int] | None:
         """Answer a grouping request.
 
         Args:
             tracks: The tracks sent.
+            config: Ignored.
 
         Returns:
             list[int] | None: The planned labels.
@@ -537,3 +540,27 @@ def test_boxes_are_reported_in_original_source_pixels(monkeypatch: pytest.Monkey
     assert all(crop.box == (200, 200, 160, 160) for crop in entry.crops)
     assert [row.box for row in result.rows] == [(200, 200, 160, 160)] * 2
     assert _decode(entry.best.jpeg).size == (160, 160)
+
+
+def test_faces_config_is_read_once_per_video(monkeypatch: pytest.MonkeyPatch, log_lines: list[str]) -> None:
+    """The faces endpoint settings are read once per video, so a bad value warns once, not per batch."""
+    fakes = _Fakes([DARK] * 16, [[] for _ in range(16)])
+    monkeypatch.setattr(face_extraction, "sample_frames", fakes.sample_frames)
+    monkeypatch.setenv("FACES_API_BASE", "http://router.invalid")
+    monkeypatch.setenv("FACES_TIMEOUT", "soon")
+    calls: list[float] = []
+
+    def post(url: str, **kwargs: Any) -> httpx.Response:
+        calls.append(kwargs["timeout"])
+        images = kwargs["json"]["images"]
+        return httpx.Response(
+            200, json={"results": [{"faces": []} for _ in images]}, request=httpx.Request("POST", url)
+        )
+
+    monkeypatch.setattr(faces.httpx, "post", post)
+
+    result = _run("detect")
+
+    assert result.outcome == "ok"
+    assert len(calls) == 2
+    assert sum("FACES_TIMEOUT" in line for line in log_lines) == 1

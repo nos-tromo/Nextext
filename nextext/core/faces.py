@@ -247,7 +247,9 @@ def _parse_results(payload: Any, expected: int) -> list[list[DetectedFace] | Non
     return parsed
 
 
-def detect_faces(images: Sequence[bytes], *, min_score: float = 0.7) -> list[list[DetectedFace] | None] | None:
+def detect_faces(
+    images: Sequence[bytes], *, min_score: float = 0.7, config: FacesConfig | None = None
+) -> list[list[DetectedFace] | None] | None:
     """Find the faces in a batch of images via ``/faces/detect``.
 
     One request per call, recorded once as ``face_detect``.
@@ -255,6 +257,8 @@ def detect_faces(images: Sequence[bytes], *, min_score: float = 0.7) -> list[lis
     Args:
         images: Encoded images (JPEG or PNG), at most eight.
         min_score: Lowest detector confidence the service should return.
+        config: The faces configuration, when the caller read it already (one
+            video's batches share one); read from the environment otherwise.
 
     Returns:
         list[list[DetectedFace] | None] | None: The faces of each image, in
@@ -262,7 +266,7 @@ def detect_faces(images: Sequence[bytes], *, min_score: float = 0.7) -> list[lis
             ``None`` overall when no endpoint is configured or the request
             failed or broke the contract.
     """
-    config = load_faces_env()
+    config = config or load_faces_env()
     if not config.api_base:
         return None
     if not images:
@@ -308,7 +312,7 @@ def _parse_labels(payload: Any, expected: int) -> list[int] | None:
     return list(labels)
 
 
-def group_faces(tracks: Sequence[GroupTrack]) -> list[int] | None:
+def group_faces(tracks: Sequence[GroupTrack], *, config: FacesConfig | None = None) -> list[int] | None:
     """Group tracks of the same person via ``/faces/group``.
 
     The service returns labels only; the features it groups by never reach
@@ -317,13 +321,15 @@ def group_faces(tracks: Sequence[GroupTrack]) -> list[int] | None:
 
     Args:
         tracks: The tracks, each with its sample indices and a few crops.
+        config: The faces configuration, when the caller read it already;
+            read from the environment otherwise.
 
     Returns:
         list[int] | None: One label per track (``-1`` for a track the service
             could not use), or ``None`` when no endpoint is configured, the
             body is over budget, or the request failed or broke the contract.
     """
-    config = load_faces_env()
+    config = config or load_faces_env()
     if not config.api_base:
         return None
     if not tracks:

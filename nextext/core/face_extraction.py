@@ -48,6 +48,7 @@ from nextext.core.face_tracks import (
 )
 from nextext.core.faces import DetectedFace, GroupFace, GroupTrack, detect_faces, group_faces
 from nextext.core.keyframes import SampledFrame, sample_frames
+from nextext.utils.env_cfg import FacesConfig, load_faces_env
 
 __all__ = [
     "DetectionRow",
@@ -303,15 +304,17 @@ def _clamp(value: int, upper: int) -> int:
 class _Extraction:
     """The running state of one video's extraction."""
 
-    def __init__(self, mode: Literal["detect", "group"], interval_s: float) -> None:
+    def __init__(self, mode: Literal["detect", "group"], interval_s: float, config: FacesConfig) -> None:
         """Start an empty extraction.
 
         Args:
             mode: ``detect`` or ``group``.
             interval_s: The requested sampling interval.
+            config: The faces service configuration, read once for the video.
         """
         self.mode = mode
         self.interval_s = interval_s
+        self.config = config
         self.tracks: list[Track] = []
         self.crops: dict[int, _TrackCrops] = {}
         self.sample_times: list[float] = []
@@ -333,7 +336,7 @@ class _Extraction:
         """
         images = [_encode_jpeg(_scaled(frame.image, DETECT_MAX_SIDE)[0], DETECT_JPEG_QUALITY) for frame in batch]
         self.frames_sent += len(batch)
-        results = detect_faces(images)
+        results = detect_faces(images, config=self.config)
         if results is None:
             self.batches_failed += 1
         else:
@@ -546,7 +549,8 @@ class _Extraction:
                     faces=tuple(face for _score, face in self.crops[track.id].group),
                 )
                 for track in eligible
-            ]
+            ],
+            config=self.config,
         )
         if labels is None:
             return False, len(eligible), {}
@@ -633,7 +637,7 @@ def extract_faces(
         FacesResult | None: The faces, or ``None`` when no frame could be
             sampled (an audio-only or undecodable file).
     """
-    extraction = _Extraction(mode, interval_s)
+    extraction = _Extraction(mode, interval_s, load_faces_env())
     batch: list[SampledFrame] = []
     batch_bytes = 0
     for frame in sample_frames(file_path, interval_s=interval_s, max_frames=max_frames):
