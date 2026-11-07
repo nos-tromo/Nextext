@@ -41,6 +41,7 @@ from starlette.concurrency import run_in_threadpool
 
 from nextext.api.artifacts import (
     BATCH_ARTIFACTS,
+    FACE_IMAGE_ARTIFACT,
     SUPPORTED_ARTIFACTS,
     render_artifact,
     render_batch_artifact,
@@ -841,7 +842,7 @@ async def download_artifact(
     Returns:
         Response: Binary payload with the appropriate media type.
     """
-    if name not in SUPPORTED_ARTIFACTS:
+    if name not in SUPPORTED_ARTIFACTS and not FACE_IMAGE_ARTIFACT.fullmatch(name):
         raise HTTPException(
             status_code=404,
             detail=f"Unsupported artifact '{name}'.",
