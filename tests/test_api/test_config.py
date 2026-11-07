@@ -17,7 +17,7 @@ def test_get_config_language(api_client: TestClient, monkeypatch: pytest.MonkeyP
     response = api_client.get("/api/v1/config")
 
     assert response.status_code == 200
-    assert response.json() == {"language": "de", "require_purpose": []}
+    assert response.json() == {"language": "de", "require_purpose": [], "faces": "off"}
 
 
 @pytest.mark.parametrize(
