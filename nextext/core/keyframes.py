@@ -326,6 +326,20 @@ def _keyframe_times(file_path: Path) -> tuple[list[float], float] | None:
     return times, duration_sec
 
 
+def _decoder_threads() -> int:
+    """Decoder threads for one job: the CPUs this process may use, shared among the job workers.
+
+    A container limited by ``--cpus``/cpuset sees the host's count in
+    ``os.cpu_count()``; the affinity mask is what it may actually run on.
+
+    Returns:
+        int: At least ``1``.
+    """
+    sched_getaffinity = getattr(os, "sched_getaffinity", None)
+    cpus = len(sched_getaffinity(0)) if sched_getaffinity is not None else (os.cpu_count() or 1)
+    return max(1, cpus // load_job_concurrency())
+
+
 def _decode_mode(keyframe_times: Sequence[float], interval_s: float) -> DecodeMode:
     """Choose which frames the decoder may skip.
 
@@ -383,7 +397,7 @@ def sample_frames(
             codec_context = stream.codec_context
             codec_context.skip_frame = mode
             codec_context.thread_type = "AUTO"
-            codec_context.thread_count = max(1, (os.cpu_count() or 1) // load_job_concurrency())
+            codec_context.thread_count = _decoder_threads()
             rate = float(stream.average_rate) if stream.average_rate else None
             start_sec = (
                 float(stream.start_time * stream.time_base)

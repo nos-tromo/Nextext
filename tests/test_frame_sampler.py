@@ -329,3 +329,17 @@ def test_sample_frames_stretch_without_duration_metadata(tmp_path: Path) -> None
     frames = list(sample_frames(clip, interval_s=1.0, max_frames=10))
 
     assert len(frames) <= 10 and frames[-1].time_sec >= 50.0
+
+
+def test_decoder_threads_follow_the_cpus_the_process_may_use(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Decoder threads split the CPUs this process may run on (not the host's) among the job workers."""
+    monkeypatch.setattr(keyframes_module.os, "cpu_count", lambda: 64)
+    monkeypatch.setattr(keyframes_module.os, "sched_getaffinity", lambda pid: {0, 1, 2, 3}, raising=False)
+    monkeypatch.setattr(keyframes_module, "load_job_concurrency", lambda: 2)
+    assert keyframes_module._decoder_threads() == 2
+
+    monkeypatch.delattr(keyframes_module.os, "sched_getaffinity", raising=False)
+    assert keyframes_module._decoder_threads() == 32
+
+    monkeypatch.setattr(keyframes_module.os, "cpu_count", lambda: None)
+    assert keyframes_module._decoder_threads() == 1
