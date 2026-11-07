@@ -56,6 +56,7 @@ class _Fakes:
         planned: Sequence[list[DetectedFace] | None],
         *,
         size: tuple[int, int] = (W, H),
+        scale: float = 1.0,
         fail_calls: frozenset[int] = frozenset(),
         labels: Callable[[list[GroupTrack]], list[int] | None] | None = None,
     ) -> None:
@@ -65,12 +66,14 @@ class _Fakes:
             scenes: Grey level of each sample's frame; a jump is a shot cut.
             planned: Faces the detector reports per sample (``None``: undecodable).
             size: Frame size.
+            scale: How far the sampler scaled each frame down from the source.
             fail_calls: Detect calls (by number) that fail.
             labels: Replies to ``/faces/group``; ``None`` makes it fail.
         """
         self.scenes = list(scenes)
         self.planned = list(planned)
         self.size = size
+        self.scale = scale
         self.fail_calls = fail_calls
         self.labels = labels
         self.batches: list[list[bytes]] = []
@@ -92,7 +95,8 @@ class _Fakes:
             SampledFrame: The frames.
         """
         for index, level in enumerate(self.scenes):
-            yield SampledFrame(index=index, time_sec=float(index), image=Image.new("RGB", self.size, (level,) * 3))
+            image = Image.new("RGB", self.size, (level,) * 3)
+            yield SampledFrame(index=index, time_sec=float(index), image=image, scale=self.scale)
 
     def detect_faces(
         self, images: Sequence[bytes], *, min_score: float = 0.7
@@ -519,3 +523,17 @@ def test_faces_pipeline_reads_the_sampling_settings(monkeypatch: pytest.MonkeyPa
 
     assert pipeline.faces_pipeline(Path("synthetic.mp4"), mode="detect") is None
     assert seen == {"file_path": Path("synthetic.mp4"), "mode": "detect", "interval_s": 2.5, "max_frames": 40}
+
+
+def test_boxes_are_reported_in_original_source_pixels(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A frame the sampler scaled down still reports boxes in the source's own pixels."""
+    planned: list[list[DetectedFace] | None] = [[_face((100, 100, 80, 80))], [_face((100, 100, 80, 80))]]
+    _Fakes([DARK] * 2, planned, scale=0.5).install(monkeypatch)
+
+    result = _run("detect")
+
+    entry = result.entries[0]
+    assert entry.best.box == (200, 200, 160, 160)
+    assert all(crop.box == (200, 200, 160, 160) for crop in entry.crops)
+    assert [row.box for row in result.rows] == [(200, 200, 160, 160)] * 2
+    assert _decode(entry.best.jpeg).size == (160, 160)

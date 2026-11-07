@@ -104,6 +104,7 @@ def test_sample_frames_one_per_interval(tmp_path: Path) -> None:
     assert 9 <= len(frames) <= 11
     assert all(b.time_sec > a.time_sec for a, b in itertools.pairwise(frames))
     assert all(isinstance(f, SampledFrame) and f.image.mode == "RGB" for f in frames)
+    assert all(f.scale == 1.0 for f in frames)
 
 
 def test_sample_frames_stretch_interval_over_long_clip(tmp_path: Path) -> None:
@@ -237,6 +238,7 @@ def test_sample_frames_downscales_to_max_side(tmp_path: Path) -> None:
 
     assert frames
     assert all(f.image.size == (160, 90) for f in frames)
+    assert all(f.scale == 0.5 for f in frames)
 
 
 def test_sample_frames_caps_at_max_frames(tmp_path: Path) -> None:

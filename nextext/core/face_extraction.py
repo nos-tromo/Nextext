@@ -271,6 +271,22 @@ def _source_bytes(frame: SampledFrame) -> int:
     return frame.image.width * frame.image.height * 3
 
 
+def _to_source(box: Box, scale: float) -> Box:
+    """Map a box from a sampled image back to the source frame's own pixels.
+
+    Args:
+        box: The box in the sampled image.
+        scale: The image's size over the source's.
+
+    Returns:
+        Box: The box in source pixels.
+    """
+    if scale >= 1.0 or scale <= 0:
+        return box
+    x, y, width, height = box
+    return (round(x / scale), round(y / scale), round(width / scale), round(height / scale))
+
+
 def _clamp(value: int, upper: int) -> int:
     """Clamp a coordinate to ``[0, upper]``.
 
@@ -299,6 +315,9 @@ class _Extraction:
         self.tracks: list[Track] = []
         self.crops: dict[int, _TrackCrops] = {}
         self.sample_times: list[float] = []
+        # Sample -> how far the sampler scaled that frame down, for reporting
+        # boxes in source pixels.
+        self.scales: dict[int, float] = {}
         self.prev_thumb: np.ndarray | None = None
         self.frames_sent = 0
         self.batches_answered = 0
@@ -321,6 +340,7 @@ class _Extraction:
             self.batches_answered += 1
         for position, frame in enumerate(batch):
             self.sample_times.append(frame.time_sec)
+            self.scales[frame.index] = frame.scale
             thumb = grey_thumb(frame.image)
             cut = is_cut(self.prev_thumb, thumb)
             self.prev_thumb = thumb
@@ -334,7 +354,7 @@ class _Extraction:
             detections = self._detections(frame, found)
             owners = assign_tracks(self.tracks, detections, sample=frame.index, cut=cut)
             for detection, track in zip(detections, owners, strict=True):
-                self._keep(frame.image, detection, track)
+                self._keep(frame, detection, track)
         self._prune_closed()
 
     def _detections(self, frame: SampledFrame, found: Sequence[DetectedFace]) -> list[Detection]:
@@ -369,14 +389,19 @@ class _Extraction:
             del detections[MAX_FACES_PER_FRAME:]
         return detections
 
-    def _keep(self, image: Image.Image, detection: Detection, track: Track) -> None:
+    def _keep(self, frame: SampledFrame, detection: Detection, track: Track) -> None:
         """Score one detection's crop and keep what its track needs of it.
 
+        Crops are cut from the sampled image; the boxes they carry are mapped
+        back to the source's own pixels.
+
         Args:
-            image: The source frame.
+            frame: The sample the detection was found in.
             detection: The detection.
             track: The track it belongs to.
         """
+        image = frame.image
+        source_box = _to_source(detection.box, frame.scale)
         x, y, width, height = detection.box
         patch = image.crop((x, y, x + width, y + height)).convert("L").resize(_SHARPNESS_PATCH)
         frontal = frontality(detection.landmarks)
@@ -384,11 +409,11 @@ class _Extraction:
         kept = self.crops.setdefault(track.id, _TrackCrops())
         if kept.best is None or score > kept.best.quality:
             best_jpeg = _cut(image, detection.box, BEST_CROP)[0]
-            kept.best = FaceCrop(detection.time_sec, detection.box, detection.score, score, best_jpeg)
+            kept.best = FaceCrop(detection.time_sec, source_box, detection.score, score, best_jpeg)
             kept.thumbnail = _cut(image, detection.box, THUMBNAIL)[0]
         if len(kept.small) <= EXTRA_CROPS or score > kept.small[-1].quality:
             small_jpeg = _cut(image, detection.box, SMALL_CROP)[0]
-            kept.small.append(FaceCrop(detection.time_sec, detection.box, detection.score, score, small_jpeg))
+            kept.small.append(FaceCrop(detection.time_sec, source_box, detection.score, score, small_jpeg))
             kept.small.sort(key=lambda crop: crop.quality, reverse=True)
             del kept.small[EXTRA_CROPS + 1 :]
         if self.mode == "group" and self._is_good(detection, frontal):
@@ -579,7 +604,12 @@ class _Extraction:
                 )
             )
             rows.extend(
-                DetectionRow(time_sec=d.time_sec, entry=number, box=d.box, score=d.score)
+                DetectionRow(
+                    time_sec=d.time_sec,
+                    entry=number,
+                    box=_to_source(d.box, self.scales.get(d.sample, 1.0)),
+                    score=d.score,
+                )
                 for track in tracks
                 for d in track.detections
             )
