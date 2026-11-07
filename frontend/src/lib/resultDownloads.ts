@@ -7,6 +7,7 @@ import { transcriptHasTranslation } from './transcriptTable'
 export type ResultTabId =
   | 'transcript'
   | 'visual_context'
+  | 'faces'
   | 'summary'
   | 'words'
   | 'wordcloud'
@@ -68,6 +69,8 @@ export function downloadsFor(tab: ResultTabId, result: JobResult, stem: string, 
           : []),
         ...keyframes,
       ]
+    case 'faces':
+      return []
     case 'summary':
       return [{ name: 'summary.txt', label: 'TXT', fileName: `${stem}_summary.txt` }]
     case 'words':
