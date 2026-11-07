@@ -30,11 +30,11 @@ stream played with a grant, those of the request the grant was issued to.
 
 | Endpoint | Action / operation | Target | Recorded |
 |---|---|---|---|
-| `POST /api/v1/jobs` | `collect` / `job.create` | the job | `files`, `bytes`, `source_sha256` of the upload, the `analyses` asked for and the job `options`. An upload rejected for its size (`413`) or failing while it is stored (a full disk, say) is removed and recorded with `outcome="error"` and a typed `failure` |
+| `POST /api/v1/jobs` | `collect` / `job.create` | the job | `files`, `bytes`, `source_sha256` of the upload, the `analyses` asked for and the job `options`. An upload rejected for its size (`413`) or failing while it is stored (a full disk, say) is removed and recorded with `outcome="error"` and a typed `failure`. A job asking for `faces` while `NEXTEXT_FACES` is `off` is refused with `422` before anything is stored, and nothing is collected |
 | `GET /api/v1/jobs` | `query` / `job.list` | every job listed | — |
-| `GET /api/v1/jobs/{id}` | `query` / `job.get` | the job | only once the job has finished and its snapshot carries the result; until then the snapshot is a status poll (status, progress, the caller's own options) and is not recorded |
+| `GET /api/v1/jobs/{id}` | `query` / `job.get` | the job | only once the job has finished and its snapshot carries the result; until then the snapshot is a status poll (status, progress, the caller's own options) and is not recorded. The face thumbnails travel inside this snapshot as `data:` URIs, so looking at the faces is this one query, not a disclosure per image |
 | `DELETE /api/v1/jobs/{id}` | `delete` / `job.delete` | the job | the job's `status` when it was deleted. The SPA's "Clear" actions send one such request per job |
-| `GET /api/v1/jobs/{id}/artifacts/{name}` | `disclose` / `artifact.download` | the job | `recipient="download:<format>"` (`csv`, `xlsx`, `txt`, `png`, `jsonl`, `zip`), the `artifact` name |
+| `GET /api/v1/jobs/{id}/artifacts/{name}` | `disclose` / `artifact.download` | the job | `recipient="download:<format>"` (`csv`, `xlsx`, `txt`, `png`, `jsonl`, `zip`, `jpg`), the `artifact` name. Each face's best image (`face_NNN.jpg`, recipient `download:jpg`) is a download, and so a disclosure, of its own; so are `faces.zip` and `faces.csv` |
 | `GET /api/v1/jobs/batch/{name}` | `disclose` / `artifact.download_batch` | the completed jobs the bundle was built from | as above |
 | `GET /api/v1/jobs/{id}/media` | `query` / `media.stream` | the job | one event per request that streams bytes — a player fetches several ranges — with `ranged`. Played with a grant (`?grant=`, see [Playback](#playback)), the event carries the purpose and request id of the request the grant was issued to, and the grant's id as `grant` — never the grant itself |
 | `POST /api/v1/jobs/{id}/media-grant` | `query` / `media.grant` | the job | refusals only: another owner's job, or a purpose `AUDIT_REQUIRE_PURPOSE` asks for and the request lacks (`428`) |
@@ -55,6 +55,7 @@ Not recorded, because they carry no personal data or touch none:
 | a media request with an unknown or expired grant, or one issued for another job (`404`) | it names no one |
 | a request answered `401` | it has no actor; recording it would let anyone on the networks flood the trail |
 | `404` for an unknown job, an unsupported or unproduced artifact; `409` for an unfinished job | no data was touched |
+| `422` for invalid job options, including `faces` while `NEXTEXT_FACES` is `off` | refused before the upload is stored |
 
 When more than 200 jobs are named, the first event holds 200 ids and counts
 all of them; each further chunk follows as `<operation>.ids` with the first
@@ -86,9 +87,11 @@ reported them, and `ai.model_id` when the endpoint named the model it served.
 | Named entities | `ai.ner` | `inference:ner` | `gliner` | — | transcription, restoration, translation |
 | Summary | `ai.summarize` | `inference:chat` | `TEXT_MODEL` | the summary (`summary.txt`) | the transcript or translation, the captions |
 | Hate-speech detection | `ai.hate_speech` | `inference:chat` | `TEXT_MODEL` | never | the transcript, diarization, the captions |
+| Face detection | `ai.detect_faces` | `inference:faces` | `faces` | never | the upload |
+| Face grouping (`NEXTEXT_FACES=group`) | `ai.group_faces` | `inference:faces` | `faces` | never | the upload, face detection |
 
-The `/vad`, `/diarize` and `/gliner` services take no model field, so their
-alias is the endpoint's name. The `upload` is the job's `collect` event. A
+The `/vad`, `/diarize`, `/gliner` and `/faces` services take no model field,
+so their alias is the endpoint's name. The `upload` is the job's `collect` event. A
 stage that sent nothing (the speech guard switched off, diarization not asked
 for) writes no event.
 
@@ -96,12 +99,23 @@ Hate-speech categories can amount to special categories of personal data, so
 that stage is recorded by what it judged — `segments` and `frames` — and never
 by what it found: no categories, no counts of findings, no hash of them.
 
+The face stage is recorded the same way. `ai.detect_faces` counts the
+`frames` sent for detection (frames of a batch that failed included — what was
+transferred); `ai.group_faces` counts the `tracks` sent for grouping, in
+`group` mode only. Neither records what was found: no number of faces or
+persons, no boxes, no hash. A busy service (`503` with a short `Retry-After`)
+is retried once, and both requests count. Grouping takes face crops and
+returns labels only; no biometric feature reaches Nextext or this log.
+
 **Combination.** When a finished job's result joins two or more analyses —
 speaker labels from diarization onto the transcript, named entities, the
-hate-speech classification, captions, a summary — one `combine` /
+hate-speech classification, captions, the faces, a summary — one `combine` /
 `job.combine` event names them (`analyses`) and says whether the results carry
 speaker labels (`speaker_attributed`). Hate-speech detection is listed whenever
-it ran, whatever it found.
+it ran, whatever it found; so is `faces`, whenever the face stage produced a
+result (even one without faces, or one the service never answered). After an
+unexpected error in the face stage there is no result and nothing of it was
+joined, so `faces` is not listed — its `ai_call` events still are.
 
 **Erasure.** Besides `job.delete` by the owner, the system erases jobs in two
 places, each as one `delete` event per owner, by `Actor(None, "system")`, with
@@ -340,9 +354,11 @@ default configuration sends to stdout, is moved to stderr at startup.
 
 The chain's first event after `start`, `admin` / `config.audit`, records the
 mode the backend runs in: `edge_secret_enforced`, `default_identity_enabled`
-(the dev fallback is in effect), `require_purpose`, and `service_tokens` (how
-many services may call as themselves — a count, never a name or token). A CLI
-run's records `require_purpose` only.
+(the dev fallback is in effect), `require_purpose`, `service_tokens` (how
+many services may call as themselves — a count, never a name or token),
+`cli_retention_days`, `retention_notice_days`, and `faces` (the operator switch
+`NEXTEXT_FACES`: `off`, `detect` or `group`). A CLI run's records
+`require_purpose` only.
 
 ## Limits
 

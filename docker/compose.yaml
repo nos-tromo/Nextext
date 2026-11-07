@@ -95,6 +95,10 @@ services:
       AUDIT_REQUIRE_PURPOSE: ${AUDIT_REQUIRE_PURPOSE-query,disclose}
       DIARIZE_API_BASE: ${DIARIZE_API_BASE:-}
       DIARIZE_TIMEOUT: ${DIARIZE_TIMEOUT:-}
+      FACES_API_BASE: ${FACES_API_BASE:-}
+      FACES_INTERVAL_S: ${FACES_INTERVAL_S:-}
+      FACES_MAX_FRAMES: ${FACES_MAX_FRAMES:-}
+      FACES_TIMEOUT: ${FACES_TIMEOUT:-}
       INFERENCE_PROVIDER: ${INFERENCE_PROVIDER:-ollama}
       NER_API_BASE: ${NER_API_BASE:-}
       NER_TIMEOUT: ${NER_TIMEOUT:-}
@@ -103,6 +107,7 @@ services:
       NEXTEXT_AUTH_HEADER: ${NEXTEXT_AUTH_HEADER:-X-Auth-User}
       NEXTEXT_DEFAULT_IDENTITY: ${NEXTEXT_DEFAULT_IDENTITY:-}
       NEXTEXT_EDGE_SECRET: ${NEXTEXT_EDGE_SECRET:-}
+      NEXTEXT_FACES: ${NEXTEXT_FACES:-}
       NEXTEXT_MAX_UPLOAD_MB: ${NEXTEXT_MAX_UPLOAD_MB:-8192}
       # What `make cli` leaves in /tmp/nextext-cli (and /tmp/output from
       # before) is deleted this many days after it was written, recorded;

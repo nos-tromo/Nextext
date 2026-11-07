@@ -48,6 +48,12 @@ descriptions as `{stem}_visual_context.txt`. The
 descriptions are written whether or not a summary was asked for; with `-sum`
 they also feed the summary.
 
+The CLI has no face option, and `-F` never includes faces. What `make cli`
+writes stays on disk until `NEXTEXT_CLI_RETENTION_DAYS` runs out, and pictures
+of faces kept that long need a decision of their own; faces are an API and SPA
+feature (`faces=true`, gated by `NEXTEXT_FACES`, see
+[configuration.md](configuration.md#faces)).
+
 ## Exit codes
 
 | Code | Meaning |
