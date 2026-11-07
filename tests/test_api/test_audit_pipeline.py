@@ -331,3 +331,16 @@ def test_combination_names_hate_speech_whenever_it_ran() -> None:
     assert speaker_attributed is True
     plain = JobOptions.model_validate({"task": "transcribe"})
     assert _joined_analyses({"transcript": TRANSCRIPT.drop(columns=["speaker"])}, plain) == (["transcript"], False)
+
+
+def test_combination_names_faces_whenever_the_stage_ran() -> None:
+    """The combine event lists the face stage by whether it ran, never by what it found."""
+    from nextext.core.face_extraction import FacesResult
+
+    options = JobOptions.model_validate({"task": "transcribe"})
+    empty = FacesResult(
+        outcome="unavailable", grouped=False, truncated=False, entries=(), rows=(), frames_sent=4, tracks_sent=0
+    )
+    analyses, _speaker = _joined_analyses({"transcript": TRANSCRIPT, "faces": empty}, options)
+    assert analyses == ["transcript", "diarization", "faces"]
+    assert "faces" not in _joined_analyses({"transcript": TRANSCRIPT, "faces": None}, options)[0]

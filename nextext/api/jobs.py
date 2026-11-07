@@ -468,7 +468,7 @@ def _joined_analyses(result: dict[str, Any], options: JobOptions) -> tuple[list[
     """Name the analyses a finished job's result joins, for its ``combine`` event.
 
     Each analysis is listed when the result carries its output — except
-    hate-speech detection, listed whenever it ran (see
+    hate-speech detection and the face stage, listed whenever they ran (see
     :func:`nextext.audit.joined_analyses`).
 
     Args:
@@ -488,6 +488,7 @@ def _joined_analyses(result: dict[str, Any], options: JobOptions) -> tuple[list[
         named_entities=_is_filled_frame(result.get("named_entities")),
         summary=bool(result.get("summary")),
         frame_captions=has_captions,
+        faces=result.get("faces") is not None,
         hate_speech=options.hate_speech and (bool(columns) or has_captions),
     )
 
