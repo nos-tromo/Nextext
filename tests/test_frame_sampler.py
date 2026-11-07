@@ -6,12 +6,13 @@ need no media fixtures and no network.
 
 from __future__ import annotations
 
+import io
 import itertools
 import wave
 from collections.abc import Iterator
 from fractions import Fraction
 from pathlib import Path
-from typing import Any
+from typing import Any, override
 
 import av
 import pytest
@@ -245,3 +246,86 @@ def test_sample_frames_caps_at_max_frames(tmp_path: Path) -> None:
     frames = list(sample_frames(clip, interval_s=0.25, max_frames=3))
 
     assert len(frames) == 3
+
+
+class _NonSeekable(io.RawIOBase):
+    """A write-only stream the muxer cannot seek back in, so no duration is written."""
+
+    def __init__(self, sink: io.BufferedWriter) -> None:
+        """Wrap a file.
+
+        Args:
+            sink: The open file.
+        """
+        self._sink = sink
+
+    @override
+    def writable(self) -> bool:
+        """Report the stream as writable.
+
+        Returns:
+            bool: Always ``True``.
+        """
+        return True
+
+    @override
+    def seekable(self) -> bool:
+        """Report the stream as not seekable.
+
+        Returns:
+            bool: Always ``False``.
+        """
+        return False
+
+    @override
+    def write(self, data: Any) -> int:
+        """Pass bytes through.
+
+        Args:
+            data: The bytes.
+
+        Returns:
+            int: How many were written.
+        """
+        return self._sink.write(data)
+
+
+def _make_clip_without_duration(path: Path, *, seconds: int, fps: int) -> Path:
+    """Write a Matroska clip with no duration metadata, as a browser recording has.
+
+    Args:
+        path: Destination file.
+        seconds: Clip length.
+        fps: Frame rate.
+
+    Returns:
+        Path: ``path``.
+    """
+    with open(path, "wb") as raw, av.open(_NonSeekable(raw), mode="w", format="matroska") as container:
+        stream = container.add_stream("mpeg4", rate=fps)
+        assert isinstance(stream, av.VideoStream)
+        stream.width = stream.height = 32
+        stream.pix_fmt = "yuv420p"
+        stream.time_base = Fraction(1, fps)
+        stream.codec_context.gop_size = fps
+        image = Image.new("RGB", (32, 32), (90, 90, 90))
+        for index in range(seconds * fps):
+            frame = av.VideoFrame.from_image(image)
+            frame.pts = index
+            frame.time_base = Fraction(1, fps)
+            for packet in stream.encode(frame):
+                container.mux(packet)
+        for packet in stream.encode():
+            container.mux(packet)
+    return path
+
+
+def test_sample_frames_stretch_without_duration_metadata(tmp_path: Path) -> None:
+    """A clip whose container records no duration is still sampled over its whole length."""
+    clip = _make_clip_without_duration(tmp_path / "recorded.mkv", seconds=60, fps=4)
+    with av.open(str(clip)) as container:
+        assert container.duration is None and container.streams.video[0].duration is None
+
+    frames = list(sample_frames(clip, interval_s=1.0, max_frames=10))
+
+    assert len(frames) <= 10 and frames[-1].time_sec >= 50.0

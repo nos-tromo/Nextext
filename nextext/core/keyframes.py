@@ -291,6 +291,10 @@ def _keyframe_times(file_path: Path) -> tuple[list[float], float] | None:
     Args:
         file_path: The media file.
 
+    The duration comes from the container, else the stream, else — for a
+    file that records none, such as a browser recording — the largest packet
+    timestamp seen in this same pass.
+
     Returns:
         tuple[list[float], float] | None: Sorted keyframe times in seconds and
             the clip's duration in seconds (``0.0`` when unknown); ``None``
@@ -301,19 +305,22 @@ def _keyframe_times(file_path: Path) -> tuple[list[float], float] | None:
             return None
         stream = container.streams.video[0]
         time_base = stream.time_base
-        times = (
-            sorted(
-                float(packet.pts * time_base)
-                for packet in container.demux(stream)
-                if packet.is_keyframe and packet.pts is not None
-            )
-            if time_base is not None
-            else []
-        )
+        keyframe_pts: list[int] = []
+        last_pts: int | None = None
+        for packet in container.demux(stream):
+            if packet.pts is None:
+                continue
+            last_pts = packet.pts if last_pts is None else max(last_pts, packet.pts)
+            if packet.is_keyframe:
+                keyframe_pts.append(packet.pts)
+        times = sorted(float(pts * time_base) for pts in keyframe_pts) if time_base is not None else []
         if container.duration:
             duration_sec = container.duration / 1_000_000
         elif stream.duration and time_base is not None:
             duration_sec = float(stream.duration * time_base)
+        elif last_pts is not None and time_base is not None:
+            start_pts = stream.start_time or 0
+            duration_sec = max(0.0, float((last_pts - start_pts) * time_base))
         else:
             duration_sec = 0.0
     return times, duration_sec
