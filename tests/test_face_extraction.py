@@ -58,6 +58,7 @@ class _Fakes:
         *,
         size: tuple[int, int] = (W, H),
         scale: float = 1.0,
+        step: float = 1.0,
         fail_calls: frozenset[int] = frozenset(),
         labels: Callable[[list[GroupTrack]], list[int] | None] | None = None,
     ) -> None:
@@ -68,6 +69,7 @@ class _Fakes:
             planned: Faces the detector reports per sample (``None``: undecodable).
             size: Frame size.
             scale: How far the sampler scaled each frame down from the source.
+            step: Seconds between samples (the sampler's effective interval).
             fail_calls: Detect calls (by number) that fail.
             labels: Replies to ``/faces/group``; ``None`` makes it fail.
         """
@@ -75,6 +77,7 @@ class _Fakes:
         self.planned = list(planned)
         self.size = size
         self.scale = scale
+        self.step = step
         self.fail_calls = fail_calls
         self.labels = labels
         self.batches: list[list[bytes]] = []
@@ -99,7 +102,7 @@ class _Fakes:
         for index, level in enumerate(self.scenes):
             image = Image.new("RGB", self.size, (level,) * 3)
             self.yielded += 1
-            yield SampledFrame(index=index, time_sec=float(index), image=image, scale=self.scale)
+            yield SampledFrame(index=index, time_sec=index * self.step, image=image, scale=self.scale)
 
     def detect_faces(
         self, images: Sequence[bytes], *, min_score: float = 0.7, config: object = None
@@ -602,3 +605,23 @@ def test_an_answered_batch_resets_the_breaker(monkeypatch: pytest.MonkeyPatch) -
 
     assert len(fakes.batches) == 6
     assert result.outcome == "partial"
+
+
+def test_pruning_and_the_track_cap_rank_alike(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Tracks dropped while reading and at the end are ranked by the same, effective interval.
+
+    The sampler stretched its interval to 5 s. Ranked by duration plus 5 s
+    times area, the large one-off face and the mid-size one beat the small
+    long-lived one; ranked by the requested 1 s it would be the other way.
+    """
+    monkeypatch.setattr(face_extraction, "MAX_TRACKS", 2)
+    large = _face((50, 100, 100, 100))
+    small = _face((400, 100, 40, 40))
+    middle = _face((250, 100, 80, 80))
+    planned: list[list[DetectedFace] | None] = [[large, small], [small], [small, middle], [], [], [], [], []]
+    _Fakes([DARK] * 8, planned, step=5.0).install(monkeypatch)
+
+    result = _run("detect")
+
+    assert result.truncated is True
+    assert sorted(entry.best.box[0] for entry in result.entries) == [50, 250]
