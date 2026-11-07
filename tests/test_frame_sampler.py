@@ -343,3 +343,19 @@ def test_decoder_threads_follow_the_cpus_the_process_may_use(monkeypatch: pytest
 
     monkeypatch.setattr(keyframes_module.os, "cpu_count", lambda: None)
     assert keyframes_module._decoder_threads() == 1
+
+
+def test_sample_frames_applies_negative_display_rotation(tmp_path: Path) -> None:
+    """A -90 degree rotation (the usual phone tag) turns the other way: the red half ends up on top."""
+    clip = _make_clip(tmp_path / "portrait.mp4", seconds=2, fps=8, width=64, height=32, rotation=-90)
+
+    frames = list(sample_frames(clip, interval_s=1.0, max_frames=600))
+
+    assert frames
+    image = frames[0].image
+    assert image.size == (32, 64)
+    top = image.getpixel((16, 8))
+    bottom = image.getpixel((16, 56))
+    assert isinstance(top, tuple) and isinstance(bottom, tuple)
+    assert top[0] > 200 and top[2] < 60
+    assert bottom[2] > 200 and bottom[0] < 60
