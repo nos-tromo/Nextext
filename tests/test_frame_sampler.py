@@ -1,0 +1,443 @@
+"""Tests for the time-based video frame sampler the face stage reads from.
+
+Every clip is synthesized with PyAV (solid colours, no people), so the tests
+need no media fixtures and no network.
+"""
+
+from __future__ import annotations
+
+import io
+import itertools
+import wave
+from collections.abc import Iterator
+from fractions import Fraction
+from pathlib import Path
+from typing import Any, override
+
+import av
+import pytest
+from PIL import Image
+
+import nextext.core.keyframes as keyframes_module
+from nextext.core.keyframes import SampledFrame, sample_frames
+
+
+def _make_clip(
+    path: Path,
+    *,
+    seconds: float,
+    fps: int,
+    width: int = 32,
+    height: int = 32,
+    codec: str = "mpeg4",
+    gop_size: int | None = None,
+    rotation: int | None = None,
+    start_pts: int = 0,
+) -> Path:
+    """Write a synthetic clip whose stored frames are red on the left, blue on the right.
+
+    Args:
+        path: Destination file (container inferred from the suffix).
+        seconds: Clip length.
+        fps: Frame rate; also the time base, so frame ``i`` sits at ``i / fps``.
+        width: Stored frame width.
+        height: Stored frame height.
+        codec: Encoder; ``mjpeg`` makes every frame a keyframe.
+        gop_size: Keyframe interval in frames, for inter-coded codecs.
+        rotation: Display rotation in degrees counter-clockwise, if any.
+        start_pts: Presentation timestamp of the first frame.
+
+    Returns:
+        Path: ``path``.
+    """
+    with av.open(str(path), mode="w") as container:
+        stream = container.add_stream(codec, rate=fps)
+        assert isinstance(stream, av.VideoStream)
+        stream.width = width
+        stream.height = height
+        stream.pix_fmt = "yuvj420p" if codec == "mjpeg" else "yuv420p"
+        stream.time_base = Fraction(1, fps)
+        if gop_size is not None:
+            stream.codec_context.gop_size = gop_size
+        if rotation is not None:
+            stream.set_display_rotation(rotation)
+        image = Image.new("RGB", (width, height), (0, 0, 255))
+        image.paste((255, 0, 0), (0, 0, width // 2, height))
+        for index in range(round(seconds * fps)):
+            frame = av.VideoFrame.from_image(image)
+            frame.pts = start_pts + index
+            frame.time_base = Fraction(1, fps)
+            for packet in stream.encode(frame):
+                container.mux(packet)
+        for packet in stream.encode():
+            container.mux(packet)
+    return path
+
+
+def _capture_info(run: Any) -> list[str]:
+    """Run a callable while collecting the INFO log lines it writes.
+
+    Args:
+        run: Zero-argument callable.
+
+    Returns:
+        list[str]: The messages logged.
+    """
+    from loguru import logger
+
+    lines: list[str] = []
+    handler_id = logger.add(lines.append, level="INFO", format="{message}")
+    try:
+        run()
+    finally:
+        logger.remove(handler_id)
+    return lines
+
+
+def test_sample_frames_one_per_interval(tmp_path: Path) -> None:
+    """A 10 s clip sampled every second yields about ten frames, indexed from 0, in time order."""
+    clip = _make_clip(tmp_path / "clip.mp4", seconds=10, fps=24, gop_size=12)
+
+    frames = list(sample_frames(clip, interval_s=1.0, max_frames=600))
+
+    assert [f.index for f in frames] == list(range(len(frames)))
+    assert 9 <= len(frames) <= 11
+    assert all(b.time_sec > a.time_sec for a, b in itertools.pairwise(frames))
+    assert all(isinstance(f, SampledFrame) and f.image.mode == "RGB" for f in frames)
+    assert all(f.scale == 1.0 for f in frames)
+    assert all(f.clip_duration_sec == pytest.approx(10.0, abs=0.1) for f in frames)
+
+
+def test_sample_frames_stretch_interval_over_long_clip(tmp_path: Path) -> None:
+    """A clip longer than max_frames times the interval is sampled over its whole length."""
+    clip = _make_clip(tmp_path / "long.mp4", seconds=60, fps=4, gop_size=4)
+
+    frames = list(sample_frames(clip, interval_s=1.0, max_frames=10))
+
+    assert len(frames) <= 10 and frames[-1].time_sec >= 50.0
+
+
+def test_sample_frames_keyframe_path_when_gops_are_short(tmp_path: Path) -> None:
+    """An all-intra clip is sampled by decoding keyframes only, with the same count."""
+    clip = _make_clip(tmp_path / "intra.mkv", seconds=10, fps=8, codec="mjpeg")
+    frames: list[SampledFrame] = []
+
+    lines = _capture_info(lambda: frames.extend(sample_frames(clip, interval_s=1.0, max_frames=600)))
+
+    assert 9 <= len(frames) <= 11
+    assert any("decode=NONKEY" in line for line in lines)
+
+
+def test_sample_frames_reference_path_when_gops_are_long(tmp_path: Path) -> None:
+    """Keyframes further apart than twice the interval fall back to decoding reference frames."""
+    clip = _make_clip(tmp_path / "longgop.mp4", seconds=10, fps=24, gop_size=240)
+    frames: list[SampledFrame] = []
+
+    lines = _capture_info(lambda: frames.extend(sample_frames(clip, interval_s=1.0, max_frames=600)))
+
+    assert 9 <= len(frames) <= 11
+    assert any("decode=NONREF" in line for line in lines)
+
+
+def test_sample_frames_applies_display_rotation(tmp_path: Path) -> None:
+    """A clip stored landscape with a 90° display rotation comes out upright (portrait).
+
+    Stored frames are red on the left and blue on the right; rotated 90°
+    counter-clockwise for display, the red half ends up at the bottom.
+    """
+    clip = _make_clip(tmp_path / "portrait.mp4", seconds=2, fps=8, width=64, height=32, rotation=90)
+
+    frames = list(sample_frames(clip, interval_s=1.0, max_frames=600))
+
+    assert frames
+    image = frames[0].image
+    assert image.size == (32, 64)
+    top = image.getpixel((16, 8))
+    bottom = image.getpixel((16, 56))
+    assert isinstance(top, tuple) and isinstance(bottom, tuple)
+    assert top[2] > 200 and top[0] < 60
+    assert bottom[0] > 200 and bottom[2] < 60
+
+
+def test_sample_frames_offsets_start_time(tmp_path: Path) -> None:
+    """Times count from the stream's start, so they match the player's clock."""
+    clip = _make_clip(tmp_path / "offset.mp4", seconds=4, fps=8, start_pts=8 * 5)
+
+    frames = list(sample_frames(clip, interval_s=1.0, max_frames=600))
+
+    assert frames
+    assert frames[0].time_sec < 1.0
+    assert frames[-1].time_sec < 4.0
+
+
+def test_sample_frames_audio_only_yields_nothing(tmp_path: Path) -> None:
+    """A file with no video stream yields no samples."""
+    wav = tmp_path / "silence.wav"
+    with wave.open(str(wav), "wb") as handle:
+        handle.setnchannels(1)
+        handle.setsampwidth(2)
+        handle.setframerate(8000)
+        handle.writeframes(b"\x00\x00" * 800)
+
+    assert list(sample_frames(wav, interval_s=1.0, max_frames=600)) == []
+
+
+def test_sample_frames_undecodable_file_yields_nothing(tmp_path: Path) -> None:
+    """Bytes that are no media at all yield no samples rather than raising."""
+    bogus = tmp_path / "not_media.bin"
+    bogus.write_bytes(b"\x00\x01\x02not media")
+
+    assert list(sample_frames(bogus, interval_s=1.0, max_frames=600)) == []
+
+
+def test_sample_frames_corrupt_file_yields_what_it_has(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A decode error part-way through keeps the samples taken before it, and does not raise."""
+    clip = _make_clip(tmp_path / "clip.mp4", seconds=10, fps=8, gop_size=8)
+    opened = {"count": 0}
+    real_open = av.open
+
+    class _FlakyContainer:
+        """Delegates to a real container; the second one opened fails mid-demux."""
+
+        def __init__(self, real: Any, fail: bool) -> None:
+            self._real = real
+            self._fail = fail
+
+        def __enter__(self) -> _FlakyContainer:
+            self._real.__enter__()
+            return self
+
+        def __exit__(self, *exc: object) -> object:
+            return self._real.__exit__(*exc)
+
+        def demux(self, *args: Any, **kwargs: Any) -> Iterator[Any]:
+            for number, packet in enumerate(self._real.demux(*args, **kwargs)):
+                if self._fail and number >= 20:
+                    raise OSError("injected mid-decode failure")
+                yield packet
+
+        def __getattr__(self, name: str) -> object:
+            return getattr(self._real, name)
+
+    def _flaky_open(*args: Any, **kwargs: Any) -> _FlakyContainer:
+        opened["count"] += 1
+        return _FlakyContainer(real_open(*args, **kwargs), fail=opened["count"] >= 2)
+
+    monkeypatch.setattr(keyframes_module.av, "open", _flaky_open)
+
+    frames = list(sample_frames(clip, interval_s=1.0, max_frames=600))
+
+    assert 1 <= len(frames) < 9
+    assert [f.index for f in frames] == list(range(len(frames)))
+
+
+def test_sample_frames_downscales_to_max_side(tmp_path: Path) -> None:
+    """Frames larger than max_side are scaled down, keeping their aspect."""
+    clip = _make_clip(tmp_path / "wide.mp4", seconds=2, fps=4, width=320, height=180)
+
+    frames = list(sample_frames(clip, interval_s=1.0, max_frames=600, max_side=160))
+
+    assert frames
+    assert all(f.image.size == (160, 90) for f in frames)
+    assert all(f.scale == 0.5 for f in frames)
+
+
+def test_sample_frames_caps_at_max_frames(tmp_path: Path) -> None:
+    """Never more than max_frames samples, whatever the interval."""
+    clip = _make_clip(tmp_path / "clip.mp4", seconds=10, fps=8, gop_size=8)
+
+    frames = list(sample_frames(clip, interval_s=0.25, max_frames=3))
+
+    assert len(frames) == 3
+
+
+class _NonSeekable(io.RawIOBase):
+    """A write-only stream the muxer cannot seek back in, so no duration is written."""
+
+    def __init__(self, sink: io.BufferedWriter) -> None:
+        """Wrap a file.
+
+        Args:
+            sink: The open file.
+        """
+        self._sink = sink
+
+    @override
+    def writable(self) -> bool:
+        """Report the stream as writable.
+
+        Returns:
+            bool: Always ``True``.
+        """
+        return True
+
+    @override
+    def seekable(self) -> bool:
+        """Report the stream as not seekable.
+
+        Returns:
+            bool: Always ``False``.
+        """
+        return False
+
+    @override
+    def write(self, data: Any) -> int:
+        """Pass bytes through.
+
+        Args:
+            data: The bytes.
+
+        Returns:
+            int: How many were written.
+        """
+        return self._sink.write(data)
+
+
+def _make_clip_without_duration(path: Path, *, seconds: int, fps: int) -> Path:
+    """Write a Matroska clip with no duration metadata, as a browser recording has.
+
+    Args:
+        path: Destination file.
+        seconds: Clip length.
+        fps: Frame rate.
+
+    Returns:
+        Path: ``path``.
+    """
+    with open(path, "wb") as raw, av.open(_NonSeekable(raw), mode="w", format="matroska") as container:
+        stream = container.add_stream("mpeg4", rate=fps)
+        assert isinstance(stream, av.VideoStream)
+        stream.width = stream.height = 32
+        stream.pix_fmt = "yuv420p"
+        stream.time_base = Fraction(1, fps)
+        stream.codec_context.gop_size = fps
+        image = Image.new("RGB", (32, 32), (90, 90, 90))
+        for index in range(seconds * fps):
+            frame = av.VideoFrame.from_image(image)
+            frame.pts = index
+            frame.time_base = Fraction(1, fps)
+            for packet in stream.encode(frame):
+                container.mux(packet)
+        for packet in stream.encode():
+            container.mux(packet)
+    return path
+
+
+def test_sample_frames_stretch_without_duration_metadata(tmp_path: Path) -> None:
+    """A clip whose container records no duration is still sampled over its whole length."""
+    clip = _make_clip_without_duration(tmp_path / "recorded.mkv", seconds=60, fps=4)
+    with av.open(str(clip)) as container:
+        assert container.duration is None and container.streams.video[0].duration is None
+
+    frames = list(sample_frames(clip, interval_s=1.0, max_frames=10))
+
+    assert len(frames) <= 10 and frames[-1].time_sec >= 50.0
+
+
+def test_decoder_threads_follow_the_cpus_the_process_may_use(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Decoder threads split the CPUs this process may run on (not the host's) among the job workers."""
+    monkeypatch.setattr(keyframes_module.os, "cpu_count", lambda: 64)
+    monkeypatch.setattr(keyframes_module.os, "sched_getaffinity", lambda pid: {0, 1, 2, 3}, raising=False)
+    monkeypatch.setattr(keyframes_module, "load_job_concurrency", lambda: 2)
+    assert keyframes_module._decoder_threads() == 2
+
+    monkeypatch.delattr(keyframes_module.os, "sched_getaffinity", raising=False)
+    assert keyframes_module._decoder_threads() == 32
+
+    monkeypatch.setattr(keyframes_module.os, "cpu_count", lambda: None)
+    assert keyframes_module._decoder_threads() == 1
+
+
+def test_sample_frames_applies_negative_display_rotation(tmp_path: Path) -> None:
+    """A -90 degree rotation (the usual phone tag) turns the other way: the red half ends up on top."""
+    clip = _make_clip(tmp_path / "portrait.mp4", seconds=2, fps=8, width=64, height=32, rotation=-90)
+
+    frames = list(sample_frames(clip, interval_s=1.0, max_frames=600))
+
+    assert frames
+    image = frames[0].image
+    assert image.size == (32, 64)
+    top = image.getpixel((16, 8))
+    bottom = image.getpixel((16, 56))
+    assert isinstance(top, tuple) and isinstance(bottom, tuple)
+    assert top[0] > 200 and top[2] < 60
+    assert bottom[2] > 200 and bottom[0] < 60
+
+
+def _make_with_cover_art(path: Path, *, video_seconds: int = 0) -> Path:
+    """Write an mp4 with a cover image (an attached picture) and, optionally, a real video after it.
+
+    Args:
+        path: Destination ``.mp4`` file.
+        video_seconds: Length of a real video stream added after the cover; ``0`` for none.
+
+    Returns:
+        Path: ``path``.
+    """
+    from av.stream import Disposition
+
+    with av.open(str(path), mode="w") as container:
+        cover = container.add_stream("mjpeg", rate=1)
+        assert isinstance(cover, av.VideoStream)
+        cover.width = cover.height = 32
+        cover.pix_fmt = "yuvj420p"
+        cover.disposition = Disposition.attached_pic
+        video = None
+        if video_seconds:
+            video = container.add_stream("mpeg4", rate=4)
+            assert isinstance(video, av.VideoStream)
+            video.width = video.height = 32
+            video.pix_fmt = "yuv420p"
+            video.time_base = Fraction(1, 4)
+            video.codec_context.gop_size = 4
+        picture = av.VideoFrame.from_image(Image.new("RGB", (32, 32), (200, 0, 0)))
+        picture.pts = 0
+        picture.time_base = Fraction(1, 1)
+        for packet in [*cover.encode(picture), *cover.encode()]:
+            container.mux(packet)
+        if video is not None:
+            for index in range(video_seconds * 4):
+                frame = av.VideoFrame.from_image(Image.new("RGB", (32, 32), (0, 0, 200)))
+                frame.pts = index
+                frame.time_base = Fraction(1, 4)
+                for packet in video.encode(frame):
+                    container.mux(packet)
+            for packet in video.encode():
+                container.mux(packet)
+    return path
+
+
+def test_sample_frames_never_samples_cover_art(tmp_path: Path) -> None:
+    """A file whose only picture is its cover art (an attached picture) yields no samples."""
+    clip = _make_with_cover_art(tmp_path / "cover.mp4")
+
+    assert list(sample_frames(clip, interval_s=1.0, max_frames=600)) == []
+
+
+def test_sample_frames_skips_cover_art_before_the_video(tmp_path: Path) -> None:
+    """With cover art listed before the real video, the video is what gets sampled."""
+    clip = _make_with_cover_art(tmp_path / "both.mp4", video_seconds=5)
+
+    frames = list(sample_frames(clip, interval_s=1.0, max_frames=600))
+
+    assert 4 <= len(frames) <= 6
+    pixel = frames[0].image.getpixel((16, 16))
+    assert isinstance(pixel, tuple) and pixel[2] > 150 and pixel[0] < 60
+
+
+def test_video_stream_skips_attached_pictures() -> None:
+    """The stream sampled is the first video stream that is not an attached picture (cover art)."""
+    from types import SimpleNamespace
+
+    from av.stream import Disposition
+
+    cover = SimpleNamespace(disposition=Disposition.attached_pic)
+    video = SimpleNamespace(disposition=Disposition.default)
+
+    def container(*streams: SimpleNamespace) -> Any:
+        return SimpleNamespace(streams=SimpleNamespace(video=list(streams)))
+
+    assert keyframes_module._video_stream(container(cover, video)) is video
+    assert keyframes_module._video_stream(container(video, cover)) is video
+    assert keyframes_module._video_stream(container(cover)) is None
+    assert keyframes_module._video_stream(container()) is None

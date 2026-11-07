@@ -11,6 +11,7 @@ import pytest
 
 from nextext import audit as audit_module
 from nextext.audit import (
+    FACE_STAGE,
     SERVICE,
     TRANSCRIPTION_STAGE,
     AuditSink,
@@ -22,7 +23,7 @@ from nextext.audit import (
 from nextext.core.inference_trace import record_inference
 from nextext.utils.audit_event import Actor, AuditEmitter
 from nextext.utils.audit_runtime import ContainerAuditStream
-from tests.audit_helpers import AuditCapture, capturing_job_audit
+from tests.audit_helpers import AuditCapture, assert_no_content, capturing_job_audit
 
 
 def test_long_id_lists_are_continued_never_cut() -> None:
@@ -100,10 +101,52 @@ def test_joined_analyses_follow_the_transcript_columns() -> None:
         named_entities=False,
         summary=True,
         frame_captions=False,
+        faces=False,
         hate_speech=True,
     )
     assert analyses == ["transcript", "diarization", "translation", "word_counts", "summary", "hate_speech"]
     assert speaker is True
+
+
+def test_joined_analyses_lists_faces() -> None:
+    """The face stage is listed after the frame captions whenever it ran."""
+    analyses, speaker = joined_analyses(
+        transcript_columns=[],
+        word_counts=False,
+        named_entities=False,
+        summary=False,
+        frame_captions=True,
+        faces=True,
+        hate_speech=False,
+    )
+    assert analyses == ["frame_captions", "faces"]
+    assert speaker is False
+
+
+def test_face_stage_records_frames_and_tracks_only() -> None:
+    """Detection and grouping are two transfers of the upload, recorded by what was judged."""
+    audit, capture = capturing_job_audit("f" * 32, "alice.example")
+    collect = audit.collect({"files": 1})
+
+    with audit.stage(FACE_STAGE) as notes:
+        record_inference("face_detect", "faces", ok=True)
+        record_inference("face_detect", "faces", ok=False)
+        record_inference("face_group", "faces", ok=True)
+        notes.result("face_detect", frames=12)
+        notes.result("face_group", tracks=3)
+
+    detect = capture.one("ai_call", "ai.detect_faces")
+    group = capture.one("ai_call", "ai.group_faces")
+    assert (detect["recipient"], group["recipient"]) == ("inference:faces", "inference:faces")
+    assert detect["criteria"] == {"requests": 2, "failed_requests": 1, "frames": 12}
+    assert group["criteria"] == {"requests": 1, "tracks": 3}
+    assert detect["ai"]["sources"] == [collect["event_id"]]
+    assert group["ai"]["sources"] == [collect["event_id"], detect["event_id"]]
+    assert detect["ai"]["model_alias"] == "faces"
+    for event in (detect, group):
+        assert "output_sha256" not in event["ai"]
+        assert_no_content(event, "person", "Person", "persons", "faces_found", "sha256:")
+    capture.assert_chain_ok()
 
 
 def test_build_emitter_honours_the_output_mode(tmp_path: Path) -> None:

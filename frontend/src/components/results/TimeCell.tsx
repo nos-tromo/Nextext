@@ -1,8 +1,9 @@
 import { useT } from '../../i18n/LanguageContext'
 import { useMediaPlayerStore } from '../../lib/mediaPlayerStore'
+import { cn } from '../../lib/cn'
 
-interface TimeCellProps {
-  /** Formatted timestamp shown in the cell, e.g. `0:00:05` or `01:15`. */
+interface TimeButtonProps {
+  /** Formatted timestamp shown, e.g. `0:00:05` or `01:15`. */
   label: string
   /** Offset to seek to; `null` when the timestamp could not be parsed. */
   seconds: number | null
@@ -14,37 +15,48 @@ interface TimeCellProps {
 }
 
 /**
- * A transcript / visual-context timestamp, clickable when there is media to
- * play.
+ * A timestamp that opens the player there, when there is media to play.
  *
  * Degrades to plain text rather than a dead control whenever playback is
- * impossible — the upload has been deleted, or this row's timestamp could not
- * be parsed into an offset.
+ * impossible — the upload has been deleted, or the timestamp could not be
+ * parsed into an offset.
  *
  * @param label - The timestamp text to display.
  * @param seconds - Offset to seek to, or `null` to render plain text.
- * @param jobId - Job whose recording this row belongs to.
+ * @param jobId - Job whose recording the timestamp belongs to.
  * @param fileName - Original upload name for the player title.
  * @param mediaUrl - Capability URL, or `null` to render plain text.
  */
-export function TimeCell({ label, seconds, jobId, fileName, mediaUrl }: TimeCellProps) {
+export function TimeButton({ label, seconds, jobId, fileName, mediaUrl }: TimeButtonProps) {
   const t = useT()
   const open = useMediaPlayerStore((s) => s.open)
 
   if (mediaUrl === null || seconds === null) {
-    return <td className="whitespace-nowrap px-4 py-2 align-top tabular-nums text-muted-foreground">{label}</td>
+    return <span className="tabular-nums text-muted-foreground">{label}</span>
   }
 
   return (
-    <td className="whitespace-nowrap px-4 py-2 align-top tabular-nums">
-      <button
-        type="button"
-        aria-label={t('player.play_from', { time: label })}
-        onClick={() => open({ jobId, fileName, mediaUrl }, seconds)}
-        className="rounded text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
-      >
-        {label}
-      </button>
+    <button
+      type="button"
+      aria-label={t('player.play_from', { time: label })}
+      onClick={() => open({ jobId, fileName, mediaUrl }, seconds)}
+      className="rounded tabular-nums text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+    >
+      {label}
+    </button>
+  )
+}
+
+/**
+ * A transcript / visual-context table cell holding a {@link TimeButton}.
+ *
+ * @param props - Same as {@link TimeButton}.
+ */
+export function TimeCell(props: TimeButtonProps) {
+  const playable = props.mediaUrl !== null && props.seconds !== null
+  return (
+    <td className={cn('whitespace-nowrap px-4 py-2 align-top tabular-nums', !playable && 'text-muted-foreground')}>
+      <TimeButton {...props} />
     </td>
   )
 }

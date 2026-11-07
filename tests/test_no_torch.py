@@ -24,6 +24,12 @@ import pytest
         "accelerate",
         "scipy",
         "sklearn",
+        "cv2",
+        "onnxruntime",
+        "insightface",
+        "mediapipe",
+        "dlib",
+        "face_recognition",
     ],
 )
 def test_local_ml_runtimes_are_not_installed(package: str) -> None:

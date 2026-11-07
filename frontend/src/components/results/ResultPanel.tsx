@@ -7,6 +7,7 @@ import { resultSkipMessageKey } from '../../lib/outcomeMessages'
 import { DownloadButtons } from './DownloadButtons'
 import { TranscriptTab } from './TranscriptTab'
 import { VisualContextTab } from './VisualContextTab'
+import { FacesTab } from './FacesTab'
 import { SummaryTab } from './SummaryTab'
 import { WordCountsTab } from './WordCountsTab'
 import { WordCloudTab } from './WordCloudTab'
@@ -14,6 +15,7 @@ import { EntitiesTab } from './EntitiesTab'
 import { HateSpeechTab } from './HateSpeechTab'
 import { cn } from '../../lib/cn'
 import { useMediaPlayerStore } from '../../lib/mediaPlayerStore'
+import { useAppConfig } from '../../hooks/useAppConfig'
 
 interface ResultPanelProps {
   jobId: string
@@ -24,6 +26,7 @@ interface ResultPanelProps {
 type TabId =
   | 'transcript'
   | 'visual_context'
+  | 'faces'
   | 'summary'
   | 'words'
   | 'wordcloud'
@@ -52,6 +55,8 @@ export function ResultPanel({ jobId, fileName }: ResultPanelProps) {
   const query = useJobResult(jobId, true)
   const [activeTab, setActiveTab] = useState<TabId>('transcript')
   const openPlayer = useMediaPlayerStore((s) => s.open)
+  // Whether "not grouped" is news: only where the deployment groups faces.
+  const groupCapable = useAppConfig().data?.faces === 'group'
 
   // Derive stem: strip everything from the last '.' onward (or use the full
   // name). Fall back to 'result' so an empty/extension-only name can't yield
@@ -107,6 +112,12 @@ export function ResultPanel({ jobId, fileName }: ResultPanelProps) {
   // tab — the operator may have captioning switched off.
   if ((result.frame_captions && result.frame_captions.length > 0) || result.keyframes_url) {
     availableTabs.push({ id: 'visual_context', label: t('results.tab_visual_context') })
+  }
+  // Who is on screen when: also an account of the source material. Present
+  // whenever the stage ran on a video, so an empty or unavailable result
+  // still says so instead of the tab silently missing.
+  if (result.faces) {
+    availableTabs.push({ id: 'faces', label: t('results.tab_faces') })
   }
   if (result.summary) {
     availableTabs.push({ id: 'summary', label: t('results.tab_summary') })
@@ -202,6 +213,16 @@ export function ResultPanel({ jobId, fileName }: ResultPanelProps) {
             stem={stem}
             fileName={fileName}
             mediaUrl={result.media_url}
+          />
+        )}
+        {resolvedTab === 'faces' && result.faces && (
+          <FacesTab
+            jobId={jobId}
+            faces={result.faces}
+            stem={stem}
+            fileName={fileName}
+            mediaUrl={result.media_url}
+            groupCapable={groupCapable}
           />
         )}
         {resolvedTab === 'summary' && (

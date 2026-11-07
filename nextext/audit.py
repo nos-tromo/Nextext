@@ -44,6 +44,7 @@ from nextext.utils.audit_runtime import id_chunks, open_audit_stream
 
 __all__ = [
     "CAPTION_STAGE",
+    "FACE_STAGE",
     "FRAME_HATE_SPEECH_STAGE",
     "HATE_SPEECH_STAGE",
     "SERVICE",
@@ -326,6 +327,13 @@ TRANSCRIPTION_STAGE: Final[Mapping[str, AiSpec]] = {
 CAPTION_STAGE: Final[Mapping[str, AiSpec]] = {
     "chat": AiSpec("ai.caption_frames", "inference:chat", (MEDIA,)),
 }
+#: Faces: sampled frames go to the faces service for detection, and in
+#: ``group`` mode crops of the detected faces go back to it for grouping.
+#: Recorded by what was judged (frames, tracks), never by what was found.
+FACE_STAGE: Final[Mapping[str, AiSpec]] = {
+    "face_detect": AiSpec("ai.detect_faces", "inference:faces", (MEDIA,)),
+    "face_group": AiSpec("ai.group_faces", "inference:faces", (MEDIA, "ai.detect_faces")),
+}
 #: Segment translation by the chat model.
 TRANSLATION_STAGE: Final[Mapping[str, AiSpec]] = {
     "chat": AiSpec("ai.translate", "inference:translate", ("ai.transcribe", "ai.sentence_restore")),
@@ -388,6 +396,7 @@ def joined_analyses(
     named_entities: bool,
     summary: bool,
     frame_captions: bool,
+    faces: bool,
     hate_speech: bool,
 ) -> tuple[list[str], bool]:
     """Name the analyses a job's result joins, for its ``combine`` event.
@@ -401,6 +410,8 @@ def joined_analyses(
         named_entities: Whether the result holds named entities.
         summary: Whether the result holds a summary.
         frame_captions: Whether the result holds keyframe captions.
+        faces: Whether the face stage ran — whatever it found, so the event
+            never shows whether anyone was on screen.
         hate_speech: Whether hate-speech detection ran — whatever it found,
             so the event never shows whether it found anything.
 
@@ -418,6 +429,7 @@ def joined_analyses(
         ("named_entities", named_entities),
         ("summary", summary),
         ("frame_captions", frame_captions),
+        ("faces", faces),
         ("hate_speech", hate_speech),
     )
     return [name for name, joined in present if joined], speaker_attributed

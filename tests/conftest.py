@@ -91,6 +91,21 @@ def _hermetic_audit_env(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture(autouse=True)
+def _hermetic_faces_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Clear the face-stage variables before every test.
+
+    A local ``.env`` that switches faces on or points them at a service would
+    otherwise change what every job runs and what ``GET /config`` reports;
+    tests that need one set it explicitly.
+
+    Args:
+        monkeypatch: Fixture for patching environment variables.
+    """
+    for name in ("NEXTEXT_FACES", "FACES_API_BASE", "FACES_TIMEOUT", "FACES_INTERVAL_S", "FACES_MAX_FRAMES"):
+        monkeypatch.delenv(name, raising=False)
+
+
+@pytest.fixture(autouse=True)
 def _hermetic_cli_retention(monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory) -> None:
     """Point the CLI-file sweep at a throwaway directory and clear its variables.
 

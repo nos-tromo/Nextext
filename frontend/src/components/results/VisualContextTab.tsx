@@ -4,6 +4,7 @@ import { useMediaPlayerStore } from '../../lib/mediaPlayerStore'
 import { useFollowActiveRow } from '../../hooks/useFollowActiveRow'
 import { TimeCell } from './TimeCell'
 import { cn } from '../../lib/cn'
+import { formatStamp } from '../../lib/formatStamp'
 import type { JobResult } from '../../api/types'
 
 interface VisualContextTabProps {
@@ -12,21 +13,6 @@ interface VisualContextTabProps {
   stem: string
   fileName: string
   mediaUrl: string | null
-}
-
-/**
- * Formats a caption timestamp as `mm:ss`, with minutes growing past 60.
- *
- * Mirrors the backend's `_timestamp` so the on-screen stamps match the
- * downloaded `visual_context.txt` exactly.
- *
- * @param seconds - Offset from the start of the clip.
- * @returns Zero-padded `mm:ss` stamp.
- */
-function formatStamp(seconds: number): string {
-  const total = Number.isFinite(seconds) && seconds > 0 ? Math.floor(seconds) : 0
-  const minutes = Math.floor(total / 60)
-  return `${String(minutes).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`
 }
 
 /**

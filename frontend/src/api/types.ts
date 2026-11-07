@@ -20,6 +20,8 @@ export interface JobOptions {
   hate_speech: boolean
   /** Sample video keyframes and describe them. Independent of `summarization`. */
   keyframes: boolean
+  /** Find the faces in the video. Refused (422) while the operator switch is off. */
+  faces: boolean
 }
 
 export interface JobCreateResponse {
@@ -80,6 +82,39 @@ export interface FrameCaption {
   caption: string
 }
 
+/** One span of time a face entry was on screen, in seconds. */
+export interface FaceAppearance {
+  start_seconds: number
+  end_seconds: number
+}
+
+/** One person (grouped by the faces service) or one face track (ungrouped). */
+export interface FaceEntry {
+  /** Position by first appearance, from 1. */
+  number: number
+  /** Grouped as a person ("Person N"); otherwise a single track ("Face N"). */
+  assigned: boolean
+  first_seen_seconds: number
+  /** Time of the last detection. */
+  last_seen_seconds: number
+  appearances: FaceAppearance[]
+  /** How many sampled frames it was found in. */
+  detections: number
+  /** A small JPEG as a `data:` URI. */
+  thumbnail: string
+  /** The artifact holding the best shot, `face_NNN.jpg`. */
+  best_artifact: string
+}
+
+export interface FacesResult {
+  /** `partial`: detection failed for part of the video; `unavailable`: it never answered. */
+  outcome: 'ok' | 'partial' | 'unavailable'
+  grouped: boolean
+  /** Some faces were dropped by a cap; the most prominent are shown. */
+  truncated: boolean
+  entries: FaceEntry[]
+}
+
 export interface JobResult {
   transcript: TranscriptSegment[]
   transcript_language: string | null
@@ -94,6 +129,8 @@ export interface JobResult {
   /** Descriptions of the sampled keyframes; null unless the job asked for them. */
   frame_captions: FrameCaption[] | null
   hate_speech_findings: HateSpeechFinding[] | null
+  /** The faces of the video; null unless the job asked for them and it had frames. */
+  faces: FacesResult | null
   skipped: boolean
   /** Backend English prose. Never rendered — the SPA localizes the code below. */
   skip_reason: string | null
@@ -225,6 +262,8 @@ export interface AppConfig {
   language: 'en' | 'de'
   /** Audit actions that need a stated purpose (`AUDIT_REQUIRE_PURPOSE`), sorted. */
   require_purpose: string[]
+  /** The operator switch `NEXTEXT_FACES`: the upload form offers faces unless `off`. */
+  faces: 'off' | 'detect' | 'group'
 }
 
 export interface WhoamiResponse {

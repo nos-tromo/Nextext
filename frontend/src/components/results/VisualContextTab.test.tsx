@@ -22,6 +22,7 @@ function makeResult(frame_captions: FrameCaption[] | null, keyframes_url: string
     media_url: null,
     frame_captions,
     hate_speech_findings: null,
+    faces: null,
     skipped: false,
     skip_reason: null,
     skip_reason_code: null,

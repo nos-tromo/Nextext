@@ -677,6 +677,7 @@ def _record_combination(
         named_entities=named_entities,
         summary=summary,
         frame_captions=captions,
+        faces=False,
         hate_speech=hate_speech,
     )
     audit.combine(analyses, speaker_attributed=speaker_attributed)

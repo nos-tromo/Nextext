@@ -49,6 +49,9 @@ class JobOptions(BaseModel):
     visual_context: bool = True
     keyframes_per_minute: int = Field(default_factory=lambda: load_keyframe_defaults().per_minute, ge=0)
     keyframes_max: int = Field(default_factory=lambda: load_keyframe_defaults().max_frames, ge=0, le=200)
+    # The faces of the video (who is on screen when). Refused with 422 while
+    # the operator switch ``NEXTEXT_FACES`` is off.
+    faces: bool = False
 
 
 class JobCreateResponse(BaseModel):
@@ -118,6 +121,40 @@ class FrameCaptionOut(BaseModel):
     caption: str
 
 
+class FaceAppearanceOut(BaseModel):
+    """One span of time a face entry was on screen."""
+
+    start_seconds: float
+    end_seconds: float
+
+
+class FaceEntryOut(BaseModel):
+    """One person (grouped) or one face track (ungrouped) of a video."""
+
+    number: int
+    # True when the faces service grouped it as a person ("Person N");
+    # otherwise a single track ("Face N").
+    assigned: bool
+    first_seen_seconds: float
+    last_seen_seconds: float
+    appearances: list[FaceAppearanceOut]
+    detections: int
+    # A small JPEG as a ``data:`` URI, so looking at the faces is the one
+    # snapshot query rather than one disclosure per image.
+    thumbnail: str
+    # The artifact holding the entry's best shot, ``face_NNN.jpg``.
+    best_artifact: str
+
+
+class FacesOut(BaseModel):
+    """The faces of a video, as the finished snapshot carries them."""
+
+    outcome: Literal["ok", "partial", "unavailable"]
+    grouped: bool
+    truncated: bool
+    entries: list[FaceEntryOut]
+
+
 class JobResult(BaseModel):
     """Aggregate of all per-stage outputs for a single completed job."""
 
@@ -135,6 +172,8 @@ class JobResult(BaseModel):
     media_url: str | None = None
     frame_captions: list[FrameCaptionOut] | None = None
     hate_speech_findings: list[HateSpeechFinding] | None = None
+    # ``None`` when the job did not ask for faces or the file had no frames.
+    faces: FacesOut | None = None
     skipped: bool = False
     # Human-readable fallback prose; the SPA localizes ``skip_reason_code``
     # instead and never renders this string.
@@ -212,6 +251,8 @@ class ConfigResponse(BaseModel):
     # sorted: the SPA's purpose bar warns while none is stated when any is
     # listed, and refuses to save a blank one.
     require_purpose: list[str] = Field(default_factory=list)
+    # The operator switch ``NEXTEXT_FACES``: the SPA offers faces unless off.
+    faces: Literal["off", "detect", "group"] = "off"
 
 
 class WhoamiResponse(BaseModel):
