@@ -23,6 +23,7 @@ upload (:mod:`nextext.api.job_record`).
 from __future__ import annotations
 
 import asyncio
+import base64
 import contextlib
 import fcntl
 import json
@@ -45,6 +46,9 @@ from nextext.api.job_record import JobRecord, read_job_record, write_job_record
 from nextext.api.media_grants import MediaGrant, MediaGrants
 from nextext.api.metrics import record_completed, record_failed, record_skipped
 from nextext.api.schemas import (
+    FaceAppearanceOut,
+    FaceEntryOut,
+    FacesOut,
     FrameCaptionOut,
     HateSpeechFinding,
     JobOptions,
@@ -57,6 +61,7 @@ from nextext.api.schemas import (
 )
 from nextext.audit import (
     CAPTION_STAGE,
+    FACE_STAGE,
     FRAME_HATE_SPEECH_STAGE,
     HATE_SPEECH_STAGE,
     SUMMARY_STAGE,
@@ -72,11 +77,12 @@ from nextext.audit import (
 )
 from nextext.core.audio import AudioDecodeError
 from nextext.core.docint_transcript import parse_hhmmss_to_seconds
+from nextext.core.face_extraction import FacesResult
 from nextext.core.inference_trace import correlate
 from nextext.core.keyframes import extract_keyframe_samples
 from nextext.core.outcomes import FailureCode, SkipReason, skip_reason_text
 from nextext.utils.audit_event import Actor, AuditEmitter, Target
-from nextext.utils.env_cfg import load_job_concurrency, load_media_grant_ttl, load_visual_summary_env
+from nextext.utils.env_cfg import FacesMode, load_job_concurrency, load_media_grant_ttl, load_visual_summary_env
 from nextext.utils.log_cfg import error_label, exception_frames
 
 _TERMINAL_EVENT_NAMES: frozenset[str] = frozenset({"job_completed", "job_failed", "job_cancelled"})
@@ -85,6 +91,7 @@ _TERMINAL_EVENT_NAMES: frozenset[str] = frozenset({"job_completed", "job_failed"
 PIPELINE_STAGE_LABELS: tuple[str, ...] = (
     "Transcribing",
     "Describing keyframes",
+    "Detecting faces",
     "Translating",
     "Running word-level analysis",
     "Summarizing",
@@ -93,6 +100,7 @@ PIPELINE_STAGE_LABELS: tuple[str, ...] = (
 
 STAGE_TRANSCRIBE: Final[int] = PIPELINE_STAGE_LABELS.index("Transcribing")
 STAGE_KEYFRAMES: Final[int] = PIPELINE_STAGE_LABELS.index("Describing keyframes")
+STAGE_FACES: Final[int] = PIPELINE_STAGE_LABELS.index("Detecting faces")
 STAGE_TRANSLATE: Final[int] = PIPELINE_STAGE_LABELS.index("Translating")
 STAGE_WORDS: Final[int] = PIPELINE_STAGE_LABELS.index("Running word-level analysis")
 STAGE_SUMMARY: Final[int] = PIPELINE_STAGE_LABELS.index("Summarizing")
@@ -169,6 +177,9 @@ class JobState:
     # owns the tempdir cleanup (in its finally block) and suppresses further
     # event dispatch for the no-longer-listed job.
     deleted: bool = False
+    # The operator switch (``NEXTEXT_FACES``) the job runs under, handed down
+    # by the manager that read it at startup.
+    faces_mode: FacesMode = "off"
     # The job's audit trail: every event of the job carries the actor,
     # purpose and request id of the request that created it.
     audit: JobAudit = field(kw_only=True, repr=False)
@@ -389,6 +400,7 @@ def _serialize_result(result: dict[str, Any], media_url: str | None = None) -> J
         ]
 
     return JobResult(
+        faces=_serialize_faces(result.get("faces")),
         transcript=transcript,
         transcript_language=result.get("transcript_language"),
         resolved_src_lang=result.get("resolved_src_lang"),
@@ -405,6 +417,41 @@ def _serialize_result(result: dict[str, Any], media_url: str | None = None) -> J
         skip_reason_code=result.get("skip_reason_code"),
         task=result.get("task", "transcribe"),
     )
+
+
+def _serialize_faces(faces: Any) -> FacesOut | None:
+    """Convert a face result into its snapshot form, thumbnails as ``data:`` URIs.
+
+    Args:
+        faces: The result's ``faces`` entry.
+
+    Returns:
+        FacesOut | None: The faces, or ``None`` when the job has none.
+    """
+    if not isinstance(faces, FacesResult):
+        return None
+    seen: dict[int, tuple[float, float]] = {}
+    for row in faces.rows:
+        first, last = seen.get(row.entry, (row.time_sec, row.time_sec))
+        seen[row.entry] = (min(first, row.time_sec), max(last, row.time_sec))
+    entries: list[FaceEntryOut] = []
+    for entry in faces.entries:
+        first_seen, last_seen = seen.get(entry.number, (entry.appearances[0][0], entry.appearances[-1][1]))
+        entries.append(
+            FaceEntryOut(
+                number=entry.number,
+                assigned=entry.assigned,
+                first_seen_seconds=first_seen,
+                last_seen_seconds=last_seen,
+                appearances=[
+                    FaceAppearanceOut(start_seconds=start, end_seconds=end) for start, end in entry.appearances
+                ],
+                detections=entry.detections,
+                thumbnail="data:image/jpeg;base64," + base64.b64encode(entry.thumbnail).decode("ascii"),
+                best_artifact=f"face_{entry.number:03d}.jpg",
+            )
+        )
+    return FacesOut(outcome=faces.outcome, grouped=faces.grouped, truncated=faces.truncated, entries=entries)
 
 
 def _requested_analyses(options: JobOptions) -> list[str]:
@@ -424,6 +471,7 @@ def _requested_analyses(options: JobOptions) -> list[str]:
         ("summary", options.summarization),
         ("hate_speech", options.hate_speech),
         ("keyframes", options.keyframes),
+        ("faces", options.faces),
     ):
         if wanted:
             requested.append(name)
@@ -521,6 +569,7 @@ def _run_pipeline_blocking(state: JobState, push_event: PushEvent) -> dict[str, 
     from nextext.pipeline import (
         column_text,
         effective_text_column,
+        faces_pipeline,
         frame_hate_speech_pipeline,
         hate_speech_pipeline,
         normalize_language_code,
@@ -542,6 +591,7 @@ def _run_pipeline_blocking(state: JobState, push_event: PushEvent) -> dict[str, 
         "hate_speech": opts.hate_speech,
         "keyframes": opts.keyframes,
         "visual_context": opts.visual_context,
+        "faces": opts.faces,
     }
     total_stages = len(PIPELINE_STAGE_LABELS)
 
@@ -695,6 +745,33 @@ def _run_pipeline_blocking(state: JobState, push_event: PushEvent) -> dict[str, 
         logger.info("Job {} keyframes not requested.", state.job_id)
         _complete(STAGE_KEYFRAMES, {"skipped": True})
 
+    # Faces ------------------------------------------------------------------
+    # Its own opt-in stage, gated by the operator switch too. It runs before
+    # the no-speech short-circuit — a silent video still has faces — never
+    # touches the chat provider, and never fails the job: recorded by what it
+    # judged (frames, tracks), never by what it found.
+    _notify(STAGE_FACES)
+    faces_result: FacesResult | None = None
+    faces_mode = state.faces_mode
+    if file_opts["faces"] and faces_mode != "off":
+        with audit.stage(FACE_STAGE) as notes:
+            try:
+                faces_result = faces_pipeline(state.file_path, mode=faces_mode)
+            except Exception as exc:
+                logger.warning("Job {} faces unavailable: {}", state.job_id, error_label(exc))
+            if faces_result is not None:
+                notes.result("face_detect", frames=faces_result.frames_sent)
+                if faces_result.tracks_sent:
+                    notes.result("face_group", tracks=faces_result.tracks_sent)
+        _complete(
+            STAGE_FACES,
+            {"face_frames": faces_result.frames_sent, "faces": len(faces_result.entries)}
+            if faces_result is not None
+            else {"skipped": True},
+        )
+    else:
+        _complete(STAGE_FACES, {"skipped": True})
+
     visual_context = format_visual_context(captions) if captions else None
 
     if outcome.is_empty:
@@ -737,6 +814,7 @@ def _run_pipeline_blocking(state: JobState, push_event: PushEvent) -> dict[str, 
             "keyframe_times": keyframe_times,
             "_keyframes_url": keyframes_url,
             "frame_captions": captions or None,
+            "faces": faces_result,
         }
 
     # Translation -------------------------------------------------------------
@@ -779,6 +857,7 @@ def _run_pipeline_blocking(state: JobState, push_event: PushEvent) -> dict[str, 
         "keyframe_times": keyframe_times,
         "_keyframes_url": keyframes_url,
         "frame_captions": captions or None,
+        "faces": faces_result,
     }
 
     # Word-level analysis -----------------------------------------------------
@@ -873,6 +952,7 @@ class JobManager:
         concurrency: int | None = None,
         *,
         emitter: AuditEmitter,
+        faces_mode: FacesMode = "off",
     ) -> None:
         """Initialize the manager.
 
@@ -886,6 +966,9 @@ class JobManager:
                 (``NEXTEXT_JOB_CONCURRENCY``, itself defaulting to ``1``).
             emitter: The process's started audit emitter, which every job
                 event is written to.
+            faces_mode: The operator switch ``NEXTEXT_FACES``, read once at
+                startup; every job runs under it, and ``off`` refuses jobs
+                that ask for faces.
         """
         resolved = concurrency if concurrency is not None else load_job_concurrency()
         self._jobs: dict[str, JobState] = {}
@@ -908,6 +991,7 @@ class JobManager:
         # Playback grants (``POST /jobs/{id}/media-grant``): in memory like the
         # jobs, revoked with them.
         self.media_grants = MediaGrants(load_media_grant_ttl())
+        self.faces_mode: FacesMode = faces_mode
 
     async def start(self) -> None:
         """Take the job directory and remove what a previous process left in it.
@@ -1110,6 +1194,7 @@ class JobManager:
             source_file_hash=source_file_hash,
             options=options,
             created_at=created_at,
+            faces_mode=self.faces_mode,
             audit=audit,
         )
         async with self._lock:
