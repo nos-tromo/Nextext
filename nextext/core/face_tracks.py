@@ -194,7 +194,14 @@ def is_cut(prev: np.ndarray | None, cur: np.ndarray) -> bool:
     return float(np.mean(np.abs(cur - prev))) > CUT_THRESHOLD
 
 
-def assign_tracks(tracks: list[Track], detections: Sequence[Detection], *, sample: int, cut: bool) -> list[Track]:
+def assign_tracks(
+    tracks: list[Track],
+    detections: Sequence[Detection],
+    *,
+    sample: int,
+    cut: bool,
+    open_tracks: list[Track] | None = None,
+) -> list[Track]:
     """Link one sample's detections to open tracks, opening new tracks for the rest.
 
     Call it once per sample, in sample order, also for a sample without
@@ -205,22 +212,34 @@ def assign_tracks(tracks: list[Track], detections: Sequence[Detection], *, sampl
     :data:`MAX_AREA_RATIO`; pairs are taken greedily by descending IoU, and a
     track takes at most one detection per sample.
 
+    A caller that keeps the open tracks in a list of its own passes it as
+    ``open_tracks``: only those are looked at, and the list is kept in step
+    (closed tracks leave it, new ones join), so the work per sample does not
+    grow with every track the video ever had.
+
     Args:
-        tracks: Every track so far; extended and updated in place.
+        tracks: Every track so far, in creation order; new tracks are appended.
         detections: This sample's detections.
         sample: This sample's index.
         cut: Whether this sample opens a new shot.
+        open_tracks: The tracks still open, maintained in place; derived from
+            ``tracks`` when omitted.
 
     Returns:
         list[Track]: The track each detection now belongs to, in the order of
             ``detections``.
     """
-    for track in tracks:
-        if not track.closed and (cut or track.last_sample < sample - MAX_SAMPLE_GAP):
+    if open_tracks is None:
+        open_tracks = [track for track in tracks if not track.closed]
+    still_open: list[Track] = []
+    for track in open_tracks:
+        if cut or track.last_sample < sample - MAX_SAMPLE_GAP:
             track.closed = True
-    open_tracks = [track for track in tracks if not track.closed]
+        else:
+            still_open.append(track)
+    open_tracks[:] = still_open
     pairs: list[tuple[float, int, int]] = []
-    for track_index, track in enumerate(open_tracks):
+    for track_index, track in enumerate(still_open):
         last_box = track.detections[-1].box
         for detection_index, detection in enumerate(detections):
             overlap = iou(last_box, detection.box)
@@ -233,14 +252,15 @@ def assign_tracks(tracks: list[Track], detections: Sequence[Detection], *, sampl
         if track_index in taken or owners[detection_index] is not None:
             continue
         taken.add(track_index)
-        owners[detection_index] = open_tracks[track_index]
-    next_id = max((track.id for track in tracks), default=-1) + 1
+        owners[detection_index] = still_open[track_index]
+    next_id = tracks[-1].id + 1 if tracks else 0
     result: list[Track] = []
     for detection, owner in zip(detections, owners, strict=True):
         if owner is None:
             owner = Track(id=next_id)
             next_id += 1
             tracks.append(owner)
+            open_tracks.append(owner)
         owner.detections.append(detection)
         result.append(owner)
     return result

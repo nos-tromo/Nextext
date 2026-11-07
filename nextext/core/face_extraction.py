@@ -322,6 +322,7 @@ class _Extraction:
         self.interval_s = interval_s
         self.config = config
         self.tracks: list[Track] = []
+        self.open_tracks: list[Track] = []
         self.crops: dict[int, _TrackCrops] = {}
         self.sample_times: list[float] = []
         # Sample -> how far the sampler scaled that frame down, for reporting
@@ -375,7 +376,7 @@ class _Extraction:
                 else:
                     found = image_faces
             detections = self._detections(frame, found)
-            owners = assign_tracks(self.tracks, detections, sample=frame.index, cut=cut)
+            owners = assign_tracks(self.tracks, detections, sample=frame.index, cut=cut, open_tracks=self.open_tracks)
             for detection, track in zip(detections, owners, strict=True):
                 self._keep(frame, detection, track)
         self._prune_closed()
@@ -447,6 +448,15 @@ class _Extraction:
                 kept.group.sort(key=lambda item: item[0], reverse=True)
                 del kept.group[GROUP_FACES_PER_TRACK:]
 
+    def tracks_with_crops(self) -> list[Track]:
+        """The tracks whose crops are still kept, without walking every track ever made.
+
+        Returns:
+            list[Track]: Those tracks (track ids are their position in
+                :attr:`tracks`).
+        """
+        return [self.tracks[track_id] for track_id in self.crops]
+
     @property
     def stopped(self) -> bool:
         """Whether the faces service has failed too often in a row to keep trying.
@@ -509,7 +519,7 @@ class _Extraction:
         closed tracks hold crops, those ranked below them can never be among
         the final ones; dropping them bounds memory for a crowded video.
         """
-        closed = [track for track in self.tracks if track.closed and track.id in self.crops]
+        closed = [track for track in self.tracks_with_crops() if track.closed]
         if len(closed) <= MAX_TRACKS:
             return
         closed.sort(key=self._rank, reverse=True)
@@ -534,7 +544,7 @@ class _Extraction:
                 tracks_sent=0,
             )
         interval = self.interval()
-        kept = [track for track in self.tracks if track.id in self.crops]
+        kept = sorted(self.tracks_with_crops(), key=lambda track: track.id)
         if len(kept) > MAX_TRACKS:
             kept.sort(key=self._rank, reverse=True)
             kept = sorted(kept[:MAX_TRACKS], key=lambda track: track.id)
