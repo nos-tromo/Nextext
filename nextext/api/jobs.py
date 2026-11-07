@@ -35,7 +35,7 @@ from collections.abc import AsyncIterator, Callable, Hashable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 
 import pandas as pd
 from loguru import logger
@@ -90,6 +90,13 @@ PIPELINE_STAGE_LABELS: tuple[str, ...] = (
     "Summarizing",
     "Detecting hate speech",
 )
+
+STAGE_TRANSCRIBE: Final[int] = PIPELINE_STAGE_LABELS.index("Transcribing")
+STAGE_KEYFRAMES: Final[int] = PIPELINE_STAGE_LABELS.index("Describing keyframes")
+STAGE_TRANSLATE: Final[int] = PIPELINE_STAGE_LABELS.index("Translating")
+STAGE_WORDS: Final[int] = PIPELINE_STAGE_LABELS.index("Running word-level analysis")
+STAGE_SUMMARY: Final[int] = PIPELINE_STAGE_LABELS.index("Summarizing")
+STAGE_HATE_SPEECH: Final[int] = PIPELINE_STAGE_LABELS.index("Detecting hate speech")
 
 
 def _utcnow() -> datetime:
@@ -603,7 +610,7 @@ def _run_pipeline_blocking(state: JobState, push_event: PushEvent) -> dict[str, 
     audit = state.audit
 
     # Transcription -----------------------------------------------------------
-    _notify(0)
+    _notify(STAGE_TRANSCRIBE)
     with audit.stage(TRANSCRIPTION_STAGE) as notes:
         outcome = transcription_pipeline(
             file_path=state.file_path,
@@ -628,10 +635,10 @@ def _run_pipeline_blocking(state: JobState, push_event: PushEvent) -> dict[str, 
             state.job_id,
             reason_code or "unknown",
         )
-        _complete(0, {"transcript_segments": 0, "skipped": True, "skip_reason_code": reason_code})
+        _complete(STAGE_TRANSCRIBE, {"transcript_segments": 0, "skipped": True, "skip_reason_code": reason_code})
     else:
         _complete(
-            0,
+            STAGE_TRANSCRIBE,
             {
                 "transcript_segments": len(df),
                 "resolved_src_lang": file_opts["src_lang"],
@@ -646,7 +653,7 @@ def _run_pipeline_blocking(state: JobState, push_event: PushEvent) -> dict[str, 
     # client that wants the frames but not the words) and the operator-level
     # ``NEXTEXT_VISUAL_SUMMARY``. Either one off leaves the sampled frames
     # sampled and downloadable, and skips the provider entirely.
-    _notify(1)
+    _notify(STAGE_KEYFRAMES)
     keyframes: list[bytes] = []
     keyframe_times: list[float] = []
     captions: list[FrameCaption] = []
@@ -682,10 +689,10 @@ def _run_pipeline_blocking(state: JobState, push_event: PushEvent) -> dict[str, 
                     logger.warning("Job {} visual context unavailable: {}", state.job_id, error_label(exc))
                     captions = []
                 notes.result("chat", text=format_visual_context(captions) if captions else None)
-        _complete(1, {"keyframes": len(keyframes), "frame_captions": len(captions)})
+        _complete(STAGE_KEYFRAMES, {"keyframes": len(keyframes), "frame_captions": len(captions)})
     else:
         logger.info("Job {} keyframes not requested.", state.job_id)
-        _complete(1, {"skipped": True})
+        _complete(STAGE_KEYFRAMES, {"skipped": True})
 
     visual_context = format_visual_context(captions) if captions else None
 
@@ -695,7 +702,7 @@ def _run_pipeline_blocking(state: JobState, push_event: PushEvent) -> dict[str, 
         # source in their own right — so a silent video yields one.
         visual_summary: str | None = None
         if file_opts["summarization"] and visual_context:
-            _notify(4)
+            _notify(STAGE_SUMMARY)
             with audit.stage(VISUAL_SUMMARY_STAGE) as notes:
                 visual_summary = summarization_pipeline(
                     "",
@@ -703,15 +710,15 @@ def _run_pipeline_blocking(state: JobState, push_event: PushEvent) -> dict[str, 
                     visual_context=visual_context,
                 )
                 notes.result("chat", text=visual_summary, inputs=["visual_context"])
-            _complete(4, {"summary": bool(visual_summary)})
+            _complete(STAGE_SUMMARY, {"summary": bool(visual_summary)})
         # Likewise the captions can show hate a silent clip never speaks.
         frame_findings: list[dict[str, Any]] | None = None
         if file_opts["hate_speech"] and captions:
-            _notify(5)
+            _notify(STAGE_HATE_SPEECH)
             with audit.stage(FRAME_HATE_SPEECH_STAGE) as notes:
                 frame_findings = frame_hate_speech_pipeline(captions, inference_pipeline=_ensure_inference())
                 notes.result("chat", frames=len(captions))
-            _complete(5, {"flagged": len(frame_findings)})
+            _complete(STAGE_HATE_SPEECH, {"flagged": len(frame_findings)})
         return {
             "transcript": df,
             "summary": visual_summary,
@@ -736,7 +743,7 @@ def _run_pipeline_blocking(state: JobState, push_event: PushEvent) -> dict[str, 
     # from the source language to the target. Engage it whenever a translate
     # task was requested and the resolved source differs from the target (so an
     # English target is translated too, and a same-language request is a no-op).
-    _notify(2)
+    _notify(STAGE_TRANSLATE)
     needs_translation = should_translate(file_opts["task"], file_opts["src_lang"], file_opts["trg_lang"])
     if needs_translation:
         with audit.stage(TRANSLATION_STAGE) as notes:
@@ -752,9 +759,9 @@ def _run_pipeline_blocking(state: JobState, push_event: PushEvent) -> dict[str, 
                 src_lang=file_opts["src_lang"],
                 trg_lang=file_opts["trg_lang"],
             )
-        _complete(2, {"translated": True})
+        _complete(STAGE_TRANSLATE, {"translated": True})
     else:
-        _complete(2, {"translated": False})
+        _complete(STAGE_TRANSLATE, {"translated": False})
 
     transcript_language = file_opts["trg_lang" if file_opts["task"] == "translate" else "src_lang"]
     result: dict[str, Any] = {
@@ -774,7 +781,7 @@ def _run_pipeline_blocking(state: JobState, push_event: PushEvent) -> dict[str, 
     }
 
     # Word-level analysis -----------------------------------------------------
-    _notify(3)
+    _notify(STAGE_WORDS)
     if file_opts["words"]:
         with audit.stage(WORDLEVEL_STAGE):
             wc, ner, cloud = wordlevel_pipeline(
@@ -786,7 +793,7 @@ def _run_pipeline_blocking(state: JobState, push_event: PushEvent) -> dict[str, 
         result["wordcloud"] = cloud
         result["_wordcloud_url"] = f"/api/v1/jobs/{state.job_id}/artifacts/wordcloud.png"
         _complete(
-            3,
+            STAGE_WORDS,
             {
                 "word_counts": len(wc) if wc is not None else 0,
                 "named_entities": len(ner) if ner is not None else 0,
@@ -794,13 +801,13 @@ def _run_pipeline_blocking(state: JobState, push_event: PushEvent) -> dict[str, 
             },
         )
     else:
-        _complete(3, {"skipped": True})
+        _complete(STAGE_WORDS, {"skipped": True})
 
     # Summarization -----------------------------------------------------------
     # The summarizer takes whatever the job produced: the transcript (its
     # translation when there is one) and the keyframe captions when the
     # keyframe step ran, either alone or together.
-    _notify(4)
+    _notify(STAGE_SUMMARY)
     if file_opts["summarization"]:
         summary_text_column = effective_text_column(df)
         with audit.stage(SUMMARY_STAGE) as notes:
@@ -814,12 +821,12 @@ def _run_pipeline_blocking(state: JobState, push_event: PushEvent) -> dict[str, 
                 text=result["summary"],
                 inputs=[_SUMMARY_INPUT[summary_text_column], *(["visual_context"] if visual_context else [])],
             )
-        _complete(4, {"summary": bool(result["summary"])})
+        _complete(STAGE_SUMMARY, {"summary": bool(result["summary"])})
     else:
-        _complete(4, {"skipped": True})
+        _complete(STAGE_SUMMARY, {"skipped": True})
 
     # Hate-speech detection ---------------------------------------------------
-    _notify(5)
+    _notify(STAGE_HATE_SPEECH)
     if file_opts["hate_speech"]:
         # Recorded by what was judged, never by what was found: the findings
         # can amount to special categories of personal data.
@@ -830,9 +837,9 @@ def _run_pipeline_blocking(state: JobState, push_event: PushEvent) -> dict[str, 
             findings += frame_hate_speech_pipeline(captions, inference_pipeline=_ensure_inference())
             notes.result("chat", segments=len(df), frames=len(captions))
         result["hate_speech_findings"] = findings
-        _complete(5, {"flagged": len(findings)})
+        _complete(STAGE_HATE_SPEECH, {"flagged": len(findings)})
     else:
-        _complete(5, {"skipped": True})
+        _complete(STAGE_HATE_SPEECH, {"skipped": True})
 
     return result
 
