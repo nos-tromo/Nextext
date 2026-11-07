@@ -132,18 +132,19 @@ def extract_keyframe_samples(file_path: Path, *, per_minute: int = 4, max_frames
 
     Returns:
         list[Keyframe]: Timestamped frames in time order; ``[]`` when arguments
-            are non-positive, there is no decodable video stream, or extraction
-            fails before any frame is produced.
+            are non-positive, there is no decodable video stream (cover art does
+            not count), or extraction fails before any frame is produced.
     """
     if per_minute <= 0 or max_frames <= 0:
         return []
     frames: list[Keyframe] = []
     try:
         with av.open(str(file_path)) as container:
-            if not container.streams.video:
+            # Cover art (an audio file's attached picture) is no video to frame.
+            stream = _video_stream(container)
+            if stream is None:
                 logger.info("No video stream in '{}'; keyframe sampling skipped.", file_path.name)
                 return []
-            stream = container.streams.video[0]
             stream.codec_context.skip_frame = "NONKEY"
             duration_sec = container.duration / 1_000_000 if container.duration else 0.0
             target = min(max_frames, max(1, round(duration_sec / 60.0 * per_minute)))
