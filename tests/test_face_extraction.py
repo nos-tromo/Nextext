@@ -625,3 +625,32 @@ def test_pruning_and_the_track_cap_rank_alike(monkeypatch: pytest.MonkeyPatch) -
 
     assert result.truncated is True
     assert sorted(entry.best.box[0] for entry in result.entries) == [50, 250]
+
+
+def test_grouping_over_budget_falls_back_to_one_face_per_track(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Over the budget with three faces a track, grouping is tried with one; only over that, skipped."""
+    left: Box = (50, 100, 100, 100)
+    right: Box = (400, 100, 100, 100)
+    planned: list[list[DetectedFace] | None] = [[_face(left), _face(right)] for _ in range(5)]
+
+    def run(budget: int | None) -> tuple[_Fakes, FacesResult]:
+        if budget is not None:
+            monkeypatch.setattr(faces, "MAX_REQUEST_BYTES", budget)
+        fakes = _Fakes([DARK] * 5, planned, labels=lambda tracks: [0, 1]).install(monkeypatch)
+        return fakes, _run("group")
+
+    full, _result = run(None)
+    sent = full.group_calls[0]
+    three = len(faces.group_request_body(sent))
+    one = len(faces.group_request_body([GroupTrack(samples=t.samples, faces=t.faces[:1]) for t in sent]))
+    assert one < three
+
+    reduced, result = run((one + three) // 2)
+    assert [len(track.faces) for track in reduced.group_calls[0]] == [1, 1]
+    assert reduced.group_calls[0][0].faces[0] == sent[0].faces[0]
+    assert (result.grouped, result.tracks_sent) == (True, 2)
+
+    skipped, result = run(one - 1)
+    assert skipped.group_calls == []
+    assert (result.grouped, result.tracks_sent) == (False, 0)
+    assert [e.assigned for e in result.entries] == [False, False]

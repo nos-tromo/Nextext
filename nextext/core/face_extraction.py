@@ -35,6 +35,7 @@ import numpy as np
 from loguru import logger
 from PIL import Image
 
+from nextext.core import faces as faces_api
 from nextext.core.face_tracks import (
     Box,
     Detection,
@@ -560,6 +561,10 @@ class _Extraction:
     def _group(self, kept: Sequence[Track]) -> tuple[bool, int, dict[int, int]]:
         """Ask the service which tracks show the same person (``group`` mode).
 
+        Each track goes with its best few good crops; when that request would
+        be over the service's byte budget, with its single best one; when even
+        that is over, nothing is sent and every track stays its own entry.
+
         Args:
             kept: The tracks kept.
 
@@ -573,16 +578,24 @@ class _Extraction:
         eligible = [track for track in kept if self.crops[track.id].group]
         if not eligible:
             return False, 0, {}
-        labels = group_faces(
-            [
+        request: list[GroupTrack] | None = None
+        for faces_per_track in (GROUP_FACES_PER_TRACK, 1):
+            candidate = [
                 GroupTrack(
                     samples=tuple(detection.sample for detection in track.detections),
-                    faces=tuple(face for _score, face in self.crops[track.id].group),
+                    faces=tuple(face for _score, face in self.crops[track.id].group[:faces_per_track]),
                 )
                 for track in eligible
-            ],
-            config=self.config,
-        )
+            ]
+            if len(faces_api.group_request_body(candidate)) <= faces_api.MAX_REQUEST_BYTES:
+                request = candidate
+                break
+        if request is None:
+            logger.warning(
+                "Face grouping skipped: {} tracks are over the request budget even with one face each.", len(eligible)
+            )
+            return False, 0, {}
+        labels = group_faces(request, config=self.config)
         if labels is None:
             return False, len(eligible), {}
         return (
