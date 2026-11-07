@@ -327,6 +327,8 @@ class _Extraction:
         # Sample -> how far the sampler scaled that frame down, for reporting
         # boxes in source pixels.
         self.scales: dict[int, float] = {}
+        # The clip's duration as the sampler measured it; 0.0 when unknown.
+        self.duration_sec = 0.0
         self.prev_thumb: np.ndarray | None = None
         self.frames_sent = 0
         self.batches_answered = 0
@@ -361,6 +363,7 @@ class _Extraction:
         for position, frame in enumerate(batch):
             self.sample_times.append(frame.time_sec)
             self.scales[frame.index] = frame.scale
+            self.duration_sec = max(self.duration_sec, frame.clip_duration_sec)
             thumb = grey_thumb(frame.image)
             cut = is_cut(self.prev_thumb, thumb)
             self.prev_thumb = thumb
@@ -604,6 +607,20 @@ class _Extraction:
             {track.id: label for track, label in zip(eligible, labels, strict=True) if label >= 0},
         )
 
+    def _clamped(self, spans: Sequence[tuple[float, float]], *, last_seen: float) -> list[tuple[float, float]]:
+        """End each span at the clip's end at the latest, never before the face was last seen.
+
+        Args:
+            spans: Merged appearance spans.
+            last_seen: Time of the entry's last detection.
+
+        Returns:
+            list[tuple[float, float]]: The spans; unchanged when the duration is unknown.
+        """
+        if self.duration_sec <= 0:
+            return list(spans)
+        return [(start, max(min(end, self.duration_sec), min(end, last_seen))) for start, end in spans]
+
     def _entries(
         self, drafts: Sequence[tuple[bool, list[Track]]], interval: float
     ) -> tuple[tuple[FaceEntry, ...], tuple[DetectionRow, ...]]:
@@ -619,7 +636,10 @@ class _Extraction:
         """
         planned: list[tuple[float, float, float, bool, list[Track], list[tuple[float, float]]]] = []
         for assigned, tracks in drafts:
-            spans = merge_spans([(t.first_time, t.last_time + interval) for t in tracks], gap=2 * interval)
+            spans = self._clamped(
+                merge_spans([(t.first_time, t.last_time + interval) for t in tracks], gap=2 * interval),
+                last_seen=max(t.last_time for t in tracks),
+            )
             detections = [detection for track in tracks for detection in track.detections]
             area = sum(d.box[2] * d.box[3] for d in detections) / len(detections)
             first = min(tracks, key=lambda track: (track.first_time, track.detections[0].box[0]))
