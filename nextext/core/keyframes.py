@@ -29,6 +29,7 @@ from typing import Literal
 
 import av
 from av.error import FFmpegError
+from av.stream import Disposition
 from loguru import logger
 from PIL import Image
 
@@ -293,6 +294,25 @@ def _upright_image(frame: av.VideoFrame, max_side: int) -> tuple[Image.Image, fl
     return image, scale
 
 
+def _video_stream(container: av.container.InputContainer) -> av.VideoStream | None:
+    """Pick the video stream to sample: the first that is not an attached picture.
+
+    Audio files carry cover art as a video stream flagged ``attached_pic``
+    (MP3, M4A, FLAC); that still image is never a video to sample.
+
+    Args:
+        container: The opened media file.
+
+    Returns:
+        av.VideoStream | None: The stream, or ``None`` when the file has no
+            video beyond cover art.
+    """
+    for stream in container.streams.video:
+        if not stream.disposition & Disposition.attached_pic:
+            return stream
+    return None
+
+
 def _keyframe_times(file_path: Path) -> tuple[list[float], float] | None:
     """Demux a video once, without decoding, for its keyframe times and duration.
 
@@ -306,12 +326,12 @@ def _keyframe_times(file_path: Path) -> tuple[list[float], float] | None:
     Returns:
         tuple[list[float], float] | None: Sorted keyframe times in seconds and
             the clip's duration in seconds (``0.0`` when unknown); ``None``
-            when the file has no video stream.
+            when the file has no video stream besides cover art.
     """
     with av.open(str(file_path)) as container:
-        if not container.streams.video:
+        stream = _video_stream(container)
+        if stream is None:
             return None
-        stream = container.streams.video[0]
         time_base = stream.time_base
         keyframe_pts: list[int] = []
         last_pts: int | None = None
@@ -401,7 +421,9 @@ def sample_frames(
             effective_interval = max(interval_s, duration_sec / max_frames)
         mode = _decode_mode(keyframe_times, effective_interval)
         with av.open(str(file_path)) as container:
-            stream = container.streams.video[0]
+            stream = _video_stream(container)
+            if stream is None:
+                return
             codec_context = stream.codec_context
             codec_context.skip_frame = mode
             codec_context.thread_type = "AUTO"

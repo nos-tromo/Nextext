@@ -362,3 +362,82 @@ def test_sample_frames_applies_negative_display_rotation(tmp_path: Path) -> None
     assert isinstance(top, tuple) and isinstance(bottom, tuple)
     assert top[0] > 200 and top[2] < 60
     assert bottom[2] > 200 and bottom[0] < 60
+
+
+def _make_with_cover_art(path: Path, *, video_seconds: int = 0) -> Path:
+    """Write an mp4 with a cover image (an attached picture) and, optionally, a real video after it.
+
+    Args:
+        path: Destination ``.mp4`` file.
+        video_seconds: Length of a real video stream added after the cover; ``0`` for none.
+
+    Returns:
+        Path: ``path``.
+    """
+    from av.stream import Disposition
+
+    with av.open(str(path), mode="w") as container:
+        cover = container.add_stream("mjpeg", rate=1)
+        assert isinstance(cover, av.VideoStream)
+        cover.width = cover.height = 32
+        cover.pix_fmt = "yuvj420p"
+        cover.disposition = Disposition.attached_pic
+        video = None
+        if video_seconds:
+            video = container.add_stream("mpeg4", rate=4)
+            assert isinstance(video, av.VideoStream)
+            video.width = video.height = 32
+            video.pix_fmt = "yuv420p"
+            video.time_base = Fraction(1, 4)
+            video.codec_context.gop_size = 4
+        picture = av.VideoFrame.from_image(Image.new("RGB", (32, 32), (200, 0, 0)))
+        picture.pts = 0
+        picture.time_base = Fraction(1, 1)
+        for packet in [*cover.encode(picture), *cover.encode()]:
+            container.mux(packet)
+        if video is not None:
+            for index in range(video_seconds * 4):
+                frame = av.VideoFrame.from_image(Image.new("RGB", (32, 32), (0, 0, 200)))
+                frame.pts = index
+                frame.time_base = Fraction(1, 4)
+                for packet in video.encode(frame):
+                    container.mux(packet)
+            for packet in video.encode():
+                container.mux(packet)
+    return path
+
+
+def test_sample_frames_never_samples_cover_art(tmp_path: Path) -> None:
+    """A file whose only picture is its cover art (an attached picture) yields no samples."""
+    clip = _make_with_cover_art(tmp_path / "cover.mp4")
+
+    assert list(sample_frames(clip, interval_s=1.0, max_frames=600)) == []
+
+
+def test_sample_frames_skips_cover_art_before_the_video(tmp_path: Path) -> None:
+    """With cover art listed before the real video, the video is what gets sampled."""
+    clip = _make_with_cover_art(tmp_path / "both.mp4", video_seconds=5)
+
+    frames = list(sample_frames(clip, interval_s=1.0, max_frames=600))
+
+    assert 4 <= len(frames) <= 6
+    pixel = frames[0].image.getpixel((16, 16))
+    assert isinstance(pixel, tuple) and pixel[2] > 150 and pixel[0] < 60
+
+
+def test_video_stream_skips_attached_pictures() -> None:
+    """The stream sampled is the first video stream that is not an attached picture (cover art)."""
+    from types import SimpleNamespace
+
+    from av.stream import Disposition
+
+    cover = SimpleNamespace(disposition=Disposition.attached_pic)
+    video = SimpleNamespace(disposition=Disposition.default)
+
+    def container(*streams: SimpleNamespace) -> Any:
+        return SimpleNamespace(streams=SimpleNamespace(video=list(streams)))
+
+    assert keyframes_module._video_stream(container(cover, video)) is video
+    assert keyframes_module._video_stream(container(video, cover)) is video
+    assert keyframes_module._video_stream(container(cover)) is None
+    assert keyframes_module._video_stream(container()) is None
