@@ -207,3 +207,37 @@ def test_is_cut_on_scene_change_not_on_noise() -> None:
     assert not is_cut(None, first)
     assert not is_cut(first, grey_thumb(Image.fromarray(noisy)))
     assert is_cut(first, grey_thumb(Image.fromarray(other)))
+
+
+def test_open_list_is_kept_in_step() -> None:
+    """With an open list passed in, it always holds exactly the tracks that are still open."""
+    box_a: Box = (100, 100, 80, 80)
+    box_b: Box = (400, 100, 80, 80)
+    samples: list[list[Detection]] = [
+        [_det(0, box_a), _det(0, box_b)],
+        [_det(1, box_a)],
+        [],
+        [],
+        [_det(4, box_b)],
+        [_det(5, box_b)],
+    ]
+    tracks: list[Track] = []
+    open_tracks: list[Track] = []
+    for index, detections in enumerate(samples):
+        assign_tracks(tracks, detections, sample=index, cut=index == 5, open_tracks=open_tracks)
+        assert open_tracks == [track for track in tracks if not track.closed]
+    assert [track.id for track in tracks] == [0, 1, 2, 3]
+    assert [track.id for track in open_tracks] == [3]
+
+
+def test_only_listed_open_tracks_are_considered() -> None:
+    """Tracks outside the open list are neither continued nor revisited."""
+    old = Track(id=0, detections=[_det(0, (100, 100, 80, 80))])
+    tracks = [old]
+    open_tracks: list[Track] = []
+
+    owners = assign_tracks(tracks, [_det(1, (100, 100, 80, 80))], sample=1, cut=False, open_tracks=open_tracks)
+
+    assert [track.id for track in owners] == [1]
+    assert len(old.detections) == 1 and old.closed is False
+    assert open_tracks == [owners[0]]
