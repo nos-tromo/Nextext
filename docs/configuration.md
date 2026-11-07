@@ -27,8 +27,9 @@ Every model class can also be re-pointed at a **dedicated endpoint**, falling ba
 | GLiNER NER | `NER_API_BASE` (+ `NER_TIMEOUT`) | service root, `POST {base}/gliner` |
 | Speaker diarization | `DIARIZE_API_BASE` (+ `DIARIZE_TIMEOUT`) | service root, `POST {base}/diarize` |
 | VAD speech guard | `VAD_API_BASE` (+ `VAD_TIMEOUT`) | service root, `POST {base}/vad` |
+| Faces | `FACES_API_BASE` (+ `FACES_TIMEOUT`) | service root, `POST {base}/faces/detect`, `POST {base}/faces/group` |
 
-The NER, diarization, and VAD services speak a plain service root rather than the OpenAI `/v1` shape, so the central fallback strips one trailing `/v1` from `OPENAI_API_BASE` before appending the service path (`http://vllm-router:4000/v1` → `http://vllm-router:4000/gliner`). Whisper, which speaks `/v1`, uses `OPENAI_API_BASE` verbatim. The three non-OpenAI services reuse `OPENAI_API_KEY` as their bearer token; none takes a dedicated key.
+The NER, diarization, VAD and faces services speak a plain service root rather than the OpenAI `/v1` shape, so the central fallback strips one trailing `/v1` from `OPENAI_API_BASE` before appending the service path (`http://vllm-router:4000/v1` → `http://vllm-router:4000/gliner`). Whisper, which speaks `/v1`, uses `OPENAI_API_BASE` verbatim. The four non-OpenAI services reuse `OPENAI_API_KEY` as their bearer token; none takes a dedicated key.
 
 NER issues a request only when a job asks for entities, so it needs no off switch. Diarization runs by default for every job, auto-detecting the speaker count (no bounds sent), and is bypassed per job with `diarize=false` (CLI `--no-diarize`). The VAD guard runs ahead of every transcription (fail-open: an unreachable service transcribes anyway); switch it off with `VAD_API_BASE=off` (also `false` / `no` / `0`).
 
@@ -259,6 +260,62 @@ the same settings.
 - `VISUAL_SUMMARY_IMAGE_MAX_SIDE` (backend + CLI) — Longest edge in pixels each
   frame is downscaled to before upload, bounding request size and image-token
   count. Frames already within budget are not upscaled. Defaults to `1024`.
+
+## Faces
+
+A job that asks for faces (`JobOptions.faces`, the SPA's **Faces** toggle —
+shown only while the switch below is on) gets the faces of its video: an
+overview of who is on screen when, grouped per person in `group` mode, and
+each one's best shot to pass on. How the stage works is in
+[architecture.md](architecture.md#faces); what it records in
+[audit.md](audit.md). There is no CLI option, and `-F` never includes faces.
+
+`NEXTEXT_FACES` (backend only) is the operator switch, read once at startup,
+recorded in `config.audit` and reported by `GET /config` as `faces`:
+
+| Value | Effect |
+|---|---|
+| `off` (default; also an empty value or `0`/`false`/`no`) | A job asking for faces is refused with `422` before anything is stored |
+| `detect` | Faces are found, tracked and cut out; no biometric processing. Entries read "Face N" |
+| `group` | Also grouped per person by the faces service — **biometric processing**. The controller extends the data-protection impact assessment before switching it on (§ 67 BDSG, with the DPO involved); the software enforces nothing. Entries the service grouped read "Person N" |
+
+An unknown value warns and stays `off`. With `detect` or `group` set but no
+faces endpoint resolving, startup logs one warning naming `NEXTEXT_FACES` and
+`FACES_API_BASE`; such jobs then report their faces as unavailable.
+
+- `FACES_API_BASE` (backend only) — the faces service root; the client appends
+  `/faces/detect` and `/faces/group`. Unset: the central `OPENAI_API_BASE` with
+  one trailing `/v1` stripped. An off token (`off`/`false`/`no`/`0`) leaves no
+  endpoint. The bearer token is `OPENAI_API_KEY`.
+- `FACES_TIMEOUT` (backend only) — seconds per request. Defaults to `300`;
+  values that are not positive and finite warn and fall back. Read once per
+  video.
+- `FACES_INTERVAL_S` (backend only) — seconds between sampled frames.
+  Defaults to `1.0`; a clip longer than `FACES_MAX_FRAMES` intervals stretches
+  it so the samples span the whole clip. Values that are not positive and
+  finite warn and fall back.
+- `FACES_MAX_FRAMES` (backend only) — most frames sampled per video. Defaults
+  to `600`, clamped to `3600`.
+
+The stage never fails a job. A failed batch leaves its frames without faces
+(`partial`); a `503` whose `Retry-After` asks for at most 10 s is waited out and
+that batch sent once more; after three failed batches in a row the rest of the
+video is neither decoded nor sent, so a hung service costs at most three
+timeouts. No answered batch gives `unavailable`. A grouping request over the
+16 MiB budget is retried with one crop per track, and left ungrouped only when
+even that is too large.
+
+Boxes in `faces.csv` and the `manifest.json` of `faces.zip` are in the source
+video's own pixels (upright), also for a source larger than the 3840 px the
+frames are sampled at. `last_seen_seconds` is the time of the entry's last
+detection; an appearance runs to the next sample after it, at most to the
+clip's end. `faces.zip`, `faces.csv` and `face_NNN.jpg` answer `404` for a
+result without faces (none found, or the service unavailable), and the SPA
+then offers no download.
+
+Tests start without `NEXTEXT_FACES` or any `FACES_*` variable: an autouse
+fixture in `tests/conftest.py` clears them, so a developer `.env` cannot switch
+the stage on for the suite.
 
 ## Production sub-path
 

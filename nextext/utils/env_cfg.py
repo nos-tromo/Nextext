@@ -385,7 +385,7 @@ def _central_endpoint_root() -> str:
 
     The central endpoint is an OpenAI-SDK base that conventionally ends in
     ``/v1`` (e.g. ``http://vllm-router:4000/v1``). The out-of-process ``/gliner``,
-    ``/diarize``, and ``/vad`` services sit at the service root alongside it, so a
+    ``/diarize``, ``/vad`` and ``/faces`` services sit at the service root alongside it, so a
     single trailing ``/v1`` segment is removed before a client appends its own
     path. Surrounding whitespace and any trailing ``/`` are stripped too.
 
