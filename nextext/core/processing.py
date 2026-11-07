@@ -1,5 +1,6 @@
 """CLI-side file I/O helpers and per-format export rendering."""
 
+import os
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
@@ -64,6 +65,9 @@ class FileProcessor:
                 output_path,
             )
         else:
+            # A rerun makes the directory young at once: retention judges a
+            # run by its newest write, and must not sweep it mid-run.
+            os.utime(output_path, follow_symlinks=False)
             logger.info("Output directory {} already exists.", output_path)
         return filename, output_path
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pandas as pd
@@ -181,3 +182,13 @@ def test_write_keyframes_writes_nothing_for_an_audio_file(tmp_path: Path) -> Non
 
     assert processor.write_keyframes([]) is None
     assert not (processor.output_path / "clip_keyframes").exists()
+
+
+def test_a_reused_output_directory_counts_as_fresh(tmp_path: Path) -> None:
+    """A rerun into an old run's directory makes it young at once, so retention never sweeps it mid-run."""
+    old = tmp_path / "clip"
+    old.mkdir()
+    moment = 1_700_000_000.0
+    os.utime(old, (moment, moment))
+    FileProcessor(file_path=Path("clip.wav"), output_dir=tmp_path)
+    assert old.stat().st_mtime > moment + 86_400

@@ -68,7 +68,7 @@ def _sweep_cli_files(sweeper: cli_files.CliFileSweeper, emitter: AuditEmitter) -
         return
     if result.waiting_until is not None:
         logger.info(
-            "CLI-file retention takes effect on {}; until then nothing is deleted.",
+            "CLI-file retention takes full effect on {}; until then nothing goes sooner than announced.",
             time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(result.waiting_until)),
         )
 
@@ -82,10 +82,21 @@ async def _cli_sweep_loop(sweeper: cli_files.CliFileSweeper, emitter: AuditEmitt
     """
     while True:
         await asyncio.sleep(CLI_SWEEP_EVERY_S)
+        # Shielded: on shutdown a delete in progress finishes before the job
+        # manager stops and the audit chain closes.
+        work = asyncio.ensure_future(asyncio.to_thread(_sweep_cli_files, sweeper, emitter))
         try:
-            await asyncio.to_thread(_sweep_cli_files, sweeper, emitter)
+            await asyncio.shield(work)
+        except asyncio.CancelledError:
+            try:
+                await work
+            except Exception:
+                logger.exception("The CLI-file sweep running at shutdown failed.")
+            raise
         except AuditWriteError:
             logger.error("A CLI-file deletion could not be recorded; nothing was deleted.")
+        except Exception:
+            logger.exception("The CLI-file sweep failed; the next one runs as scheduled.")
 
 
 def _lifespan(
@@ -148,22 +159,27 @@ def _lifespan(
             job_manager = JobManager(pipeline_runner=pipeline_runner, emitter=emitter)
             await job_manager.start()
             cli_sweep: asyncio.Task[None] | None = None
-            if job_manager.holds_root_lock and cli_retention.days is not None:
-                legacy = len(legacy_inputs())
-                if legacy:
-                    logger.warning(
-                        "{} file(s) left directly in /tmp by earlier releases' make cli are not swept; "
-                        "list them with make cli-clean LEGACY=1 DRY=1, delete them with make cli-clean LEGACY=1.",
-                        legacy,
-                    )
-                sweeper = _cli_sweeper(cli_retention)
-                await asyncio.to_thread(_sweep_cli_files, sweeper, emitter)
-                cli_sweep = asyncio.create_task(_cli_sweep_loop(sweeper, emitter))
-            app.state.audit_emitter = emitter
-            app.state.audit_required = audit_cfg.require_purpose
-            app.state.job_manager = job_manager
-            logger.info("Nextext API started")
             try:
+                if job_manager.holds_root_lock and cli_retention.days is None:
+                    try:
+                        cli_files.forget_rule(cli_files.CLI_ROOT)
+                    except OSError as exc:
+                        logger.warning("CLI-file retention could not forget its state ({}).", type(exc).__name__)
+                if job_manager.holds_root_lock and cli_retention.days is not None:
+                    legacy = len(legacy_inputs())
+                    if legacy:
+                        logger.warning(
+                            "{} file(s) left directly in /tmp by earlier releases' make cli are not swept; "
+                            "list them with make cli-clean LEGACY=1 DRY=1, delete them with make cli-clean LEGACY=1.",
+                            legacy,
+                        )
+                    sweeper = _cli_sweeper(cli_retention)
+                    await asyncio.to_thread(_sweep_cli_files, sweeper, emitter)
+                    cli_sweep = asyncio.create_task(_cli_sweep_loop(sweeper, emitter))
+                app.state.audit_emitter = emitter
+                app.state.audit_required = audit_cfg.require_purpose
+                app.state.job_manager = job_manager
+                logger.info("Nextext API started")
                 yield
             finally:
                 logger.info("Nextext API shutting down.")
