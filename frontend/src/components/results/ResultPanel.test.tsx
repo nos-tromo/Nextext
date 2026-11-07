@@ -29,7 +29,8 @@ function makeSnapshot(overrides: Partial<JobSnapshot['result']> = {}): JobSnapsh
       words: false,
       summarization: false,
       hate_speech: false,
-  keyframes: false,
+      keyframes: false,
+      faces: false,
     },
     stage: null,
     stage_index: 3,
@@ -63,6 +64,7 @@ function makeSnapshot(overrides: Partial<JobSnapshot['result']> = {}): JobSnapsh
       media_url: null,
       frame_captions: null,
       hate_speech_findings: null,
+      faces: null,
       skipped: false,
       skip_reason: null,
       skip_reason_code: null,
@@ -448,5 +450,72 @@ describe('ResultPanel media player', () => {
     expect(state.session?.jobId).toBe('j1')
     expect(state.session?.fileName).toBe('clip.wav')
     expect(state.seekRequest).toBeNull()
+  })
+})
+
+const FACES = {
+  outcome: 'ok' as const,
+  grouped: true,
+  truncated: false,
+  entries: [
+    {
+      number: 1,
+      assigned: true,
+      first_seen_seconds: 0,
+      last_seen_seconds: 2,
+      appearances: [{ start_seconds: 0, end_seconds: 3 }],
+      detections: 3,
+      // A placeholder image: one transparent pixel, no face.
+      thumbnail: 'data:image/gif;base64,R0lGODlhAQABAAAAACw=',
+      best_artifact: 'face_001.jpg',
+    },
+  ],
+}
+
+function stubSnapshot(overrides: Partial<JobSnapshot['result']>) {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async () =>
+      new Response(JSON.stringify(makeSnapshot(overrides)), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }),
+    ),
+  )
+}
+
+describe('ResultPanel faces', () => {
+  it('adds the faces tab after visual context', async () => {
+    stubSnapshot({
+      summary: 'A brief summary.',
+      frame_captions: [{ time_sec: 0, caption: 'A slide titled Roadmap' }],
+      faces: FACES,
+    })
+
+    mountResultPanel('j1', 'clip.mp4')
+
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Faces' })).toBeInTheDocument())
+    const tabs = screen.getByRole('navigation').querySelectorAll('button')
+    expect([...tabs].map((b) => b.textContent)).toEqual(['Transcript', 'Visual context', 'Faces', 'Summary'])
+    fireEvent.click(screen.getByRole('button', { name: 'Faces' }))
+    expect(screen.getByAltText('Person 1')).toBeInTheDocument()
+  })
+
+  it('keeps faces under the skipped banner', async () => {
+    stubSnapshot({ transcript: [], skipped: true, skip_reason_code: 'vad_no_speech', faces: FACES })
+
+    mountResultPanel('j1', 'clip.mp4')
+
+    await waitFor(() => expect(screen.getByRole('alert')).toBeInTheDocument())
+    expect(screen.getByRole('button', { name: 'Faces' })).toBeInTheDocument()
+  })
+
+  it('shows no faces tab when the job has no face result', async () => {
+    stubSnapshot({ faces: null })
+
+    mountResultPanel('j1', 'clip.mp4')
+
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Transcript' })).toBeInTheDocument())
+    expect(screen.queryByRole('button', { name: 'Faces' })).not.toBeInTheDocument()
   })
 })

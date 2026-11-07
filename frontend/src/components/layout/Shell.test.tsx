@@ -15,7 +15,7 @@ vi.mock('../../api/sse', () => ({ streamSse: streamSseMock }))
 function stubJobs(
   jobs: JobListItem[],
   whoami: { username: string; display_name: string | null } | null = null,
-  config: AppConfig = { language: 'en', require_purpose: [] },
+  config: AppConfig = { language: 'en', require_purpose: [], faces: 'off' },
 ): void {
   const jobsUrl = '/jobs'
   vi.stubGlobal(
@@ -151,14 +151,14 @@ describe('Shell purpose bar', () => {
   })
 
   it('warns while none is stated when the config says the backend requires one', async () => {
-    stubJobs([], null, { language: 'en', require_purpose: ['disclose', 'query'] })
+    stubJobs([], null, { language: 'en', require_purpose: ['disclose', 'query'], faces: 'off' })
     mountShell()
     const bar = await screen.findByRole('button', { name: 'Purpose required' })
     expect(bar).toHaveAttribute('data-state', 'required')
   })
 
   it('speaks the UI language', async () => {
-    stubJobs([], null, { language: 'de', require_purpose: ['query'] })
+    stubJobs([], null, { language: 'de', require_purpose: ['query'], faces: 'off' })
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
     render(
       <QueryClientProvider client={qc}>

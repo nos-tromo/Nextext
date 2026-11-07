@@ -2,9 +2,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { render, screen, waitFor, fireEvent } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import type { LanguagesResponse } from '../../api/types'
+import type { AppConfig, LanguagesResponse } from '../../api/types'
 import { TARGET_LANG_STORAGE_KEY } from '../../lib/targetLang'
-import { UploadForm } from './UploadForm'
+import { UploadForm, type UploadFormProps } from './UploadForm'
 
 const LANGUAGES: LanguagesResponse = {
   whisper: [{ code: 'en', name: 'English' }],
@@ -16,8 +16,13 @@ const LANGUAGES: LanguagesResponse = {
   default_target: 'en',
 }
 
+const meta = vi.hoisted(() => ({
+  config: { language: 'en', require_purpose: [], faces: 'off' } as AppConfig,
+}))
+
 vi.mock('../../api/meta', () => ({
   getLanguages: vi.fn(async () => LANGUAGES),
+  getConfig: vi.fn(async () => meta.config),
 }))
 
 function mountForm() {
@@ -36,6 +41,7 @@ function targetPicker(): HTMLElement {
 afterEach(() => {
   localStorage.clear()
   vi.restoreAllMocks()
+  meta.config = { language: 'en', require_purpose: [], faces: 'off' }
 })
 
 describe('UploadForm target language', () => {
@@ -173,5 +179,50 @@ describe('UploadForm diarize toggle', () => {
     expect(toggle).toHaveAttribute('aria-pressed', 'false')
     fireEvent.click(screen.getByRole('button', { name: /Run/ }))
     expect(onRun.mock.calls[1][1]).toMatchObject({ diarize: false })
+  })
+})
+
+describe('UploadForm faces toggle', () => {
+  function mountWithRun(onRun: UploadFormProps['onRun']) {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    return render(
+      <QueryClientProvider client={qc}>
+        <UploadForm pending={false} onRun={onRun} />
+      </QueryClientProvider>,
+    )
+  }
+
+  it('hides the faces toggle when the switch is off', async () => {
+    const onRun = vi.fn<UploadFormProps['onRun']>()
+    const { container } = mountWithRun(onRun)
+    addFiles(container, [audio('a.mp4')])
+
+    await waitFor(() => expect(targetPicker()).toHaveTextContent('English'))
+    expect(screen.queryByRole('button', { name: 'Faces' })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /Run/ }))
+    expect(onRun.mock.calls[0][1]).toMatchObject({ faces: false })
+  })
+
+  it('shows it after keyframes and sends faces', async () => {
+    meta.config = { language: 'en', require_purpose: [], faces: 'detect' }
+    const onRun = vi.fn<UploadFormProps['onRun']>()
+    const { container } = mountWithRun(onRun)
+    addFiles(container, [audio('a.mp4')])
+
+    const toggle = await screen.findByRole('button', { name: 'Faces' })
+    const labels = screen
+      .getAllByRole('button')
+      .filter((b) => b.hasAttribute('aria-pressed'))
+      .map((b) => b.textContent)
+    expect(labels).toEqual(['Detect speakers', 'Keyframes', 'Faces', 'Word analysis', 'Hate speech', 'Summary'])
+    expect(toggle).toHaveAttribute('aria-pressed', 'false')
+
+    fireEvent.click(screen.getByRole('button', { name: /Run/ }))
+    expect(onRun.mock.calls[0][1]).toMatchObject({ faces: false, keyframes: false })
+
+    fireEvent.click(toggle)
+    fireEvent.click(screen.getByRole('button', { name: /Run/ }))
+    // Independent of the keyframes: faces sample the video on their own.
+    expect(onRun.mock.calls[1][1]).toMatchObject({ faces: true, keyframes: false })
   })
 })
