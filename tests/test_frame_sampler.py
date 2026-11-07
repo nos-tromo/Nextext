@@ -105,6 +105,7 @@ def test_sample_frames_one_per_interval(tmp_path: Path) -> None:
     assert all(b.time_sec > a.time_sec for a, b in itertools.pairwise(frames))
     assert all(isinstance(f, SampledFrame) and f.image.mode == "RGB" for f in frames)
     assert all(f.scale == 1.0 for f in frames)
+    assert all(f.clip_duration_sec == pytest.approx(10.0, abs=0.1) for f in frames)
 
 
 def test_sample_frames_stretch_interval_over_long_clip(tmp_path: Path) -> None:

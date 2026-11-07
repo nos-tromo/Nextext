@@ -59,6 +59,7 @@ class _Fakes:
         size: tuple[int, int] = (W, H),
         scale: float = 1.0,
         step: float = 1.0,
+        duration: float = 0.0,
         fail_calls: frozenset[int] = frozenset(),
         labels: Callable[[list[GroupTrack]], list[int] | None] | None = None,
     ) -> None:
@@ -70,6 +71,7 @@ class _Fakes:
             size: Frame size.
             scale: How far the sampler scaled each frame down from the source.
             step: Seconds between samples (the sampler's effective interval).
+            duration: The clip's duration as the sampler reports it (0: unknown).
             fail_calls: Detect calls (by number) that fail.
             labels: Replies to ``/faces/group``; ``None`` makes it fail.
         """
@@ -78,6 +80,7 @@ class _Fakes:
         self.size = size
         self.scale = scale
         self.step = step
+        self.duration = duration
         self.fail_calls = fail_calls
         self.labels = labels
         self.batches: list[list[bytes]] = []
@@ -102,7 +105,13 @@ class _Fakes:
         for index, level in enumerate(self.scenes):
             image = Image.new("RGB", self.size, (level,) * 3)
             self.yielded += 1
-            yield SampledFrame(index=index, time_sec=index * self.step, image=image, scale=self.scale)
+            yield SampledFrame(
+                index=index,
+                time_sec=index * self.step,
+                image=image,
+                scale=self.scale,
+                clip_duration_sec=self.duration,
+            )
 
     def detect_faces(
         self, images: Sequence[bytes], *, min_score: float = 0.7, config: object = None
@@ -654,3 +663,21 @@ def test_grouping_over_budget_falls_back_to_one_face_per_track(monkeypatch: pyte
     assert skipped.group_calls == []
     assert (result.grouped, result.tracks_sent) == (False, 0)
     assert [e.assigned for e in result.entries] == [False, False]
+
+
+@pytest.mark.parametrize(("duration", "end"), [(7.5, 7.5), (6.5, 7.0), (0.0, 8.0), (20.0, 8.0)])
+def test_appearances_end_within_the_clip(monkeypatch: pytest.MonkeyPatch, duration: float, end: float) -> None:
+    """An appearance ends at the clip's end at the latest, but never before the face was last seen.
+
+    Args:
+        monkeypatch: Pytest patcher.
+        duration: The clip's duration (0: unknown).
+        end: The last appearance's expected end.
+    """
+    box: Box = (200, 100, 100, 100)
+    planned: list[list[DetectedFace] | None] = [[_face(box)], [], [], [], [], [], [_face(box)], [_face(box)]]
+    _Fakes([DARK] * 8, planned, duration=duration).install(monkeypatch)
+
+    result = _run("detect")
+
+    assert [e.appearances for e in result.entries] == [((0.0, 1.0),), ((6.0, end),)]

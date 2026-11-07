@@ -229,12 +229,15 @@ class SampledFrame:
         scale: The image's size over the source frame's (``1.0`` unless the
             sampler scaled it down), so positions found in the image can be
             reported in the source's own pixels.
+        clip_duration_sec: The clip's duration in seconds as the sampler
+            measured it, ``0.0`` when unknown.
     """
 
     index: int
     time_sec: float
     image: Image.Image
     scale: float = 1.0
+    clip_duration_sec: float = 0.0
 
 
 def _sample_time(frame: av.VideoFrame, packet_index: int, average_rate: float | None, start_sec: float) -> float | None:
@@ -416,7 +419,9 @@ def sample_frames(
                     if time_sec is None or time_sec + _TICK_EPSILON < next_tick:
                         continue
                     image, scale = _upright_image(frame, max_side)
-                    yield SampledFrame(index=yielded, time_sec=time_sec, image=image, scale=scale)
+                    yield SampledFrame(
+                        index=yielded, time_sec=time_sec, image=image, scale=scale, clip_duration_sec=duration_sec
+                    )
                     yielded += 1
                     if yielded >= max_frames:
                         break
