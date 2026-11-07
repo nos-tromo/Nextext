@@ -226,11 +226,15 @@ class SampledFrame:
             matches the player's clock.
         image: The frame as an RGB image, upright (display rotation applied)
             and no larger than the sampler's ``max_side``.
+        scale: The image's size over the source frame's (``1.0`` unless the
+            sampler scaled it down), so positions found in the image can be
+            reported in the source's own pixels.
     """
 
     index: int
     time_sec: float
     image: Image.Image
+    scale: float = 1.0
 
 
 def _sample_time(frame: av.VideoFrame, packet_index: int, average_rate: float | None, start_sec: float) -> float | None:
@@ -256,7 +260,7 @@ def _sample_time(frame: av.VideoFrame, packet_index: int, average_rate: float | 
     return None
 
 
-def _upright_image(frame: av.VideoFrame, max_side: int) -> Image.Image:
+def _upright_image(frame: av.VideoFrame, max_side: int) -> tuple[Image.Image, float]:
     """Convert a frame to an upright RGB image whose long side is at most ``max_side``.
 
     The frame is scaled down by the decoder's scaler before conversion, then
@@ -268,7 +272,8 @@ def _upright_image(frame: av.VideoFrame, max_side: int) -> Image.Image:
         max_side: Largest allowed width or height.
 
     Returns:
-        Image.Image: The upright RGB image.
+        tuple[Image.Image, float]: The upright RGB image, and its scale
+            relative to the source frame.
     """
     long_side = max(frame.width, frame.height)
     scale = min(1.0, max_side / long_side) if long_side else 1.0
@@ -277,12 +282,12 @@ def _upright_image(frame: av.VideoFrame, max_side: int) -> Image.Image:
     image = frame.reformat(width=width, height=height, format="rgb24").to_image()
     quarter_turns = round(frame.rotation / 90) % 4
     if quarter_turns == 1:
-        return image.transpose(Image.Transpose.ROTATE_90)
+        return image.transpose(Image.Transpose.ROTATE_90), scale
     if quarter_turns == 2:
-        return image.transpose(Image.Transpose.ROTATE_180)
+        return image.transpose(Image.Transpose.ROTATE_180), scale
     if quarter_turns == 3:
-        return image.transpose(Image.Transpose.ROTATE_270)
-    return image
+        return image.transpose(Image.Transpose.ROTATE_270), scale
+    return image, scale
 
 
 def _keyframe_times(file_path: Path) -> tuple[list[float], float] | None:
@@ -410,7 +415,8 @@ def sample_frames(
                     time_sec = _sample_time(frame, packet_index, rate, start_sec)
                     if time_sec is None or time_sec + _TICK_EPSILON < next_tick:
                         continue
-                    yield SampledFrame(index=yielded, time_sec=time_sec, image=_upright_image(frame, max_side))
+                    image, scale = _upright_image(frame, max_side)
+                    yield SampledFrame(index=yielded, time_sec=time_sec, image=image, scale=scale)
                     yielded += 1
                     if yielded >= max_frames:
                         break
