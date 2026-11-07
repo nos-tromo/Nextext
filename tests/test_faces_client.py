@@ -318,3 +318,94 @@ def test_group_http_error_is_none(monkeypatch: pytest.MonkeyPatch, log_lines: li
 
     assert group_faces([_track((0,))]) is None
     assert any("HTTPStatusError (HTTP 503)" in line for line in log_lines)
+
+
+def _busy(url: str, retry_after: str) -> httpx.Response:
+    """Build the service's busy reply.
+
+    Args:
+        url: The request URL.
+        retry_after: The ``Retry-After`` header value.
+
+    Returns:
+        httpx.Response: A 503 with the header.
+    """
+    return httpx.Response(
+        503, json={"detail": "busy"}, headers={"Retry-After": retry_after}, request=httpx.Request("POST", url)
+    )
+
+
+def test_detect_retries_once_after_a_short_retry_after(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A busy service that asks for a short wait gets one retry of the same batch."""
+    monkeypatch.setenv("FACES_API_BASE", "http://router:4000")
+    replies = iter([_busy("http://router:4000/faces/detect", "2"), None])
+    sent: list[dict[str, Any]] = []
+    waits: list[float] = []
+
+    def post(url: str, **kwargs: Any) -> httpx.Response:
+        sent.append(kwargs["json"])
+        reply = next(replies)
+        return reply if reply is not None else _reply(url, {"results": [{"faces": [_FACE]}]})
+
+    monkeypatch.setattr(faces.httpx, "post", post)
+    monkeypatch.setattr(faces.time, "sleep", waits.append)
+
+    with trace_inference() as trace:
+        results = detect_faces([b"image"])
+
+    assert results is not None and len(results[0] or []) == 1
+    assert waits == [2.0]
+    assert len(sent) == 2 and sent[0] == sent[1]
+    assert [(t.requests, t.failed) for t in trace.tallies] == [(2, 1)]
+
+
+def test_detect_retries_only_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A second busy reply ends the batch as failed."""
+    monkeypatch.setenv("FACES_API_BASE", "http://router:4000")
+    waits: list[float] = []
+    monkeypatch.setattr(faces.httpx, "post", lambda url, **kwargs: _busy(url, "1"))
+    monkeypatch.setattr(faces.time, "sleep", waits.append)
+
+    with trace_inference() as trace:
+        assert detect_faces([b"image"]) is None
+    assert waits == [1.0]
+    assert [(t.requests, t.failed) for t in trace.tallies] == [(2, 2)]
+
+
+@pytest.mark.parametrize("retry_after", ["30", "soon", "-1"])
+def test_detect_does_not_wait_long_or_on_a_bad_retry_after(monkeypatch: pytest.MonkeyPatch, retry_after: str) -> None:
+    """A wait over 10 s, or a Retry-After that is no number of seconds, fails the batch at once.
+
+    Args:
+        monkeypatch: Pytest patcher.
+        retry_after: The header value.
+    """
+    monkeypatch.setenv("FACES_API_BASE", "http://router:4000")
+    calls: list[str] = []
+
+    def post(url: str, **kwargs: Any) -> httpx.Response:
+        calls.append(url)
+        return _busy(url, retry_after)
+
+    monkeypatch.setattr(faces.httpx, "post", post)
+    monkeypatch.setattr(faces.time, "sleep", lambda seconds: pytest.fail("must not wait"))
+
+    assert detect_faces([b"image"]) is None
+    assert len(calls) == 1
+
+
+def test_group_retries_once_after_a_short_retry_after(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Grouping gets the same single retry on a short busy reply."""
+    monkeypatch.setenv("FACES_API_BASE", "http://router:4000")
+    replies = iter([_busy("http://router:4000/faces/group", "0.5"), None])
+    waits: list[float] = []
+
+    def post(url: str, **kwargs: Any) -> httpx.Response:
+        reply = next(replies)
+        return reply if reply is not None else _reply(url, {"labels": [0]})
+
+    monkeypatch.setattr(faces.httpx, "post", post)
+    monkeypatch.setattr(faces.time, "sleep", waits.append)
+
+    assert group_faces([_track((0,))]) == [0]
+    assert waits == [0.5]
