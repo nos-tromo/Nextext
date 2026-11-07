@@ -21,6 +21,7 @@ track its own entry.
 
 from __future__ import annotations
 
+import contextlib
 import io
 import itertools
 import math
@@ -73,6 +74,10 @@ MAX_FACES_PER_FRAME = 20
 MIN_FACE_PX = 40
 MAX_TRACKS = 500
 MAX_ENTRIES = 100
+# Detect batches failing in a row after which the service counts as down: the
+# rest of the video is neither decoded nor sent, so a hung service cannot hold
+# a job for hours (one timeout per batch).
+FAILED_BATCHES_TO_STOP = 3
 # A face good enough to group by.
 GOOD_SCORE = 0.85
 GOOD_MIN_PX = 64
@@ -325,6 +330,7 @@ class _Extraction:
         self.frames_sent = 0
         self.batches_answered = 0
         self.batches_failed = 0
+        self.failed_in_a_row = 0
         self.undecodable = 0
         self.truncated = False
 
@@ -339,8 +345,15 @@ class _Extraction:
         results = detect_faces(images, config=self.config)
         if results is None:
             self.batches_failed += 1
+            self.failed_in_a_row += 1
+            if self.stopped:
+                logger.warning(
+                    "Face detection failed for {} batches in a row; the rest of the video is not sampled.",
+                    self.failed_in_a_row,
+                )
         else:
             self.batches_answered += 1
+            self.failed_in_a_row = 0
         for position, frame in enumerate(batch):
             self.sample_times.append(frame.time_sec)
             self.scales[frame.index] = frame.scale
@@ -426,6 +439,16 @@ class _Extraction:
                 kept.group.append((score, GroupFace(jpeg=group_jpeg, landmarks=landmarks)))
                 kept.group.sort(key=lambda item: item[0], reverse=True)
                 del kept.group[GROUP_FACES_PER_TRACK:]
+
+    @property
+    def stopped(self) -> bool:
+        """Whether the faces service has failed too often in a row to keep trying.
+
+        Returns:
+            bool: ``True`` after :data:`FAILED_BATCHES_TO_STOP` failed batches
+                in a row.
+        """
+        return self.failed_in_a_row >= FAILED_BATCHES_TO_STOP
 
     @staticmethod
     def _is_good(detection: Detection, frontal: float) -> bool:
@@ -640,14 +663,23 @@ def extract_faces(
     extraction = _Extraction(mode, interval_s, load_faces_env())
     batch: list[SampledFrame] = []
     batch_bytes = 0
-    for frame in sample_frames(file_path, interval_s=interval_s, max_frames=max_frames):
-        size = _source_bytes(frame)
-        if batch and (len(batch) >= BATCH_IMAGES or batch_bytes + size > SOURCE_BATCH_BYTES):
-            extraction.process(batch)
-            batch = []
-            batch_bytes = 0
-        batch.append(frame)
-        batch_bytes += size
+    with contextlib.closing(sample_frames(file_path, interval_s=interval_s, max_frames=max_frames)) as frames:
+        for frame in frames:
+            size = _source_bytes(frame)
+            if batch and batch_bytes + size > SOURCE_BATCH_BYTES:
+                extraction.process(batch)
+                batch = []
+                batch_bytes = 0
+                if extraction.stopped:
+                    break
+            batch.append(frame)
+            batch_bytes += size
+            if len(batch) >= BATCH_IMAGES:
+                extraction.process(batch)
+                batch = []
+                batch_bytes = 0
+                if extraction.stopped:
+                    break
     if batch:
         extraction.process(batch)
     if not extraction.sample_times:

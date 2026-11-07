@@ -79,6 +79,7 @@ class _Fakes:
         self.labels = labels
         self.batches: list[list[bytes]] = []
         self.group_calls: list[list[GroupTrack]] = []
+        self.yielded = 0
         self._cursor = 0
 
     def sample_frames(
@@ -97,6 +98,7 @@ class _Fakes:
         """
         for index, level in enumerate(self.scenes):
             image = Image.new("RGB", self.size, (level,) * 3)
+            self.yielded += 1
             yield SampledFrame(index=index, time_sec=float(index), image=image, scale=self.scale)
 
     def detect_faces(
@@ -564,3 +566,39 @@ def test_faces_config_is_read_once_per_video(monkeypatch: pytest.MonkeyPatch, lo
     assert result.outcome == "ok"
     assert len(calls) == 2
     assert sum("FACES_TIMEOUT" in line for line in log_lines) == 1
+
+
+def test_three_failed_batches_in_a_row_stop_the_stage(monkeypatch: pytest.MonkeyPatch) -> None:
+    """After three failed batches in a row nothing more is sent, and nothing more is decoded."""
+    box: Box = (200, 100, 100, 100)
+    fakes = _Fakes([DARK] * 80, [[_face(box)] for _ in range(80)], fail_calls=frozenset(range(10))).install(monkeypatch)
+
+    result = _run("detect")
+
+    assert len(fakes.batches) == 3
+    assert fakes.yielded == 24
+    assert (result.outcome, result.entries, result.frames_sent) == ("unavailable", (), 24)
+
+
+def test_breaker_after_a_success_is_partial(monkeypatch: pytest.MonkeyPatch) -> None:
+    """When the service dies after answering, what it answered is kept and the result is partial."""
+    box: Box = (200, 100, 100, 100)
+    fakes = _Fakes([DARK] * 80, [[_face(box)] for _ in range(80)], fail_calls=frozenset(range(1, 10))).install(
+        monkeypatch
+    )
+
+    result = _run("detect")
+
+    assert len(fakes.batches) == 4
+    assert result.outcome == "partial"
+    assert [e.appearances for e in result.entries] == [((0.0, 8.0),)]
+
+
+def test_an_answered_batch_resets_the_breaker(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Failures that never come three in a row do not stop the stage."""
+    fakes = _Fakes([DARK] * 48, [[] for _ in range(48)], fail_calls=frozenset({0, 1, 3, 4})).install(monkeypatch)
+
+    result = _run("detect")
+
+    assert len(fakes.batches) == 6
+    assert result.outcome == "partial"

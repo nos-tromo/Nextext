@@ -22,7 +22,7 @@ import json
 import math
 import os
 import statistics
-from collections.abc import Iterator, Sequence
+from collections.abc import Generator, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -364,7 +364,7 @@ def _decode_mode(keyframe_times: Sequence[float], interval_s: float) -> DecodeMo
 
 def sample_frames(
     file_path: Path, *, interval_s: float, max_frames: int, max_side: int = 3840
-) -> Iterator[SampledFrame]:
+) -> Generator[SampledFrame, None, None]:
     """Yield one upright frame per time interval across the whole video.
 
     The interval stretches to ``duration / max_frames`` when the clip is longer
