@@ -5,7 +5,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import openai
 import pandas as pd
@@ -19,6 +19,7 @@ from nextext.core.diarization import (
     fill_speakers_by_nearest_turn,
     renumber_speakers_by_appearance,
 )
+from nextext.core.face_extraction import FacesResult, extract_faces
 from nextext.core.hate_speech import (
     TranscriptLine,
     WindowTruncatedError,
@@ -37,6 +38,7 @@ from nextext.core.translation import Translator
 from nextext.core.visual_context import FrameCaption
 from nextext.core.words import WordCounter
 from nextext.utils.env_cfg import (
+    load_faces_sampling_env,
     load_hate_speech_env,
     load_language_env,
     load_sentence_restore_env,
@@ -1020,3 +1022,19 @@ def frame_hate_speech_pipeline(
         len(findings),
     )
     return findings
+
+
+def faces_pipeline(file_path: Path, *, mode: Literal["detect", "group"]) -> FacesResult | None:
+    """Find the faces of a video at the configured sampling density.
+
+    Args:
+        file_path: The uploaded media.
+        mode: ``detect`` or ``group`` — the operator switch ``NEXTEXT_FACES``
+            when it is not ``off``.
+
+    Returns:
+        FacesResult | None: The faces, or ``None`` when the file yielded no
+            frame (audio only, undecodable).
+    """
+    sampling = load_faces_sampling_env()
+    return extract_faces(file_path, mode=mode, interval_s=sampling.interval_s, max_frames=sampling.max_frames)
