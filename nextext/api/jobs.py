@@ -536,6 +536,9 @@ def _joined_analyses(result: dict[str, Any], options: JobOptions) -> tuple[list[
         named_entities=_is_filled_frame(result.get("named_entities")),
         summary=bool(result.get("summary")),
         frame_captions=has_captions,
+        # Listed when the stage ran and yielded a result. After an exception
+        # in the stage there is none, so nothing of it was joined and the
+        # combine event rightly leaves it out.
         faces=result.get("faces") is not None,
         hate_speech=options.hate_speech and (bool(columns) or has_captions),
     )
@@ -758,7 +761,11 @@ def _run_pipeline_blocking(state: JobState, push_event: PushEvent) -> dict[str, 
             try:
                 faces_result = faces_pipeline(state.file_path, mode=faces_mode)
             except Exception as exc:
-                logger.warning("Job {} faces unavailable: {}", state.job_id, error_label(exc))
+                # Not an upstream reply (the client handles those): an
+                # unexpected error, so its frames are logged — never its message.
+                logger.warning(
+                    "Job {} faces unavailable: {}\n{}", state.job_id, error_label(exc), exception_frames(exc)
+                )
             if faces_result is not None:
                 notes.result("face_detect", frames=faces_result.frames_sent)
                 if faces_result.tracks_sent:

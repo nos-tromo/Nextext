@@ -226,9 +226,10 @@ def test_faces_failure_does_not_fail_the_job(
     transcribed: None, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, log_lines: list[str]
 ) -> None:
     """An unexpected error in the stage leaves the job running, without faces, logged by class."""
+    detail = " ".join(("invented", "failure", "detail", "0427"))
 
     def faces(path: Path, *, mode: str) -> FacesResult:
-        raise RuntimeError("invented failure detail 0427")
+        raise RuntimeError(detail)
 
     monkeypatch.setattr("nextext.pipeline.faces_pipeline", faces)
 
@@ -239,6 +240,8 @@ def test_faces_failure_does_not_fail_the_job(
     assert _face_completed(events)["result_delta"] == {"skipped": True}
     logged = "\n".join(log_lines)
     assert "RuntimeError" in logged
+    assert "Traceback (most recent call last):" in logged
+    assert ", in faces" in logged
     assert "invented failure detail" not in logged
 
 
