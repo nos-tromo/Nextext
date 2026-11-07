@@ -331,6 +331,9 @@ class _Extraction:
         self.batches_answered = 0
         self.batches_failed = 0
         self.failed_in_a_row = 0
+        # The interval tracks are ranked by, fixed at its first use so that
+        # pruning while reading and the final cap rank alike.
+        self._ranking_interval: float | None = None
         self.undecodable = 0
         self.truncated = False
 
@@ -478,17 +481,22 @@ class _Extraction:
         positive = [gap for gap in gaps if gap > 0]
         return max(self.interval_s, statistics.median(positive)) if positive else self.interval_s
 
-    def _rank(self, track: Track, interval: float) -> float:
+    def _rank(self, track: Track) -> float:
         """How prominent a track is: its duration times its mean area.
+
+        The duration counts one sampling interval for the last sample; the
+        interval is the effective one, fixed the first time any track is
+        ranked, so every ranking of the video agrees.
 
         Args:
             track: The track.
-            interval: The sampling interval.
 
         Returns:
             float: Higher is more prominent.
         """
-        return (track.last_time - track.first_time + interval) * track.mean_area
+        if self._ranking_interval is None:
+            self._ranking_interval = self.interval()
+        return (track.last_time - track.first_time + self._ranking_interval) * track.mean_area
 
     def _prune_closed(self) -> None:
         """Drop the crops of closed tracks that can no longer make the track cap.
@@ -500,7 +508,7 @@ class _Extraction:
         closed = [track for track in self.tracks if track.closed and track.id in self.crops]
         if len(closed) <= MAX_TRACKS:
             return
-        closed.sort(key=lambda track: self._rank(track, self.interval_s), reverse=True)
+        closed.sort(key=self._rank, reverse=True)
         for track in closed[MAX_TRACKS:]:
             del self.crops[track.id]
         self.truncated = True
@@ -524,7 +532,7 @@ class _Extraction:
         interval = self.interval()
         kept = [track for track in self.tracks if track.id in self.crops]
         if len(kept) > MAX_TRACKS:
-            kept.sort(key=lambda track: self._rank(track, interval), reverse=True)
+            kept.sort(key=self._rank, reverse=True)
             kept = sorted(kept[:MAX_TRACKS], key=lambda track: track.id)
             self.truncated = True
         grouped, tracks_sent, labels = self._group(kept)
