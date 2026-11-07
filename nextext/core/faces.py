@@ -70,6 +70,7 @@ __all__ = [
     "GroupTrack",
     "detect_faces",
     "group_faces",
+    "group_request_body",
 ]
 
 # The faces service takes no model field; the audit log names it by its endpoint.
@@ -370,6 +371,32 @@ def _parse_labels(payload: Any, expected: int) -> list[int] | None:
     return list(labels)
 
 
+def group_request_body(tracks: Sequence[GroupTrack]) -> bytes:
+    """Serialize a ``/faces/group`` request, so its size can be checked before sending.
+
+    Args:
+        tracks: The tracks, each with its sample indices and a few crops.
+
+    Returns:
+        bytes: The compact JSON body.
+    """
+    return json.dumps(
+        {
+            "tracks": [
+                {
+                    "samples": list(track.samples),
+                    "faces": [
+                        {"image": _b64(face.jpeg), "landmarks": [list(point) for point in face.landmarks]}
+                        for face in track.faces
+                    ],
+                }
+                for track in tracks
+            ]
+        },
+        separators=(",", ":"),
+    ).encode("ascii")
+
+
 def group_faces(tracks: Sequence[GroupTrack], *, config: FacesConfig | None = None) -> list[int] | None:
     """Group tracks of the same person via ``/faces/group``.
 
@@ -392,21 +419,7 @@ def group_faces(tracks: Sequence[GroupTrack], *, config: FacesConfig | None = No
         return None
     if not tracks:
         return []
-    body = json.dumps(
-        {
-            "tracks": [
-                {
-                    "samples": list(track.samples),
-                    "faces": [
-                        {"image": _b64(face.jpeg), "landmarks": [list(point) for point in face.landmarks]}
-                        for face in track.faces
-                    ],
-                }
-                for track in tracks
-            ]
-        },
-        separators=(",", ":"),
-    ).encode("ascii")
+    body = group_request_body(tracks)
     if len(body) > MAX_REQUEST_BYTES:
         logger.warning(
             "Face grouping skipped: the request would be {} bytes, over the {} byte budget.",
