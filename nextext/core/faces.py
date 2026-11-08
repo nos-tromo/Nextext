@@ -35,14 +35,18 @@ Request/response contract::
         application/json:
             {"tracks": [{"samples": [3, 4, 5],
                          "faces": [{"image": "<base64 JPEG>",
-                                    "landmarks": [[x, y], ... crop pixels]}]}]}
+                                    "landmarks": [[x, y], ... crop pixels]}],
+                         "anchor": true}]}
         Tracks that share a sample index were on screen together and are
-        never merged.
+        never merged. Anchor tracks (with a good face) are clustered into
+        people; a weak track (``"anchor": false``) may only join the one
+        person it matches, never found or link one.
 
     200 OK
         {"labels": [0, 0, 1, -1]}
-        One label per track, numbered by each cluster's first track; ``-1``
-        for a track with no usable face.
+        One label per track, numbered by each person's first anchor track;
+        ``-1`` for a track with no usable face and a weak track that joined
+        no one.
 """
 
 from __future__ import annotations
@@ -121,11 +125,15 @@ class GroupTrack:
     Attributes:
         samples: The sample indices the track spans; tracks sharing one were
             on screen together, so the service keeps them apart.
-        faces: A few good crops of the face.
+        faces: A few crops of the face.
+        anchor: Whether the crops include a good face. An anchor track can
+            found a person; a weak one (a profile, say) may only join one the
+            anchors make up, never link two.
     """
 
     samples: tuple[int, ...]
     faces: tuple[GroupFace, ...]
+    anchor: bool = True
 
 
 def _headers(config: FacesConfig) -> dict[str, str]:
@@ -389,6 +397,7 @@ def group_request_body(tracks: Sequence[GroupTrack]) -> bytes:
                         {"image": _b64(face.jpeg), "landmarks": [list(point) for point in face.landmarks]}
                         for face in track.faces
                     ],
+                    "anchor": track.anchor,
                 }
                 for track in tracks
             ]

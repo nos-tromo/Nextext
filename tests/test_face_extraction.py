@@ -19,7 +19,7 @@ from PIL import Image
 from nextext import pipeline
 from nextext.core import face_extraction, faces
 from nextext.core.face_extraction import FacesResult, extract_faces
-from nextext.core.face_tracks import Box
+from nextext.core.face_tracks import Box, frontality
 from nextext.core.faces import DetectedFace, GroupTrack
 from nextext.core.keyframes import SampledFrame
 
@@ -27,20 +27,22 @@ W, H = 640, 360
 DARK, LIGHT = 60, 200
 
 
-def _face(box: Box, score: float = 0.95, size: tuple[int, int] = (W, H)) -> DetectedFace:
-    """Describe a frontal face at a box, normalized to the frame as the service reports it.
+def _face(box: Box, score: float = 0.95, size: tuple[int, int] = (W, H), nose_x: float = 0.5) -> DetectedFace:
+    """Describe a face at a box, normalized to the frame as the service reports it.
 
     Args:
         box: ``(x, y, w, h)`` in source pixels.
         score: The detector's confidence.
         size: The frame's size.
+        nose_x: The nose tip across the box; ``0.5`` (between the eyes) is
+            frontal, ``0.66`` a half profile (frontality 0.2).
 
     Returns:
         DetectedFace: The face.
     """
     x, y, w, h = box
     sw, sh = size
-    points = ((0.3, 0.4), (0.7, 0.4), (0.5, 0.6), (0.35, 0.8), (0.65, 0.8))
+    points = ((0.3, 0.4), (0.7, 0.4), (nose_x, 0.6), (0.35, 0.8), (0.65, 0.8))
     return DetectedFace(
         box=(x / sw, y / sh, w / sw, h / sh),
         score=score,
@@ -283,17 +285,65 @@ def test_cooccurring_tracks_send_their_samples(monkeypatch: pytest.MonkeyPatch) 
     assert [e.assigned for e in result.entries] == [True, True]
 
 
-def test_poor_faces_are_not_sent_for_grouping(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Tracks with no good face (low score or too small) stay single and are not sent."""
-    planned: list[list[DetectedFace] | None] = [[_face((50, 100, 100, 100), score=0.75), _face((400, 100, 50, 50))]] * 3
-    fakes = _Fakes([DARK] * 3, planned, labels=lambda tracks: [0] * len(tracks)).install(monkeypatch)
+def test_tracks_without_a_good_face_are_sent_as_weak(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Tracks with no good face (low score, too small, a profile) go as weak tracks with their best crops."""
+    planned: list[list[DetectedFace] | None] = [
+        [
+            _face((50, 100, 100, 100), score=0.75),
+            _face((250, 100, 50, 50)),
+            _face((400, 100, 100, 100), nose_x=0.66),
+        ]
+    ] * 3
+    fakes = _Fakes([DARK] * 3, planned, labels=lambda tracks: [-1] * len(tracks)).install(monkeypatch)
 
     result = _run("group")
 
-    assert fakes.group_calls == []
-    assert result.tracks_sent == 0
-    assert result.grouped is False
-    assert [e.assigned for e in result.entries] == [False, False]
+    sent = fakes.group_calls[0]
+    assert [track.anchor for track in sent] == [False, False, False]
+    assert all(len(track.faces) == 3 for track in sent)
+    assert (result.grouped, result.tracks_sent) == (True, 3)
+    assert [e.assigned for e in result.entries] == [False, False, False]
+
+
+def test_profile_track_joins_the_person_the_service_names(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A profile-only track labelled like a frontal one becomes part of that person, not a face of its own."""
+    box: Box = (200, 100, 100, 100)
+    scenes = [DARK] * 2 + [LIGHT] * 2
+    planned: list[list[DetectedFace] | None] = [
+        [_face(box)],
+        [_face(box)],
+        [_face(box, nose_x=0.66)],
+        [_face(box, nose_x=0.66)],
+    ]
+    fakes = _Fakes(scenes, planned, labels=lambda tracks: [0] * len(tracks)).install(monkeypatch)
+
+    result = _run("group")
+
+    assert [track.anchor for track in fakes.group_calls[0]] == [True, False]
+    assert len(result.entries) == 1
+    entry = result.entries[0]
+    assert (entry.number, entry.assigned, entry.detections) == (1, True, 4)
+    assert entry.appearances == ((0.0, 4.0),)
+    assert entry.best.time_sec in (0.0, 1.0)
+
+
+def test_mixed_track_sends_only_its_good_crops(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A track with one good face is an anchor and sends that face alone, not its profiles."""
+    box: Box = (200, 100, 100, 100)
+    planned: list[list[DetectedFace] | None] = [
+        [_face(box, nose_x=0.66)],
+        [_face(box)],
+        [_face(box, nose_x=0.66)],
+        [_face(box, nose_x=0.66)],
+    ]
+    fakes = _Fakes([DARK] * 4, planned, labels=lambda tracks: [0]).install(monkeypatch)
+
+    _run("group")
+
+    (track,) = fakes.group_calls[0]
+    assert track.anchor is True
+    assert len(track.faces) == 1
+    assert frontality(track.faces[0].landmarks) >= face_extraction.GOOD_FRONTALITY
 
 
 def test_numbering_follows_first_appearance(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -651,7 +701,9 @@ def test_grouping_over_budget_falls_back_to_one_face_per_track(monkeypatch: pyte
     full, _result = run(None)
     sent = full.group_calls[0]
     three = len(faces.group_request_body(sent))
-    one = len(faces.group_request_body([GroupTrack(samples=t.samples, faces=t.faces[:1]) for t in sent]))
+    one = len(
+        faces.group_request_body([GroupTrack(samples=t.samples, faces=t.faces[:1], anchor=t.anchor) for t in sent])
+    )
     assert one < three
 
     reduced, result = run((one + three) // 2)

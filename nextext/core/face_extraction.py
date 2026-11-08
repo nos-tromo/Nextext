@@ -6,7 +6,7 @@ for detection. The boxes that come back are mapped onto the source frame,
 filtered, linked into tracks (:mod:`nextext.core.face_tracks`) and cut out of
 the source while it is still in memory: per track the best shot with a wide
 margin, a few smaller crops, a thumbnail, and — in ``group`` mode — up to three
-good crops for ``/faces/group``. Only the batch's source frames are held at
+crops for ``/faces/group``, good ones first. Only the batch's source frames are held at
 once.
 
 After the last batch the tracks are capped, grouped per person when the mode
@@ -79,7 +79,8 @@ MAX_ENTRIES = 100
 # rest of the video is neither decoded nor sent, so a hung service cannot hold
 # a job for hours (one timeout per batch).
 FAILED_BATCHES_TO_STOP = 3
-# A face good enough to group by.
+# A face good enough to found a person on: a track with one is an anchor; a
+# track without one is sent as a weak track, which may only join a person.
 GOOD_SCORE = 0.85
 GOOD_MIN_PX = 64
 GOOD_FRONTALITY = 0.5
@@ -204,13 +205,26 @@ class _TrackCrops:
         best: The highest-quality shot so far.
         thumbnail: The thumbnail of that shot.
         small: The best few smaller crops, best first.
-        group: The best few good crops for grouping, best first, with their quality.
+        group: The best few crops for grouping, good ones first, then by
+            quality, each with that ranking.
     """
 
     best: FaceCrop | None = None
     thumbnail: bytes = b""
     small: list[FaceCrop] = field(default_factory=list)
-    group: list[tuple[float, GroupFace]] = field(default_factory=list)
+    group: list[tuple[tuple[bool, float], GroupFace]] = field(default_factory=list)
+
+    def group_faces(self) -> tuple[bool, list[GroupFace]]:
+        """The crops to group this track by, and whether it is an anchor.
+
+        Returns:
+            tuple[bool, list[GroupFace]]: ``True`` and only the good crops when
+                there is one; else ``False`` and the best crops there are.
+        """
+        good = [face for (is_good, _quality), face in self.group if is_good]
+        if good:
+            return True, good
+        return False, [face for _rank, face in self.group]
 
 
 def _encode_jpeg(image: Image.Image, jpeg_quality: int) -> bytes:
@@ -440,11 +454,12 @@ class _Extraction:
             kept.small.append(FaceCrop(detection.time_sec, source_box, detection.score, score, small_jpeg))
             kept.small.sort(key=lambda crop: crop.quality, reverse=True)
             del kept.small[EXTRA_CROPS + 1 :]
-        if self.mode == "group" and self._is_good(detection, frontal):
-            if len(kept.group) < GROUP_FACES_PER_TRACK or score > kept.group[-1][0]:
+        if self.mode == "group":
+            rank = (self._is_good(detection, frontal), score)
+            if len(kept.group) < GROUP_FACES_PER_TRACK or rank > kept.group[-1][0]:
                 group_jpeg, left, top, scale = _cut(image, detection.box, GROUP_CROP)
                 landmarks = tuple(((px - left) * scale, (py - top) * scale) for px, py in detection.landmarks)
-                kept.group.append((score, GroupFace(jpeg=group_jpeg, landmarks=landmarks)))
+                kept.group.append((rank, GroupFace(jpeg=group_jpeg, landmarks=landmarks)))
                 kept.group.sort(key=lambda item: item[0], reverse=True)
                 del kept.group[GROUP_FACES_PER_TRACK:]
 
@@ -469,7 +484,7 @@ class _Extraction:
 
     @staticmethod
     def _is_good(detection: Detection, frontal: float) -> bool:
-        """Whether a face is good enough to group by.
+        """Whether a face is good enough to found a person on.
 
         Args:
             detection: The detection.
@@ -574,9 +589,12 @@ class _Extraction:
     def _group(self, kept: Sequence[Track]) -> tuple[bool, int, dict[int, int]]:
         """Ask the service which tracks show the same person (``group`` mode).
 
-        Each track goes with its best few good crops; when that request would
-        be over the service's byte budget, with its single best one; when even
-        that is over, nothing is sent and every track stays its own entry.
+        Each track goes with its best few crops: a track with a good face is
+        an anchor and sends only its good ones; one without is weak and sends
+        its best ones, and the service lets it join at most a person the
+        anchors make up. When that request would be over the service's byte
+        budget, each track goes with its single best crop; when even that is
+        over, nothing is sent and every track stays its own entry.
 
         Args:
             kept: The tracks kept.
@@ -593,13 +611,16 @@ class _Extraction:
             return False, 0, {}
         request: list[GroupTrack] | None = None
         for faces_per_track in (GROUP_FACES_PER_TRACK, 1):
-            candidate = [
-                GroupTrack(
-                    samples=tuple(detection.sample for detection in track.detections),
-                    faces=tuple(face for _score, face in self.crops[track.id].group[:faces_per_track]),
+            candidate: list[GroupTrack] = []
+            for track in eligible:
+                anchor, crops = self.crops[track.id].group_faces()
+                candidate.append(
+                    GroupTrack(
+                        samples=tuple(detection.sample for detection in track.detections),
+                        faces=tuple(crops[:faces_per_track]),
+                        anchor=anchor,
+                    )
                 )
-                for track in eligible
-            ]
             if len(faces_api.group_request_body(candidate)) <= faces_api.MAX_REQUEST_BYTES:
                 request = candidate
                 break

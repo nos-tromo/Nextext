@@ -271,9 +271,26 @@ def test_group_returns_labels(monkeypatch: pytest.MonkeyPatch) -> None:
         "faces": [
             {"image": base64.b64encode(b"\xff\xd8crop").decode("ascii"), "landmarks": [[10.0, 12.0], [20.0, 12.0]]}
         ],
+        "anchor": True,
     }
     assert sent[0]["headers"]["Content-Type"] == "application/json"
     assert [(t.task, t.model, t.requests, t.failed) for t in trace.tallies] == [("face_group", FACES_MODEL_ALIAS, 1, 0)]
+
+
+def test_group_marks_weak_tracks(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A track sent without a good face says so with ``"anchor": false``."""
+    monkeypatch.setenv("FACES_API_BASE", "http://router:4000")
+    sent: list[dict[str, Any]] = []
+
+    def post(url: str, **kwargs: Any) -> httpx.Response:
+        sent.append(json.loads(kwargs["content"]))
+        return _reply(url, {"labels": [0, 0]})
+
+    monkeypatch.setattr(faces.httpx, "post", post)
+    weak = GroupTrack(samples=(3,), faces=_track((3,)).faces, anchor=False)
+
+    assert group_faces([_track((0, 1)), weak]) == [0, 0]
+    assert [track["anchor"] for track in sent[0]["tracks"]] == [True, False]
 
 
 def test_group_label_count_mismatch_is_none(monkeypatch: pytest.MonkeyPatch) -> None:
