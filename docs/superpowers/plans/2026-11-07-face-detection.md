@@ -357,3 +357,20 @@ links a person (vllm-service `faces_cluster.py`). Tests:
 `test_tracks_without_a_good_face_are_sent_as_weak`,
 `test_profile_track_joins_the_person_the_service_names`,
 `test_mixed_track_sends_only_its_good_crops`, `test_group_marks_weak_tracks`.
+
+## Addendum: faces seen once, and faces too small to compare
+
+A second end-to-end run, on hand-held video with hard cuts, split people
+again: every track there is a single sample (the cut detector fires on almost
+every sample, and boxes a second apart barely overlap), so a small or blurred
+face that passes the good-face bar founds a person of its own, and profile
+tracks fell short of joining at the group threshold. Denser sampling did not
+link them. The fix is in the faces service (vllm-service: a cluster seen in a
+single sample joins like a weak track; joining compares a piece with the
+person's three closest anchors and has its own, looser threshold,
+`FACE_JOIN_THRESHOLD`). On this side, `_group` no longer sends a weak track
+none of whose faces reaches `GOOD_MIN_PX` (64 px): the feature model works on
+112 px faces, and below that the features are too noisy to match anyone.
+Tests: `test_tracks_too_small_to_compare_are_not_sent`,
+`test_tracks_without_a_good_face_are_sent_as_weak`.
+

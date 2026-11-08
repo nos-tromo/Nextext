@@ -68,10 +68,12 @@ no-speech short-circuit, so a silent video still yields faces. It never calls
    track's sample indices so the service keeps co-occurring tracks apart. A
    track with a good face (score ≥ 0.85, ≥ 64 px, roughly frontal) is an
    anchor and sends only its good faces; a track without one is weak and sends
-   its best faces with `"anchor": false`. Anchors make up the people; a weak
-   track may join the one person it matches but never founds or links one
-   (added after a first end-to-end run left half-profile tracks of a grouped
-   person as faces of their own).
+   its best faces with `"anchor": false`, provided one of its faces is at
+   least 64 px. Anchors make up the people; a weak track, and an anchor seen
+   in a single sample, may join the one person it matches but never founds or
+   links one (added after end-to-end runs left half-profile tracks of a
+   grouped person as faces of their own, and, on hand-held, hard-cut video,
+   small or blurred single-sample faces as people of their own).
 7. **Number** entries by first appearance; merge each entry's spans into
    appearances.
 
@@ -79,7 +81,8 @@ Kept per entry: the best shot from the source with a generous margin (≈ 50 % o
 the box per side, ≤ 1024 px) so another system can detect on it, 3 more crops
 (≤ 256 px) and the thumbnail. Caps: 500 tracks, 100 entries, ranked by
 duration × size; over either, `truncated` is set. A weak track that matches no
-person (or more than one), a track without a decodable face, or every track
+person (or no person clearly), a weak track whose faces all stay under 64 px, a
+track without a decodable face, or every track
 when grouping is off, failed or over its byte budget, stays a single entry
 (`assigned=false`, shown as "Face N").
 

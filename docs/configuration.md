@@ -297,6 +297,11 @@ faces endpoint resolving, startup logs one warning naming `NEXTEXT_FACES` and
 - `FACES_MAX_FRAMES` (backend only) — most frames sampled per video. Defaults
   to `600`, clamped to `3600`.
 
+How strictly faces are grouped is the faces service's setting, not Nextext's:
+`FACE_GROUP_THRESHOLD` (when anchors form one person) and
+`FACE_JOIN_THRESHOLD` (when a weak track or a face seen once joins one) in
+vllm-service's `.env`.
+
 The stage never fails a job. A failed batch leaves its frames without faces
 (`partial`); a `503` whose `Retry-After` asks for at most 10 s is waited out and
 that batch sent once more; after three failed batches in a row the rest of the
