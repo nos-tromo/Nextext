@@ -286,11 +286,10 @@ def test_cooccurring_tracks_send_their_samples(monkeypatch: pytest.MonkeyPatch) 
 
 
 def test_tracks_without_a_good_face_are_sent_as_weak(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Tracks with no good face (low score, too small, a profile) go as weak tracks with their best crops."""
+    """Tracks with no good face (low score, a profile) go as weak tracks with their best crops."""
     planned: list[list[DetectedFace] | None] = [
         [
             _face((50, 100, 100, 100), score=0.75),
-            _face((250, 100, 50, 50)),
             _face((400, 100, 100, 100), nose_x=0.66),
         ]
     ] * 3
@@ -299,10 +298,31 @@ def test_tracks_without_a_good_face_are_sent_as_weak(monkeypatch: pytest.MonkeyP
     result = _run("group")
 
     sent = fakes.group_calls[0]
-    assert [track.anchor for track in sent] == [False, False, False]
+    assert [track.anchor for track in sent] == [False, False]
     assert all(len(track.faces) == 3 for track in sent)
-    assert (result.grouped, result.tracks_sent) == (True, 3)
-    assert [e.assigned for e in result.entries] == [False, False, False]
+    assert (result.grouped, result.tracks_sent) == (True, 2)
+    assert [e.assigned for e in result.entries] == [False, False]
+
+
+def test_tracks_too_small_to_compare_are_not_sent(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A weak track whose faces all stay under 64 px is not sent and stays its own entry; 64 px is sent."""
+    planned: list[list[DetectedFace] | None] = [
+        [
+            _face((50, 100, 100, 100)),
+            _face((250, 100, 63, 63)),
+            _face((400, 100, 64, 64), score=0.75),
+        ]
+    ] * 3
+    fakes = _Fakes([DARK] * 3, planned, labels=lambda tracks: [0] * len(tracks)).install(monkeypatch)
+
+    result = _run("group")
+
+    sent = fakes.group_calls[0]
+    assert [track.anchor for track in sent] == [True, False]
+    assert result.tracks_sent == 2
+    assert sorted((e.assigned, e.detections) for e in result.entries) == [(False, 3), (True, 6)]
+    small = next(e for e in result.entries if not e.assigned)
+    assert small.best.box[2] == 63
 
 
 def test_profile_track_joins_the_person_the_service_names(monkeypatch: pytest.MonkeyPatch) -> None:

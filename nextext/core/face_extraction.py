@@ -80,7 +80,9 @@ MAX_ENTRIES = 100
 # a job for hours (one timeout per batch).
 FAILED_BATCHES_TO_STOP = 3
 # A face good enough to found a person on: a track with one is an anchor; a
-# track without one is sent as a weak track, which may only join a person.
+# track without one is sent as a weak track, which may only join a person, as
+# long as one of its faces is GOOD_MIN_PX or more: the feature model works on
+# 112 px faces, and a smaller one's features are too noisy to match anyone.
 GOOD_SCORE = 0.85
 GOOD_MIN_PX = 64
 GOOD_FRONTALITY = 0.5
@@ -592,9 +594,11 @@ class _Extraction:
         Each track goes with its best few crops: a track with a good face is
         an anchor and sends only its good ones; one without is weak and sends
         its best ones, and the service lets it join at most a person the
-        anchors make up. When that request would be over the service's byte
-        budget, each track goes with its single best crop; when even that is
-        over, nothing is sent and every track stays its own entry.
+        anchors make up. A weak track none of whose faces reaches
+        :data:`GOOD_MIN_PX` is not sent and stays its own entry. When that
+        request would be over the service's byte budget, each track goes with
+        its single best crop; when even that is over, nothing is sent and
+        every track stays its own entry.
 
         Args:
             kept: The tracks kept.
@@ -606,7 +610,12 @@ class _Extraction:
         """
         if self.mode != "group":
             return False, 0, {}
-        eligible = [track for track in kept if self.crops[track.id].group]
+        eligible = [
+            track
+            for track in kept
+            if self.crops[track.id].group
+            and max(min(detection.box[2], detection.box[3]) for detection in track.detections) >= GOOD_MIN_PX
+        ]
         if not eligible:
             return False, 0, {}
         request: list[GroupTrack] | None = None
