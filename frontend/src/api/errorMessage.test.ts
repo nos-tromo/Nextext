@@ -14,6 +14,9 @@ describe('describeError', () => {
       key: 'common.error_purpose_required',
     })
   })
+  it('maps a 401 to the signed-out key', () => {
+    expect(describeError(new ApiError(401, null))).toEqual({ key: 'common.error_signed_out' })
+  })
   it('maps network TypeError to the network key', () => {
     expect(describeError(new TypeError('Failed to fetch'))).toEqual({
       key: 'common.error_network',
