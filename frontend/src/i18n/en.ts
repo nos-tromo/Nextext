@@ -7,6 +7,7 @@ export const en = {
   'common.error_unknown': 'Something went wrong. Please try again or contact support.',
   'common.error_network': 'Service unreachable. Please check your connection or try again later.',
   'common.error_purpose_required': 'This action needs a stated purpose. Please state one in the header and try again.',
+  'common.error_signed_out': 'Your sign-in has expired. Reload the page to sign in again.',
   'common.file_count_one': '{count} file',
   'common.file_count_other': '{count} files',
   'common.jobs_processing': '{count} processing',

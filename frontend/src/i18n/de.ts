@@ -10,6 +10,7 @@ export const de: Strings = {
   'common.error_network': 'Dienst nicht erreichbar – Bitte prüfen Sie Ihre Verbindung oder versuchen Sie es später erneut.',
   'common.error_purpose_required':
     'Für diese Aktion muss ein Zweck angegeben werden – Bitte geben Sie ihn oben in der Kopfzeile an und versuchen Sie es erneut.',
+  'common.error_signed_out': 'Ihre Anmeldung ist abgelaufen – Bitte laden Sie die Seite neu, um sich erneut anzumelden.',
   'common.file_count_one': '{count} Datei',
   'common.file_count_other': '{count} Dateien',
   'common.jobs_processing': '{count} in Verarbeitung',
