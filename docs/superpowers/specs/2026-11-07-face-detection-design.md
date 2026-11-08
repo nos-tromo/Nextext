@@ -64,18 +64,24 @@ no-speech short-circuit, so a silent video still yields faces. It never calls
    detected from the grey-level difference of tiny thumbnails.
 5. **Score quality** per crop: detection score × size × frontality (from the
    landmarks) × sharpness (Laplacian variance).
-6. **Group** (`group` mode): up to 3 good faces per track (score ≥ 0.85,
-   ≥ 64 px, roughly frontal), ≤ 160 px JPEG, with each track's sample indices so
-   the service keeps co-occurring tracks apart.
+6. **Group** (`group` mode): up to 3 faces per track, ≤ 160 px JPEG, with each
+   track's sample indices so the service keeps co-occurring tracks apart. A
+   track with a good face (score ≥ 0.85, ≥ 64 px, roughly frontal) is an
+   anchor and sends only its good faces; a track without one is weak and sends
+   its best faces with `"anchor": false`. Anchors make up the people; a weak
+   track may join the one person it matches but never founds or links one
+   (added after a first end-to-end run left half-profile tracks of a grouped
+   person as faces of their own).
 7. **Number** entries by first appearance; merge each entry's spans into
    appearances.
 
 Kept per entry: the best shot from the source with a generous margin (≈ 50 % of
 the box per side, ≤ 1024 px) so another system can detect on it, 3 more crops
 (≤ 256 px) and the thumbnail. Caps: 500 tracks, 100 entries, ranked by
-duration × size; over either, `truncated` is set. Tracks without a usable face,
-or every track when grouping is off, failed or over its byte budget, stay
-single entries (`assigned=false`, shown as "Face N").
+duration × size; over either, `truncated` is set. A weak track that matches no
+person (or more than one), a track without a decodable face, or every track
+when grouping is off, failed or over its byte budget, stays a single entry
+(`assigned=false`, shown as "Face N").
 
 ## Result
 

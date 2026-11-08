@@ -337,3 +337,23 @@ FacesTab: banners (`Banner` from `@infra/ui`) for `partial`/`unavailable`, `trun
 - [ ] **Step 1:** `pyproject.toml` `version = "1.18.0"`, `uv lock` (only the version line changes).
 - [ ] **Step 2:** `make verify && uv run pytest -q && (cd frontend && pnpm test)` → green.
 - [ ] **Step 3: Commit** — `git commit -m "chore: release v1.18.0"`.
+
+---
+
+## Addendum: weak tracks (after the first end-to-end run)
+
+A first run on a two-person clip left two half-profile tracks of an already
+grouped person as faces of their own: Task 6 sent only tracks with at least one
+good face, so a track without one was never compared, although its features
+matched its person well above the threshold and the other person far below it.
+
+The fix keeps the good-face rule but turns it into a role instead of an entry
+ticket. Each track now goes to `/faces/group`: one with a good face as an
+anchor, with only its good crops; one without as a weak track
+(`GroupTrack.anchor=False`), with its best crops by quality. The service
+clusters the anchors into people and lets each weak track join the one person
+it matches and was not on screen with, or nobody; a weak track never founds or
+links a person (vllm-service `faces_cluster.py`). Tests:
+`test_tracks_without_a_good_face_are_sent_as_weak`,
+`test_profile_track_joins_the_person_the_service_names`,
+`test_mixed_track_sends_only_its_good_crops`, `test_group_marks_weak_tracks`.

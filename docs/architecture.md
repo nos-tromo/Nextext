@@ -93,11 +93,16 @@ HTTP client, and everything else is arithmetic on boxes and grey levels:
    — closes every track.
 5. **Score** each crop: detection score times size, frontality (from the
    landmarks) and sharpness (Laplacian variance).
-6. **Group** (`group` mode only): each track goes with up to three good crops
-   (score at least 0.85, at least 64 px, roughly frontal) and its sample
-   indices, so tracks on screen together are never merged. The service returns
-   one label per track and nothing else. A request over the 16 MiB budget is
-   retried with one crop per track; over even that, nothing is grouped.
+6. **Group** (`group` mode only): each track goes with up to three crops and
+   its sample indices, so tracks on screen together are never merged. A track
+   with a good face (score at least 0.85, at least 64 px, roughly frontal) is
+   an anchor and sends only its good crops; the anchors make up the people. A
+   track without one (a profile, say) is weak and sends its best crops anyway:
+   it may join the one person it matches, but never founds or links one, so a
+   person seen from the side is not split off as a face of its own. The
+   service returns one label per track and nothing else. A request over the
+   16 MiB budget is retried with one crop per track; over even that, nothing is
+   grouped.
 7. **Number** the entries by first appearance and merge each entry's spans into
    appearances, each ending at the clip's end at the latest but never before
    the face was last seen.
