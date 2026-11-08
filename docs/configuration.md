@@ -12,10 +12,10 @@ Nextext communicates with any OpenAI-compatible inference provider via `OPENAI_A
 
 **Language selection:** Set `RESPONSE_LANGUAGE` to `en` (English, default) or `de` (German) to control both the LLM output language (summaries, hate-speech rationales, prompts) and the SPA UI language. Missing or unrecognized values fall back to English. The legacy `NEXTEXT_RESPONSE_LANGUAGE` is deprecated but accepted as a fallback for one release; prefer `RESPONSE_LANGUAGE` in new deployments.
 
-**Docker defaults:** `docker/compose.yaml` applies these defaults to the backend when `.env` leaves a key unset: `INFERENCE_PROVIDER=vllm`, `OPENAI_API_BASE=http://vllm-router:4000/v1`, `RESPONSE_LANGUAGE=en`, `NER_TIMEOUT=120`, `DIARIZE_TIMEOUT=600` and `VAD_TIMEOUT=60`. Outside Docker (`uv run`) the code defaults apply instead, with `ollama` as the provider and no `OPENAI_API_BASE`.
+**Docker defaults:** `docker/compose.yaml` applies these defaults to the backend when `.env` leaves a key unset: `INFERENCE_PROVIDER=vllm`, `OPENAI_API_BASE=http://vllm-router:4000/v1`, `NER_TIMEOUT=120`, `DIARIZE_TIMEOUT=600` and `VAD_TIMEOUT=60`. Outside Docker (`uv run`) the code defaults apply instead, with `ollama` as the provider and no `OPENAI_API_BASE`.
 - `INFERENCE_PROVIDER`: a value exported in the shell that runs `make up` beats `.env`.
 - `OPENAI_API_BASE`: a value exported in the shell that runs `make up` beats `.env`.
-- `RESPONSE_LANGUAGE`: a value exported in the shell that runs `make up` beats `.env`. The compose default `en` also outranks a legacy `NEXTEXT_RESPONSE_LANGUAGE` left in `.env`; rename it (`make env` does) before `make up`.
+- `RESPONSE_LANGUAGE`: a value exported in the shell that runs `make up` beats `.env`.
 
 ## Dedicated endpoints
 
@@ -69,6 +69,7 @@ WHISPER_MODEL=openai/whisper-large-v3
 **Hosted OpenAI API:**
 
 ```bash
+INFERENCE_PROVIDER=openai
 OPENAI_API_BASE=https://api.openai.com/v1
 OPENAI_API_KEY=your-key
 ```
