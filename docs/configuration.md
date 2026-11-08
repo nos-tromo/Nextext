@@ -12,6 +12,11 @@ Nextext communicates with any OpenAI-compatible inference provider via `OPENAI_A
 
 **Language selection:** Set `RESPONSE_LANGUAGE` to `en` (English, default) or `de` (German) to control both the LLM output language (summaries, hate-speech rationales, prompts) and the SPA UI language. Missing or unrecognized values fall back to English. The legacy `NEXTEXT_RESPONSE_LANGUAGE` is deprecated but accepted as a fallback for one release; prefer `RESPONSE_LANGUAGE` in new deployments.
 
+**Docker defaults:** `docker/compose.yaml` applies these defaults to the backend when `.env` leaves a key unset: `INFERENCE_PROVIDER=vllm`, `OPENAI_API_BASE=http://vllm-router:4000/v1`, `RESPONSE_LANGUAGE=en`, `NER_TIMEOUT=120`, `DIARIZE_TIMEOUT=600` and `VAD_TIMEOUT=60`. Outside Docker (`uv run`) the code defaults apply instead, with `ollama` as the provider and no `OPENAI_API_BASE`.
+- `INFERENCE_PROVIDER`: a value exported in the shell that runs `make up` beats `.env`.
+- `OPENAI_API_BASE`: a value exported in the shell that runs `make up` beats `.env`.
+- `RESPONSE_LANGUAGE`: a value exported in the shell that runs `make up` beats `.env`. The compose default `en` also outranks a legacy `NEXTEXT_RESPONSE_LANGUAGE` left in `.env`; rename it (`make env` does) before `make up`.
+
 ## Dedicated endpoints
 
 Every model class can also be re-pointed at a **dedicated endpoint**, falling back to the central pair when unset:
@@ -51,9 +56,10 @@ docker run -d \
   ollama/ollama:0.32.15@sha256:57d60e686821ea81a7748a3ec8141308c8b8f95b27105713954abf7a6529e700
 ```
 
-Then configure Nextext to reach it by adding the following to your `.env` file (Ollama serves no transcription API, so Whisper needs an explicit dedicated endpoint):
+Then configure Nextext to reach it by adding the following to your `.env` file (under Docker the provider defaults to `vllm`, so it is set here too; Ollama serves no transcription API, so Whisper needs an explicit dedicated endpoint):
 
 ```bash
+INFERENCE_PROVIDER=ollama
 OPENAI_API_BASE=http://ollama:11434/v1
 OPENAI_API_KEY=ollama
 WHISPER_API_BASE=http://<your-whisper-host>:8000/v1
