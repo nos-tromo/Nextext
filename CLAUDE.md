@@ -183,9 +183,9 @@ Identity is resolved per request by `resolve_principal`, in order: a service tok
 
 ## Environment
 
-Key env vars (see `.env.example`):
-
 `.env.example` follows deploy's shared format (deploy `docs/runbooks/env-sync.md`, For member authors); check with `python3 -B ../deploy/scripts/check_env_examples.py .`.
+
+Key env vars (see `.env.example`):
 
 - `OPENAI_API_KEY`, `OPENAI_API_BASE` — the **central** OpenAI-compatible endpoint; carries translation, summarization, and hate-speech detection (all on `TEXT_MODEL`), supplies the bearer token reused by the NER, diarization, and VAD clients, and is the fallback for every per-model endpoint below (Whisper verbatim; NER/diarization/VAD with one trailing `/v1` stripped, since they speak a plain service root).
 - `WHISPER_API_BASE` / `WHISPER_API_KEY` / `WHISPER_MODEL` — dedicated Whisper endpoint (OpenAI SDK base incl. `/v1`); falls back to the central pair. Model defaults: `whisper-1` (openai), `openai/whisper-large-v3` (vllm). `INFERENCE_PROVIDER=ollama` has no transcription API, so it requires explicit `WHISPER_API_BASE` + `WHISPER_MODEL` (`load_whisper_env` raises otherwise).

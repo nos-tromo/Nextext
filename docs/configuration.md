@@ -74,7 +74,9 @@ OPENAI_API_BASE=https://api.openai.com/v1
 OPENAI_API_KEY=your-key
 ```
 
-Any other OpenAI-compatible endpoint (vLLM, LiteLLM, etc.) works the same way — set `OPENAI_API_BASE` to the `/v1` endpoint and `OPENAI_API_KEY` to whatever the provider expects.
+`api.openai.com` serves no `/gliner`, `/diarize` or `/vad`, so also set the dedicated `NER_API_BASE` and `DIARIZE_API_BASE` to services that do, and `VAD_API_BASE` to one or to `off` (also `false`, `no`, `0`). Without `INFERENCE_PROVIDER=openai` the provider stays `vllm` under Docker and Whisper asks for the wrong model.
+
+Any other OpenAI-compatible endpoint (vLLM, LiteLLM, etc.) works the same way — set `INFERENCE_PROVIDER` to match, `OPENAI_API_BASE` to the `/v1` endpoint and `OPENAI_API_KEY` to whatever the provider expects.
 
 ## Recommended Ollama models
 
