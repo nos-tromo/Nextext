@@ -12,6 +12,8 @@ export const API_BASE = apiBase()
 export const OWNER_HEADER = 'X-Auth-User'
 /** The app's purpose scope: the compose project name, shared with its PurposeBar. */
 export const PURPOSE_SCOPE = 'nextext'
+/** Status of the {@link ApiError} a request fails with when the gateway's sign-in page answered it. */
+export const SIGNED_OUT_STATUS = 401
 
 export class ApiError extends Error {
   readonly status: number
@@ -32,6 +34,23 @@ function identityHeaders(): Record<string, string> {
 export type ApiRequestInit = Omit<RequestInit, 'headers'> & { headers?: Record<string, string> }
 
 /**
+ * Whether a response is the edge gateway's sign-in page rather than the backend's answer.
+ *
+ * Once the gateway session has expired, the gateway redirects a request to its
+ * sign-in page and `fetch` follows, ending on an HTML page with a `200`. The
+ * backend never redirects and never answers with HTML, so a followed redirect
+ * or a successful HTML response means the request never reached it. An HTML
+ * error page (a proxy's `502`, say) keeps its own status.
+ *
+ * @param res - The response `fetch` ended on.
+ * @returns `true` when the response is not the backend's.
+ */
+export function isSignInPage(res: Response): boolean {
+  const type = res.headers.get('content-type') ?? ''
+  return res.redirected || (res.ok && type.toLowerCase().startsWith('text/html'))
+}
+
+/**
  * Send a request to the backend: the one place every API call goes through.
  *
  * Adds the identity header and the purpose stated in the header's
@@ -42,15 +61,20 @@ export type ApiRequestInit = Omit<RequestInit, 'headers'> & { headers?: Record<s
  *
  * @param path - Path relative to {@link API_BASE}, e.g. `/jobs`.
  * @param init - Fetch options.
- * @returns The raw response, whatever its status.
+ * @returns The backend's raw response, whatever its status.
+ * @throws {ApiError} With {@link SIGNED_OUT_STATUS} and no detail when the
+ *   gateway's sign-in page answered instead (see {@link isSignInPage}), so no
+ *   caller reads the page as data or saves it as a download.
  */
-export function apiRequest(path: string, init: ApiRequestInit = {}): Promise<Response> {
-  return withPurpose(PURPOSE_SCOPE, (purpose) =>
+export async function apiRequest(path: string, init: ApiRequestInit = {}): Promise<Response> {
+  const res = await withPurpose(PURPOSE_SCOPE, (purpose) =>
     fetch(`${API_BASE}${path}`, {
       ...init,
       headers: { ...identityHeaders(), ...init.headers, ...purpose },
     }),
   )
+  if (isSignInPage(res)) throw new ApiError(SIGNED_OUT_STATUS, null)
+  return res
 }
 
 async function errorFrom(res: Response): Promise<ApiError> {
@@ -80,7 +104,8 @@ async function parse<T>(res: Response): Promise<T> {
 
 /**
  * Fetch a backend path and hand back the response for the caller to read —
- * a download's blob, say — throwing {@link ApiError} on a non-2xx.
+ * a download's blob, say — throwing {@link ApiError} on a non-2xx, and with
+ * {@link SIGNED_OUT_STATUS} when the gateway's sign-in page answered.
  *
  * @param path - Path relative to {@link API_BASE}.
  * @returns The successful response, its body unread.

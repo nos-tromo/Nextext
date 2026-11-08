@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { clearAllPurposes, encodePurpose, PURPOSE_HEADER, PurposeBar, setPurpose } from '@infra/ui'
-import { apiBase, ApiError, apiFetch, apiGet, apiSend, OWNER_HEADER, PURPOSE_SCOPE } from './client'
+import { apiBase, ApiError, apiFetch, apiGet, apiRequest, apiSend, OWNER_HEADER, PURPOSE_SCOPE } from './client'
 import { OWNER_STORAGE_KEY } from '../identity/owner'
 
 afterEach(() => {
@@ -68,6 +68,71 @@ describe('apiSend', () => {
     const ri = init
     expect(ri.body).toBe(fd)
     expect(ri.headers).not.toHaveProperty('content-type')
+  })
+})
+
+describe('the gateway sign-in page', () => {
+  const signInPage = '<!doctype html><title>Sign in</title><form></form>'
+
+  /** A response as `fetch` hands it back, marked redirected when it followed one. */
+  function respond(body: BodyInit, contentType: string, { status = 200, redirected = false } = {}): Response {
+    const res = new Response(body, { status, headers: { 'content-type': contentType } })
+    if (redirected) Object.defineProperty(res, 'redirected', { value: true })
+    return res
+  }
+
+  function fetchReturning(res: Response) {
+    const fn = vi.fn(async () => res)
+    vi.stubGlobal('fetch', fn)
+    return fn
+  }
+
+  it('fails as signed out when fetch followed the redirect to it, and keeps the page out of the error', async () => {
+    fetchReturning(respond(signInPage, 'text/html; charset=utf-8', { redirected: true }))
+
+    await expect(apiFetch('/jobs/j1/artifacts/archive.zip')).rejects.toMatchObject({
+      name: 'ApiError',
+      status: 401,
+      detail: null,
+    } satisfies Partial<ApiError>)
+  })
+
+  it('fails as signed out when it answers without a redirect', async () => {
+    fetchReturning(respond(signInPage, 'text/html'))
+
+    await expect(apiRequest('/jobs')).rejects.toMatchObject({ name: 'ApiError', status: 401, detail: null })
+  })
+
+  it('fails a JSON read as signed out instead of returning the page as text', async () => {
+    fetchReturning(respond(signInPage, 'text/html', { redirected: true }))
+
+    await expect(apiGet('/jobs')).rejects.toMatchObject({ name: 'ApiError', status: 401 })
+  })
+
+  it('fails as signed out on any redirect: the backend never sends one', async () => {
+    fetchReturning(respond('{}', 'application/json', { redirected: true }))
+
+    await expect(apiSend('DELETE', '/jobs/j1')).rejects.toMatchObject({ name: 'ApiError', status: 401 })
+  })
+
+  it('keeps the status of an HTML error page, which is not the sign-in page', async () => {
+    fetchReturning(respond('<html><body>502 Bad Gateway</body></html>', 'text/html', { status: 502 }))
+
+    await expect(apiFetch('/jobs/j1/artifacts/archive.zip')).rejects.toMatchObject({ name: 'ApiError', status: 502 })
+  })
+
+  it('passes a JSON answer through', async () => {
+    fetchReturning(respond(JSON.stringify({ jobs: [] }), 'application/json'))
+
+    await expect(apiGet('/jobs')).resolves.toEqual({ jobs: [] })
+  })
+
+  it.each(['image/jpeg', 'application/zip', 'text/csv; charset=utf-8'])('passes a %s download through', async (type) => {
+    fetchReturning(respond(new Blob([new Uint8Array([1, 2, 3])]), type))
+
+    const res = await apiFetch('/jobs/j1/artifacts/some.bin')
+    expect(res.ok).toBe(true)
+    expect((await res.blob()).size).toBe(3)
   })
 })
 

@@ -159,6 +159,42 @@ describe('downloadBatchArtifact', () => {
   })
 })
 
+describe('downloads and the gateway sign-in page', () => {
+  let createObjectUrl: ReturnType<typeof vi.spyOn>
+  let click: ReturnType<typeof vi.spyOn>
+  beforeEach(() => {
+    // What fetch ends on once it has followed the gateway's redirect to its sign-in page.
+    const signInPage = new Response('<!doctype html><title>Sign in</title>', {
+      status: 200,
+      headers: { 'content-type': 'text/html; charset=utf-8' },
+    })
+    Object.defineProperty(signInPage, 'redirected', { value: true })
+    vi.stubGlobal('fetch', vi.fn(async () => signInPage))
+    createObjectUrl = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:mock-url')
+    vi.spyOn(URL, 'revokeObjectURL').mockReturnValue(undefined)
+    click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
+  })
+  afterEach(() => vi.restoreAllMocks())
+
+  it('fails an artifact download as signed out instead of saving the page', async () => {
+    await expect(downloadArtifact('job1', 'archive.zip', 'clip_archive.zip')).rejects.toMatchObject({
+      name: 'ApiError',
+      status: 401,
+    })
+    expect(createObjectUrl).not.toHaveBeenCalled()
+    expect(click).not.toHaveBeenCalled()
+  })
+
+  it('fails a batch download as signed out instead of saving the page', async () => {
+    await expect(downloadBatchArtifact('archive.zip', 'nextext_batch.zip')).rejects.toMatchObject({
+      name: 'ApiError',
+      status: 401,
+    })
+    expect(createObjectUrl).not.toHaveBeenCalled()
+    expect(click).not.toHaveBeenCalled()
+  })
+})
+
 describe('downloads and the stated purpose', () => {
   // The anchor a download clicks, read off the real element rather than a
   // mocked document.createElement, which React needs for the purpose bar.
