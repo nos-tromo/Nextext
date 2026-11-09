@@ -5,7 +5,7 @@ import { useT } from '../../i18n/LanguageContext'
 import { describeError } from '../../api/errorMessage'
 import type { ErrorDescriptor } from '../../api/errorMessage'
 
-interface DownloadSpec {
+export interface DownloadSpec {
   /** Artifact name on the backend, e.g. `transcript.csv`. */
   name: string
   /**
