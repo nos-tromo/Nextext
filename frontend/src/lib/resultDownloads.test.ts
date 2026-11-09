@@ -89,4 +89,8 @@ describe('downloadsFor', () => {
       ['hate_speech.xlsx', 'XLSX', 'clip_hate_speech.xlsx'],
     ])
   })
+
+  it('offers no transcript downloads for an empty transcript', () => {
+    expect(downloadsFor('transcript', result({ transcript: [] }), 'clip', t)).toEqual([])
+  })
 })

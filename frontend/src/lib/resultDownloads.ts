@@ -49,6 +49,8 @@ export function downloadsFor(tab: ResultTabId, result: JobResult, stem: string, 
     : []
   switch (tab) {
     case 'transcript':
+      // Nothing to export from an empty transcript; the backend has no such files.
+      if (result.transcript.length === 0) return []
       return [
         ...table('transcript', stem),
         ...(transcriptHasTranslation(result.transcript)

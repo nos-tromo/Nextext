@@ -137,6 +137,7 @@ export function ResultPanel({ jobId, fileName }: ResultPanelProps) {
             <button
               key={tab.id}
               type="button"
+              aria-pressed={resolvedTab === tab.id}
               onClick={() => setActiveTab(tab.id)}
               className={cn(
                 'rounded px-3 py-1 text-sm transition-colors',

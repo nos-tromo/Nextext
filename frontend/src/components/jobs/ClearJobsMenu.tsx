@@ -89,8 +89,8 @@ export function ClearJobsMenu({ jobs }: ClearJobsMenuProps) {
               </MenuItem>
             </>
           ) : (
-            <div className="px-3 py-2">
-              <p className="max-w-[16rem] text-sm text-foreground">
+            <div className="w-72 max-w-full px-3 py-2">
+              <p className="text-sm text-foreground">
                 {t(confirmIds.length === 1 ? 'jobs.clear_confirm_one' : 'jobs.clear_confirm_other', {
                   count: confirmIds.length,
                 })}

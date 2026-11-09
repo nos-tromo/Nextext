@@ -102,6 +102,8 @@ describe('ClearJobsMenu', () => {
     expect(bar).toHaveClass('flex-wrap', '*:flex-[1_1_8rem]')
     expect(bar).toContainElement(screen.getByRole('button', { name: 'Cancel' }))
     expect(bar.lastElementChild).toBe(clear)
+    // The panel sizes to its content; a fixed width keeps both buttons on one row.
+    expect(bar.parentElement).toHaveClass('w-72')
   })
 
   it('cancels without deleting and returns to the menu', () => {

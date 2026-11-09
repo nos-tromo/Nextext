@@ -538,4 +538,20 @@ describe('ResultPanel downloads in the header', () => {
 
     expect((await screen.findByText('No result data available.')).closest('.border-dashed')).not.toBeNull()
   })
+
+  it('keeps wrapped format rows right-aligned', async () => {
+    serve(makeSnapshot())
+    mountResultPanel('j1', 'clip.wav')
+    await screen.findByText('Hello world')
+    const formats = within(cluster()).getByRole('button', { name: 'Download CSV' }).parentElement!
+    expect(formats).toHaveClass('justify-end')
+  })
+
+  it('says which tab is active, since the header downloads belong to it', async () => {
+    serve(makeSnapshot({ summary: 'Ein kurzer Text.' }))
+    mountResultPanel('j1', 'clip.wav')
+    await screen.findByText('Hello world')
+    expect(screen.getByRole('button', { name: 'Transcript' })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByRole('button', { name: 'Summary' })).toHaveAttribute('aria-pressed', 'false')
+  })
 })
