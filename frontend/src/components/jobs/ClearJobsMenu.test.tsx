@@ -93,6 +93,17 @@ describe('ClearJobsMenu', () => {
     expect(mockedDelete).not.toHaveBeenCalledWith('run')
   })
 
+  it('confirms from one full-width bar, Clear last', () => {
+    renderMenu(<ClearJobsMenu jobs={[mkJob('a', 'completed')]} />)
+    fireEvent.click(screen.getByRole('button', { name: /Clear jobs/ }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Clear all (1)' }))
+    const clear = screen.getByRole('button', { name: 'Clear' })
+    const bar = clear.parentElement!
+    expect(bar).toHaveClass('flex-wrap', '*:flex-[1_1_8rem]')
+    expect(bar).toContainElement(screen.getByRole('button', { name: 'Cancel' }))
+    expect(bar.lastElementChild).toBe(clear)
+  })
+
   it('cancels without deleting and returns to the menu', () => {
     renderMenu(<ClearJobsMenu jobs={[mkJob('a', 'completed')]} />)
     fireEvent.click(screen.getByRole('button', { name: /Clear jobs/ }))

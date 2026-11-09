@@ -54,7 +54,7 @@ export const en = {
   'upload.drop_hint': 'Upload audio/video files',
   'upload.file_too_large':
     '"{name}" is {sizeGb} GB, over the {limitGb} GB per-file limit. Split it, or use `nextext-cli` for very large local files.',
-  'upload.run': '▶ Run',
+  'upload.run': 'Run',
   'upload.submitting': 'Submitting…',
 
   // options

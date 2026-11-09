@@ -3,7 +3,7 @@ import { useLanguages } from '../../hooks/useLanguages'
 import { checkUploadAcceptable } from '../../lib/uploadGuard'
 import { readStoredTargetLang, writeStoredTargetLang } from '../../lib/targetLang'
 import { Dropzone } from './Dropzone'
-import { Banner, Button, FileList, SelectMenu, ToggleButton, mergeFiles } from '@infra/ui'
+import { ActionBar, Banner, Button, FileList, SelectMenu, ToggleButton, mergeFiles } from '@infra/ui'
 import { useT } from '../../i18n/LanguageContext'
 import type { JobOptions, Task } from '../../api/types'
 
@@ -152,9 +152,11 @@ export function UploadForm({ pending, onRun }: UploadFormProps) {
         </ToggleButton>
       </div>
 
-      <Button type="button" className="w-full" disabled={!canRun} onClick={run}>
-        {pending ? t('upload.submitting') : t('upload.run')}
-      </Button>
+      <ActionBar>
+        <Button type="button" disabled={!canRun} onClick={run}>
+          {pending ? t('upload.submitting') : t('upload.run')}
+        </Button>
+      </ActionBar>
     </div>
   )
 }

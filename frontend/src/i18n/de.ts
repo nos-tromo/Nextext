@@ -57,7 +57,7 @@ export const de: Strings = {
   'upload.drop_hint': 'Audio- oder Videodateien hochladen',
   'upload.file_too_large':
     '"{name}" ist {sizeGb} GB groß und überschreitet das Limit von {limitGb} GB pro Datei. Teilen Sie die Datei auf, oder verwenden Sie `nextext-cli` für sehr große lokale Dateien.',
-  'upload.run': '▶ Starten',
+  'upload.run': 'Starten',
   'upload.submitting': 'Wird übermittelt…',
 
   // options
