@@ -86,6 +86,8 @@ export const de: Strings = {
   // downloads
   'downloads.transcript_txt': 'Transkript TXT',
   'downloads.keyframes_zip': 'Keyframes (ZIP)',
+  'downloads.faces_zip': 'Gesichter (ZIP)',
+  'downloads.faces_csv': 'Erkennungen (CSV)',
   'downloads.translation_txt': 'Übersetzung TXT',
 
   // results (ResultPanel and its tabs)
@@ -134,8 +136,6 @@ export const de: Strings = {
   'results.visual_context_hint': 'Was das Video zu den jeweils ausgewerteten Zeitpunkten zeigte. Eine Zusammenfassung dieses Auftrags berücksichtigt diese Beschreibungen ebenfalls, sofern eine angefordert wurde.',
   'results.keyframes_only': 'Die Keyframes wurden extrahiert, aber nicht beschrieben. Lade sie herunter, um sie anzusehen.',
   'artifacts.download_keyframes': 'Die extrahierten Keyframes als ZIP-Archiv herunterladen',
-  'artifacts.download_faces': 'Alle Gesichter herunterladen (ZIP)',
-  'artifacts.download_faces_csv': 'Gesichtertabelle herunterladen (CSV)',
   'artifacts.download_face_best': 'Bestes Bild herunterladen',
   'results.face_person': 'Person {n}',
   'results.face_single': 'Gesicht {n}',

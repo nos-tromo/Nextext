@@ -103,12 +103,16 @@ describe('downloadsFor', () => {
     }
     const faces = (overrides: Partial<NonNullable<JobResult['faces']>> = {}) =>
       result({ faces: { outcome: 'ok', grouped: true, truncated: false, entries: [face], ...overrides } })
-    expect(names('faces', faces())).toEqual([
-      ['faces.zip', 'ZIP', 'clip_faces.zip'],
-      ['faces.csv', 'CSV', 'clip_faces.csv'],
-    ])
+    // Two different things, not one table in two formats, so each says what it holds.
+    const both = [
+      ['faces.zip', 'downloads.faces_zip', 'clip_faces.zip'],
+      ['faces.csv', 'downloads.faces_csv', 'clip_faces.csv'],
+    ]
+    expect(names('faces', faces())).toEqual(both)
+    // A partly answered detection still has its faces to export.
+    expect(names('faces', faces({ outcome: 'partial' }))).toEqual(both)
     expect(downloadsFor('faces', faces({ entries: [] }), 'clip', t)).toEqual([])
-    expect(downloadsFor('faces', faces({ outcome: 'unavailable' }), 'clip', t)).toEqual([])
+    expect(downloadsFor('faces', faces({ outcome: 'unavailable', entries: [] }), 'clip', t)).toEqual([])
     expect(downloadsFor('faces', result({ faces: null }), 'clip', t)).toEqual([])
   })
 

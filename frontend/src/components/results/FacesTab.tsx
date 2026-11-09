@@ -1,7 +1,7 @@
-import { Banner } from '@infra/ui'
-import { DownloadButtons } from './DownloadButtons'
+import { Banner, DownloadButton } from '@infra/ui'
 import { TimeButton } from './TimeCell'
 import { useT } from '../../i18n/LanguageContext'
+import { useArtifactDownload } from '../../hooks/useArtifactDownload'
 import { useMediaPlayerStore } from '../../lib/mediaPlayerStore'
 import { formatStamp } from '../../lib/formatStamp'
 import { cn } from '../../lib/cn'
@@ -26,6 +26,86 @@ interface FacesTabProps {
  */
 function onScreen(entry: FaceEntry, seconds: number): boolean {
   return entry.appearances.some((a) => a.start_seconds <= seconds && seconds < a.end_seconds)
+}
+
+interface FaceCardProps {
+  entry: FaceEntry
+  /** Whether the playhead of this job's recording is inside one of its appearances. */
+  current: boolean
+  jobId: string
+  stem: string
+  fileName: string
+  mediaUrl: string | null
+}
+
+/**
+ * One person's (or, ungrouped, one face track's) card.
+ *
+ * Holds its own download, so a failed best-image download is reported under
+ * the card's name rather than beside the icon, where it would stretch the card.
+ *
+ * @param entry - The face entry.
+ * @param current - Whether the entry is on screen now.
+ * @param jobId - The job identifier, for the download and the player.
+ * @param stem - Upload filename without extension; prefixes the download name.
+ * @param fileName - Original upload name, shown as the player's title.
+ * @param mediaUrl - Capability URL for playback; `null` disables seeking.
+ */
+function FaceCard({ entry, current, jobId, stem, fileName, mediaUrl }: FaceCardProps) {
+  const t = useT()
+  const { busy, error, download } = useArtifactDownload(jobId)
+  const label = t(entry.assigned ? 'results.face_person' : 'results.face_single', { n: entry.number })
+  return (
+    <li
+      aria-current={current ? 'true' : undefined}
+      className={cn(
+        'flex gap-3 rounded-md border border-border p-3',
+        current && 'bg-accent/60 ring-2 ring-primary',
+      )}
+    >
+      <img
+        src={entry.thumbnail}
+        alt={label}
+        className="h-16 w-16 shrink-0 rounded object-cover"
+      />
+      <div className="min-w-0 flex-1 space-y-1 text-sm">
+        <div className="flex items-start gap-2">
+          <p className="min-w-0 flex-1 font-medium text-foreground">{label}</p>
+          <DownloadButton
+            label={t('artifacts.download_face_best')}
+            busy={busy !== null}
+            disabled={busy !== null}
+            onClick={() => void download({ name: entry.best_artifact, fileName: `${stem}_${entry.best_artifact}` })}
+            className="-my-1.5 shrink-0"
+          />
+        </div>
+        {error && <p className="text-danger">{t(error.key, error.vars)}</p>}
+        <p className="text-muted-foreground">
+          {t(entry.detections === 1 ? 'results.face_sightings_one' : 'results.face_sightings_other', {
+            count: entry.detections,
+          })}
+        </p>
+        <p className="text-muted-foreground">
+          {t('results.face_seen', {
+            first: formatStamp(entry.first_seen_seconds),
+            last: formatStamp(entry.last_seen_seconds),
+          })}
+        </p>
+        <div className="flex flex-wrap gap-2">
+          {entry.appearances.map((appearance) => (
+            <TimeButton
+              key={appearance.start_seconds}
+              label={formatStamp(appearance.start_seconds)}
+              seconds={appearance.start_seconds}
+              jobId={jobId}
+              fileName={fileName}
+              mediaUrl={mediaUrl}
+            />
+          ))}
+        </div>
+      </div>
+    </li>
+  )
 }
 
 /**
@@ -65,66 +145,17 @@ export function FacesTab({ jobId, faces, stem, fileName, mediaUrl, groupCapable 
 
       {hasEntries && (
         <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {faces.entries.map((entry) => {
-            const label = t(entry.assigned ? 'results.face_person' : 'results.face_single', { n: entry.number })
-            const current = playingHere && onScreen(entry, currentTime)
-            return (
-              <li
-                key={entry.number}
-                aria-current={current ? 'true' : undefined}
-                className={cn(
-                  'flex gap-3 rounded-md border border-border p-3',
-                  current && 'bg-accent/60 ring-2 ring-primary',
-                )}
-              >
-                <img
-                  src={entry.thumbnail}
-                  alt={label}
-                  className="h-16 w-16 shrink-0 rounded object-cover"
-                />
-                <div className="min-w-0 flex-1 space-y-1 text-sm">
-                  <div className="flex items-start gap-2">
-                    <p className="min-w-0 flex-1 font-medium text-foreground">{label}</p>
-                    <div className="-my-1.5 shrink-0">
-                      <DownloadButtons
-                        jobId={jobId}
-                        items={[
-                          {
-                            name: entry.best_artifact,
-                            title: t('artifacts.download_face_best'),
-                            fileName: `${stem}_${entry.best_artifact}`,
-                          },
-                        ]}
-                      />
-                    </div>
-                  </div>
-                  <p className="text-muted-foreground">
-                    {t(entry.detections === 1 ? 'results.face_sightings_one' : 'results.face_sightings_other', {
-                      count: entry.detections,
-                    })}
-                  </p>
-                  <p className="text-muted-foreground">
-                    {t('results.face_seen', {
-                      first: formatStamp(entry.first_seen_seconds),
-                      last: formatStamp(entry.last_seen_seconds),
-                    })}
-                  </p>
-                  <div className="flex flex-wrap gap-2">
-                    {entry.appearances.map((appearance) => (
-                      <TimeButton
-                        key={appearance.start_seconds}
-                        label={formatStamp(appearance.start_seconds)}
-                        seconds={appearance.start_seconds}
-                        jobId={jobId}
-                        fileName={fileName}
-                        mediaUrl={mediaUrl}
-                      />
-                    ))}
-                  </div>
-                </div>
-              </li>
-            )
-          })}
+          {faces.entries.map((entry) => (
+            <FaceCard
+              key={entry.number}
+              entry={entry}
+              current={playingHere && onScreen(entry, currentTime)}
+              jobId={jobId}
+              stem={stem}
+              fileName={fileName}
+              mediaUrl={mediaUrl}
+            />
+          ))}
         </ul>
       )}
     </div>

@@ -84,6 +84,8 @@ export const en = {
   // abbreviations, identical in both locales, and stay as plain literals)
   'downloads.transcript_txt': 'Transcript TXT',
   'downloads.keyframes_zip': 'Keyframes (ZIP)',
+  'downloads.faces_zip': 'Faces (ZIP)',
+  'downloads.faces_csv': 'Detections (CSV)',
   'downloads.translation_txt': 'Translation TXT',
 
   // results (ResultPanel and its tabs)
@@ -132,8 +134,6 @@ export const en = {
   'results.visual_context_hint': 'What the video showed at each sampled moment. A summary of this job draws on these descriptions too, when one was requested.',
   'results.keyframes_only': 'The keyframes were sampled but not described. Download them to see them.',
   'artifacts.download_keyframes': 'Download the sampled keyframes as a ZIP archive',
-  'artifacts.download_faces': 'Download all faces (ZIP)',
-  'artifacts.download_faces_csv': 'Download face table (CSV)',
   'artifacts.download_face_best': 'Download best image',
   'results.face_person': 'Person {n}',
   'results.face_single': 'Face {n}',

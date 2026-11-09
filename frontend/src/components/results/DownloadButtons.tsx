@@ -1,9 +1,6 @@
-import { useState } from 'react'
 import { DownloadButton } from '@infra/ui'
-import { downloadArtifact } from '../../lib/download'
 import { useT } from '../../i18n/LanguageContext'
-import { describeError } from '../../api/errorMessage'
-import type { ErrorDescriptor } from '../../api/errorMessage'
+import { useArtifactDownload } from '../../hooks/useArtifactDownload'
 
 export interface DownloadSpec {
   /** Artifact name on the backend, e.g. `transcript.csv`. */
@@ -28,7 +25,7 @@ interface DownloadButtonsProps {
 /**
  * Renders a row of download buttons for a set of job artifacts.
  *
- * Each button triggers a blob-URL download via {@link downloadArtifact}.
+ * Each button triggers a blob-URL download via {@link useArtifactDownload}.
  * An individual per-button loading state prevents double-clicks; errors
  * are surfaced inline as a short error message next to the buttons.
  *
@@ -37,21 +34,7 @@ interface DownloadButtonsProps {
  */
 export function DownloadButtons({ jobId, items }: DownloadButtonsProps) {
   const t = useT()
-  const [busy, setBusy] = useState<string | null>(null)
-  const [error, setError] = useState<ErrorDescriptor | null>(null)
-
-  async function handleClick(item: DownloadSpec) {
-    if (busy) return
-    setError(null)
-    setBusy(item.name)
-    try {
-      await downloadArtifact(jobId, item.name, item.fileName)
-    } catch (err) {
-      setError(describeError(err))
-    } finally {
-      setBusy(null)
-    }
-  }
+  const { busy, error, download } = useArtifactDownload(jobId)
 
   return (
     <div className="flex flex-wrap items-center justify-end gap-2">
@@ -64,7 +47,7 @@ export function DownloadButtons({ jobId, items }: DownloadButtonsProps) {
           label={item.title ?? t('results.download_artifact', { label: item.label ?? '' })}
           busy={busy === item.name}
           disabled={busy !== null}
-          onClick={() => void handleClick(item)}
+          onClick={() => void download(item)}
         >
           {item.label}
         </DownloadButton>

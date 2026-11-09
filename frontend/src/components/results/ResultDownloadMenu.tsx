@@ -1,9 +1,6 @@
-import { useState } from 'react'
 import { ChevronDownIcon, DownloadButton, Menu, MenuItem } from '@infra/ui'
-import { downloadArtifact } from '../../lib/download'
 import { useT } from '../../i18n/LanguageContext'
-import { describeError } from '../../api/errorMessage'
-import type { ErrorDescriptor } from '../../api/errorMessage'
+import { useArtifactDownload } from '../../hooks/useArtifactDownload'
 import type { DownloadSpec } from './DownloadButtons'
 
 interface ResultDownloadMenuProps {
@@ -28,23 +25,9 @@ interface ResultDownloadMenuProps {
  */
 export function ResultDownloadMenu({ jobId, tabLabel, items }: ResultDownloadMenuProps) {
   const t = useT()
-  const [busy, setBusy] = useState<string | null>(null)
-  const [error, setError] = useState<ErrorDescriptor | null>(null)
+  const { busy, error, download } = useArtifactDownload(jobId)
 
   if (items.length === 0) return null
-
-  async function handleSelect(item: DownloadSpec) {
-    if (busy) return
-    setError(null)
-    setBusy(item.name)
-    try {
-      await downloadArtifact(jobId, item.name, item.fileName)
-    } catch (err) {
-      setError(describeError(err))
-    } finally {
-      setBusy(null)
-    }
-  }
 
   return (
     <div className="flex items-center gap-2">
@@ -64,7 +47,7 @@ export function ResultDownloadMenu({ jobId, tabLabel, items }: ResultDownloadMen
         )}
       >
         {items.map((item) => (
-          <MenuItem key={item.name} onSelect={() => void handleSelect(item)}>
+          <MenuItem key={item.name} onSelect={() => void download(item)}>
             {item.label}
           </MenuItem>
         ))}

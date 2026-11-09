@@ -1,5 +1,11 @@
-import { afterEach, describe, expect, it } from 'vitest'
-import { act, fireEvent, render, screen } from '@testing-library/react'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+
+vi.mock('../../lib/download', () => ({
+  downloadArtifact: vi.fn(),
+}))
+
+import { downloadArtifact } from '../../lib/download'
 import { FacesTab } from './FacesTab'
 import type { FaceEntry, FacesResult } from '../../api/types'
 import { useMediaPlayerStore } from '../../lib/mediaPlayerStore'
@@ -124,8 +130,31 @@ describe('FacesTab', () => {
   it("leaves the tab's downloads to the result header", () => {
     mount(faces())
 
-    expect(screen.queryByRole('button', { name: 'Download all faces (ZIP)' })).not.toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'Download face table (CSV)' })).not.toBeInTheDocument()
+    // One download per card, its best image; nothing tab-wide.
+    expect(screen.getAllByRole('button', { name: /^Download/ })).toHaveLength(2)
+  })
+
+  it("downloads a card's best image under the upload's name", async () => {
+    vi.mocked(downloadArtifact).mockResolvedValueOnce(undefined)
+    mount(faces())
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Download best image' })[1])
+    await waitFor(() => expect(downloadArtifact).toHaveBeenCalledWith('j1', 'face_002.jpg', 'clip_face_002.jpg'))
+  })
+
+  it('reports a failed download inside its card, under the name row', async () => {
+    vi.mocked(downloadArtifact).mockRejectedValueOnce(new Error('boom'))
+    const { container } = mount(faces())
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Download best image' })[0])
+    const error = await waitFor(() => {
+      const found = container.querySelector('.text-danger')
+      expect(found).not.toBeNull()
+      return found as HTMLElement
+    })
+    expect(error.closest('li')).toBe(screen.getAllByRole('listitem')[0])
+    // Beside the 32 px icon the message would stretch the card sideways.
+    expect(screen.getByText('Person 1').parentElement).not.toContainElement(error)
   })
 
   it("offers each best image as an icon at its card's right edge, beside the name", () => {
@@ -145,8 +174,7 @@ describe('FacesTab', () => {
     mount(faces({ entries: [] }))
 
     expect(screen.getByText('No faces found.')).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'Download all faces (ZIP)' })).not.toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'Download face table (CSV)' })).not.toBeInTheDocument()
+    expect(screen.queryAllByRole('button', { name: /^Download/ })).toHaveLength(0)
   })
 
   it('shows only the unavailable banner when detection never answered', () => {
@@ -155,6 +183,6 @@ describe('FacesTab', () => {
     expect(screen.getByText('Face detection was not reachable.')).toBeInTheDocument()
     expect(screen.queryByText('No faces found.')).not.toBeInTheDocument()
     expect(screen.queryByText('Faces were not grouped by person.')).not.toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'Download all faces (ZIP)' })).not.toBeInTheDocument()
+    expect(screen.queryAllByRole('button', { name: /^Download/ })).toHaveLength(0)
   })
 })

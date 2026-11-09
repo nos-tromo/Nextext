@@ -71,10 +71,11 @@ export function downloadsFor(tab: ResultTabId, result: JobResult, stem: string, 
       ]
     case 'faces':
       // The backend has no faces.zip or faces.csv without a face to put in them.
-      if (!result.faces || result.faces.outcome === 'unavailable' || result.faces.entries.length === 0) return []
+      if (!result.faces || result.faces.entries.length === 0) return []
+      // The pictures and the detections table are two things, so each label says which.
       return [
-        { name: 'faces.zip', label: 'ZIP', title: t('artifacts.download_faces'), fileName: `${stem}_faces.zip` },
-        { name: 'faces.csv', label: 'CSV', title: t('artifacts.download_faces_csv'), fileName: `${stem}_faces.csv` },
+        { name: 'faces.zip', label: t('downloads.faces_zip'), fileName: `${stem}_faces.zip` },
+        { name: 'faces.csv', label: t('downloads.faces_csv'), fileName: `${stem}_faces.csv` },
       ]
     case 'summary':
       return [{ name: 'summary.txt', label: 'TXT', fileName: `${stem}_summary.txt` }]

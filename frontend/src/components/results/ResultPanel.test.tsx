@@ -605,7 +605,7 @@ describe('ResultPanel faces', () => {
 
     fireEvent.click(await screen.findByRole('button', { name: 'Faces' }))
     fireEvent.click(within(cluster()).getByRole('button', { name: 'Download Faces' }))
-    expect(screen.getAllByRole('menuitem').map((m) => m.textContent)).toEqual(['ZIP', 'CSV'])
+    expect(screen.getAllByRole('menuitem').map((m) => m.textContent)).toEqual(['Faces (ZIP)', 'Detections (CSV)'])
   })
 
   it('offers no faces menu when no face was found', async () => {
