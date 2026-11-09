@@ -49,6 +49,12 @@ describe('Home', () => {
 })
 
 describe('Home German locale', () => {
+  it('names the jobs list exactly once', async () => {
+    stubEmptyJobs()
+    mountHome()
+    await waitFor(() => expect(screen.getAllByRole('heading', { name: 'Jobs' })).toHaveLength(1))
+  })
+
   it('renders the "New job" heading in German', () => {
     stubEmptyJobs()
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })

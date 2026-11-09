@@ -100,4 +100,19 @@ describe('BatchProgress clear control', () => {
     expect(await screen.findByText('No jobs yet.')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /Clear jobs/ })).toBeNull()
   })
+
+  it('puts the menus in the jobs header', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => jobsResponse('completed')))
+    mountBatchProgress()
+    const clear = await screen.findByRole('button', { name: /Clear jobs/ })
+    expect(clear.closest('.flex-wrap')).toContainElement(screen.getByRole('heading', { level: 2, name: 'Jobs' }))
+  })
+
+  it('shows the header and an empty state with no jobs', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => emptyJobsResponse()))
+    mountBatchProgress()
+    const empty = await screen.findByText('No jobs yet.')
+    expect(empty.closest('.border-dashed')).not.toBeNull()
+    expect(screen.getByRole('heading', { level: 2, name: 'Jobs' })).toBeInTheDocument()
+  })
 })

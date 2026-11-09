@@ -29,7 +29,7 @@ export function StatusBar() {
   const done = counts.finished + counts.skipped + counts.failed // terminal files
   const pct = Math.round((done / counts.total) * 100)
   return (
-    <div className="flex flex-col items-end gap-1 text-xs">
+    <div className="mt-1 flex flex-col items-start gap-1 text-xs">
       <div className="flex items-center gap-2">
         {counts.processing > 0 && (
           <Badge variant="accent">{t('common.jobs_processing', { count: counts.processing })}</Badge>

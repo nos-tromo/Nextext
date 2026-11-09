@@ -1,7 +1,6 @@
 import { useSubmitBatch } from '../hooks/useJobs'
 import { UploadForm } from '../components/upload/UploadForm'
 import { BatchProgress } from '../components/jobs/BatchProgress'
-import { StatusBar } from '../components/layout/StatusBar'
 import { Banner, Card, PageHeader } from '@infra/ui'
 import { useT } from '../i18n/LanguageContext'
 import { describeError } from '../api/errorMessage'
@@ -39,11 +38,7 @@ export function Home() {
           )}
           {fileErrors.length > 0 && <Banner variant="danger">{fileErrors.join('\n')}</Banner>}
         </section>
-        <section className="min-w-0 space-y-3">
-          <div className="flex items-center justify-between gap-4">
-            <h2 className="text-base font-semibold">{t('home.jobs_heading')}</h2>
-            <StatusBar />
-          </div>
+        <section className="min-w-0">
           <BatchProgress />
         </section>
       </div>
