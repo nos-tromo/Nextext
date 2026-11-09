@@ -44,7 +44,7 @@ export const en = {
 
   // page
   'page.title': 'Audio & Video Analysis',
-  'page.caption': 'Transcription, keyframe extraction, translation, and analysis',
+  'page.caption': 'Transcription, keyframe extraction, translation, face detection, and analysis',
 
   // home
   'home.new_job': 'New job',
