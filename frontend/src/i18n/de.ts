@@ -84,11 +84,13 @@ export const de: Strings = {
 
   // downloads
   'downloads.transcript_txt': 'Transkript TXT',
+  'downloads.keyframes_zip': 'Keyframes (ZIP)',
   'downloads.translation_txt': 'Übersetzung TXT',
 
   // results (ResultPanel and its tabs)
   // Barrierefreier Name eines Download-Buttons, dessen Chip nur das Format zeigt.
   'results.download_artifact': '{label} herunterladen',
+  'results.download_tab': '{tab} herunterladen',
   'results.tab_transcript': 'Transkript',
   'results.tab_visual_context': 'Visueller Kontext',
   'results.tab_summary': 'Zusammenfassung',

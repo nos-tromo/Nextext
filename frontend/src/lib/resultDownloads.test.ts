@@ -61,14 +61,14 @@ describe('downloadsFor', () => {
     const r = result({ frame_captions: [{ time_sec: 1, caption: 'Ein Tisch' }] as JobResult['frame_captions'], keyframes_url: '/k.zip' })
     expect(names('visual_context', r)).toEqual([
       ['visual_context.txt', 'TXT', 'clip_visual_context.txt'],
-      ['keyframes.zip', 'ZIP', 'clip_keyframes.zip'],
+      ['keyframes.zip', 'downloads.keyframes_zip', 'clip_keyframes.zip'],
     ])
     expect(downloadsFor('visual_context', r, 'clip', t)[1].title).toBe('artifacts.download_keyframes')
   })
 
   it('offers only the keyframes ZIP when frames have no captions', () => {
     expect(names('visual_context', result({ keyframes_url: '/k.zip' }))).toEqual([
-      ['keyframes.zip', 'ZIP', 'clip_keyframes.zip'],
+      ['keyframes.zip', 'downloads.keyframes_zip', 'clip_keyframes.zip'],
     ])
   })
 

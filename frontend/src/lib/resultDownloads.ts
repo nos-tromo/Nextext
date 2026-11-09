@@ -41,7 +41,7 @@ export function downloadsFor(tab: ResultTabId, result: JobResult, stem: string, 
     ? [
         {
           name: 'keyframes.zip',
-          label: 'ZIP',
+          label: t('downloads.keyframes_zip'),
           title: t('artifacts.download_keyframes'),
           fileName: `${stem}_keyframes.zip`,
         },

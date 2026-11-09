@@ -475,30 +475,26 @@ function cluster(): HTMLElement {
 }
 
 describe('ResultPanel downloads in the header', () => {
-  it("offers the active tab's downloads in the header, before play and the archive", async () => {
+  it("offers the active tab's download menu in the header, before play and the archive", async () => {
     serve(makeSnapshot({ media_url: '/api/v1/jobs/j1/media?token=t' }))
     mountResultPanel('j1', 'clip.wav')
     await screen.findByText('Hello world')
 
     const names = Array.from(cluster().querySelectorAll('button')).map((b) => b.getAttribute('aria-label'))
-    expect(names).toEqual([
-      'Download CSV',
-      'Download XLSX',
-      'Download TXT',
-      'Download JSONL',
-      'Open player',
-      'Download all (.zip)',
-    ])
+    expect(names).toEqual(['Download Transcript', 'Open player', 'Download all (.zip)'])
+    fireEvent.click(screen.getByRole('button', { name: 'Download Transcript' }))
+    expect(screen.getAllByRole('menuitem').map((m) => m.textContent)).toEqual(['CSV', 'XLSX', 'TXT', 'JSONL'])
   })
 
-  it('swaps the formats when the tab changes', async () => {
+  it('swaps the menu when the tab changes', async () => {
     serve(makeSnapshot({ summary: 'Ein kurzer Text.' }))
     mountResultPanel('j1', 'clip.wav')
     await screen.findByText('Hello world')
 
     fireEvent.click(screen.getByRole('button', { name: 'Summary' }))
-    expect(within(cluster()).getByRole('button', { name: 'Download TXT' })).toBeInTheDocument()
-    expect(within(cluster()).queryByRole('button', { name: 'Download CSV' })).toBeNull()
+    expect(within(cluster()).queryByRole('button', { name: 'Download Transcript' })).toBeNull()
+    fireEvent.click(within(cluster()).getByRole('button', { name: 'Download Summary' }))
+    expect(screen.getAllByRole('menuitem').map((m) => m.textContent)).toEqual(['TXT'])
   })
 
   it("starts the next tab's downloads clean", async () => {
@@ -507,7 +503,8 @@ describe('ResultPanel downloads in the header', () => {
     mountResultPanel('j1', 'clip.wav')
     await screen.findByText('Hello world')
 
-    fireEvent.click(within(cluster()).getByRole('button', { name: 'Download CSV' }))
+    fireEvent.click(within(cluster()).getByRole('button', { name: 'Download Transcript' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'CSV' }))
     await waitFor(() => expect(cluster().querySelector('.text-danger')).not.toBeNull())
     fireEvent.click(screen.getByRole('button', { name: 'Summary' }))
     expect(cluster().querySelector('.text-danger')).toBeNull()
@@ -527,9 +524,16 @@ describe('ResultPanel downloads in the header', () => {
     mountResultPanel('j1', 'clip.wav')
 
     expect(await screen.findByText(/sampled but not described/)).toBeInTheDocument()
-    expect(
-      within(cluster()).getByRole('button', { name: 'Download the sampled keyframes as a ZIP archive' }),
-    ).toBeInTheDocument()
+    fireEvent.click(within(cluster()).getByRole('button', { name: 'Download Visual context' }))
+    expect(screen.getByRole('menuitem', { name: 'Keyframes (ZIP)' })).toBeInTheDocument()
+  })
+
+  it('offers no tab menu for an empty transcript', async () => {
+    serve(makeSnapshot({ transcript: [] }))
+    mountResultPanel('j1', 'clip.wav')
+
+    await screen.findByRole('button', { name: 'Download all (.zip)' })
+    expect(within(cluster()).queryByRole('button', { name: /^Download Transcript$/ })).toBeNull()
   })
 
   it('shows an empty state when there is no result', async () => {
@@ -537,14 +541,6 @@ describe('ResultPanel downloads in the header', () => {
     mountResultPanel('j1', 'clip.wav')
 
     expect((await screen.findByText('No result data available.')).closest('.border-dashed')).not.toBeNull()
-  })
-
-  it('keeps wrapped format rows right-aligned', async () => {
-    serve(makeSnapshot())
-    mountResultPanel('j1', 'clip.wav')
-    await screen.findByText('Hello world')
-    const formats = within(cluster()).getByRole('button', { name: 'Download CSV' }).parentElement!
-    expect(formats).toHaveClass('justify-end')
   })
 
   it('says which tab is active, since the header downloads belong to it', async () => {

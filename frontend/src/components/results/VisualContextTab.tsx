@@ -62,8 +62,8 @@ export function VisualContextTab({ jobId, result, fileName, mediaUrl }: VisualCo
   const activeRowRef = useFollowActiveRow(activeIndex)
 
   if (captions.length === 0) {
-    // Frames but no captions: the ZIP is the whole result, so offer it rather
-    // than reporting an empty tab over a job that did produce something.
+    // Frames but no captions: say so rather than report an empty tab; the
+    // header's download menu offers the frames as a ZIP.
     if (result.keyframes_url) {
       return (
         <p className="text-sm text-muted-foreground">{t('results.keyframes_only')}</p>

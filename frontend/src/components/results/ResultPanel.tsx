@@ -5,6 +5,7 @@ import { useT } from '../../i18n/LanguageContext'
 import { describeError } from '../../api/errorMessage'
 import { resultSkipMessageKey } from '../../lib/outcomeMessages'
 import { DownloadButtons } from './DownloadButtons'
+import { ResultDownloadMenu } from './ResultDownloadMenu'
 import { TranscriptTab } from './TranscriptTab'
 import { VisualContextTab } from './VisualContextTab'
 import { SummaryTab } from './SummaryTab'
@@ -22,10 +23,8 @@ interface ResultPanelProps {
   fileName: string
 }
 
-type TabId = ResultTabId
-
 interface TabSpec {
-  id: TabId
+  id: ResultTabId
   label: string
 }
 
@@ -35,7 +34,8 @@ interface TabSpec {
  * Calls {@link useJobResult} (always enabled — the parent is responsible for
  * only mounting ResultPanel on a terminal job). Handles loading, error, null
  * result, and skipped-job states. Renders only the tabs whose data is present
- * in the result, and provides a "Download all (.zip)" button in the header.
+ * in the result. The header carries the active tab's download menu, the player
+ * and "Download all (.zip)".
  *
  * @param jobId - The job whose result to fetch and display.
  * @param fileName - The original upload filename; used to derive the stem for
@@ -44,7 +44,7 @@ interface TabSpec {
 export function ResultPanel({ jobId, fileName }: ResultPanelProps) {
   const t = useT()
   const query = useJobResult(jobId, true)
-  const [activeTab, setActiveTab] = useState<TabId>('transcript')
+  const [activeTab, setActiveTab] = useState<ResultTabId>('transcript')
   const openPlayer = useMediaPlayerStore((s) => s.open)
 
   // Derive stem: strip everything from the last '.' onward (or use the full
@@ -152,9 +152,10 @@ export function ResultPanel({ jobId, fileName }: ResultPanelProps) {
         </nav>
         <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
           {/* Keyed by tab so a busy or failed download does not carry over. */}
-          <DownloadButtons
+          <ResultDownloadMenu
             key={resolvedTab}
             jobId={jobId}
+            tabLabel={availableTabs.find((tab) => tab.id === resolvedTab)?.label ?? ''}
             items={downloadsFor(resolvedTab, result, stem, t)}
           />
           {/* Opens the recording without jumping anywhere; the timestamps in

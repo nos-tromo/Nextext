@@ -82,11 +82,13 @@ export const en = {
   // downloads (per-artifact button labels; CSV/XLSX/TXT/PNG/JSONL are format
   // abbreviations, identical in both locales, and stay as plain literals)
   'downloads.transcript_txt': 'Transcript TXT',
+  'downloads.keyframes_zip': 'Keyframes (ZIP)',
   'downloads.translation_txt': 'Translation TXT',
 
   // results (ResultPanel and its tabs)
   // Accessible name for a download button whose visible chip is the bare format.
   'results.download_artifact': 'Download {label}',
+  'results.download_tab': 'Download {tab}',
   'results.tab_transcript': 'Transcript',
   'results.tab_visual_context': 'Visual context',
   'results.tab_summary': 'Summary',
