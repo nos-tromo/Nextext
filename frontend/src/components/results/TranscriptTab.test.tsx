@@ -4,27 +4,14 @@ import { TranscriptTab } from './TranscriptTab'
 import type { TranscriptSegment } from '../../api/types'
 import { useMediaPlayerStore } from '../../lib/mediaPlayerStore'
 
-const transcribeSegments: TranscriptSegment[] = [
-  { start: '0.00', end: '2.00', start_seconds: 0, end_seconds: 2, speaker: null, text: 'Hello world', translation: null },
-]
-
 const translateSegments: TranscriptSegment[] = [
   { start: '0.00', end: '2.00', start_seconds: 0, end_seconds: 2, speaker: null, text: 'Hello world', translation: 'Hallo Welt' },
 ]
 
-describe('TranscriptTab download buttons', () => {
-  it('shows a single TXT button for a transcribe-only transcript', () => {
-    render(<TranscriptTab jobId="j1" segments={transcribeSegments} stem="clip" fileName="clip.mp4" mediaUrl={null} />)
-    expect(screen.getByRole('button', { name: 'Download TXT' })).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'Download Transcript TXT' })).not.toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'Download Translation TXT' })).not.toBeInTheDocument()
-  })
-
-  it('splits into Transcript TXT and Translation TXT when a translation exists', () => {
-    render(<TranscriptTab jobId="j1" segments={translateSegments} stem="clip" fileName="clip.mp4" mediaUrl={null} />)
-    expect(screen.getByRole('button', { name: 'Download Transcript TXT' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Download Translation TXT' })).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'Download TXT' })).not.toBeInTheDocument()
+describe('TranscriptTab downloads', () => {
+  it('renders no downloads of its own; they live in the result header', () => {
+    render(<TranscriptTab jobId="j1" segments={translateSegments} fileName="clip.mp4" mediaUrl={null} />)
+    expect(screen.queryAllByRole('button', { name: /download/i })).toEqual([])
   })
 })
 
@@ -41,14 +28,14 @@ afterEach(() => useMediaPlayerStore.getState().clear())
 describe('TranscriptTab playback', () => {
   it('makes the start time a button when the recording is playable', () => {
     render(
-      <TranscriptTab jobId="j1" segments={playable} stem="clip" fileName="clip.mp4" mediaUrl={MEDIA_URL} />,
+      <TranscriptTab jobId="j1" segments={playable} fileName="clip.mp4" mediaUrl={MEDIA_URL} />,
     )
     expect(screen.getByRole('button', { name: 'Play from 0:00:00' })).toBeInTheDocument()
   })
 
   it('leaves the start time as plain text when there is no media', () => {
     // A job whose upload is gone must not offer a control that cannot work.
-    render(<TranscriptTab jobId="j1" segments={playable} stem="clip" fileName="clip.mp4" mediaUrl={null} />)
+    render(<TranscriptTab jobId="j1" segments={playable} fileName="clip.mp4" mediaUrl={null} />)
     expect(screen.queryByRole('button', { name: /Play from/ })).not.toBeInTheDocument()
     expect(screen.getByText('0:00:00')).toBeInTheDocument()
   })
@@ -57,13 +44,13 @@ describe('TranscriptTab playback', () => {
     const unparsed: TranscriptSegment[] = [
       { start: 'garbled', end: null, start_seconds: null, end_seconds: null, speaker: null, text: 'x', translation: null },
     ]
-    render(<TranscriptTab jobId="j1" segments={unparsed} stem="clip" fileName="clip.mp4" mediaUrl={MEDIA_URL} />)
+    render(<TranscriptTab jobId="j1" segments={unparsed} fileName="clip.mp4" mediaUrl={MEDIA_URL} />)
     expect(screen.queryByRole('button', { name: /Play from/ })).not.toBeInTheDocument()
   })
 
   it('opens the player at that row on click', () => {
     render(
-      <TranscriptTab jobId="j1" segments={playable} stem="clip" fileName="clip.mp4" mediaUrl={MEDIA_URL} />,
+      <TranscriptTab jobId="j1" segments={playable} fileName="clip.mp4" mediaUrl={MEDIA_URL} />,
     )
     fireEvent.click(screen.getByRole('button', { name: 'Play from 0:00:05' }))
     const state = useMediaPlayerStore.getState()
@@ -73,7 +60,7 @@ describe('TranscriptTab playback', () => {
 
   it('marks the row the playhead is inside', () => {
     render(
-      <TranscriptTab jobId="j1" segments={playable} stem="clip" fileName="clip.mp4" mediaUrl={MEDIA_URL} />,
+      <TranscriptTab jobId="j1" segments={playable} fileName="clip.mp4" mediaUrl={MEDIA_URL} />,
     )
     act(() => {
       useMediaPlayerStore.getState().open({ jobId: 'j1', fileName: 'clip.mp4', mediaUrl: MEDIA_URL })
@@ -86,7 +73,7 @@ describe('TranscriptTab playback', () => {
   it('scrolls the row under the playhead into view', () => {
     // The highlight is useless once it has scrolled past the fold.
     render(
-      <TranscriptTab jobId="j1" segments={playable} stem="clip" fileName="clip.mp4" mediaUrl={MEDIA_URL} />,
+      <TranscriptTab jobId="j1" segments={playable} fileName="clip.mp4" mediaUrl={MEDIA_URL} />,
     )
     const row = screen.getByText('Second line').closest('tr')!
     // happy-dom lays nothing out; put the row below the fold so the hook has
@@ -105,7 +92,7 @@ describe('TranscriptTab playback', () => {
   it('never marks a row while another job is playing', () => {
     // Several result panels can be open at once; only the playing one follows.
     render(
-      <TranscriptTab jobId="j1" segments={playable} stem="clip" fileName="clip.mp4" mediaUrl={MEDIA_URL} />,
+      <TranscriptTab jobId="j1" segments={playable} fileName="clip.mp4" mediaUrl={MEDIA_URL} />,
     )
     act(() => {
       useMediaPlayerStore.getState().open({ jobId: 'other', fileName: 'x.mp4', mediaUrl: '/m' })

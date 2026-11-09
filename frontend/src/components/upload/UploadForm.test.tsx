@@ -175,3 +175,12 @@ describe('UploadForm diarize toggle', () => {
     expect(onRun.mock.calls[1][1]).toMatchObject({ diarize: false })
   })
 })
+
+describe('UploadForm run bar', () => {
+  it('runs from a full-width bar with a plain label', () => {
+    mountForm()
+    const run = screen.getByRole('button', { name: 'Run' })
+    expect(run).toHaveTextContent(/^Run$/)
+    expect(run.parentElement).toHaveClass('flex-wrap', '*:flex-[1_1_8rem]')
+  })
+})

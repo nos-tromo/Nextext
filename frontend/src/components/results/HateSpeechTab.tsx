@@ -1,12 +1,9 @@
-import { DownloadButtons } from './DownloadButtons'
 import { cn } from '../../lib/cn'
 import { useT } from '../../i18n/LanguageContext'
 import type { HateSpeechFinding, JobResult } from '../../api/types'
 
 interface HateSpeechTabProps {
-  jobId: string
   result: JobResult
-  stem: string
 }
 
 const CONFIDENCE_CLASSES: Record<HateSpeechFinding['confidence'], string> = {
@@ -16,17 +13,15 @@ const CONFIDENCE_CLASSES: Record<HateSpeechFinding['confidence'], string> = {
 }
 
 /**
- * Displays hate-speech findings in a card list, with confidence badges and
- * CSV/XLSX download buttons. Transcript segments are counted against the
+ * Displays hate-speech findings in a card list, with confidence badges.
+ * Transcript segments are counted against the
  * transcript; keyframe captions, judged for what a video shows, are counted
  * on their own and marked as video frames.
  * Renders a placeholder when no findings are present.
  *
- * @param jobId - The job identifier, forwarded to {@link DownloadButtons}.
  * @param result - The completed job result containing the hate-speech findings.
- * @param stem - Upload filename without extension; used to prefix download names.
  */
-export function HateSpeechTab({ jobId, result, stem }: HateSpeechTabProps) {
+export function HateSpeechTab({ result }: HateSpeechTabProps) {
   const t = useT()
   if (!result.hate_speech_findings || result.hate_speech_findings.length === 0) {
     return <p className="text-sm text-muted-foreground">{t('results.no_hate_speech')}</p>
@@ -109,13 +104,6 @@ export function HateSpeechTab({ jobId, result, stem }: HateSpeechTabProps) {
           </li>
         ))}
       </ul>
-      <DownloadButtons
-        jobId={jobId}
-        items={[
-          { name: 'hate_speech.csv', label: 'CSV', fileName: `${stem}_hate_speech.csv` },
-          { name: 'hate_speech.xlsx', label: 'XLSX', fileName: `${stem}_hate_speech.xlsx` },
-        ]}
-      />
     </div>
   )
 }

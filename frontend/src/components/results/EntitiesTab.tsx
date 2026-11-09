@@ -1,23 +1,18 @@
-import { DownloadButtons } from './DownloadButtons'
 import { useT } from '../../i18n/LanguageContext'
 import type { JobResult } from '../../api/types'
 
 interface EntitiesTabProps {
-  jobId: string
   result: JobResult
-  stem: string
 }
 
 /**
  * Displays named entities extracted from the job, grouped by category in a
- * table with frequency counts, plus CSV/XLSX download buttons.
+ * table with frequency counts.
  * Renders a placeholder when no entities are present.
  *
- * @param jobId - The job identifier, forwarded to {@link DownloadButtons}.
  * @param result - The completed job result containing the named entity list.
- * @param stem - Upload filename without extension; used to prefix download names.
  */
-export function EntitiesTab({ jobId, result, stem }: EntitiesTabProps) {
+export function EntitiesTab({ result }: EntitiesTabProps) {
   const t = useT()
   if (!result.named_entities || result.named_entities.length === 0) {
     return <p className="text-sm text-muted-foreground">{t('results.no_entities')}</p>
@@ -45,13 +40,6 @@ export function EntitiesTab({ jobId, result, stem }: EntitiesTabProps) {
           </tbody>
         </table>
       </div>
-      <DownloadButtons
-        jobId={jobId}
-        items={[
-          { name: 'entities.csv', label: 'CSV', fileName: `${stem}_entities.csv` },
-          { name: 'entities.xlsx', label: 'XLSX', fileName: `${stem}_entities.xlsx` },
-        ]}
-      />
     </div>
   )
 }

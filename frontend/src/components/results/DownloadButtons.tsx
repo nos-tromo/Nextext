@@ -5,7 +5,7 @@ import { useT } from '../../i18n/LanguageContext'
 import { describeError } from '../../api/errorMessage'
 import type { ErrorDescriptor } from '../../api/errorMessage'
 
-interface DownloadSpec {
+export interface DownloadSpec {
   /** Artifact name on the backend, e.g. `transcript.csv`. */
   name: string
   /**
@@ -54,7 +54,7 @@ export function DownloadButtons({ jobId, items }: DownloadButtonsProps) {
   }
 
   return (
-    <div className="flex flex-wrap items-center gap-2">
+    <div className="flex flex-wrap items-center justify-end gap-2">
       {/* Each keeps its format beside the icon: these sit side by side, and a
           row of identical download icons would be a guessing game. The busy
           one shows a spinner rather than the `…` this used to type out. */}

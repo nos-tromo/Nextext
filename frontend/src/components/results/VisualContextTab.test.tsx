@@ -31,13 +31,13 @@ function makeResult(frame_captions: FrameCaption[] | null, keyframes_url: string
 
 describe('VisualContextTab', () => {
   it('lists every caption', () => {
-    render(<VisualContextTab jobId="j1" result={makeResult(captions)} stem="clip" fileName="clip.mp4" mediaUrl={null} />)
+    render(<VisualContextTab jobId="j1" result={makeResult(captions)} fileName="clip.mp4" mediaUrl={null} />)
     expect(screen.getByText('A slide titled Roadmap')).toBeInTheDocument()
     expect(screen.getByText('A speaker at a lectern')).toBeInTheDocument()
   })
 
   it('stamps each caption with its moment in the clip', () => {
-    render(<VisualContextTab jobId="j1" result={makeResult(captions)} stem="clip" fileName="clip.mp4" mediaUrl={null} />)
+    render(<VisualContextTab jobId="j1" result={makeResult(captions)} fileName="clip.mp4" mediaUrl={null} />)
     expect(screen.getByText('00:00')).toBeInTheDocument()
     expect(screen.getByText('01:15')).toBeInTheDocument()
   })
@@ -45,41 +45,32 @@ describe('VisualContextTab', () => {
   it('shows the captions without needing a disclosure to be opened', () => {
     // The tab is now the dedicated place for this, so its content is the page —
     // not something folded away behind a summary.
-    const { container } = render(<VisualContextTab jobId="j1" result={makeResult(captions)} stem="clip" fileName="clip.mp4" mediaUrl={null} />)
+    const { container } = render(<VisualContextTab jobId="j1" result={makeResult(captions)} fileName="clip.mp4" mediaUrl={null} />)
     expect(container.querySelector('details')).toBeNull()
   })
 
-  it('offers the visual context as a download', () => {
-    render(<VisualContextTab jobId="j1" result={makeResult(captions)} stem="clip" fileName="clip.mp4" mediaUrl={null} />)
-    expect(screen.getByRole('button', { name: 'Download TXT' })).toBeInTheDocument()
+  it('renders no downloads of its own; they live in the result header', () => {
+    const url = '/api/v1/jobs/j1/artifacts/keyframes.zip'
+    render(<VisualContextTab jobId="j1" result={makeResult(captions, url)} fileName="clip.mp4" mediaUrl={null} />)
+    expect(screen.queryAllByRole('button', { name: /download/i })).toEqual([])
   })
 
   it('renders an empty state when the job produced no captions', () => {
-    render(<VisualContextTab jobId="j1" result={makeResult(null)} stem="clip" fileName="clip.mp4" mediaUrl={null} />)
+    render(<VisualContextTab jobId="j1" result={makeResult(null)} fileName="clip.mp4" mediaUrl={null} />)
     expect(screen.getByText('No visual context produced for this job.')).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'Download TXT' })).not.toBeInTheDocument()
   })
 
   it('renders the empty state for an empty caption list too', () => {
-    render(<VisualContextTab jobId="j1" result={makeResult([])} stem="clip" fileName="clip.mp4" mediaUrl={null} />)
+    render(<VisualContextTab jobId="j1" result={makeResult([])} fileName="clip.mp4" mediaUrl={null} />)
     expect(screen.getByText('No visual context produced for this job.')).toBeInTheDocument()
   })
 
-  it('offers the sampled frames as a ZIP beside the descriptions', () => {
-    const url = '/api/v1/jobs/j1/artifacts/keyframes.zip'
-    render(<VisualContextTab jobId="j1" result={makeResult(captions, url)} stem="clip" fileName="clip.mp4" mediaUrl={null} />)
-    expect(screen.getByRole('button', { name: 'Download TXT' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /keyframes/i })).toBeInTheDocument()
-  })
-
-  it('offers the ZIP alone when the frames were sampled but not described', () => {
+  it('says the frames were sampled but not described', () => {
     // What an operator with captioning switched off sees: the job produced
     // something, so the tab must not claim it produced nothing.
     const url = '/api/v1/jobs/j1/artifacts/keyframes.zip'
-    render(<VisualContextTab jobId="j1" result={makeResult(null, url)} stem="clip" fileName="clip.mp4" mediaUrl={null} />)
+    render(<VisualContextTab jobId="j1" result={makeResult(null, url)} fileName="clip.mp4" mediaUrl={null} />)
     expect(screen.getByText(/sampled but not described/)).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /keyframes/i })).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'Download TXT' })).not.toBeInTheDocument()
   })
 })
 
@@ -94,7 +85,6 @@ describe('VisualContextTab playback', () => {
       <VisualContextTab
         jobId="j1"
         result={makeResult(captions)}
-        stem="clip"
         fileName="clip.mp4"
         mediaUrl={VC_MEDIA_URL}
       />,
@@ -104,7 +94,7 @@ describe('VisualContextTab playback', () => {
 
   it('leaves timestamps as plain text without media', () => {
     render(
-      <VisualContextTab jobId="j1" result={makeResult(captions)} stem="clip" fileName="clip.mp4" mediaUrl={null} />,
+      <VisualContextTab jobId="j1" result={makeResult(captions)} fileName="clip.mp4" mediaUrl={null} />,
     )
     expect(screen.queryByRole('button', { name: /Play from/ })).not.toBeInTheDocument()
     expect(screen.getByText('01:15')).toBeInTheDocument()
@@ -115,7 +105,6 @@ describe('VisualContextTab playback', () => {
       <VisualContextTab
         jobId="j1"
         result={makeResult(captions)}
-        stem="clip"
         fileName="clip.mp4"
         mediaUrl={VC_MEDIA_URL}
       />,
@@ -129,7 +118,6 @@ describe('VisualContextTab playback', () => {
       <VisualContextTab
         jobId="j1"
         result={makeResult(captions)}
-        stem="clip"
         fileName="clip.mp4"
         mediaUrl={VC_MEDIA_URL}
       />,
@@ -154,7 +142,6 @@ describe('VisualContextTab playback', () => {
       <VisualContextTab
         jobId="j1"
         result={makeResult(captions)}
-        stem="clip"
         fileName="clip.mp4"
         mediaUrl={VC_MEDIA_URL}
       />,

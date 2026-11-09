@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Button, ChevronDownIcon, DeleteButton, Menu, MenuItem } from '@infra/ui'
+import { ActionBar, Button, ChevronDownIcon, DeleteButton, Menu, MenuItem } from '@infra/ui'
 import { isActive, useClearJobs } from '../../hooks/useJobs'
 import { useT } from '../../i18n/LanguageContext'
 import type { JobListItem } from '../../api/types'
@@ -89,13 +89,13 @@ export function ClearJobsMenu({ jobs }: ClearJobsMenuProps) {
               </MenuItem>
             </>
           ) : (
-            <div className="px-3 py-2">
-              <p className="max-w-[16rem] text-sm text-foreground">
+            <div className="w-72 max-w-full px-3 py-2">
+              <p className="text-sm text-foreground">
                 {t(confirmIds.length === 1 ? 'jobs.clear_confirm_one' : 'jobs.clear_confirm_other', {
                   count: confirmIds.length,
                 })}
               </p>
-              <div className="mt-2 flex justify-end gap-2">
+              <ActionBar className="mt-2">
                 <Button
                   size="sm"
                   variant="secondary"
@@ -112,7 +112,7 @@ export function ClearJobsMenu({ jobs }: ClearJobsMenuProps) {
                 >
                   {clear.isPending ? t('jobs.clearing') : t('jobs.clear_confirm_button')}
                 </Button>
-              </div>
+              </ActionBar>
             </div>
           )
         }

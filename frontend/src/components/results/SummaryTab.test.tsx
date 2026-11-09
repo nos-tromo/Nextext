@@ -31,30 +31,23 @@ const captions: FrameCaption[] = [
 
 describe('SummaryTab', () => {
   it('no longer carries the visual context — it has its own tab now', () => {
-    render(<SummaryTab jobId="j1" result={makeResult({ frame_captions: captions })} stem="clip" />)
+    render(<SummaryTab result={makeResult({ frame_captions: captions })} />)
     expect(screen.queryByText('A slide titled Roadmap')).not.toBeInTheDocument()
     expect(screen.queryByText(/visual context/i)).not.toBeInTheDocument()
   })
 
-  it('keeps a single plain TXT download whether or not captions exist', () => {
-    const { unmount } = render(
-      <SummaryTab jobId="j1" result={makeResult({ frame_captions: captions })} stem="clip" />,
-    )
-    expect(screen.getByRole('button', { name: 'Download TXT' })).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: /visual context/i })).not.toBeInTheDocument()
-    unmount()
-
-    render(<SummaryTab jobId="j1" result={makeResult()} stem="clip" />)
-    expect(screen.getByRole('button', { name: 'Download TXT' })).toBeInTheDocument()
+  it('renders no downloads of its own; they live in the result header', () => {
+    render(<SummaryTab result={makeResult({ frame_captions: captions })} />)
+    expect(screen.queryAllByRole('button', { name: /download/i })).toEqual([])
   })
 
   it('still renders the summary text itself', () => {
-    render(<SummaryTab jobId="j1" result={makeResult({ frame_captions: captions })} stem="clip" />)
+    render(<SummaryTab result={makeResult({ frame_captions: captions })} />)
     expect(screen.getByText('They discussed the roadmap.')).toBeInTheDocument()
   })
 
   it('renders the empty state when there is no summary at all', () => {
-    render(<SummaryTab jobId="j1" result={makeResult({ summary: null })} stem="clip" />)
+    render(<SummaryTab result={makeResult({ summary: null })} />)
     expect(screen.getByText('No summary produced for this job.')).toBeInTheDocument()
   })
 })

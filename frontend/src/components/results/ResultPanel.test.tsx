@@ -1,9 +1,15 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import type { JobSnapshot } from '../../api/types'
 import { ResultPanel } from './ResultPanel'
 import { useMediaPlayerStore } from '../../lib/mediaPlayerStore'
+import { downloadArtifact } from '../../lib/download'
+
+vi.mock('../../lib/download', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../lib/download')>()),
+  downloadArtifact: vi.fn(async () => {}),
+}))
 
 function mountResultPanel(jobId: string, fileName: string) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
@@ -448,5 +454,100 @@ describe('ResultPanel media player', () => {
     expect(state.session?.jobId).toBe('j1')
     expect(state.session?.fileName).toBe('clip.wav')
     expect(state.seekRequest).toBeNull()
+  })
+})
+
+function serve(snapshot: JobSnapshot) {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async () =>
+      new Response(JSON.stringify(snapshot), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }),
+    ),
+  )
+}
+
+/** The header's right-hand cluster, found from the archive download it always holds. */
+function cluster(): HTMLElement {
+  return screen.getByRole('button', { name: 'Download all (.zip)' }).closest('.ml-auto') as HTMLElement
+}
+
+describe('ResultPanel downloads in the header', () => {
+  it("offers the active tab's download menu in the header, before play and the archive", async () => {
+    serve(makeSnapshot({ media_url: '/api/v1/jobs/j1/media?token=t' }))
+    mountResultPanel('j1', 'clip.wav')
+    await screen.findByText('Hello world')
+
+    const names = Array.from(cluster().querySelectorAll('button')).map((b) => b.getAttribute('aria-label'))
+    expect(names).toEqual(['Download Transcript', 'Open player', 'Download all (.zip)'])
+    fireEvent.click(screen.getByRole('button', { name: 'Download Transcript' }))
+    expect(screen.getAllByRole('menuitem').map((m) => m.textContent)).toEqual(['CSV', 'XLSX', 'TXT', 'JSONL'])
+  })
+
+  it('swaps the menu when the tab changes', async () => {
+    serve(makeSnapshot({ summary: 'Ein kurzer Text.' }))
+    mountResultPanel('j1', 'clip.wav')
+    await screen.findByText('Hello world')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Summary' }))
+    expect(within(cluster()).queryByRole('button', { name: 'Download Transcript' })).toBeNull()
+    fireEvent.click(within(cluster()).getByRole('button', { name: 'Download Summary' }))
+    expect(screen.getAllByRole('menuitem').map((m) => m.textContent)).toEqual(['TXT'])
+  })
+
+  it("starts the next tab's downloads clean", async () => {
+    vi.mocked(downloadArtifact).mockRejectedValueOnce(new Error('boom'))
+    serve(makeSnapshot({ summary: 'Ein kurzer Text.' }))
+    mountResultPanel('j1', 'clip.wav')
+    await screen.findByText('Hello world')
+
+    fireEvent.click(within(cluster()).getByRole('button', { name: 'Download Transcript' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'CSV' }))
+    await waitFor(() => expect(cluster().querySelector('.text-danger')).not.toBeNull())
+    fireEvent.click(screen.getByRole('button', { name: 'Summary' }))
+    expect(cluster().querySelector('.text-danger')).toBeNull()
+  })
+
+  it('keeps the cluster right-aligned when the header wraps', async () => {
+    serve(makeSnapshot())
+    mountResultPanel('j1', 'clip.wav')
+    await screen.findByText('Hello world')
+
+    expect(cluster()).toHaveClass('ml-auto')
+    expect(cluster().parentElement).toHaveClass('flex-wrap')
+  })
+
+  it('offers the keyframes ZIP for frames without captions', async () => {
+    serve(makeSnapshot({ transcript: [], keyframes_url: '/api/v1/jobs/j1/artifacts/keyframes.zip' }))
+    mountResultPanel('j1', 'clip.wav')
+
+    expect(await screen.findByText(/sampled but not described/)).toBeInTheDocument()
+    fireEvent.click(within(cluster()).getByRole('button', { name: 'Download Visual context' }))
+    expect(screen.getByRole('menuitem', { name: 'Keyframes (ZIP)' })).toBeInTheDocument()
+  })
+
+  it('offers no tab menu for an empty transcript', async () => {
+    serve(makeSnapshot({ transcript: [] }))
+    mountResultPanel('j1', 'clip.wav')
+
+    await screen.findByRole('button', { name: 'Download all (.zip)' })
+    expect(within(cluster()).queryByRole('button', { name: /^Download Transcript$/ })).toBeNull()
+  })
+
+  it('shows an empty state when there is no result', async () => {
+    serve({ ...makeSnapshot(), result: null } as unknown as JobSnapshot)
+    mountResultPanel('j1', 'clip.wav')
+
+    expect((await screen.findByText('No result data available.')).closest('.border-dashed')).not.toBeNull()
+  })
+
+  it('says which tab is active, since the header downloads belong to it', async () => {
+    serve(makeSnapshot({ summary: 'Ein kurzer Text.' }))
+    mountResultPanel('j1', 'clip.wav')
+    await screen.findByText('Hello world')
+    expect(screen.getByRole('button', { name: 'Transcript' })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByRole('button', { name: 'Summary' })).toHaveAttribute('aria-pressed', 'false')
   })
 })

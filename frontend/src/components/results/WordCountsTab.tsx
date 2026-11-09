@@ -1,24 +1,18 @@
-import { DownloadButtons } from './DownloadButtons'
 import { useT } from '../../i18n/LanguageContext'
 import type { JobResult } from '../../api/types'
 
 interface WordCountsTabProps {
-  jobId: string
   result: JobResult
-  stem: string
 }
 
 /**
  * Displays a ranked word-frequency histogram for the job — one row per word
- * with a bar scaled against the most frequent word, the exact count beside it,
- * and CSV/XLSX download buttons. Renders a placeholder when no word counts
- * are present.
+ * with a bar scaled against the most frequent word and the exact count beside
+ * it. Renders a placeholder when no word counts are present.
  *
- * @param jobId - The job identifier, forwarded to {@link DownloadButtons}.
  * @param result - The completed job result containing the word count list.
- * @param stem - Upload filename without extension; used to prefix download names.
  */
-export function WordCountsTab({ jobId, result, stem }: WordCountsTabProps) {
+export function WordCountsTab({ result }: WordCountsTabProps) {
   const t = useT()
   if (!result.word_counts || result.word_counts.length === 0) {
     return <p className="text-sm text-muted-foreground">{t('results.no_word_counts')}</p>
@@ -57,13 +51,6 @@ export function WordCountsTab({ jobId, result, stem }: WordCountsTabProps) {
           </tbody>
         </table>
       </div>
-      <DownloadButtons
-        jobId={jobId}
-        items={[
-          { name: 'wordcounts.csv', label: 'CSV', fileName: `${stem}_wordcounts.csv` },
-          { name: 'wordcounts.xlsx', label: 'XLSX', fileName: `${stem}_wordcounts.xlsx` },
-        ]}
-      />
     </div>
   )
 }

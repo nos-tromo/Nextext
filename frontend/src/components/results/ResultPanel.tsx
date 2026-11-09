@@ -1,10 +1,11 @@
 import { useState } from 'react'
 import { useJobResult } from '../../hooks/useJobResult'
-import { Banner, PlayButton, Spinner, WarningIcon } from '@infra/ui'
+import { Banner, EmptyState, PlayButton, Spinner, WarningIcon } from '@infra/ui'
 import { useT } from '../../i18n/LanguageContext'
 import { describeError } from '../../api/errorMessage'
 import { resultSkipMessageKey } from '../../lib/outcomeMessages'
 import { DownloadButtons } from './DownloadButtons'
+import { ResultDownloadMenu } from './ResultDownloadMenu'
 import { TranscriptTab } from './TranscriptTab'
 import { VisualContextTab } from './VisualContextTab'
 import { SummaryTab } from './SummaryTab'
@@ -14,6 +15,7 @@ import { EntitiesTab } from './EntitiesTab'
 import { HateSpeechTab } from './HateSpeechTab'
 import { cn } from '../../lib/cn'
 import { useMediaPlayerStore } from '../../lib/mediaPlayerStore'
+import { downloadsFor, type ResultTabId } from '../../lib/resultDownloads'
 
 interface ResultPanelProps {
   jobId: string
@@ -21,17 +23,8 @@ interface ResultPanelProps {
   fileName: string
 }
 
-type TabId =
-  | 'transcript'
-  | 'visual_context'
-  | 'summary'
-  | 'words'
-  | 'wordcloud'
-  | 'entities'
-  | 'hate_speech'
-
 interface TabSpec {
-  id: TabId
+  id: ResultTabId
   label: string
 }
 
@@ -41,7 +34,8 @@ interface TabSpec {
  * Calls {@link useJobResult} (always enabled — the parent is responsible for
  * only mounting ResultPanel on a terminal job). Handles loading, error, null
  * result, and skipped-job states. Renders only the tabs whose data is present
- * in the result, and provides a "Download all (.zip)" button in the header.
+ * in the result. The header carries the active tab's download menu, the player
+ * and "Download all (.zip)".
  *
  * @param jobId - The job whose result to fetch and display.
  * @param fileName - The original upload filename; used to derive the stem for
@@ -50,7 +44,7 @@ interface TabSpec {
 export function ResultPanel({ jobId, fileName }: ResultPanelProps) {
   const t = useT()
   const query = useJobResult(jobId, true)
-  const [activeTab, setActiveTab] = useState<TabId>('transcript')
+  const [activeTab, setActiveTab] = useState<ResultTabId>('transcript')
   const openPlayer = useMediaPlayerStore((s) => s.open)
 
   // Derive stem: strip everything from the last '.' onward (or use the full
@@ -75,7 +69,7 @@ export function ResultPanel({ jobId, fileName }: ResultPanelProps) {
   const result = query.data
 
   if (result === null || result === undefined) {
-    return <p className="text-sm text-muted-foreground">{t('results.no_data')}</p>
+    return <EmptyState>{t('results.no_data')}</EmptyState>
   }
 
   // A skipped job is not an error, but it IS the headline of the run — a muted
@@ -135,13 +129,15 @@ export function ResultPanel({ jobId, fileName }: ResultPanelProps) {
   return (
     <div className="space-y-4">
       {skippedBanner}
-      {/* Header row: tab bar + archive download */}
+      {/* Header row: tabs on the left; the active tab's downloads, play and the
+          archive on the right, which stay put when the tab changes. */}
       <div className="flex flex-wrap items-center justify-between gap-2">
         <nav className="flex flex-wrap gap-1" aria-label={t('results.tab_nav_label')}>
           {availableTabs.map((tab) => (
             <button
               key={tab.id}
               type="button"
+              aria-pressed={resolvedTab === tab.id}
               onClick={() => setActiveTab(tab.id)}
               className={cn(
                 'rounded px-3 py-1 text-sm transition-colors',
@@ -154,7 +150,14 @@ export function ResultPanel({ jobId, fileName }: ResultPanelProps) {
             </button>
           ))}
         </nav>
-        <div className="flex items-center gap-2">
+        <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
+          {/* Keyed by tab so a busy or failed download does not carry over. */}
+          <ResultDownloadMenu
+            key={resolvedTab}
+            jobId={jobId}
+            tabLabel={availableTabs.find((tab) => tab.id === resolvedTab)?.label ?? ''}
+            items={downloadsFor(resolvedTab, result, stem, t)}
+          />
           {/* Opens the recording without jumping anywhere; the timestamps in
               the tabs below are the seek controls. Hidden when the upload is
               gone, since the player would only 404. */}
@@ -186,38 +189,36 @@ export function ResultPanel({ jobId, fileName }: ResultPanelProps) {
             <TranscriptTab
               jobId={jobId}
               segments={result.transcript}
-              stem={stem}
               fileName={fileName}
               mediaUrl={result.media_url}
             />
           ) : (
             // No rows: render the same kind of empty state as the sibling tabs
-            // rather than a header-only table with download buttons under it.
+            // rather than a header-only table.
             <p className="text-sm text-muted-foreground">{t('results.no_transcript')}</p>
           ))}
         {resolvedTab === 'visual_context' && (
           <VisualContextTab
             jobId={jobId}
             result={result}
-            stem={stem}
             fileName={fileName}
             mediaUrl={result.media_url}
           />
         )}
         {resolvedTab === 'summary' && (
-          <SummaryTab jobId={jobId} result={result} stem={stem} />
+          <SummaryTab result={result} />
         )}
         {resolvedTab === 'words' && (
-          <WordCountsTab jobId={jobId} result={result} stem={stem} />
+          <WordCountsTab result={result} />
         )}
         {resolvedTab === 'wordcloud' && (
-          <WordCloudTab jobId={jobId} stem={stem} />
+          <WordCloudTab jobId={jobId} />
         )}
         {resolvedTab === 'entities' && (
-          <EntitiesTab jobId={jobId} result={result} stem={stem} />
+          <EntitiesTab result={result} />
         )}
         {resolvedTab === 'hate_speech' && (
-          <HateSpeechTab jobId={jobId} result={result} stem={stem} />
+          <HateSpeechTab result={result} />
         )}
       </div>
     </div>
