@@ -599,6 +599,24 @@ describe('ResultPanel faces', () => {
     expect(screen.getByRole('button', { name: 'Faces' })).toBeInTheDocument()
   })
 
+  it('offers the faces downloads in the header menu', async () => {
+    serve(makeSnapshot({ faces: FACES }))
+    mountResultPanel('j1', 'clip.mp4')
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Faces' }))
+    fireEvent.click(within(cluster()).getByRole('button', { name: 'Download Faces' }))
+    expect(screen.getAllByRole('menuitem').map((m) => m.textContent)).toEqual(['ZIP', 'CSV'])
+  })
+
+  it('offers no faces menu when no face was found', async () => {
+    serve(makeSnapshot({ faces: { ...FACES, entries: [] } }))
+    mountResultPanel('j1', 'clip.mp4')
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Faces' }))
+    expect(screen.getByText('No faces found.')).toBeInTheDocument()
+    expect(within(cluster()).queryByRole('button', { name: 'Download Faces' })).toBeNull()
+  })
+
   it('shows no faces tab when the job has no face result', async () => {
     serve(makeSnapshot({ faces: null }))
 

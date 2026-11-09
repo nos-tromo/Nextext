@@ -70,7 +70,12 @@ export function downloadsFor(tab: ResultTabId, result: JobResult, stem: string, 
         ...keyframes,
       ]
     case 'faces':
-      return []
+      // The backend has no faces.zip or faces.csv without a face to put in them.
+      if (!result.faces || result.faces.outcome === 'unavailable' || result.faces.entries.length === 0) return []
+      return [
+        { name: 'faces.zip', label: 'ZIP', title: t('artifacts.download_faces'), fileName: `${stem}_faces.zip` },
+        { name: 'faces.csv', label: 'CSV', title: t('artifacts.download_faces_csv'), fileName: `${stem}_faces.csv` },
+      ]
     case 'summary':
       return [{ name: 'summary.txt', label: 'TXT', fileName: `${stem}_summary.txt` }]
     case 'words':

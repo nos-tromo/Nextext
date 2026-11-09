@@ -35,9 +35,8 @@ function onScreen(entry: FaceEntry, seconds: number): boolean {
  *
  * The thumbnails arrive as `data:` URIs inside the result, so looking at them
  * is the one snapshot query rather than a download per face. The tab-level
- * `faces.zip` / `faces.csv` exist only when there are entries — the backend
- * answers 404 for an empty or unavailable result — so they are offered only
- * then.
+ * `faces.zip` / `faces.csv` are the result header's menu (`downloadsFor`);
+ * each card offers only its own best image.
  *
  * @param jobId - The job identifier, forwarded to the downloads and the player.
  * @param faces - The job's face result.
@@ -84,7 +83,21 @@ export function FacesTab({ jobId, faces, stem, fileName, mediaUrl, groupCapable 
                   className="h-16 w-16 shrink-0 rounded object-cover"
                 />
                 <div className="min-w-0 flex-1 space-y-1 text-sm">
-                  <p className="font-medium text-foreground">{label}</p>
+                  <div className="flex items-start gap-2">
+                    <p className="min-w-0 flex-1 font-medium text-foreground">{label}</p>
+                    <div className="-my-1.5 shrink-0">
+                      <DownloadButtons
+                        jobId={jobId}
+                        items={[
+                          {
+                            name: entry.best_artifact,
+                            title: t('artifacts.download_face_best'),
+                            fileName: `${stem}_${entry.best_artifact}`,
+                          },
+                        ]}
+                      />
+                    </div>
+                  </div>
                   <p className="text-muted-foreground">
                     {t(entry.detections === 1 ? 'results.face_sightings_one' : 'results.face_sightings_other', {
                       count: entry.detections,
@@ -108,37 +121,11 @@ export function FacesTab({ jobId, faces, stem, fileName, mediaUrl, groupCapable 
                       />
                     ))}
                   </div>
-                  <DownloadButtons
-                    jobId={jobId}
-                    items={[
-                      {
-                        name: entry.best_artifact,
-                        label: 'JPG',
-                        title: t('artifacts.download_face_best'),
-                        fileName: `${stem}_${entry.best_artifact}`,
-                      },
-                    ]}
-                  />
                 </div>
               </li>
             )
           })}
         </ul>
-      )}
-
-      {hasEntries && !unavailable && (
-        <DownloadButtons
-          jobId={jobId}
-          items={[
-            { name: 'faces.zip', label: 'ZIP', title: t('artifacts.download_faces'), fileName: `${stem}_faces.zip` },
-            {
-              name: 'faces.csv',
-              label: 'CSV',
-              title: t('artifacts.download_faces_csv'),
-              fileName: `${stem}_faces.csv`,
-            },
-          ]}
-        />
       )}
     </div>
   )

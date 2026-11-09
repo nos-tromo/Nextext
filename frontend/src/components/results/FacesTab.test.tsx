@@ -121,12 +121,24 @@ describe('FacesTab', () => {
     expect(screen.queryByText('Faces were not grouped by person.')).not.toBeInTheDocument()
   })
 
-  it('offers the faces as a ZIP, the table as CSV and each best image', () => {
+  it("leaves the tab's downloads to the result header", () => {
     mount(faces())
 
-    expect(screen.getByRole('button', { name: 'Download all faces (ZIP)' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Download face table (CSV)' })).toBeInTheDocument()
-    expect(screen.getAllByRole('button', { name: 'Download best image' })).toHaveLength(2)
+    expect(screen.queryByRole('button', { name: 'Download all faces (ZIP)' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Download face table (CSV)' })).not.toBeInTheDocument()
+  })
+
+  it("offers each best image as an icon at its card's right edge, beside the name", () => {
+    mount(faces())
+
+    const best = screen.getAllByRole('button', { name: 'Download best image' })
+    expect(best).toHaveLength(2)
+    expect(best[0].textContent).toBe('')
+    const name = screen.getByText('Person 1')
+    expect(name.parentElement).toContainElement(best[0])
+    expect(name).toHaveClass('flex-1')
+    // Pulled into the name's line, so the 32 px button does not push the card's text down.
+    expect(best[0].closest('.-my-1\\.5')).not.toBeNull()
   })
 
   it('shows faces_none for an empty ok result', () => {

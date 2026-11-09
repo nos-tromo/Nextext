@@ -90,6 +90,28 @@ describe('downloadsFor', () => {
     ])
   })
 
+  it('offers the faces and their table only while there are faces', () => {
+    const face = {
+      number: 1,
+      assigned: true,
+      first_seen_seconds: 0,
+      last_seen_seconds: 1,
+      appearances: [{ start_seconds: 0, end_seconds: 1 }],
+      detections: 1,
+      thumbnail: 'data:image/gif;base64,R0lGODlhAQABAAAAACw=',
+      best_artifact: 'face_001.jpg',
+    }
+    const faces = (overrides: Partial<NonNullable<JobResult['faces']>> = {}) =>
+      result({ faces: { outcome: 'ok', grouped: true, truncated: false, entries: [face], ...overrides } })
+    expect(names('faces', faces())).toEqual([
+      ['faces.zip', 'ZIP', 'clip_faces.zip'],
+      ['faces.csv', 'CSV', 'clip_faces.csv'],
+    ])
+    expect(downloadsFor('faces', faces({ entries: [] }), 'clip', t)).toEqual([])
+    expect(downloadsFor('faces', faces({ outcome: 'unavailable' }), 'clip', t)).toEqual([])
+    expect(downloadsFor('faces', result({ faces: null }), 'clip', t)).toEqual([])
+  })
+
   it('offers no transcript downloads for an empty transcript', () => {
     expect(downloadsFor('transcript', result({ transcript: [] }), 'clip', t)).toEqual([])
   })
