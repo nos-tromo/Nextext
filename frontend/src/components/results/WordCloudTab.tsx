@@ -2,11 +2,9 @@ import { useArtifactImage } from '../../hooks/useArtifactImage'
 import { Spinner } from '@infra/ui'
 import { Banner } from '@infra/ui'
 import { useT } from '../../i18n/LanguageContext'
-import { DownloadButtons } from './DownloadButtons'
 
 interface WordCloudTabProps {
   jobId: string
-  stem: string
 }
 
 /**
@@ -14,13 +12,12 @@ interface WordCloudTabProps {
  *
  * Fetches the image as a blob object URL via {@link useArtifactImage}, shows a
  * {@link Spinner} while loading, a {@link Banner} on failure, and the
- * `<img>` once the URL is available. Provides a stem-prefixed PNG download
- * button.
+ * `<img>` once the URL is available. Its PNG download sits in the result
+ * panel's header.
  *
  * @param jobId - The job identifier used to fetch the wordcloud artifact.
- * @param stem - Upload filename without extension; used to prefix the download name.
  */
-export function WordCloudTab({ jobId, stem }: WordCloudTabProps) {
+export function WordCloudTab({ jobId }: WordCloudTabProps) {
   const t = useT()
   const { url, loading, error } = useArtifactImage(jobId, 'wordcloud.png', true)
 
@@ -35,10 +32,6 @@ export function WordCloudTab({ jobId, stem }: WordCloudTabProps) {
           className="max-w-full rounded-md border border-border"
         />
       )}
-      <DownloadButtons
-        jobId={jobId}
-        items={[{ name: 'wordcloud.png', label: 'PNG', fileName: `${stem}_wordcloud.png` }]}
-      />
     </div>
   )
 }

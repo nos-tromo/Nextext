@@ -1,28 +1,24 @@
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { DownloadButtons } from './DownloadButtons'
 import { useT } from '../../i18n/LanguageContext'
 import type { JobResult } from '../../api/types'
 
 interface SummaryTabProps {
-  jobId: string
   result: JobResult
-  stem: string
 }
 
 /**
- * Displays the job summary rendered as Markdown, plus a download button
- * for `summary.txt`. Renders nothing when the job produced no summary.
+ * Displays the job summary rendered as Markdown; its `summary.txt` download
+ * sits in the result panel's header. Renders nothing when the job produced no
+ * summary.
  *
  * When the job also sampled keyframes, the summary draws on their descriptions
  * as well — or on them alone, for a video whose audio held no speech. The
  * descriptions live in their own tab (see `VisualContextTab`), not here.
  *
- * @param jobId - The job identifier, forwarded to {@link DownloadButtons}.
  * @param result - The completed job result containing the summary text.
- * @param stem - Upload filename without extension; used to prefix download names.
  */
-export function SummaryTab({ jobId, result, stem }: SummaryTabProps) {
+export function SummaryTab({ result }: SummaryTabProps) {
   const t = useT()
   if (!result.summary) {
     return <p className="text-sm text-muted-foreground">{t('results.no_summary')}</p>
@@ -33,10 +29,6 @@ export function SummaryTab({ jobId, result, stem }: SummaryTabProps) {
       <div className="prose prose-invert max-w-none text-sm">
         <ReactMarkdown remarkPlugins={[remarkGfm]}>{result.summary}</ReactMarkdown>
       </div>
-      <DownloadButtons
-        jobId={jobId}
-        items={[{ name: 'summary.txt', label: 'TXT', fileName: `${stem}_summary.txt` }]}
-      />
     </div>
   )
 }

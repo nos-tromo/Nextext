@@ -36,7 +36,7 @@ function barFills(container: HTMLElement): HTMLElement[] {
 
 describe('WordCountsTab', () => {
   it('lists every word with its count', () => {
-    render(<WordCountsTab jobId="j1" result={makeResult(counts)} stem="clip" />)
+    render(<WordCountsTab result={makeResult(counts)} />)
     expect(screen.getByText('alpha')).toBeInTheDocument()
     expect(screen.getByText('40')).toBeInTheDocument()
     expect(screen.getByText('gamma')).toBeInTheDocument()
@@ -46,12 +46,12 @@ describe('WordCountsTab', () => {
   it('draws a bar per word scaled against the most frequent one', () => {
     // The magnitude is what makes this a histogram rather than a word list:
     // the top word fills the track and the rest are a share of it.
-    const { container } = render(<WordCountsTab jobId="j1" result={makeResult(counts)} stem="clip" />)
+    const { container } = render(<WordCountsTab result={makeResult(counts)} />)
     expect(barFills(container).map((bar) => bar.style.width)).toEqual(['100%', '25%', '12.5%'])
   })
 
   it('keeps the bars out of the accessibility tree, since each row already reads its count', () => {
-    const { container } = render(<WordCountsTab jobId="j1" result={makeResult(counts)} stem="clip" />)
+    const { container } = render(<WordCountsTab result={makeResult(counts)} />)
     for (const bar of barFills(container)) {
       expect(bar.closest('[aria-hidden="true"]')).not.toBeNull()
     }
@@ -62,18 +62,17 @@ describe('WordCountsTab', () => {
       { word: 'small', count: 2 },
       { word: 'big', count: 8 },
     ]
-    const { container } = render(<WordCountsTab jobId="j1" result={makeResult(unsorted)} stem="clip" />)
+    const { container } = render(<WordCountsTab result={makeResult(unsorted)} />)
     expect(barFills(container).map((bar) => bar.style.width)).toEqual(['25%', '100%'])
   })
 
-  it('offers the word counts as CSV and XLSX downloads', () => {
-    render(<WordCountsTab jobId="j1" result={makeResult(counts)} stem="clip" />)
-    expect(screen.getByRole('button', { name: 'Download CSV' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Download XLSX' })).toBeInTheDocument()
+  it('renders no downloads of its own; they live in the result header', () => {
+    render(<WordCountsTab result={makeResult(counts)} />)
+    expect(screen.queryAllByRole('button', { name: /download/i })).toEqual([])
   })
 
   it('renders an empty state when the job produced no word counts', () => {
-    const { container } = render(<WordCountsTab jobId="j1" result={makeResult(null)} stem="clip" />)
+    const { container } = render(<WordCountsTab result={makeResult(null)} />)
     expect(screen.getByText('No word counts available for this job.')).toBeInTheDocument()
     expect(barFills(container)).toHaveLength(0)
   })

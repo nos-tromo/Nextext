@@ -1,4 +1,3 @@
-import { DownloadButtons } from './DownloadButtons'
 import { useT } from '../../i18n/LanguageContext'
 import { useMediaPlayerStore } from '../../lib/mediaPlayerStore'
 import { useFollowActiveRow } from '../../hooks/useFollowActiveRow'
@@ -9,7 +8,6 @@ import type { JobResult } from '../../api/types'
 interface VisualContextTabProps {
   jobId: string
   result: JobResult
-  stem: string
   fileName: string
   mediaUrl: string | null
 }
@@ -31,24 +29,24 @@ function formatStamp(seconds: number): string {
 
 /**
  * Displays what the video showed, moment by moment: one model-written
- * description per sampled keyframe, stamped with its time in the clip, plus
- * `visual_context.txt` and `keyframes.zip` downloads.
+ * description per sampled keyframe, stamped with its time in the clip. Its
+ * `visual_context.txt` and `keyframes.zip` downloads sit in the result panel's
+ * header.
  *
  * The keyframe step stands on its own — a summary is not required for it, and
  * takes these descriptions as one of its sources when both were asked for — so
  * the tab sits next to the transcript: both are accounts of the source
  * material itself rather than analyses derived from it. When the frames were
- * sampled but the operator has captioning switched off, the tab is the ZIP
- * download and says so.
+ * sampled but the operator has captioning switched off, the tab says so and
+ * the header still offers the ZIP.
  *
- * @param jobId - The job identifier, forwarded to {@link DownloadButtons}.
+ * @param jobId - The job identifier; its recording is what the timestamps seek in.
  * @param result - The completed job result containing the frame captions.
- * @param stem - Upload filename without extension; used to prefix download names.
  * @param fileName - Original upload name, shown as the player's title.
  * @param mediaUrl - Capability URL for playback; `null` disables the
  *   timestamp controls.
  */
-export function VisualContextTab({ jobId, result, stem, fileName, mediaUrl }: VisualContextTabProps) {
+export function VisualContextTab({ jobId, result, fileName, mediaUrl }: VisualContextTabProps) {
   const t = useT()
   const playingHere = useMediaPlayerStore((s) => s.session?.jobId === jobId)
   const currentTime = useMediaPlayerStore((s) => s.currentTime)
@@ -63,26 +61,12 @@ export function VisualContextTab({ jobId, result, stem, fileName, mediaUrl }: Vi
   }
   const activeRowRef = useFollowActiveRow(activeIndex)
 
-  const keyframesDownload = result.keyframes_url
-    ? [
-        {
-          name: 'keyframes.zip',
-          label: 'ZIP',
-          title: t('artifacts.download_keyframes'),
-          fileName: `${stem}_keyframes.zip`,
-        },
-      ]
-    : []
-
   if (captions.length === 0) {
     // Frames but no captions: the ZIP is the whole result, so offer it rather
     // than reporting an empty tab over a job that did produce something.
     if (result.keyframes_url) {
       return (
-        <div className="space-y-4">
-          <p className="text-sm text-muted-foreground">{t('results.keyframes_only')}</p>
-          <DownloadButtons jobId={jobId} items={keyframesDownload} />
-        </div>
+        <p className="text-sm text-muted-foreground">{t('results.keyframes_only')}</p>
       )
     }
     return <p className="text-sm text-muted-foreground">{t('results.no_visual_context')}</p>
@@ -123,13 +107,6 @@ export function VisualContextTab({ jobId, result, stem, fileName, mediaUrl }: Vi
           </tbody>
         </table>
       </div>
-      <DownloadButtons
-        jobId={jobId}
-        items={[
-          { name: 'visual_context.txt', label: 'TXT', fileName: `${stem}_visual_context.txt` },
-          ...keyframesDownload,
-        ]}
-      />
     </div>
   )
 }
