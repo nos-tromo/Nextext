@@ -11,7 +11,7 @@ import requests
 from dotenv import load_dotenv
 from loguru import logger
 
-from nextext.core.inference_trace import correlation_headers, record_inference, reply_usage
+from nextext.core.inference_trace import cache_scope_headers, correlation_headers, record_inference, reply_usage
 from nextext.utils.env_cfg import (
     DEFAULT_PROMPT_LANGUAGE,
     load_inference_env,
@@ -480,7 +480,7 @@ class InferencePipeline:
         effective_think = think if think is not None else load_inference_env().think
         if effective_think is not None:
             request_kwargs["extra_body"] = {"think": effective_think}
-        headers = correlation_headers()
+        headers = {**correlation_headers(), **cache_scope_headers()}
         if headers:
             request_kwargs["extra_headers"] = headers
 

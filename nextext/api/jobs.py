@@ -78,7 +78,7 @@ from nextext.audit import (
 from nextext.core.audio import AudioDecodeError
 from nextext.core.docint_transcript import parse_hhmmss_to_seconds
 from nextext.core.face_extraction import FacesResult
-from nextext.core.inference_trace import correlate
+from nextext.core.inference_trace import cache_scope, correlate
 from nextext.core.keyframes import extract_keyframe_samples
 from nextext.core.outcomes import FailureCode, SkipReason, skip_reason_text
 from nextext.utils.audit_event import Actor, AuditEmitter, Target
@@ -1518,8 +1518,9 @@ class JobManager:
 
             try:
                 # The creating request's id rides along on every inference
-                # request the job makes (X-Request-ID), for correlation.
-                with correlate(state.audit.origin.request_id):
+                # request the job makes (X-Request-ID), for correlation; its
+                # chat calls carry the owner's cache scope (X-Cache-Scope).
+                with correlate(state.audit.origin.request_id), cache_scope(state.owner_id):
                     result = await asyncio.to_thread(self._pipeline_runner, state, _push)
                 if not state.deleted:
                     # A job deleted mid-run discards its result instead of

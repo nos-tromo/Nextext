@@ -295,6 +295,16 @@ every inference request the job makes — Whisper, `/vad`, `/diarize`,
 `/gliner` and the chat model — so the router's logs can be matched with the
 trail. No identity and no purpose are sent to the router.
 
+Chat calls also carry `X-Cache-Scope`, a pseudonym of the job's owner: an
+HMAC-SHA256 of the owner id under a key the backend draws at startup and never
+lets out (`nextext/core/inference_trace.py`). vllm-service gives each scope
+its own share of the chat model's prefix cache, so one owner cannot time
+another owner's cached prompts. Outside the process a scope cannot be mapped
+back to an owner, and a restart draws new scopes. The other inference requests
+do not carry it, and CLI runs send none. Jobs docint starts run under its
+service owner (`service:docint`), so they share one scope; their prompts are
+the pipeline's own, not ones a user writes.
+
 ## Command line
 
 Every `nextext-cli` run writes a chain of its own, attributed to
