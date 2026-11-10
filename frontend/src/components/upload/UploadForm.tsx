@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useLanguages } from '../../hooks/useLanguages'
+import { useAppConfig } from '../../hooks/useAppConfig'
 import { checkUploadAcceptable } from '../../lib/uploadGuard'
 import { readStoredTargetLang, writeStoredTargetLang } from '../../lib/targetLang'
 import { Dropzone } from './Dropzone'
@@ -27,6 +28,11 @@ export function UploadForm({ pending, onRun }: UploadFormProps) {
   const [summarization, setSummarization] = useState(false)
   const [hateSpeech, setHateSpeech] = useState(false)
   const [keyframes, setKeyframes] = useState(false)
+  const [faces, setFaces] = useState(false)
+  // Offered only while the operator switch is on: the backend refuses a job
+  // asking for faces otherwise. Hidden until the config has loaded.
+  const facesMode = useAppConfig().data?.faces
+  const facesOffered = facesMode === 'detect' || facesMode === 'group'
 
   const sizeError = checkUploadAcceptable(files, undefined, (vars) =>
     t('upload.file_too_large', { name: vars.name, sizeGb: vars.sizeGb, limitGb: vars.limitGb }),
@@ -44,6 +50,7 @@ export function UploadForm({ pending, onRun }: UploadFormProps) {
       summarization,
       hate_speech: hateSpeech,
       keyframes,
+      faces: facesOffered && faces,
     })
   }
 
@@ -141,6 +148,11 @@ export function UploadForm({ pending, onRun }: UploadFormProps) {
         <ToggleButton className="min-w-32 flex-1" pressed={keyframes} onClick={() => setKeyframes((v) => !v)}>
           {t('options.keyframes')}
         </ToggleButton>
+        {facesOffered && (
+          <ToggleButton className="min-w-32 flex-1" pressed={faces} onClick={() => setFaces((v) => !v)}>
+            {t('options.faces')}
+          </ToggleButton>
+        )}
         <ToggleButton className="min-w-32 flex-1" pressed={words} onClick={() => setWords((v) => !v)}>
           {t('options.word_analysis')}
         </ToggleButton>

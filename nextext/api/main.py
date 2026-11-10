@@ -22,7 +22,14 @@ from nextext.api.routes import router as api_router
 from nextext.audit import build_emitter, emit_config_event, service_version
 from nextext.cli_clean import legacy_inputs
 from nextext.utils.audit_event import AuditEmitter, AuditWriteError
-from nextext.utils.env_cfg import CliRetentionConfig, load_audit_env, load_cli_retention_env, load_principal_env
+from nextext.utils.env_cfg import (
+    CliRetentionConfig,
+    load_audit_env,
+    load_cli_retention_env,
+    load_faces_env,
+    load_faces_mode,
+    load_principal_env,
+)
 from nextext.utils.log_cfg import setup_logging
 
 _APP_VERSION = service_version()
@@ -139,6 +146,12 @@ def _lifespan(
         audit_cfg = load_audit_env()
         principal_cfg = load_principal_env()
         cli_retention = load_cli_retention_env()
+        faces_mode = load_faces_mode()
+        if faces_mode != "off" and not load_faces_env().api_base:
+            logger.warning(
+                "NEXTEXT_FACES is on but no faces endpoint resolves (FACES_API_BASE, or OPENAI_API_BASE as "
+                "its fallback); jobs asking for faces will report them unavailable."
+            )
         emitter = emitter_factory(audit_cfg.output)
         emitter.start()
         try:
@@ -154,9 +167,10 @@ def _lifespan(
                     "service_tokens": len(principal_cfg.service_tokens),
                     "cli_retention_days": cli_retention.days,
                     "retention_notice_days": cli_retention.notice_days,
+                    "faces": faces_mode,
                 },
             )
-            job_manager = JobManager(pipeline_runner=pipeline_runner, emitter=emitter)
+            job_manager = JobManager(pipeline_runner=pipeline_runner, emitter=emitter, faces_mode=faces_mode)
             await job_manager.start()
             cli_sweep: asyncio.Task[None] | None = None
             try:
@@ -178,6 +192,7 @@ def _lifespan(
                     cli_sweep = asyncio.create_task(_cli_sweep_loop(sweeper, emitter))
                 app.state.audit_emitter = emitter
                 app.state.audit_required = audit_cfg.require_purpose
+                app.state.faces_mode = faces_mode
                 app.state.job_manager = job_manager
                 logger.info("Nextext API started")
                 yield

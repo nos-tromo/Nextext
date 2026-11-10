@@ -6,7 +6,10 @@ never written to disk.
 
 from __future__ import annotations
 
+import csv
 import io
+import json
+import re
 import zipfile
 from collections.abc import Sequence
 from pathlib import Path
@@ -20,6 +23,7 @@ from nextext.core.docint_transcript import (
     build_docint_jsonl,
     transcript_segments_from_df,
 )
+from nextext.core.face_extraction import FacesResult
 from nextext.core.keyframes import keyframe_manifest
 from nextext.core.visual_context import format_visual_context
 from nextext.pipeline import normalize_language_code, transcript_txt_exports
@@ -111,6 +115,90 @@ def _keyframe_times(result: dict[str, Any]) -> Sequence[float] | None:
     return times if isinstance(times, Sequence) and not isinstance(times, str | bytes) else None
 
 
+# One entry's best shot, by entry number: ``face_001.jpg``.
+FACE_IMAGE_ARTIFACT = re.compile(r"face_\d{3}\.jpg")
+
+
+def _faces_of(result: dict[str, Any]) -> FacesResult | None:
+    """Return a job result's faces when it holds any entry.
+
+    Args:
+        result: The job's result payload.
+
+    Returns:
+        FacesResult | None: The faces, or ``None`` when the job has none (not
+            asked for, no frames, or no face found).
+    """
+    faces = result.get("faces")
+    return faces if isinstance(faces, FacesResult) and faces.entries else None
+
+
+def faces_members(result: FacesResult) -> list[tuple[str, bytes]]:
+    """Lay out a face result as ZIP members: a folder per entry and a manifest.
+
+    A grouped person goes to ``person_NNN/``, an ungrouped face to
+    ``face_NNN/``; each holds ``best.jpg`` and ``crop_1.jpg`` … ``crop_3.jpg``.
+    ``manifest.json`` names every file with its time, box (source pixels),
+    score and quality. No source file name, no image metadata.
+
+    Args:
+        result: The face result.
+
+    Returns:
+        list[tuple[str, bytes]]: ``(path, bytes)`` members, manifest last.
+    """
+    members: list[tuple[str, bytes]] = []
+    entries: list[dict[str, object]] = []
+    for entry in result.entries:
+        folder = f"{'person' if entry.assigned else 'face'}_{entry.number:03d}"
+        files = [("best.jpg", entry.best)] + [
+            (f"crop_{index}.jpg", crop) for index, crop in enumerate(entry.crops, start=1)
+        ]
+        described: list[dict[str, object]] = []
+        for file_name, crop in files:
+            path = f"{folder}/{file_name}"
+            members.append((path, crop.jpeg))
+            described.append(
+                {
+                    "file": path,
+                    "time_sec": crop.time_sec,
+                    "box": list(crop.box),
+                    "score": round(crop.score, 4),
+                    "quality": round(crop.quality, 4),
+                }
+            )
+        entries.append(
+            {
+                "number": entry.number,
+                "assigned": entry.assigned,
+                "folder": folder,
+                "appearances": [[start, end] for start, end in entry.appearances],
+                "files": described,
+            }
+        )
+    manifest = {"outcome": result.outcome, "grouped": result.grouped, "truncated": result.truncated, "entries": entries}
+    members.append(("manifest.json", json.dumps(manifest, ensure_ascii=False).encode("utf-8")))
+    return members
+
+
+def faces_csv(result: FacesResult) -> bytes:
+    """Render the face table: one row per detection of a kept entry, no images.
+
+    Args:
+        result: The face result.
+
+    Returns:
+        bytes: UTF-8 CSV with the header ``time_sec,entry,x,y,w,h,score``.
+    """
+    buffer = io.StringIO()
+    writer = csv.writer(buffer, lineterminator="\n")
+    writer.writerow(["time_sec", "entry", "x", "y", "w", "h", "score"])
+    for row in result.rows:
+        x, y, width, height = row.box
+        writer.writerow([row.time_sec, row.entry, x, y, width, height, round(row.score, 4)])
+    return buffer.getvalue().encode("utf-8")
+
+
 def _render_archive_members(state: JobState) -> dict[str, bytes]:
     """Render every produced output for a job as ``name -> bytes`` members.
 
@@ -118,10 +206,11 @@ def _render_archive_members(state: JobState) -> dict[str, bytes]:
     word-cloud rasterization, docint JSONL — so the mapping is cached on the
     job and reused by both the per-job and batch ZIP builders. Keys are archive
     file names without any leading job folder, e.g. ``{stem}_transcript.csv``.
-    Keyframes are the one exception: they nest under a ``keyframes/``
-    subfolder (e.g. ``keyframes/frame_000.jpg``) so they never collide with
-    the flat ``{stem}_...``-style keys above. This intentionally differs from
-    the standalone ``keyframes.zip`` artifact, which uses flat names.
+    Keyframes and faces are the exceptions: they nest under ``keyframes/`` and
+    ``faces/`` subfolders (e.g. ``keyframes/frame_000.jpg``,
+    ``faces/person_001/best.jpg``) so they never collide with the flat
+    ``{stem}_...``-style keys above. This intentionally differs from the
+    standalone ``keyframes.zip`` artifact, which uses flat names.
 
     Args:
         state: The completed job.
@@ -183,6 +272,12 @@ def _render_archive_members(state: JobState) -> dict[str, bytes]:
         manifest = keyframe_manifest(_keyframe_times(result), len(frames))
         if manifest is not None:
             members["keyframes/manifest.json"] = manifest
+
+    faces = _faces_of(result)
+    if faces is not None:
+        for path, payload in faces_members(faces):
+            members[f"faces/{path}"] = payload
+        members[f"{stem}_faces.csv"] = faces_csv(faces)
 
     state.archive_members_cache = members
     return members
@@ -346,6 +441,7 @@ _APP_XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 _APP_PNG = "image/png"
 _APP_NDJSON = "application/x-ndjson"
 _APP_ZIP = "application/zip"
+_APP_JPEG = "image/jpeg"
 
 
 def render_artifact(state: JobState, name: str) -> tuple[bytes, str] | None:
@@ -353,7 +449,8 @@ def render_artifact(state: JobState, name: str) -> tuple[bytes, str] | None:
 
     Args:
         state: The job whose results back the artifact.
-        name: Artifact name, e.g. ``transcript.csv`` or ``archive.zip``.
+        name: Artifact name, e.g. ``transcript.csv``, ``archive.zip`` or one
+            entry's best shot, ``face_001.jpg``.
 
     Returns:
         tuple[bytes, str] | None: ``(payload, content_type)`` on success.
@@ -455,6 +552,23 @@ def render_artifact(state: JobState, name: str) -> tuple[bytes, str] | None:
         if manifest is not None:
             members.append(("manifest.json", manifest))
         return _zip_members(members), _APP_ZIP
+    if name == "faces.zip":
+        faces = _faces_of(result)
+        if faces is None:
+            return None
+        return _zip_members(faces_members(faces)), _APP_ZIP
+    if name == "faces.csv":
+        faces = _faces_of(result)
+        if faces is None:
+            return None
+        return faces_csv(faces), _TEXT_CSV
+    if FACE_IMAGE_ARTIFACT.fullmatch(name):
+        faces = _faces_of(result)
+        number = int(name.removeprefix("face_").removesuffix(".jpg"))
+        entry = next((e for e in faces.entries if e.number == number), None) if faces is not None else None
+        if entry is None:
+            return None
+        return entry.best.jpeg, _APP_JPEG
     return None
 
 
@@ -476,6 +590,8 @@ SUPPORTED_ARTIFACTS: frozenset[str] = frozenset(
         "docint.jsonl",
         "archive.zip",
         "keyframes.zip",
+        "faces.zip",
+        "faces.csv",
     }
 )
 

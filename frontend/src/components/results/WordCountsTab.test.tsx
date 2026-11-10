@@ -22,6 +22,7 @@ function makeResult(word_counts: WordCount[] | null): JobResult {
     media_url: null,
     frame_captions: null,
     hate_speech_findings: null,
+    faces: null,
     skipped: false,
     skip_reason: null,
     skip_reason_code: null,

@@ -41,6 +41,7 @@ from starlette.concurrency import run_in_threadpool
 
 from nextext.api.artifacts import (
     BATCH_ARTIFACTS,
+    FACE_IMAGE_ARTIFACT,
     SUPPORTED_ARTIFACTS,
     render_artifact,
     render_batch_artifact,
@@ -238,7 +239,9 @@ async def create_job(
 
     The manager records the upload (``collect`` / ``job.create``) before the
     job exists; an upload rejected for its size, or failing while it is
-    stored, is removed and recorded with ``outcome="error"``.
+    stored, is removed and recorded with ``outcome="error"``. A job asking for
+    faces while ``NEXTEXT_FACES`` is off is refused with ``422`` before the
+    upload is stored.
 
     Args:
         file: Multipart audio/video upload.
@@ -251,6 +254,10 @@ async def create_job(
         JobCreateResponse: Identifier and timestamps for the new job.
     """
     parsed_options = _parse_options(options)
+    if parsed_options.faces and manager.faces_mode == "off":
+        # Refused before anything is stored, so nothing is collected.
+        logger.warning("Faces requested while NEXTEXT_FACES is off; job refused.")
+        raise HTTPException(status_code=422, detail="Invalid request.")
     raw_name = Path(file.filename or "upload").name or "upload"
     suffix = Path(raw_name).suffix
     file_path, _ = manager.allocate_tmpdir(suffix=suffix)
@@ -835,7 +842,7 @@ async def download_artifact(
     Returns:
         Response: Binary payload with the appropriate media type.
     """
-    if name not in SUPPORTED_ARTIFACTS:
+    if name not in SUPPORTED_ARTIFACTS and not FACE_IMAGE_ARTIFACT.fullmatch(name):
         raise HTTPException(
             status_code=404,
             detail=f"Unsupported artifact '{name}'.",

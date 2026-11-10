@@ -58,6 +58,84 @@ captioning alone (sampling continues), and `VISUAL_SUMMARY_MAX_FRAMES` bounds
 the cost — see
 [configuration.md](configuration.md#visual-context-keyframe-descriptions).
 
+## Faces
+
+**Detecting faces** is the third stage, right after the keyframes and, like
+them, before the no-speech short-circuit, so a silent video still yields its
+faces. It runs only when the job asks for it (`JobOptions.faces`, the
+**Faces** toggle) *and* the operator switch `NEXTEXT_FACES` is `detect` or
+`group`; a job asking for faces while the switch is `off` is refused with
+`422` before its upload is stored. There is no CLI option.
+
+No face model runs in Nextext. The models live behind the inference router in
+vllm-service (`/faces/detect`, `/faces/group`); `nextext/core/faces.py` is the
+HTTP client, and everything else is arithmetic on boxes and grey levels:
+
+1. **Sample** (`sample_frames` in `nextext/core/keyframes.py`): one frame every
+   `FACES_INTERVAL_S`, at most `FACES_MAX_FRAMES`; a longer clip stretches the
+   interval so the samples span it — its duration taken from the container,
+   the stream, or, for a file that records none (a browser recording), the
+   largest packet timestamp. When keyframes come at most two intervals apart
+   only they are decoded, otherwise the reference frames. Times count from the
+   stream's start, so they match the player's clock; the display rotation is
+   applied, so portrait phone videos are upright. Cover art (an attached
+   picture in an audio file) is never sampled, so an audio file gets no Faces
+   tab. Frames larger than 3840 px are scaled down, and every reported box is
+   mapped back to the source's own pixels.
+2. **Detect** in batches of 8 images, each scaled to at most 1280 px, while
+   at most about 100 MB of source frames are held at once.
+3. **Filter**: at least 40 px; at most 20 faces a frame, the most prominent
+   (score times area) kept.
+4. **Track** (`nextext/core/face_tracks.py`): a detection continues a track
+   when it overlaps its last box by an IoU of at least 0.5, its area is within
+   1.5 times that box's, and at most one sample went by without it. A shot cut
+   — a large grey-level change between tiny thumbnails of consecutive samples
+   — closes every track.
+5. **Score** each crop: detection score times size, frontality (from the
+   landmarks) and sharpness (Laplacian variance).
+6. **Group** (`group` mode only): each track goes with up to three crops and
+   its sample indices, so tracks on screen together are never merged. A track
+   with a good face (score at least 0.85, at least 64 px, roughly frontal) is
+   an anchor and sends only its good crops; the anchors make up the people. A
+   track without one (a profile, say) is weak and sends its best crops anyway,
+   provided one of its faces is at least 64 px (a smaller face is too blurred
+   to compare and stays its own entry): it may join the one person it matches,
+   but never founds or links one, so a person seen from the side is not split
+   off as a face of its own. The service treats an anchor seen in a single
+   sample the same way (on hand-held, hard-cut video every track is one sample
+   long, and a small or blurred face would otherwise found a person of its
+   own); how close is close enough is `FACE_JOIN_THRESHOLD` in vllm-service.
+   The service returns one label per track and nothing else. A request over the
+   16 MiB budget is retried with one crop per track; over even that, nothing is
+   grouped.
+7. **Number** the entries by first appearance and merge each entry's spans into
+   appearances, each ending at the clip's end at the latest but never before
+   the face was last seen.
+
+Each entry keeps its best shot (a wide margin, at most 1024 px, so another
+system can detect on it), three more crops (at most 256 px) and a thumbnail
+(at most 128 px). Caps: 500 tracks and 100 entries, ranked by duration times
+size; over either — or over 20 faces in a frame — the result is `truncated`.
+Tracks without a usable face, or every track when grouping is off, failed or
+over budget, stay single entries (`assigned=false`, "Face N").
+
+The thumbnails travel in the finished snapshot as `data:` URIs
+(`JobResult.faces`), never in an SSE frame or a `GET /jobs` item. The
+artifacts are `faces.zip` (`person_NNN/` or `face_NNN/` folders with
+`best.jpg` and `crop_N.jpg`, plus a `manifest.json` of each file's time, box,
+score and quality), `faces.csv` (one row per detection, no images),
+`face_NNN.jpg` (one entry's best shot) and `faces/` plus `{stem}_faces.csv`
+inside `archive.zip`; none of them exists for a result without faces. Faces
+never reach `docint.jsonl`.
+
+The stage is fail-soft and never touches the chat provider. A failed batch
+leaves its frames without faces (`outcome="partial"`); a busy service that asks
+for a short wait (`503`, `Retry-After` at most 10 s) gets that batch once more;
+after three failed batches in a row the rest of the video is neither decoded
+nor sent, so a hung service cannot hold the job for hours. No answered batch
+at all gives `outcome="unavailable"`. An unexpected error leaves the job
+without faces and is logged with its traceback frames.
+
 ## Playback
 
 The original upload outlives the pipeline — it is removed only when the owner

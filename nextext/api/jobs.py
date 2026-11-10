@@ -23,6 +23,7 @@ upload (:mod:`nextext.api.job_record`).
 from __future__ import annotations
 
 import asyncio
+import base64
 import contextlib
 import fcntl
 import json
@@ -35,7 +36,7 @@ from collections.abc import AsyncIterator, Callable, Hashable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 
 import pandas as pd
 from loguru import logger
@@ -45,6 +46,9 @@ from nextext.api.job_record import JobRecord, read_job_record, write_job_record
 from nextext.api.media_grants import MediaGrant, MediaGrants
 from nextext.api.metrics import record_completed, record_failed, record_skipped
 from nextext.api.schemas import (
+    FaceAppearanceOut,
+    FaceEntryOut,
+    FacesOut,
     FrameCaptionOut,
     HateSpeechFinding,
     JobOptions,
@@ -57,6 +61,7 @@ from nextext.api.schemas import (
 )
 from nextext.audit import (
     CAPTION_STAGE,
+    FACE_STAGE,
     FRAME_HATE_SPEECH_STAGE,
     HATE_SPEECH_STAGE,
     SUMMARY_STAGE,
@@ -72,11 +77,12 @@ from nextext.audit import (
 )
 from nextext.core.audio import AudioDecodeError
 from nextext.core.docint_transcript import parse_hhmmss_to_seconds
+from nextext.core.face_extraction import FacesResult
 from nextext.core.inference_trace import correlate
 from nextext.core.keyframes import extract_keyframe_samples
 from nextext.core.outcomes import FailureCode, SkipReason, skip_reason_text
 from nextext.utils.audit_event import Actor, AuditEmitter, Target
-from nextext.utils.env_cfg import load_job_concurrency, load_media_grant_ttl, load_visual_summary_env
+from nextext.utils.env_cfg import FacesMode, load_job_concurrency, load_media_grant_ttl, load_visual_summary_env
 from nextext.utils.log_cfg import error_label, exception_frames
 
 _TERMINAL_EVENT_NAMES: frozenset[str] = frozenset({"job_completed", "job_failed", "job_cancelled"})
@@ -85,11 +91,20 @@ _TERMINAL_EVENT_NAMES: frozenset[str] = frozenset({"job_completed", "job_failed"
 PIPELINE_STAGE_LABELS: tuple[str, ...] = (
     "Transcribing",
     "Describing keyframes",
+    "Detecting faces",
     "Translating",
     "Running word-level analysis",
     "Summarizing",
     "Detecting hate speech",
 )
+
+STAGE_TRANSCRIBE: Final[int] = PIPELINE_STAGE_LABELS.index("Transcribing")
+STAGE_KEYFRAMES: Final[int] = PIPELINE_STAGE_LABELS.index("Describing keyframes")
+STAGE_FACES: Final[int] = PIPELINE_STAGE_LABELS.index("Detecting faces")
+STAGE_TRANSLATE: Final[int] = PIPELINE_STAGE_LABELS.index("Translating")
+STAGE_WORDS: Final[int] = PIPELINE_STAGE_LABELS.index("Running word-level analysis")
+STAGE_SUMMARY: Final[int] = PIPELINE_STAGE_LABELS.index("Summarizing")
+STAGE_HATE_SPEECH: Final[int] = PIPELINE_STAGE_LABELS.index("Detecting hate speech")
 
 
 def _utcnow() -> datetime:
@@ -162,6 +177,9 @@ class JobState:
     # owns the tempdir cleanup (in its finally block) and suppresses further
     # event dispatch for the no-longer-listed job.
     deleted: bool = False
+    # The operator switch (``NEXTEXT_FACES``) the job runs under, handed down
+    # by the manager that read it at startup.
+    faces_mode: FacesMode = "off"
     # The job's audit trail: every event of the job carries the actor,
     # purpose and request id of the request that created it.
     audit: JobAudit = field(kw_only=True, repr=False)
@@ -382,6 +400,7 @@ def _serialize_result(result: dict[str, Any], media_url: str | None = None) -> J
         ]
 
     return JobResult(
+        faces=_serialize_faces(result.get("faces")),
         transcript=transcript,
         transcript_language=result.get("transcript_language"),
         resolved_src_lang=result.get("resolved_src_lang"),
@@ -398,6 +417,41 @@ def _serialize_result(result: dict[str, Any], media_url: str | None = None) -> J
         skip_reason_code=result.get("skip_reason_code"),
         task=result.get("task", "transcribe"),
     )
+
+
+def _serialize_faces(faces: Any) -> FacesOut | None:
+    """Convert a face result into its snapshot form, thumbnails as ``data:`` URIs.
+
+    Args:
+        faces: The result's ``faces`` entry.
+
+    Returns:
+        FacesOut | None: The faces, or ``None`` when the job has none.
+    """
+    if not isinstance(faces, FacesResult):
+        return None
+    seen: dict[int, tuple[float, float]] = {}
+    for row in faces.rows:
+        first, last = seen.get(row.entry, (row.time_sec, row.time_sec))
+        seen[row.entry] = (min(first, row.time_sec), max(last, row.time_sec))
+    entries: list[FaceEntryOut] = []
+    for entry in faces.entries:
+        first_seen, last_seen = seen.get(entry.number, (entry.appearances[0][0], entry.appearances[-1][1]))
+        entries.append(
+            FaceEntryOut(
+                number=entry.number,
+                assigned=entry.assigned,
+                first_seen_seconds=first_seen,
+                last_seen_seconds=last_seen,
+                appearances=[
+                    FaceAppearanceOut(start_seconds=start, end_seconds=end) for start, end in entry.appearances
+                ],
+                detections=entry.detections,
+                thumbnail="data:image/jpeg;base64," + base64.b64encode(entry.thumbnail).decode("ascii"),
+                best_artifact=f"face_{entry.number:03d}.jpg",
+            )
+        )
+    return FacesOut(outcome=faces.outcome, grouped=faces.grouped, truncated=faces.truncated, entries=entries)
 
 
 def _requested_analyses(options: JobOptions) -> list[str]:
@@ -417,6 +471,7 @@ def _requested_analyses(options: JobOptions) -> list[str]:
         ("summary", options.summarization),
         ("hate_speech", options.hate_speech),
         ("keyframes", options.keyframes),
+        ("faces", options.faces),
     ):
         if wanted:
             requested.append(name)
@@ -461,7 +516,7 @@ def _joined_analyses(result: dict[str, Any], options: JobOptions) -> tuple[list[
     """Name the analyses a finished job's result joins, for its ``combine`` event.
 
     Each analysis is listed when the result carries its output — except
-    hate-speech detection, listed whenever it ran (see
+    hate-speech detection and the face stage, listed whenever they ran (see
     :func:`nextext.audit.joined_analyses`).
 
     Args:
@@ -481,6 +536,10 @@ def _joined_analyses(result: dict[str, Any], options: JobOptions) -> tuple[list[
         named_entities=_is_filled_frame(result.get("named_entities")),
         summary=bool(result.get("summary")),
         frame_captions=has_captions,
+        # Listed when the stage ran and yielded a result. After an exception
+        # in the stage there is none, so nothing of it was joined and the
+        # combine event rightly leaves it out.
+        faces=result.get("faces") is not None,
         hate_speech=options.hate_speech and (bool(columns) or has_captions),
     )
 
@@ -513,6 +572,7 @@ def _run_pipeline_blocking(state: JobState, push_event: PushEvent) -> dict[str, 
     from nextext.pipeline import (
         column_text,
         effective_text_column,
+        faces_pipeline,
         frame_hate_speech_pipeline,
         hate_speech_pipeline,
         normalize_language_code,
@@ -534,6 +594,7 @@ def _run_pipeline_blocking(state: JobState, push_event: PushEvent) -> dict[str, 
         "hate_speech": opts.hate_speech,
         "keyframes": opts.keyframes,
         "visual_context": opts.visual_context,
+        "faces": opts.faces,
     }
     total_stages = len(PIPELINE_STAGE_LABELS)
 
@@ -603,7 +664,7 @@ def _run_pipeline_blocking(state: JobState, push_event: PushEvent) -> dict[str, 
     audit = state.audit
 
     # Transcription -----------------------------------------------------------
-    _notify(0)
+    _notify(STAGE_TRANSCRIBE)
     with audit.stage(TRANSCRIPTION_STAGE) as notes:
         outcome = transcription_pipeline(
             file_path=state.file_path,
@@ -628,10 +689,10 @@ def _run_pipeline_blocking(state: JobState, push_event: PushEvent) -> dict[str, 
             state.job_id,
             reason_code or "unknown",
         )
-        _complete(0, {"transcript_segments": 0, "skipped": True, "skip_reason_code": reason_code})
+        _complete(STAGE_TRANSCRIBE, {"transcript_segments": 0, "skipped": True, "skip_reason_code": reason_code})
     else:
         _complete(
-            0,
+            STAGE_TRANSCRIBE,
             {
                 "transcript_segments": len(df),
                 "resolved_src_lang": file_opts["src_lang"],
@@ -646,7 +707,7 @@ def _run_pipeline_blocking(state: JobState, push_event: PushEvent) -> dict[str, 
     # client that wants the frames but not the words) and the operator-level
     # ``NEXTEXT_VISUAL_SUMMARY``. Either one off leaves the sampled frames
     # sampled and downloadable, and skips the provider entirely.
-    _notify(1)
+    _notify(STAGE_KEYFRAMES)
     keyframes: list[bytes] = []
     keyframe_times: list[float] = []
     captions: list[FrameCaption] = []
@@ -682,10 +743,41 @@ def _run_pipeline_blocking(state: JobState, push_event: PushEvent) -> dict[str, 
                     logger.warning("Job {} visual context unavailable: {}", state.job_id, error_label(exc))
                     captions = []
                 notes.result("chat", text=format_visual_context(captions) if captions else None)
-        _complete(1, {"keyframes": len(keyframes), "frame_captions": len(captions)})
+        _complete(STAGE_KEYFRAMES, {"keyframes": len(keyframes), "frame_captions": len(captions)})
     else:
         logger.info("Job {} keyframes not requested.", state.job_id)
-        _complete(1, {"skipped": True})
+        _complete(STAGE_KEYFRAMES, {"skipped": True})
+
+    # Faces ------------------------------------------------------------------
+    # Its own opt-in stage, gated by the operator switch too. It runs before
+    # the no-speech short-circuit — a silent video still has faces — never
+    # touches the chat provider, and never fails the job: recorded by what it
+    # judged (frames, tracks), never by what it found.
+    _notify(STAGE_FACES)
+    faces_result: FacesResult | None = None
+    faces_mode = state.faces_mode
+    if file_opts["faces"] and faces_mode != "off":
+        with audit.stage(FACE_STAGE) as notes:
+            try:
+                faces_result = faces_pipeline(state.file_path, mode=faces_mode)
+            except Exception as exc:
+                # Not an upstream reply (the client handles those): an
+                # unexpected error, so its frames are logged — never its message.
+                logger.warning(
+                    "Job {} faces unavailable: {}\n{}", state.job_id, error_label(exc), exception_frames(exc)
+                )
+            if faces_result is not None:
+                notes.result("face_detect", frames=faces_result.frames_sent)
+                if faces_result.tracks_sent:
+                    notes.result("face_group", tracks=faces_result.tracks_sent)
+        _complete(
+            STAGE_FACES,
+            {"face_frames": faces_result.frames_sent, "faces": len(faces_result.entries)}
+            if faces_result is not None
+            else {"skipped": True},
+        )
+    else:
+        _complete(STAGE_FACES, {"skipped": True})
 
     visual_context = format_visual_context(captions) if captions else None
 
@@ -695,7 +787,7 @@ def _run_pipeline_blocking(state: JobState, push_event: PushEvent) -> dict[str, 
         # source in their own right — so a silent video yields one.
         visual_summary: str | None = None
         if file_opts["summarization"] and visual_context:
-            _notify(4)
+            _notify(STAGE_SUMMARY)
             with audit.stage(VISUAL_SUMMARY_STAGE) as notes:
                 visual_summary = summarization_pipeline(
                     "",
@@ -703,15 +795,15 @@ def _run_pipeline_blocking(state: JobState, push_event: PushEvent) -> dict[str, 
                     visual_context=visual_context,
                 )
                 notes.result("chat", text=visual_summary, inputs=["visual_context"])
-            _complete(4, {"summary": bool(visual_summary)})
+            _complete(STAGE_SUMMARY, {"summary": bool(visual_summary)})
         # Likewise the captions can show hate a silent clip never speaks.
         frame_findings: list[dict[str, Any]] | None = None
         if file_opts["hate_speech"] and captions:
-            _notify(5)
+            _notify(STAGE_HATE_SPEECH)
             with audit.stage(FRAME_HATE_SPEECH_STAGE) as notes:
                 frame_findings = frame_hate_speech_pipeline(captions, inference_pipeline=_ensure_inference())
                 notes.result("chat", frames=len(captions))
-            _complete(5, {"flagged": len(frame_findings)})
+            _complete(STAGE_HATE_SPEECH, {"flagged": len(frame_findings)})
         return {
             "transcript": df,
             "summary": visual_summary,
@@ -729,6 +821,7 @@ def _run_pipeline_blocking(state: JobState, push_event: PushEvent) -> dict[str, 
             "keyframe_times": keyframe_times,
             "_keyframes_url": keyframes_url,
             "frame_captions": captions or None,
+            "faces": faces_result,
         }
 
     # Translation -------------------------------------------------------------
@@ -736,7 +829,7 @@ def _run_pipeline_blocking(state: JobState, push_event: PushEvent) -> dict[str, 
     # from the source language to the target. Engage it whenever a translate
     # task was requested and the resolved source differs from the target (so an
     # English target is translated too, and a same-language request is a no-op).
-    _notify(2)
+    _notify(STAGE_TRANSLATE)
     needs_translation = should_translate(file_opts["task"], file_opts["src_lang"], file_opts["trg_lang"])
     if needs_translation:
         with audit.stage(TRANSLATION_STAGE) as notes:
@@ -752,9 +845,9 @@ def _run_pipeline_blocking(state: JobState, push_event: PushEvent) -> dict[str, 
                 src_lang=file_opts["src_lang"],
                 trg_lang=file_opts["trg_lang"],
             )
-        _complete(2, {"translated": True})
+        _complete(STAGE_TRANSLATE, {"translated": True})
     else:
-        _complete(2, {"translated": False})
+        _complete(STAGE_TRANSLATE, {"translated": False})
 
     transcript_language = file_opts["trg_lang" if file_opts["task"] == "translate" else "src_lang"]
     result: dict[str, Any] = {
@@ -771,10 +864,11 @@ def _run_pipeline_blocking(state: JobState, push_event: PushEvent) -> dict[str, 
         "keyframe_times": keyframe_times,
         "_keyframes_url": keyframes_url,
         "frame_captions": captions or None,
+        "faces": faces_result,
     }
 
     # Word-level analysis -----------------------------------------------------
-    _notify(3)
+    _notify(STAGE_WORDS)
     if file_opts["words"]:
         with audit.stage(WORDLEVEL_STAGE):
             wc, ner, cloud = wordlevel_pipeline(
@@ -786,7 +880,7 @@ def _run_pipeline_blocking(state: JobState, push_event: PushEvent) -> dict[str, 
         result["wordcloud"] = cloud
         result["_wordcloud_url"] = f"/api/v1/jobs/{state.job_id}/artifacts/wordcloud.png"
         _complete(
-            3,
+            STAGE_WORDS,
             {
                 "word_counts": len(wc) if wc is not None else 0,
                 "named_entities": len(ner) if ner is not None else 0,
@@ -794,13 +888,13 @@ def _run_pipeline_blocking(state: JobState, push_event: PushEvent) -> dict[str, 
             },
         )
     else:
-        _complete(3, {"skipped": True})
+        _complete(STAGE_WORDS, {"skipped": True})
 
     # Summarization -----------------------------------------------------------
     # The summarizer takes whatever the job produced: the transcript (its
     # translation when there is one) and the keyframe captions when the
     # keyframe step ran, either alone or together.
-    _notify(4)
+    _notify(STAGE_SUMMARY)
     if file_opts["summarization"]:
         summary_text_column = effective_text_column(df)
         with audit.stage(SUMMARY_STAGE) as notes:
@@ -814,12 +908,12 @@ def _run_pipeline_blocking(state: JobState, push_event: PushEvent) -> dict[str, 
                 text=result["summary"],
                 inputs=[_SUMMARY_INPUT[summary_text_column], *(["visual_context"] if visual_context else [])],
             )
-        _complete(4, {"summary": bool(result["summary"])})
+        _complete(STAGE_SUMMARY, {"summary": bool(result["summary"])})
     else:
-        _complete(4, {"skipped": True})
+        _complete(STAGE_SUMMARY, {"skipped": True})
 
     # Hate-speech detection ---------------------------------------------------
-    _notify(5)
+    _notify(STAGE_HATE_SPEECH)
     if file_opts["hate_speech"]:
         # Recorded by what was judged, never by what was found: the findings
         # can amount to special categories of personal data.
@@ -830,9 +924,9 @@ def _run_pipeline_blocking(state: JobState, push_event: PushEvent) -> dict[str, 
             findings += frame_hate_speech_pipeline(captions, inference_pipeline=_ensure_inference())
             notes.result("chat", segments=len(df), frames=len(captions))
         result["hate_speech_findings"] = findings
-        _complete(5, {"flagged": len(findings)})
+        _complete(STAGE_HATE_SPEECH, {"flagged": len(findings)})
     else:
-        _complete(5, {"skipped": True})
+        _complete(STAGE_HATE_SPEECH, {"skipped": True})
 
     return result
 
@@ -865,6 +959,7 @@ class JobManager:
         concurrency: int | None = None,
         *,
         emitter: AuditEmitter,
+        faces_mode: FacesMode = "off",
     ) -> None:
         """Initialize the manager.
 
@@ -878,6 +973,9 @@ class JobManager:
                 (``NEXTEXT_JOB_CONCURRENCY``, itself defaulting to ``1``).
             emitter: The process's started audit emitter, which every job
                 event is written to.
+            faces_mode: The operator switch ``NEXTEXT_FACES``, read once at
+                startup; every job runs under it, and ``off`` refuses jobs
+                that ask for faces.
         """
         resolved = concurrency if concurrency is not None else load_job_concurrency()
         self._jobs: dict[str, JobState] = {}
@@ -900,6 +998,7 @@ class JobManager:
         # Playback grants (``POST /jobs/{id}/media-grant``): in memory like the
         # jobs, revoked with them.
         self.media_grants = MediaGrants(load_media_grant_ttl())
+        self.faces_mode: FacesMode = faces_mode
 
     async def start(self) -> None:
         """Take the job directory and remove what a previous process left in it.
@@ -1102,6 +1201,7 @@ class JobManager:
             source_file_hash=source_file_hash,
             options=options,
             created_at=created_at,
+            faces_mode=self.faces_mode,
             audit=audit,
         )
         async with self._lock:

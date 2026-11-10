@@ -44,7 +44,7 @@ export const en = {
 
   // page
   'page.title': 'Audio & Video Analysis',
-  'page.caption': 'Transcription, keyframe extraction, translation, and analysis',
+  'page.caption': 'Transcription, keyframe extraction, translation, face detection, and analysis',
 
   // home
   'home.new_job': 'New job',
@@ -69,6 +69,7 @@ export const en = {
   'options.detect_speakers': 'Detect speakers',
   'options.word_analysis': 'Word analysis',
   'options.keyframes': 'Keyframes',
+  'options.faces': 'Faces',
 
   // processing (terminal job states only; in-flight stage text is protocol —
   // sent verbatim by the backend as `stage` and never translated client-side)
@@ -83,6 +84,8 @@ export const en = {
   // abbreviations, identical in both locales, and stay as plain literals)
   'downloads.transcript_txt': 'Transcript TXT',
   'downloads.keyframes_zip': 'Keyframes (ZIP)',
+  'downloads.faces_zip': 'Faces (ZIP)',
+  'downloads.faces_csv': 'Detections (CSV)',
   'downloads.translation_txt': 'Translation TXT',
 
   // results (ResultPanel and its tabs)
@@ -91,6 +94,7 @@ export const en = {
   'results.download_tab': 'Download {tab}',
   'results.tab_transcript': 'Transcript',
   'results.tab_visual_context': 'Visual context',
+  'results.tab_faces': 'Faces',
   'results.tab_summary': 'Summary',
   'results.tab_words': 'Words',
   'results.tab_wordcloud': 'Word Cloud',
@@ -130,6 +134,17 @@ export const en = {
   'results.visual_context_hint': 'What the video showed at each sampled moment. A summary of this job draws on these descriptions too, when one was requested.',
   'results.keyframes_only': 'The keyframes were sampled but not described. Download them to see them.',
   'artifacts.download_keyframes': 'Download the sampled keyframes as a ZIP archive',
+  'artifacts.download_face_best': 'Download best image',
+  'results.face_person': 'Person {n}',
+  'results.face_single': 'Face {n}',
+  'results.face_sightings_one': '{count} sighting',
+  'results.face_sightings_other': '{count} sightings',
+  'results.face_seen': 'First seen {first} · last seen {last}',
+  'results.faces_none': 'No faces found.',
+  'results.faces_partial': 'Face detection was not reachable for part of the video.',
+  'results.faces_unavailable': 'Face detection was not reachable.',
+  'results.faces_truncated': 'Only the most prominent faces are shown.',
+  'results.faces_not_grouped': 'Faces were not grouped by person.',
   'results.col_time': 'Time',
   'results.col_description': 'What is shown',
   'results.no_hate_speech': 'No hate-speech findings for this job.',

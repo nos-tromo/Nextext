@@ -7,6 +7,7 @@ import { transcriptHasTranslation } from './transcriptTable'
 export type ResultTabId =
   | 'transcript'
   | 'visual_context'
+  | 'faces'
   | 'summary'
   | 'words'
   | 'wordcloud'
@@ -67,6 +68,14 @@ export function downloadsFor(tab: ResultTabId, result: JobResult, stem: string, 
           ? [{ name: 'visual_context.txt', label: 'TXT', fileName: `${stem}_visual_context.txt` }]
           : []),
         ...keyframes,
+      ]
+    case 'faces':
+      // The backend has no faces.zip or faces.csv without a face to put in them.
+      if (!result.faces || result.faces.entries.length === 0) return []
+      // The pictures and the detections table are two things, so each label says which.
+      return [
+        { name: 'faces.zip', label: t('downloads.faces_zip'), fileName: `${stem}_faces.zip` },
+        { name: 'faces.csv', label: t('downloads.faces_csv'), fileName: `${stem}_faces.csv` },
       ]
     case 'summary':
       return [{ name: 'summary.txt', label: 'TXT', fileName: `${stem}_summary.txt` }]

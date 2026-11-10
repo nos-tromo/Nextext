@@ -62,16 +62,19 @@ def get_config(request: Request) -> ConfigResponse:
 
     Args:
         request: The incoming request, for the purpose requirement the
-            lifespan parsed from ``AUDIT_REQUIRE_PURPOSE``.
+            lifespan parsed from ``AUDIT_REQUIRE_PURPOSE`` and the face switch
+            it read from ``NEXTEXT_FACES``.
 
     Returns:
-        ConfigResponse: The UI language and the audit actions that need a
-            stated purpose, sorted (empty when none do).
+        ConfigResponse: The UI language, the audit actions that need a
+            stated purpose, sorted (empty when none do), and the face mode.
     """
     required = getattr(request.app.state, "audit_required", None)
+    faces = getattr(request.app.state, "faces_mode", "off")
     return ConfigResponse(
         language=load_language_env().code,
         require_purpose=sorted(required) if isinstance(required, frozenset) else [],
+        faces=faces if faces in ("detect", "group") else "off",
     )
 
 

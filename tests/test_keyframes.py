@@ -246,3 +246,22 @@ def test_extract_keyframe_samples_failsoft_on_audio_only(tmp_path: Path) -> None
         handle.setframerate(8000)
         handle.writeframes(b"\x00\x00" * 800)
     assert extract_keyframe_samples(wav, per_minute=4, max_frames=5) == []
+
+
+def test_extract_keyframe_samples_picks_its_stream_past_cover_art(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Keyframes come from the stream the cover-art-aware picker chooses; none chosen, none sampled."""
+    import nextext.core.keyframes as kf
+
+    video = tmp_path / "ramp.mkv"
+    _make_mjpeg_ramp(video, n_frames=30, fps=1)
+    picked: list[object] = []
+
+    def no_video(container: Any) -> None:
+        picked.append(container)
+
+    monkeypatch.setattr(kf, "_video_stream", no_video)
+
+    assert extract_keyframe_samples(video, per_minute=60, max_frames=6) == []
+    assert len(picked) == 1

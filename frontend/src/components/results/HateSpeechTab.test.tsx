@@ -42,6 +42,7 @@ function makeResult(overrides: Partial<JobResult> = {}): JobResult {
     media_url: null,
     frame_captions: null,
     hate_speech_findings: [finding()],
+    faces: null,
     skipped: false,
     skip_reason: null,
     skip_reason_code: null,

@@ -72,6 +72,7 @@ export const de: Strings = {
   'options.detect_speakers': 'Sprechererkennung',
   'options.word_analysis': 'Wortanalyse',
   'options.keyframes': 'Keyframes',
+  'options.faces': 'Gesichter',
 
   // processing (terminal job states only; in-flight stage text is protocol —
   // sent verbatim by the backend as `stage` and never translated client-side)
@@ -85,6 +86,8 @@ export const de: Strings = {
   // downloads
   'downloads.transcript_txt': 'Transkript TXT',
   'downloads.keyframes_zip': 'Keyframes (ZIP)',
+  'downloads.faces_zip': 'Gesichter (ZIP)',
+  'downloads.faces_csv': 'Erkennungen (CSV)',
   'downloads.translation_txt': 'Übersetzung TXT',
 
   // results (ResultPanel and its tabs)
@@ -93,6 +96,7 @@ export const de: Strings = {
   'results.download_tab': '{tab} herunterladen',
   'results.tab_transcript': 'Transkript',
   'results.tab_visual_context': 'Visueller Kontext',
+  'results.tab_faces': 'Gesichter',
   'results.tab_summary': 'Zusammenfassung',
   'results.tab_words': 'Wörter',
   'results.tab_wordcloud': 'Wörterwolke',
@@ -132,6 +136,17 @@ export const de: Strings = {
   'results.visual_context_hint': 'Was das Video zu den jeweils ausgewerteten Zeitpunkten zeigte. Eine Zusammenfassung dieses Auftrags berücksichtigt diese Beschreibungen ebenfalls, sofern eine angefordert wurde.',
   'results.keyframes_only': 'Die Keyframes wurden extrahiert, aber nicht beschrieben. Lade sie herunter, um sie anzusehen.',
   'artifacts.download_keyframes': 'Die extrahierten Keyframes als ZIP-Archiv herunterladen',
+  'artifacts.download_face_best': 'Bestes Bild herunterladen',
+  'results.face_person': 'Person {n}',
+  'results.face_single': 'Gesicht {n}',
+  'results.face_sightings_one': '{count} Sichtung',
+  'results.face_sightings_other': '{count} Sichtungen',
+  'results.face_seen': 'Zuerst {first} · zuletzt {last}',
+  'results.faces_none': 'Keine Gesichter gefunden.',
+  'results.faces_partial': 'Die Gesichtserkennung war für einen Teil des Videos nicht erreichbar.',
+  'results.faces_unavailable': 'Die Gesichtserkennung war nicht erreichbar.',
+  'results.faces_truncated': 'Es werden nur die auffälligsten Gesichter gezeigt.',
+  'results.faces_not_grouped': 'Gesichter wurden nicht nach Personen gruppiert.',
   'results.col_time': 'Zeit',
   'results.col_description': 'Zu sehen',
   'results.no_hate_speech': 'Keine Hatespeech-Befunde für diesen Auftrag.',
