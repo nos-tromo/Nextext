@@ -21,7 +21,7 @@
     "@infra/ui": "https://codeload.github.com/nos-tromo/infra-ui/tar.gz/d29e58bd331b98540fac264cdc808320881fbdfa",
     "@tanstack/react-query": "^5.105.0",
     "@tanstack/react-table": "^9.3.1",
-    "@tanstack/react-virtual": "^3.14.21",
+    "@tanstack/react-virtual": "^3.14.26",
     "clsx": "^2.1.1",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
