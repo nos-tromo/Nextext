@@ -300,6 +300,40 @@ describe('MediaPanel playback grant', () => {
     expect(screen.queryByText(/needs a stated purpose/)).not.toBeInTheDocument()
   })
 
+  it('plays when a purpose is stated while the refusal is still on its way', async () => {
+    // The refusal's body is read after the purpose wrapper gave up on the 428
+    // and before the panel listens for a purpose, so a purpose stated there is
+    // announced to nobody: the panel has to read it, not wait to be told.
+    vi.mocked(fetch).mockImplementationOnce(async () => {
+      const refusal = new Response('{}', { status: 428 })
+      const body = refusal.text.bind(refusal)
+      refusal.text = async () => {
+        setPurpose(PURPOSE_SCOPE, { caseRef: 'case-0001' })
+        return body()
+      }
+      return refusal
+    })
+    const { container } = render(<MediaPanel />)
+    dispatch(() => useMediaPlayerStore.getState().open(video))
+    await mediaElement(container, 'video', grantUrl('j1', 1))
+    expect(screen.queryByText(/needs a stated purpose/)).not.toBeInTheDocument()
+  })
+
+  it('does not ask again with the purpose it was refused with', async () => {
+    // Refused although a purpose was sent (a proxy that drops the header, say):
+    // asking again with the same purpose would loop, one denied event a turn.
+    setPurpose(PURPOSE_SCOPE, { caseRef: 'case-0001' })
+    grantStatus = 428
+    render(<MediaPanel />)
+    dispatch(() => useMediaPlayerStore.getState().open(video))
+    expect(await screen.findByText(/Playing this recording needs a stated purpose/)).toBeInTheDocument()
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    const grantPosts = vi
+      .mocked(fetch)
+      .mock.calls.filter(([input]) => String(input).endsWith('/jobs/j1/media-grant'))
+    expect(grantPosts).toHaveLength(1)
+  })
+
   it('reports other grant failures as an error, not as a missing purpose', async () => {
     grantStatus = 404
     render(<MediaPanel />)

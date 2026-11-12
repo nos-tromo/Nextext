@@ -1,5 +1,13 @@
 import { useCallback, useEffect, useRef, useState, type SyntheticEvent } from 'react'
-import { IconButton, PURPOSE_REQUIRED_STATUS, Spinner, XIcon, subscribePurpose } from '@infra/ui'
+import {
+  IconButton,
+  PURPOSE_REQUIRED_STATUS,
+  Spinner,
+  XIcon,
+  getPurpose,
+  subscribePurpose,
+  type Purpose,
+} from '@infra/ui'
 import { ApiError, PURPOSE_SCOPE } from '../../api/client'
 import { requestMediaGrant } from '../../api/jobs'
 import { describeError, type ErrorDescriptor } from '../../api/errorMessage'
@@ -75,7 +83,8 @@ function isVideoFile(fileName: string): boolean {
  * expires; when the element fails, the panel asks for a fresh one once and
  * picks playback up where it stopped ({@link REGRANT_INTERVAL_MS}). A grant
  * refused because no purpose is stated leaves the panel saying so, and it
- * plays as soon as a purpose is stated in the header.
+ * plays as soon as a purpose is stated in the header, or already was by the
+ * time it learned of the refusal.
  */
 export function MediaPanel() {
   const t = useT()
@@ -100,6 +109,8 @@ export function MediaPanel() {
   // same element does not count twice.
   const regrantedSrcRef = useRef<string | null>(null)
   const resumeAtRef = useRef<Resume | null>(null)
+  // The purpose stated when the refused grant request was sent.
+  const refusedPurposeRef = useRef<Purpose | null>(null)
 
   const open = session !== null
   const jobId = session?.jobId ?? null
@@ -109,13 +120,16 @@ export function MediaPanel() {
 
   const fetchGrant = useCallback(async (id: string) => {
     const seq = ++requestSeqRef.current
+    const statedAtRequest = getPurpose(PURPOSE_SCOPE)
     try {
       const { media_url } = await requestMediaGrant(id)
       if (seq === requestSeqRef.current) setGrant({ jobId: id, src: mediaSrcUrl(media_url) })
     } catch (err) {
       if (seq !== requestSeqRef.current) return
-      if (err instanceof ApiError && err.status === PURPOSE_REQUIRED_STATUS) setPurposeNeeded(true)
-      else setGrantError(describeError(err))
+      if (err instanceof ApiError && err.status === PURPOSE_REQUIRED_STATUS) {
+        refusedPurposeRef.current = statedAtRequest
+        setPurposeNeeded(true)
+      } else setGrantError(describeError(err))
     }
   }, [])
 
@@ -139,11 +153,18 @@ export function MediaPanel() {
   // Waiting for a purpose: the moment one is stated in the header, ask again.
   useEffect(() => {
     if (!purposeNeeded || jobId === null) return
-    return subscribePurpose(PURPOSE_SCOPE, (purpose) => {
-      if (!purpose) return
+    const retry = (purpose: Purpose | null) => {
+      // The purpose the refused request already carried would only be refused
+      // again — asking with it would loop.
+      if (!purpose || purpose === refusedPurposeRef.current) return
       setPurposeNeeded(false)
       void fetchGrant(jobId)
-    })
+    }
+    const unsubscribe = subscribePurpose(PURPOSE_SCOPE, retry)
+    // A purpose stated between the refusal and this subscription was announced
+    // to no listener; the store does not replay it, so read it.
+    retry(getPurpose(PURPOSE_SCOPE))
+    return unsubscribe
   }, [purposeNeeded, jobId, fetchGrant])
 
   // Escape to close, plus focus return — the docint PreviewDialog contract
