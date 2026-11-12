@@ -11,16 +11,27 @@ per task (:mod:`nextext.audit`). Outside a trace, reports are dropped.
 The module also carries the correlation id of the request that started the
 work (:func:`correlate`). The clients forward it as ``X-Request-ID``
 (:func:`correlation_headers`), so the router's logs can be matched with the
-audit trail. Nothing else about the caller — no identity, no purpose — leaves
-with a request.
+audit trail.
 
-Both are context variables: ``asyncio.to_thread`` copies them into the thread
-that runs a job's pipeline, and every job's worker task has a context of its
-own, so concurrent jobs never share a trace or a correlation id.
+Chat calls also carry the job owner's cache scope (:func:`cache_scope`,
+:func:`cache_scope_headers`): an HMAC of the owner id under a key drawn when
+the process starts, sent as ``X-Cache-Scope``. The router gives each scope its
+own share of the chat model's prefix cache, so one owner cannot time another
+owner's cached prompts. The key never leaves the process, so nobody outside it
+can map a scope back to an owner, and a restart draws new scopes. Nothing else
+about the caller — no identity, no purpose — leaves with a request.
+
+All three are context variables: ``asyncio.to_thread`` copies them into the
+thread that runs a job's pipeline, and every job's worker task has a context
+of its own, so concurrent jobs never share a trace, a correlation id or a
+scope.
 """
 
 from __future__ import annotations
 
+import hashlib
+import hmac
+import secrets
 import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -31,6 +42,8 @@ from typing import Any
 __all__ = [
     "InferenceTrace",
     "TaskTally",
+    "cache_scope",
+    "cache_scope_headers",
     "correlate",
     "correlation_headers",
     "record_inference",
@@ -39,6 +52,9 @@ __all__ = [
 ]
 
 REQUEST_ID_HEADER = "X-Request-ID"
+CACHE_SCOPE_HEADER = "X-Cache-Scope"
+_CACHE_SCOPE_KEY = secrets.token_bytes(32)
+_CACHE_SCOPE_LABEL = b"cache-scope/v1\0"
 
 
 @dataclass
@@ -167,6 +183,7 @@ class InferenceTrace:
 
 _TRACE: ContextVar[InferenceTrace | None] = ContextVar("nextext_inference_trace", default=None)
 _REQUEST_ID: ContextVar[str | None] = ContextVar("nextext_request_id", default=None)
+_CACHE_SCOPE: ContextVar[str | None] = ContextVar("nextext_cache_scope", default=None)
 
 
 def record_inference(
@@ -242,6 +259,40 @@ def correlation_headers() -> dict[str, str]:
     """
     request_id = _REQUEST_ID.get()
     return {REQUEST_ID_HEADER: request_id} if request_id else {}
+
+
+@contextmanager
+def cache_scope(owner_id: str | None) -> Iterator[None]:
+    """Send ``owner_id``'s cache scope on the chat calls made inside the block.
+
+    Args:
+        owner_id: The owner the work runs for; ``None`` or empty binds no
+            scope.
+
+    Yields:
+        None: Control, with the scope in effect.
+    """
+    scope = None
+    if owner_id:
+        scope = hmac.new(_CACHE_SCOPE_KEY, _CACHE_SCOPE_LABEL + owner_id.encode("utf-8"), hashlib.sha256).hexdigest()
+    token = _CACHE_SCOPE.set(scope)
+    try:
+        yield
+    finally:
+        _CACHE_SCOPE.reset(token)
+
+
+def cache_scope_headers() -> dict[str, str]:
+    """Return the header a chat call carries for its owner's cache scope.
+
+    Only chat calls send it: the other endpoints keep no prompt cache.
+
+    Returns:
+        dict[str, str]: ``{"X-Cache-Scope": <64 hex characters>}`` inside
+            :func:`cache_scope` with an owner, otherwise empty.
+    """
+    scope = _CACHE_SCOPE.get()
+    return {CACHE_SCOPE_HEADER: scope} if scope else {}
 
 
 def reply_usage(reply: Any) -> tuple[int | None, int | None]:

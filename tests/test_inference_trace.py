@@ -18,7 +18,10 @@ import pytest
 
 from nextext.core import diarization, faces, ner, transcription, vad
 from nextext.core.inference_trace import (
+    CACHE_SCOPE_HEADER,
     REQUEST_ID_HEADER,
+    cache_scope,
+    cache_scope_headers,
     correlate,
     correlation_headers,
     record_inference,
@@ -28,6 +31,7 @@ from nextext.core.inference_trace import (
 from nextext.core.openai_cfg import InferencePipeline
 
 REQUEST_ID = "0f4b8c2e-1a2b-4c3d-9e8f-0123456789ab"
+OWNER = "owner-synthetic-0001"
 
 
 def _response(payload: dict[str, Any], status: int = 200) -> httpx.Response:
@@ -87,6 +91,44 @@ def test_correlation_headers_carry_only_the_request_id() -> None:
     assert correlation_headers() == {}
 
 
+def test_cache_scope_headers_carry_a_pseudonym_of_the_owner() -> None:
+    """Inside ``cache_scope`` the header holds 64 hex characters derived from the owner; outside, nothing."""
+    assert cache_scope_headers() == {}
+    with cache_scope(OWNER):
+        headers = cache_scope_headers()
+    assert set(headers) == {CACHE_SCOPE_HEADER}
+    scope = headers[CACHE_SCOPE_HEADER]
+    assert len(scope) == 64
+    assert set(scope) <= set("0123456789abcdef")
+    assert OWNER not in scope
+    assert cache_scope_headers() == {}
+
+
+def test_cache_scope_is_stable_per_owner_and_differs_between_owners() -> None:
+    """The same owner always gets the same scope, another owner another one."""
+    with cache_scope(OWNER):
+        first = cache_scope_headers()
+    with cache_scope(OWNER):
+        again = cache_scope_headers()
+    with cache_scope("owner-synthetic-0002"):
+        other = cache_scope_headers()
+    assert first == again
+    assert first != other
+
+
+@pytest.mark.parametrize("owner", [None, ""])
+def test_cache_scope_without_an_owner_binds_nothing(owner: str | None) -> None:
+    """Work for no owner sends no scope."""
+    with cache_scope(owner):
+        assert cache_scope_headers() == {}
+
+
+def test_correlation_headers_never_carry_the_cache_scope() -> None:
+    """The correlation headers, which every client sends, stay free of the scope."""
+    with correlate(REQUEST_ID), cache_scope(OWNER):
+        assert correlation_headers() == {REQUEST_ID_HEADER: REQUEST_ID}
+
+
 def test_reply_usage_reads_openai_usage_and_ignores_anything_else() -> None:
     """Token counts come from ``usage``; mocks and missing usage give none."""
     reply = SimpleNamespace(usage=SimpleNamespace(prompt_tokens=7, completion_tokens=3))
@@ -141,6 +183,24 @@ def test_chat_requests_are_reported_with_tokens_and_correlated(monkeypatch: pyte
     assert seen[0]["extra_headers"] == {REQUEST_ID_HEADER: REQUEST_ID}
 
 
+def test_chat_requests_carry_the_cache_scope(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Inside ``cache_scope`` a chat call also sends the owner's X-Cache-Scope."""
+    seen: list[dict[str, Any]] = []
+
+    def create(**kwargs: Any) -> Any:
+        seen.append(kwargs)
+        return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content="x"))])
+
+    pipeline = _chat_pipeline(monkeypatch, create)
+    with cache_scope(OWNER):
+        expected = cache_scope_headers()
+        pipeline.call_model("hello")
+        with correlate(REQUEST_ID):
+            pipeline.call_model("hello")
+    assert seen[0]["extra_headers"] == expected
+    assert seen[1]["extra_headers"] == {REQUEST_ID_HEADER: REQUEST_ID, **expected}
+
+
 def test_chat_without_correlation_sends_no_extra_headers(monkeypatch: pytest.MonkeyPatch) -> None:
     """Outside ``correlate`` the request kwargs are unchanged."""
     seen: list[dict[str, Any]] = []
@@ -187,7 +247,7 @@ def test_whisper_request_is_reported_and_correlated(monkeypatch: pytest.MonkeyPa
         return nullcontext(file_path)
 
     monkeypatch.setattr(transcription, "normalize_for_transcription", passthrough)
-    with trace_inference() as trace, correlate(REQUEST_ID):
+    with trace_inference() as trace, correlate(REQUEST_ID), cache_scope(OWNER):
         transcriber.transcription()
     assert [(t.task, t.model, t.requests, t.failed) for t in trace.tallies] == [("asr", "whisper-test", 1, 0)]
     assert calls[0]["extra_headers"] == {REQUEST_ID_HEADER: REQUEST_ID}
@@ -261,13 +321,14 @@ def test_service_clients_report_and_correlate(
         return next(replies)
 
     monkeypatch.setattr(module.httpx, "post", post)
-    with trace_inference() as trace, correlate(REQUEST_ID):
+    with trace_inference() as trace, correlate(REQUEST_ID), cache_scope(OWNER):
         call(media)
         call(media)
     tally = trace.tallies[0]
     assert (tally.task, tally.model, tally.requests, tally.failed) == (task, alias, 2, 1)
     assert all(headers.get(REQUEST_ID_HEADER) == REQUEST_ID for headers in sent)
     assert not any("X-Auth-User" in headers or "X-Audit-Purpose" in headers for headers in sent)
+    assert not any(CACHE_SCOPE_HEADER in headers for headers in sent)
 
 
 def test_service_clients_send_no_correlation_header_outside_correlate(
