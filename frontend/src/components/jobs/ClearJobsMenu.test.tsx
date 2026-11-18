@@ -136,9 +136,9 @@ describe('ClearJobsMenu', () => {
     )
     const trigger = screen.getByRole('button', { name: /Clear jobs/ })
     fireEvent.click(trigger)
-    // Opening moves focus onto the first item, so Escape is pressed there —
-    // the menu catches it itself rather than listening on `document`, which is
-    // what stops one press from also closing a dialog around it.
+    // A click-open moves focus into the menu's panel, so Escape is pressed
+    // there — the menu catches it itself rather than listening on `document`,
+    // which is what stops one press from also closing a dialog around it.
     fireEvent.keyDown(document.activeElement!, { key: 'Escape' })
     expect(screen.queryByRole('menu')).toBeNull()
     expect(trigger).toHaveFocus()
