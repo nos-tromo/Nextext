@@ -18,7 +18,7 @@ from nextext.core.audio import normalize_for_transcription, video_without_audio
 from nextext.core.inference_trace import correlation_headers, record_inference, reply_usage
 from nextext.core.outcomes import SkipReason
 from nextext.core.vad import has_speech
-from nextext.utils.env_cfg import load_inference_env, load_whisper_env
+from nextext.utils.env_cfg import WhisperClientConfig, load_inference_env, load_whisper_env
 from nextext.utils.log_cfg import error_label
 from nextext.utils.mappings_loader import load_mappings
 
@@ -29,6 +29,30 @@ OPENAI_WHISPER_MAX_UPLOAD_BYTES: int = 25 * 1024 * 1024
 # ``avg_logprob``, which lets confident hallucinations on silent audio slip
 # through.  Filtering on ``no_speech_prob`` alone catches them.
 NO_SPEECH_THRESHOLD: float = 0.6
+
+
+def build_whisper_client(cfg: WhisperClientConfig, **options: Any) -> OpenAI:
+    """Build the OpenAI-compatible client for the Whisper endpoint.
+
+    The one place the endpoint's base URL and key become a client, so the
+    transcriber and the readiness probe (:mod:`nextext.api.readiness`) always
+    reach the same endpoint the same way.
+
+    Args:
+        cfg (WhisperClientConfig): The endpoint, key and model from
+            :func:`nextext.utils.env_cfg.load_whisper_env`. An empty base URL
+            leaves the SDK's built-in default.
+        **options: Further ``OpenAI`` constructor options (``timeout``,
+            ``max_retries``).
+
+    Returns:
+        OpenAI: A new client; the caller owns it.
+    """
+    client_kwargs: dict[str, Any] = {"api_key": cfg.api_key, **options}
+    base_url = cfg.api_base.rstrip("/")
+    if base_url:
+        client_kwargs["base_url"] = base_url
+    return OpenAI(**client_kwargs)
 
 
 def _normalize_whisper_language(value: str | None) -> str | None:
@@ -269,12 +293,7 @@ class ExternalWhisperTranscriber:
             Any: The cached OpenAI client instance.
         """
         if self._client is None:
-            cfg = load_whisper_env()
-            client_kwargs: dict[str, Any] = {"api_key": cfg.api_key}
-            base_url = cfg.api_base.rstrip("/")
-            if base_url:
-                client_kwargs["base_url"] = base_url
-            self._client = OpenAI(**client_kwargs)
+            self._client = build_whisper_client(load_whisper_env())
         return self._client
 
     def transcription(self) -> None:

@@ -37,6 +37,29 @@ NER issues a request only when a job asks for entities, so it needs no off switc
 
 Speaker diarization runs out-of-process against an HTTP `/diarize` service. It uses the central endpoint by default, or set `DIARIZE_API_BASE` to a dedicated service root; the gated-model agreements and any Hugging Face token live on the service side, not in Nextext.
 
+## Readiness
+
+`GET /api/v1/health` is liveness: it answers `200` while the process lives,
+and its `inference` field says whether the central endpoint's `GET /models`
+answers. A router answers that while one of its backends is down, so it cannot
+tell a caller whether a clip will transcribe. `GET /api/v1/ready` can: it
+reports `inference` the same way, and `transcription` from a real probe — half
+a second of synthetic silence sent to the Whisper endpoint with the same base,
+key and model a job uses (`WHISPER_API_BASE` / `WHISPER_API_KEY` /
+`WHISPER_MODEL`, else the central pair), a 10 s timeout and no retries. It
+answers `200` with `{"status": "ready", "inference": true, "transcription":
+true, "version": …}`, or `503` with `"status": "unavailable"` and the failing
+field `false`. A caller that offers transcription only while it works (Ghostwriter
+does) polls this route, and keeps `/health` for liveness.
+
+The probe's result, good or bad, holds for 30 s, and requests that arrive while
+a probe runs share it, so any number of callers cost the Whisper endpoint at
+most one request per 30 s. A failure is logged once, as a warning by exception
+class and HTTP status, and its recovery once at info. Like `/health`, the route
+needs no identity and no stated purpose, is not [audited](audit.md), and the
+probe is never recorded as a job's inference call. The container healthcheck
+and compose's `service_healthy` stay on `/health`.
+
 ## Provider setup
 
 The Nextext compose services join an external Docker network (`inference-net`) so they can reach whichever inference container you deploy on that network. **Create the network and start your inference provider before running the compose stack.**

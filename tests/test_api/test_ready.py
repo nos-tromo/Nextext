@@ -1,0 +1,459 @@
+"""Tests for ``GET /api/v1/ready`` and the Whisper probe behind it.
+
+The probe's own HTTP is faked with a mock transport under the real OpenAI
+client, never a network call; the route-level tests inject a stub probe, and a
+clock where the cache matters.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import io
+import threading
+import time
+import wave
+from collections.abc import Callable
+from typing import Any
+
+import httpx
+import httpx2
+import openai
+import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
+from nextext.api import main as main_module
+from nextext.api.main import create_app
+from nextext.api.readiness import (
+    PROBE_TIMEOUT_S,
+    READY_CACHE_TTL_S,
+    TranscriptionReadiness,
+    probe_transcription,
+    silence_wav,
+)
+from nextext.api.routes import health as health_module
+from nextext.core import transcription as transcription_module
+from nextext.core.inference_trace import trace_inference
+from tests.audit_helpers import AuditCapture
+
+WHISPER_URL = "http://whisper.invalid/v1"
+ECHOED = "invented upstream detail 0427"
+
+
+def _connection_error() -> openai.APIConnectionError:
+    """Build the error the SDK raises when the endpoint cannot be reached.
+
+    Returns:
+        openai.APIConnectionError: A connection failure.
+    """
+    return openai.APIConnectionError(request=httpx2.Request("POST", f"{WHISPER_URL}/audio/transcriptions"))
+
+
+def _status_error(status_code: int = 503) -> openai.APIStatusError:
+    """Build the error the SDK raises for an HTTP error status, quoting a body.
+
+    Args:
+        status_code: The response status.
+
+    Returns:
+        openai.APIStatusError: A status error whose message echoes ``ECHOED``.
+    """
+    request = httpx2.Request("POST", f"{WHISPER_URL}/audio/transcriptions")
+    response = httpx2.Response(status_code, request=request, text=f"rejected: {ECHOED}")
+    return openai.APIStatusError(f"Error code: {status_code} - {ECHOED}", response=response, body={"error": ECHOED})
+
+
+class _Clock:
+    """A clock that only moves when a test says so."""
+
+    def __init__(self) -> None:
+        """Start at an arbitrary instant."""
+        self.now = 1000.0
+
+    def __call__(self) -> float:
+        """Return the current instant.
+
+        Returns:
+            float: Seconds on this clock.
+        """
+        return self.now
+
+
+class _Probe:
+    """A stand-in probe that counts its calls and plays back scripted outcomes."""
+
+    def __init__(self, *outcomes: Exception | None, hold: threading.Event | None = None) -> None:
+        """Script the outcomes.
+
+        Args:
+            *outcomes: What each call does, in order: ``None`` succeeds, an
+                exception is raised. The last one repeats; no outcome succeeds.
+            hold: When set, every call blocks until the event is set.
+        """
+        self.outcomes = list(outcomes) or [None]
+        self.calls = 0
+        self.hold = hold
+        self.started = threading.Event()
+
+    def __call__(self) -> None:
+        """Count the call, wait if told to, then succeed or raise."""
+        self.calls += 1
+        self.started.set()
+        if self.hold is not None:
+            assert self.hold.wait(timeout=5.0), "the probe was never released"
+        outcome = self.outcomes[min(self.calls, len(self.outcomes)) - 1]
+        if outcome is not None:
+            raise outcome
+
+
+class _Pipeline:
+    """Stand-in for ``InferencePipeline`` with a fixed health answer."""
+
+    def __init__(self, healthy: bool) -> None:
+        """Fix the answer.
+
+        Args:
+            healthy: What ``get_health`` returns.
+        """
+        self.healthy = healthy
+
+    def get_health(self) -> bool:
+        """Answer as the real pipeline's check would.
+
+        Returns:
+            bool: The fixed answer.
+        """
+        return self.healthy
+
+
+@pytest.fixture
+def app(monkeypatch: pytest.MonkeyPatch, audit_capture: AuditCapture) -> FastAPI:
+    """Build the app with its audit events captured and logging left alone.
+
+    Args:
+        monkeypatch: Pytest patcher.
+        audit_capture: Where the app's audit events go.
+
+    Returns:
+        FastAPI: A fresh app, whose readiness probe a test replaces.
+    """
+    monkeypatch.setattr(main_module, "setup_logging", lambda: None)
+    return create_app(audit_emitter_factory=audit_capture.factory)
+
+
+def _arrange(
+    app: FastAPI,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    probe: Callable[[], None],
+    inference: bool = True,
+    clock: Callable[[], float] = time.monotonic,
+) -> None:
+    """Install a probe and an inference answer on ``app``.
+
+    Args:
+        app: The app under test.
+        monkeypatch: Pytest patcher.
+        probe: The Whisper probe.
+        inference: What the central inference check answers.
+        clock: The readiness cache's clock.
+    """
+    monkeypatch.setattr(health_module, "InferencePipeline", lambda: _Pipeline(inference))
+    app.state.readiness = TranscriptionReadiness(probe=probe, clock=clock)
+
+
+def test_ready_answers_200_when_inference_and_transcription_work(app: FastAPI, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Both checks true: ``200`` with status ``ready`` and the package version."""
+    probe = _Probe()
+    _arrange(app, monkeypatch, probe=probe)
+
+    with TestClient(app) as client:
+        response = client.get("/api/v1/ready")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body == {"status": "ready", "inference": True, "transcription": True, "version": body["version"]}
+    assert isinstance(body["version"], str) and body["version"]
+    assert probe.calls == 1
+
+
+@pytest.mark.parametrize("failure", [_connection_error(), _status_error(503)], ids=["connection", "http-503"])
+def test_ready_answers_503_when_whisper_does_not_transcribe_while_health_stays_200(
+    app: FastAPI, monkeypatch: pytest.MonkeyPatch, failure: Exception
+) -> None:
+    """A failing probe makes ``/ready`` ``503``; ``/health`` keeps answering ``200``."""
+    _arrange(app, monkeypatch, probe=_Probe(failure))
+
+    with TestClient(app) as client:
+        ready = client.get("/api/v1/ready")
+        health = client.get("/api/v1/health")
+
+    assert ready.status_code == 503
+    body = ready.json()
+    assert (body["status"], body["inference"], body["transcription"]) == ("unavailable", True, False)
+    assert health.status_code == 200
+    assert health.json()["status"] == "ok"
+
+
+def test_ready_answers_503_when_inference_is_down(app: FastAPI, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A central endpoint that does not answer makes ``/ready`` ``503`` with ``inference`` false."""
+    _arrange(app, monkeypatch, probe=_Probe(), inference=False)
+
+    with TestClient(app) as client:
+        response = client.get("/api/v1/ready")
+
+    assert response.status_code == 503
+    body = response.json()
+    assert (body["status"], body["inference"], body["transcription"]) == ("unavailable", False, True)
+
+
+def test_ready_survives_an_inference_check_that_raises(app: FastAPI, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The route never 500s because the inference check raised."""
+
+    class _Broken:
+        def get_health(self) -> bool:
+            raise RuntimeError("simulated provider failure")
+
+    _arrange(app, monkeypatch, probe=_Probe())
+    monkeypatch.setattr(health_module, "InferencePipeline", _Broken)
+
+    with TestClient(app) as client:
+        response = client.get("/api/v1/ready")
+
+    assert response.status_code == 503
+    assert response.json()["inference"] is False
+
+
+def test_ready_probes_once_per_ttl_and_caches_a_failure_too(app: FastAPI, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Within 30 s the first result answers, good or bad; after it a new probe runs."""
+    clock = _Clock()
+    probe = _Probe(_connection_error(), None)
+    _arrange(app, monkeypatch, probe=probe, clock=clock)
+
+    with TestClient(app) as client:
+        first = client.get("/api/v1/ready")
+        clock.now += READY_CACHE_TTL_S - 1
+        second = client.get("/api/v1/ready")
+        assert probe.calls == 1
+        assert (first.status_code, second.status_code) == (503, 503)
+
+        clock.now += 1
+        third = client.get("/api/v1/ready")
+        fourth = client.get("/api/v1/ready")
+
+    assert probe.calls == 2
+    assert (third.status_code, fourth.status_code) == (200, 200)
+
+
+@pytest.mark.asyncio
+async def test_concurrent_requests_share_one_probe(app: FastAPI, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Requests that arrive while a probe runs wait for it instead of starting their own."""
+    release = threading.Event()
+    probe = _Probe(hold=release)
+    _arrange(app, monkeypatch, probe=probe)
+    transport = httpx.ASGITransport(app=app)
+
+    try:
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            requests = [asyncio.create_task(client.get("/api/v1/ready")) for _ in range(8)]
+            assert await asyncio.to_thread(probe.started.wait, 5.0), "no probe started"
+            await asyncio.sleep(0.2)
+            assert probe.calls == 1, "a second probe started while the first was running"
+            release.set()
+            responses = await asyncio.gather(*requests)
+    finally:
+        release.set()
+
+    assert probe.calls == 1
+    assert [response.status_code for response in responses] == [200] * 8
+
+
+def test_ready_needs_neither_identity_nor_purpose_and_is_not_audited(
+    monkeypatch: pytest.MonkeyPatch, audit_capture: AuditCapture
+) -> None:
+    """With every action needing a purpose and no identity on the request, ``/ready`` still answers."""
+    monkeypatch.setenv("NEXTEXT_EDGE_SECRET", "edge-secret-for-tests-only-0123456789abcdef")
+    monkeypatch.setenv("AUDIT_REQUIRE_PURPOSE", "query,disclose,collect,ai_call,combine")
+    monkeypatch.setattr(main_module, "setup_logging", lambda: None)
+    app = create_app(audit_emitter_factory=audit_capture.factory)
+    _arrange(app, monkeypatch, probe=_Probe())
+
+    with TestClient(app) as client:
+        assert client.get("/api/v1/jobs").status_code == 401
+        before = len(audit_capture.events)
+        response = client.get("/api/v1/ready")
+        after = len(audit_capture.events)
+
+    assert response.status_code == 200
+    assert after == before
+    audit_capture.assert_chain_ok()
+
+
+# ---------------------------------------------------------------------------
+# The cache's logging
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_a_failure_is_logged_once_per_change_of_state_by_class_and_status(log_lines: list[str]) -> None:
+    """A failure logs a warning once, however long it lasts; recovery logs once at info; no body is quoted."""
+    clock = _Clock()
+    probe = _Probe(_status_error(503), _status_error(503), None, None)
+    readiness = TranscriptionReadiness(probe=probe, clock=clock)
+
+    results = []
+    for _ in range(4):
+        results.append(await readiness.is_ready())
+        clock.now += READY_CACHE_TTL_S
+
+    assert results == [False, False, True, True]
+    logged = "\n".join(log_lines)
+    assert logged.count("Transcription readiness probe failed: APIStatusError (HTTP 503)") == 1
+    assert logged.count("Transcription readiness probe succeeded again.") == 1
+    assert ECHOED not in logged
+
+
+@pytest.mark.asyncio
+async def test_a_first_success_logs_nothing(log_lines: list[str]) -> None:
+    """Only a failure and its recovery are news."""
+    readiness = TranscriptionReadiness(probe=_Probe(), clock=_Clock())
+
+    assert await readiness.is_ready() is True
+
+    assert not [line for line in log_lines if "readiness" in line]
+
+
+# ---------------------------------------------------------------------------
+# The probe itself
+# ---------------------------------------------------------------------------
+
+
+def _whisper_env(monkeypatch: pytest.MonkeyPatch, **overrides: str) -> None:
+    """Point the Whisper settings at an invented vLLM endpoint.
+
+    Args:
+        monkeypatch: Pytest patcher.
+        **overrides: Environment variables to set on top of the defaults.
+    """
+    for name in ("WHISPER_API_BASE", "WHISPER_API_KEY", "WHISPER_MODEL"):
+        monkeypatch.delenv(name, raising=False)
+    env = {"INFERENCE_PROVIDER": "vllm", "OPENAI_API_BASE": WHISPER_URL, "OPENAI_API_KEY": "central-key", **overrides}
+    for name, value in env.items():
+        monkeypatch.setenv(name, value)
+
+
+def _fake_whisper_http(
+    monkeypatch: pytest.MonkeyPatch, handler: Callable[[httpx2.Request], httpx2.Response]
+) -> list[httpx2.Request]:
+    """Put a mock transport under the OpenAI client the probe builds.
+
+    Args:
+        monkeypatch: Pytest patcher.
+        handler: Answers each request the client sends.
+
+    Returns:
+        list[httpx2.Request]: Every request the handler saw, in order.
+    """
+    seen: list[httpx2.Request] = []
+    real_client = transcription_module.OpenAI
+
+    def answer(request: httpx2.Request) -> httpx2.Response:
+        request.read()
+        seen.append(request)
+        return handler(request)
+
+    def build(**kwargs: Any) -> openai.OpenAI:
+        return real_client(http_client=httpx2.Client(transport=httpx2.MockTransport(answer)), **kwargs)
+
+    monkeypatch.setattr(transcription_module, "OpenAI", build)
+    return seen
+
+
+def test_silence_wav_is_half_a_second_of_16khz_mono_16bit_silence() -> None:
+    """The probe's audio is a valid WAV of zero samples."""
+    with wave.open(io.BytesIO(silence_wav()), "rb") as wav:
+        assert (wav.getnchannels(), wav.getsampwidth(), wav.getframerate()) == (1, 2, 16_000)
+        assert wav.getnframes() == 8_000
+        assert set(wav.readframes(wav.getnframes())) == {0}
+
+
+def test_probe_sends_silence_with_the_transcribers_endpoint_key_and_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    """One request to ``/audio/transcriptions`` with the Whisper base, key and model, a short timeout."""
+    _whisper_env(
+        monkeypatch,
+        WHISPER_API_BASE="http://dedicated.invalid/v1/",
+        WHISPER_API_KEY="whisper-key",
+        WHISPER_MODEL="invented/whisper-model",
+    )
+    seen = _fake_whisper_http(monkeypatch, lambda request: httpx2.Response(200, json={"text": ""}))
+
+    probe_transcription()
+
+    assert len(seen) == 1
+    request = seen[0]
+    assert request.method == "POST"
+    assert str(request.url) == "http://dedicated.invalid/v1/audio/transcriptions"
+    assert request.headers["authorization"] == "Bearer whisper-key"
+    assert request.extensions["timeout"]["read"] == PROBE_TIMEOUT_S
+    body = request.content
+    assert b'name="model"' in body and b"invented/whisper-model" in body
+    assert b'name="response_format"' in body and b"json" in body
+    assert b"RIFF" in body and b"WAVE" in body
+
+
+def test_probe_falls_back_to_the_central_endpoint_key_and_the_provider_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Without dedicated settings the probe uses the central pair and the provider's default model."""
+    _whisper_env(monkeypatch)
+    seen = _fake_whisper_http(monkeypatch, lambda request: httpx2.Response(200, json={"text": ""}))
+
+    probe_transcription()
+
+    assert str(seen[0].url) == f"{WHISPER_URL}/audio/transcriptions"
+    assert seen[0].headers["authorization"] == "Bearer central-key"
+    assert b"openai/whisper-large-v3" in seen[0].content
+
+
+@pytest.mark.parametrize("status_code", [429, 500, 503])
+def test_probe_fails_on_an_error_status_without_retrying(monkeypatch: pytest.MonkeyPatch, status_code: int) -> None:
+    """An HTTP error status raises, and the client asks once: no retries."""
+    _whisper_env(monkeypatch)
+    seen = _fake_whisper_http(monkeypatch, lambda request: httpx2.Response(status_code, json={"error": "down"}))
+
+    with pytest.raises(openai.APIStatusError):
+        probe_transcription()
+
+    assert len(seen) == 1
+
+
+def test_probe_fails_on_a_connection_error_without_retrying(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A refused connection raises, once."""
+    _whisper_env(monkeypatch)
+
+    def refuse(request: httpx2.Request) -> httpx2.Response:
+        raise httpx2.ConnectError("refused", request=request)
+
+    seen = _fake_whisper_http(monkeypatch, refuse)
+
+    with pytest.raises(openai.APIConnectionError):
+        probe_transcription()
+
+    assert len(seen) == 1
+
+
+def test_probe_is_not_recorded_as_an_inference_call(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The probe never reaches a job's inference tally."""
+    _whisper_env(monkeypatch)
+    _fake_whisper_http(monkeypatch, lambda request: httpx2.Response(200, json={"text": ""}))
+
+    with trace_inference() as trace:
+        probe_transcription()
+
+    assert trace.tallies == []
+
+
+@pytest.mark.asyncio
+async def test_a_configuration_that_cannot_work_is_not_ready(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Ollama without a Whisper endpoint raises ``RuntimeError`` in the probe, which reads as not ready."""
+    _whisper_env(monkeypatch, INFERENCE_PROVIDER="ollama")
+
+    assert await TranscriptionReadiness().is_ready() is False

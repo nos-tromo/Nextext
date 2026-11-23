@@ -48,7 +48,7 @@ Not recorded, because they carry no personal data or touch none:
 
 | Endpoint or case | Why |
 |---|---|
-| `GET /api/v1/health`, `/version`, `/config`, `/languages`; `GET /metrics` | health, configuration, static mappings, aggregate counters |
+| `GET /api/v1/health`, `/ready`, `/version`, `/config`, `/languages`; `GET /metrics` | health, readiness, configuration, static mappings, aggregate counters; `/ready`'s probe sends synthetic silence, carries no user data, and is no job's inference call |
 | `GET /api/v1/whoami` | echoes the caller's own identity |
 | `GET /api/v1/jobs/events`, `GET /api/v1/jobs/{id}/events` | progress streams: stage names, progress, counts and typed codes |
 | `POST /api/v1/jobs/{id}/media-grant` answered `201` | the grant hands out no personal data; each stream it opens is recorded when it is played |

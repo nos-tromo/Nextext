@@ -237,6 +237,17 @@ class HealthResponse(BaseModel):
     version: str
 
 
+class ReadyResponse(BaseModel):
+    """Response body for ``GET /ready``: ``200`` while ``ready``, ``503`` while ``unavailable``."""
+
+    status: Literal["ready", "unavailable"]
+    # The central OpenAI-compatible endpoint answers (as ``/health`` reports).
+    inference: bool
+    # The Whisper endpoint transcribed a probe of synthetic silence.
+    transcription: bool
+    version: str
+
+
 class VersionResponse(BaseModel):
     """App release version."""
 

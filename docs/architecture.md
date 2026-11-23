@@ -8,7 +8,7 @@ endpoints, `edge-net` for the production gateway).
 
 The stack brings up two containers:
 
-- **Backend** (`backend`) — FastAPI on port 8000 (internal). Owns the pipeline, the HTTP inference clients, and the in-memory job store. Exposes `/api/v1/health`, `/api/v1/languages`, `/api/v1/jobs/*`. Not published to the host by default.
+- **Backend** (`backend`) — FastAPI on port 8000 (internal). Owns the pipeline, the HTTP inference clients, and the in-memory job store. Exposes `/api/v1/health` (liveness: `200` while the process lives, with whether the central inference endpoint answers), `/api/v1/ready` (readiness: `200` only while Whisper transcribes a probe of synthetic silence too, else `503`), `/api/v1/languages`, `/api/v1/jobs/*`. Not published to the host by default.
 - **Frontend** (`frontend`) — React SPA served by nginx on port 8080 (internal). nginx proxies `/api/v1` to the backend same-origin, so browser uploads stream through nginx without buffering whole files in Python.
 
 Both images run non-root with read-only root filesystems (deploy ADR 0001):
