@@ -29,8 +29,9 @@ from nextext.utils.env_cfg import load_whisper_env
 from nextext.utils.log_cfg import error_label
 
 #: How long a probe result, good or bad, answers every ``/ready`` request. A
-#: caller that polls (Ghostwriter 0.6.1 and later) costs the Whisper endpoint at
-#: most one request per period, however many callers there are.
+#: caller costs the Whisper endpoint at most one request per period, however
+#: many callers there are (Ghostwriter 0.6.1 and later probe at start and
+#: again only after a failure, polling with backoff while Whisper is down).
 READY_CACHE_TTL_S: float = 30.0
 
 #: Seconds the probe waits for the Whisper endpoint, with no retries. Whisper
@@ -104,6 +105,25 @@ NOT_CONFIGURED_HINT: str = (
 )
 
 
+def _is_connect_timeout(exc: BaseException) -> bool:
+    """Report whether a timeout of the SDK was the connection never being made.
+
+    The SDK raises ``APITimeoutError`` from the HTTP library's timeout, whose
+    class says which phase ran out. A Whisper that is busy has accepted the
+    connection and is slow to answer; one that cannot be connected to is not
+    busy, whatever else this process has in flight. The class is matched by name,
+    so it holds for whichever HTTP library the SDK is built on.
+
+    Args:
+        exc (BaseException): The ``APITimeoutError``.
+
+    Returns:
+        bool: ``True`` when its cause is a ``ConnectTimeout``.
+    """
+    cause = exc.__cause__
+    return cause is not None and any(klass.__name__ == "ConnectTimeout" for klass in type(cause).__mro__)
+
+
 @dataclass(frozen=True)
 class _ProbeResult:
     """What one probe found.
@@ -135,9 +155,10 @@ class TranscriptionReadiness:
     process has a Whisper request of its own in flight (a job's upload, which
     on a CPU backend can queue the probe behind minutes of audio) keeps the
     last good answer, and says so at debug. A timeout with nothing of ours in
-    flight, or with no good answer yet, is not ready; a connection error, an
-    HTTP error status or a configuration that cannot work is not ready
-    whatever is in flight.
+    flight, with no good answer yet, or while the answer is stale (invalidated
+    since the probe started) is not ready, nor is a connect timeout; a
+    connection error, an HTTP error status or a configuration that cannot work
+    is not ready whatever is in flight.
 
     :meth:`invalidate` marks the answer stale, so the next request probes
     afresh: a job that found inference down is evidence the cached ``200``
@@ -211,7 +232,7 @@ class TranscriptionReadiness:
         try:
             result = await asyncio.to_thread(self._run_probe)
             failure = result.failure
-            if result.busy and self._ready is True and self._stored_in == generation:
+            if result.busy and self._ready is True and self._stored_in == generation == self._generation:
                 logger.debug("Transcription readiness probe timed out while Whisper is busy; keeping the last answer.")
                 failure = None
             self._checked_at = self._clock()
@@ -236,7 +257,8 @@ class TranscriptionReadiness:
         except WhisperNotConfigured:
             return _ProbeResult(NOT_CONFIGURED_HINT)
         except openai.APITimeoutError as exc:
-            return _ProbeResult(error_label(exc), busy=self._calls_in_flight() > 0)
+            busy = not _is_connect_timeout(exc) and self._calls_in_flight() > 0
+            return _ProbeResult(error_label(exc), busy=busy)
         except Exception as exc:
             return _ProbeResult(error_label(exc))
         return _ProbeResult(None)

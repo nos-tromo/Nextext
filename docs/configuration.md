@@ -75,14 +75,20 @@ answer yet, with nothing of this process's in flight, or after a failure, a
 timeout is `unavailable`, and so is a refused connection, an HTTP error status
 or a configuration that cannot work, whatever is in flight. Only this process's
 own requests are counted: a Whisper that another caller keeps busy still reads
-`unavailable` when the probe times out. A job that fails `inference_unavailable`
-makes the next `/ready` probe afresh, instead of answering from a cached `200`. A failure is logged once, as a warning by exception class and
-HTTP status (a configuration that cannot work, such as `INFERENCE_PROVIDER=ollama`
-without `WHISPER_API_BASE` and `WHISPER_MODEL`, by a fixed hint naming them), and
-its recovery once at info. Like `/health`, the route
-needs no identity and no stated purpose, is not [audited](audit.md), and the
-probe is never recorded as a job's inference call. The container healthcheck
-and compose's `service_healthy` stay on `/health`.
+`unavailable` when the probe times out. A timeout while the connection itself was
+never made (a connect timeout) is no busy Whisper either. A job that fails
+`inference_unavailable` makes the next `/ready` probe afresh, instead of
+answering from a cached `200`, and invalidates the earlier good answer: a busy
+timeout does not keep it, so `/ready` reads `unavailable` until a probe
+answers, even while another job's upload runs.
+
+A failure is logged once, as a warning by exception class and HTTP status (a
+configuration that cannot work, such as `INFERENCE_PROVIDER=ollama` without
+`WHISPER_API_BASE` and `WHISPER_MODEL`, by a fixed hint naming them), and its
+recovery once at info. Like `/health`, the route needs no identity and no
+stated purpose, is not [audited](audit.md), and the probe is never recorded as
+a job's inference call. The container healthcheck and compose's
+`service_healthy` stay on `/health`.
 
 ## Provider setup
 

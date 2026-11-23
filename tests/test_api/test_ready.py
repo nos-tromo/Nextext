@@ -31,6 +31,7 @@ from nextext.api.readiness import (
     READY_CACHE_TTL_S,
     TranscriptionReadiness,
     WhisperNotConfigured,
+    _is_connect_timeout,
     probe_transcription,
     silence_wav,
 )
@@ -500,6 +501,98 @@ async def test_a_busy_timeout_extends_the_good_answer_only_for_one_window() -> N
     assert probe.calls == 3
 
 
+@pytest.mark.asyncio
+async def test_a_busy_timeout_of_a_probe_started_before_an_invalidation_is_not_ready() -> None:
+    """A job fails while a probe is in flight; the probe then times out while busy: not ready, nothing kept."""
+    clock = _Clock()
+    release = threading.Event()
+    started = threading.Event()
+    calls = 0
+
+    def probe() -> None:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return
+        started.set()
+        assert release.wait(timeout=5.0), "the probe was never released"
+        raise _timeout()
+
+    readiness = TranscriptionReadiness(probe=probe, clock=clock, calls_in_flight=lambda: 1)
+    assert await readiness.is_ready() is True
+
+    clock.now += READY_CACHE_TTL_S
+    waiting = asyncio.create_task(readiness.is_ready())
+    assert await asyncio.to_thread(started.wait, 5.0)
+    readiness.invalidate()
+    release.set()
+
+    assert await waiting is False, "the answer a job's failure invalidated was kept for a busy timeout"
+    assert calls == 2
+
+
+def _probe_http_answering(
+    monkeypatch: pytest.MonkeyPatch, *outcomes: httpx2.Response | Exception
+) -> list[httpx2.Request]:
+    """Fake the Whisper endpoint under the real probe: each request gets the next outcome, the last repeats.
+
+    Args:
+        monkeypatch: Pytest patcher.
+        *outcomes: A response to return or an exception to raise.
+
+    Returns:
+        list[httpx2.Request]: Every request the endpoint saw.
+    """
+    _whisper_env(monkeypatch)
+    answered = iter(outcomes)
+    last: list[httpx2.Response | Exception] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        outcome = next(answered, last[0] if last else outcomes[-1])
+        last[:] = [outcome]
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+    return _fake_whisper_http(monkeypatch, handler)
+
+
+@pytest.mark.asyncio
+async def test_a_read_timeout_while_busy_keeps_the_answer_but_a_connect_timeout_does_not(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Through the real probe: the SDK's timeout is busy only once the connection was made."""
+    request = httpx2.Request("POST", f"{WHISPER_URL}/audio/transcriptions")
+    ok = httpx2.Response(200, json={"text": ""})
+    seen = _probe_http_answering(
+        monkeypatch, ok, httpx2.ReadTimeout("slow", request=request), ok, httpx2.ConnectTimeout("none", request=request)
+    )
+    clock = _Clock()
+    readiness = TranscriptionReadiness(clock=clock, calls_in_flight=lambda: 1)
+
+    answers = []
+    for _ in range(4):
+        answers.append(await readiness.is_ready())
+        clock.now += READY_CACHE_TTL_S
+
+    assert answers == [True, True, True, False]
+    assert len(seen) == 4
+
+
+@pytest.mark.parametrize("cause", [httpx2.ConnectTimeout("none"), httpx2.ReadTimeout("slow")], ids=["connect", "read"])
+def test_the_sdk_turns_an_http_timeout_into_an_api_timeout_whose_cause_names_the_phase(
+    monkeypatch: pytest.MonkeyPatch, cause: Exception
+) -> None:
+    """The cause of the probe's ``APITimeoutError`` is the HTTP library's timeout, which the busy rule reads."""
+    _probe_http_answering(monkeypatch, cause)
+
+    with pytest.raises(openai.APITimeoutError) as raised:
+        probe_transcription()
+
+    assert type(raised.value.__cause__) is type(cause)
+    assert _is_connect_timeout(raised.value) is isinstance(cause, httpx2.ConnectTimeout)
+
+
 # ---------------------------------------------------------------------------
 # A job that finds inference down says the cached answer may be wrong
 # ---------------------------------------------------------------------------
@@ -545,7 +638,7 @@ def test_a_job_that_fails_inference_unavailable_makes_the_next_ready_probe_again
 def test_a_job_that_fails_for_another_reason_leaves_the_cached_answer_alone(
     monkeypatch: pytest.MonkeyPatch, audit_capture: AuditCapture
 ) -> None:
-    """A bug, a rejected request or a bad upload says nothing about Whisper."""
+    """A bug or a bad upload says nothing about Whisper."""
     for runner in (_raising(lambda: RuntimeError("a bug")), _decode_failure_runner):
         assert _ready_after_a_job_failed_with(runner, monkeypatch, audit_capture) == (1, 1, 1)
 

@@ -12,7 +12,10 @@ class InferenceUnreachable(ConnectionError):
     """The configured inference provider did not answer its health check.
 
     Raised by the job worker at the start of a stage that needs the chat
-    provider. It is a :class:`ConnectionError` for callers that catch that, but
+    provider, and the cause of the ``RuntimeError`` that
+    :meth:`nextext.core.openai_cfg.InferencePipeline._chat` raises when the
+    provider drops between two requests. It is a :class:`ConnectionError` for
+    callers that catch that, but
     only this class counts as an outage in :func:`find_inference_outage`: the
     builtin family also holds a ``BrokenPipeError`` from a closed output
     stream, which is the audit chain's failure and no inference outage.
@@ -49,8 +52,9 @@ def find_inference_outage(exc: BaseException) -> BaseException | None:
     (unless ``raise ... from None`` suppressed it) are all asked. An outage is
     a transient inference failure (:func:`is_transient_inference_error`) or
     :class:`InferenceUnreachable`, which is what the job worker raises when the
-    configured provider is unreachable at the start of a stage. Any other
-    :class:`ConnectionError` is not one.
+    configured provider is unreachable at the start of a stage, and what
+    ``_chat`` chains to its ``RuntimeError`` when it drops between two
+    requests. Any other :class:`ConnectionError` is not one.
 
     Args:
         exc (BaseException): The failure to classify.
