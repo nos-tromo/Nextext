@@ -479,7 +479,7 @@ same either way. The gateway's side of the contract is edge-plane's
 comma-separated `name=token` pairs:
 
 ```bash
-NEXTEXT_SERVICE_TOKENS=docint=<token>
+NEXTEXT_SERVICE_TOKENS=docint=<token>,ghostwriter=<token>
 ```
 
 Names use letters, digits, `.`, `_` and `-` and are unique; tokens are at
@@ -492,6 +492,14 @@ docint sends its `NEXTEXT_API_KEY` as the bearer token, so its entry carries
 that value, and its calls then resolve to `service:docint`. A bearer token
 that matches no entry is not an error: the request continues with the
 trusted header. Tokens are compared in constant time and never logged.
+
+Ghostwriter sends its `NEXTEXT_API_KEY` as the bearer token, and its calls
+resolve to `service:ghostwriter`. It runs one job per attached video or audio
+clip, under the file name `media.<ext>`, with `keyframes` on, `visual_context`
+and `summarization` off, `keyframes_max` 19 and `keyframes_per_minute` 20. It
+fetches `docint.jsonl` and `keyframes.zip` and deletes the job at once. At
+start and daily it deletes any job of its own that none of its clips owns. How
+its clips queue is under [Job concurrency](#job-concurrency).
 
 ### Rolling out
 
@@ -513,12 +521,22 @@ Each step must not lock out a caller that is still on the old path:
 Without a matching token, docint's calls fall back to the trusted header,
 which the backend ignores once the edge secret is set — they then get `401`.
 
+Adding Ghostwriter's entry changes no existing principal, so it may go in at
+any time. Nextext goes first: append `ghostwriter=<token>` to
+`NEXTEXT_SERVICE_TOKENS`, keeping docint's entry as it is, and recreate
+Nextext's backend while no job is in flight (jobs live in memory). Then set the
+same token as `NEXTEXT_API_KEY` in Ghostwriter's `.env` and recreate
+Ghostwriter's backend. Until both hold the same token, Nextext answers
+Ghostwriter's calls `401`, and its clips fail as unavailable.
+
 A service states its purpose like any caller: under the deployment default
 `AUDIT_REQUIRE_PURPOSE=query,disclose`, docint's reads of a finished job's
 snapshot and of its artifacts carry `X-Audit-Purpose` — the purpose of the
 docint job that started the ingest. A docint release that does not send it
 yet gets `428` on those reads, so upgrade docint before Nextext, or switch the
-requirement off until then (see [audit.md](audit.md#purpose)).
+requirement off until then (see [audit.md](audit.md#purpose)). Ghostwriter
+sends `X-Audit-Purpose` on every call, form-encoded: the purpose the user
+stated, else the reason `ghostwriter chat`.
 
 ## Data-protection audit log
 
