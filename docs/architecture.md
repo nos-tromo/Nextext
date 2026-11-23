@@ -46,7 +46,8 @@ budgeted payload, so the summary covers slides, scenes and legible on-screen
 text alongside what was said.
 
 Because the stage runs before the no-speech short-circuit, a video whose audio
-held nothing still yields its frames and their descriptions — and, if a summary
+held nothing — or that has no audio track at all, such as a screen recording
+(`no_audio_stream`) — still yields its frames and their descriptions — and, if a summary
 was requested, one written from those descriptions alone. Such a job is still
 reported as `skipped` with its typed code: that flag means "no transcript",
 not "no result".
@@ -195,7 +196,7 @@ Jobs live only in memory — there is no durable storage and no TTL, so a long-r
 A job whose file held no processable speech still **completes** — it is a
 result, not a failure — and carries `skipped: true` with a typed
 `skip_reason_code` (`vad_no_speech`, `asr_empty_transcript`,
-`asr_all_segments_filtered`) on the snapshot, the job list, and the
+`asr_all_segments_filtered`, `no_audio_stream`) on the snapshot, the job list, and the
 `job_completed` event. Failures carry a typed `error_code`
 (`undecodable_media`, `internal`) beside the static `"Job failed."` message.
 The SPA localizes these codes; the backend logs one warning per outcome and

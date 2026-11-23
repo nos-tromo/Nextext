@@ -13,6 +13,7 @@ from __future__ import annotations
 import io
 import json
 import time
+import zipfile
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -27,9 +28,11 @@ from nextext.api import main as main_module
 from nextext.api.jobs import JobState, PushEvent, _run_pipeline_blocking, _serialize_result
 from nextext.api.main import create_app
 from nextext.api.schemas import JobOptions, JobStatus
+from nextext.core import transcription as transcription_module
 from nextext.core.audio import AudioDecodeError
 from nextext.pipeline import TranscriptionOutcome
 from tests.audit_helpers import AuditCapture, job_audit
+from tests.media_factory import make_clip, make_with_cover_art
 
 OWNER_HEADER = "X-Auth-User"
 OWNER_ID = "c" * 32
@@ -433,3 +436,111 @@ def test_metrics_count_failed_jobs_by_code(
 
     assert 'nextext_jobs_total{outcome="failed"}' in body
     assert 'nextext_jobs_failed_total{code="undecodable_media"}' in body
+
+
+# ---------------------------------------------------------------------------
+# A video without an audio track is skipped with its frames, not failed
+# ---------------------------------------------------------------------------
+
+
+def _post_file_job(client: TestClient, path: Path, *, keyframes: bool) -> str:
+    """Create a job over a real media file and return its id.
+
+    Args:
+        client (TestClient): Client carrying the owner header.
+        path (Path): The upload.
+        keyframes (bool): Whether the job asks for keyframes.
+
+    Returns:
+        str: The new job's identifier.
+    """
+    options = {**_options_payload(), "keyframes": keyframes}
+    response = client.post(
+        "/api/v1/jobs",
+        files={"file": (path.name, io.BytesIO(path.read_bytes()), "video/mp4")},
+        data={"options": json.dumps(options)},
+    )
+    assert response.status_code == 201
+    return str(response.json()["job_id"])
+
+
+@pytest.fixture
+def real_pipeline_client(monkeypatch: pytest.MonkeyPatch) -> Iterator[TestClient]:
+    """Client whose jobs run the real pipeline, with no inference service behind it.
+
+    The ``/vad`` guard fails the test if it is asked, and captioning is off, so
+    nothing a job does can reach a service.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Sets the provider and the guard.
+
+    Yields:
+        TestClient: The HTTP client.
+    """
+
+    def _vad_must_not_be_asked(_path: Path) -> bool:
+        raise AssertionError("the /vad service must not be asked about a file without audio")
+
+    monkeypatch.setenv("INFERENCE_PROVIDER", "vllm")
+    monkeypatch.setenv("OPENAI_API_BASE", "http://router.invalid/v1")
+    monkeypatch.setenv("NEXTEXT_VISUAL_SUMMARY", "off")
+    monkeypatch.setattr(transcription_module, "has_speech", _vad_must_not_be_asked)
+    monkeypatch.setattr(main_module, "setup_logging", lambda: None)
+    app = create_app(audit_emitter_factory=AuditCapture().factory)
+    client = TestClient(app, raise_server_exceptions=False)
+    client.headers[OWNER_HEADER] = OWNER_ID
+    with client:
+        yield client
+
+
+def test_video_without_audio_completes_skipped_with_its_keyframes(
+    real_pipeline_client: TestClient, tmp_path: Path
+) -> None:
+    """A screen recording is skipped as ``no_audio_stream`` and its keyframes are served.
+
+    Args:
+        real_pipeline_client (TestClient): Client running the real pipeline.
+        tmp_path (Path): Where the clip is written.
+    """
+    client = real_pipeline_client
+    clip = make_clip(tmp_path / "screen.mp4", seconds=4, fps=8, gop_size=8)
+    job_id = _post_file_job(client, clip, keyframes=True)
+
+    snapshot = _wait_for_status(client, job_id, "completed", timeout=30.0)
+
+    assert snapshot["skipped"] is True
+    assert snapshot["skip_reason_code"] == "no_audio_stream"
+    assert snapshot["error_code"] is None
+    item = next(job for job in client.get("/api/v1/jobs").json()["jobs"] if job["job_id"] == job_id)
+    assert item["skipped"] is True
+    assert item["skip_reason_code"] == "no_audio_stream"
+
+    served = client.get(f"/api/v1/jobs/{job_id}/artifacts/keyframes.zip")
+    assert served.status_code == 200
+    with zipfile.ZipFile(io.BytesIO(served.content)) as archive:
+        frames = [name for name in archive.namelist() if name.endswith(".jpg")]
+    assert frames
+    assert client.get(f"/api/v1/jobs/{job_id}/artifacts/docint.jsonl").status_code == 404
+    metrics = client.get("/metrics").text
+    assert 'nextext_jobs_skipped_total{reason="no_audio_stream"}' in metrics
+
+
+def test_cover_art_only_file_still_fails_as_undecodable(
+    real_pipeline_client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A file whose only picture is cover art is no video: it fails ``undecodable_media``, as before.
+
+    Args:
+        real_pipeline_client (TestClient): Client running the real pipeline.
+        monkeypatch (pytest.MonkeyPatch): Lets the ``/vad`` guard pass, as it fails open.
+        tmp_path (Path): Where the file is written.
+    """
+    client = real_pipeline_client
+    monkeypatch.setattr(transcription_module, "has_speech", lambda _path: True)
+    cover = make_with_cover_art(tmp_path / "cover.mp4")
+    job_id = _post_file_job(client, cover, keyframes=True)
+
+    snapshot = _wait_for_status(client, job_id, "failed", timeout=30.0)
+
+    assert snapshot["error_code"] == "undecodable_media"
+    assert snapshot["skipped"] is False

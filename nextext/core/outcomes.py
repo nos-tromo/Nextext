@@ -1,6 +1,6 @@
 """Typed outcome vocabulary shared by the pipeline, the API, and the CLI.
 
-A run can end without a transcript for three distinct reasons, and a job can
+A run can end without a transcript for four distinct reasons, and a job can
 fail for reasons the user can act on (an undecodable upload) or cannot (an
 inference outage). Both used to collapse into one string — a single hardcoded
 ``"No speech detected in audio file."`` and a generic ``"Job failed."`` — so
@@ -20,6 +20,7 @@ SkipReason = Literal[
     "vad_no_speech",
     "asr_empty_transcript",
     "asr_all_segments_filtered",
+    "no_audio_stream",
 ]
 
 #: Why a job failed. ``internal`` covers everything the user cannot act on
@@ -36,6 +37,7 @@ _SKIP_REASON_TEXT: dict[str, str] = {
     "vad_no_speech": "No speech detected in the audio.",
     "asr_empty_transcript": "Transcription returned no text for this file.",
     "asr_all_segments_filtered": "Only non-speech audio was detected; all transcribed segments were discarded.",
+    "no_audio_stream": "The file has no audio track.",
 }
 
 

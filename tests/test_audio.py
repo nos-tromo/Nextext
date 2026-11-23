@@ -11,6 +11,7 @@ import pytest
 
 from nextext.core import audio
 from nextext.core.cancel import JobCancelled, bind_cancel
+from tests.media_factory import make_clip, make_with_cover_art
 
 
 def _write_stereo_wav(path: Path, *, seconds: float = 0.4, rate: int = 44100) -> None:
@@ -167,3 +168,37 @@ def test_normalize_stops_a_cancelled_job_and_leaves_no_copy(tmp_path: Path) -> N
             pass
 
     assert list(scratch.iterdir()) == []
+
+
+def test_video_without_audio_is_true_for_a_clip_with_pictures_only(tmp_path: Path) -> None:
+    """A clip with a video stream and no audio stream at all is the case the job skips and frames."""
+    clip = make_clip(tmp_path / "screen.mp4", seconds=2, fps=8)
+
+    assert audio.video_without_audio(clip) is True
+
+
+def test_video_without_audio_is_false_when_the_clip_has_an_audio_stream(tmp_path: Path) -> None:
+    """A clip with a (here silent) audio track reaches the normal path; the VAD guard judges its sound."""
+    clip = make_clip(tmp_path / "talk.mp4", seconds=2, fps=8, audio=True)
+
+    assert audio.video_without_audio(clip) is False
+
+
+def test_video_without_audio_is_false_for_audio_only_and_for_cover_art_only(tmp_path: Path) -> None:
+    """No video stream, or one that is only cover art, is no video: the file is left to the normalizer."""
+    wav = tmp_path / "tone.wav"
+    _write_stereo_wav(wav)
+    cover = make_with_cover_art(tmp_path / "cover.mp4")
+
+    assert audio.video_without_audio(wav) is False
+    assert audio.video_without_audio(cover) is False
+
+
+def test_video_without_audio_is_false_for_a_file_that_is_not_media_or_is_missing(tmp_path: Path) -> None:
+    """It decides only on a positive finding: any error opening the file answers no."""
+    not_media = tmp_path / "notes.bin"
+    not_media.write_bytes(b"\x00\x01\x02not media")
+
+    assert audio.video_without_audio(not_media) is False
+    assert audio.video_without_audio(Path(__file__)) is False
+    assert audio.video_without_audio(tmp_path / "missing.mp4") is False

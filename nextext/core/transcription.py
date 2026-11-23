@@ -14,7 +14,7 @@ import pandas as pd
 from loguru import logger
 from openai import APIStatusError, OpenAI
 
-from nextext.core.audio import normalize_for_transcription
+from nextext.core.audio import normalize_for_transcription, video_without_audio
 from nextext.core.inference_trace import correlation_headers, record_inference, reply_usage
 from nextext.core.outcomes import SkipReason
 from nextext.core.vad import has_speech
@@ -291,6 +291,10 @@ class ExternalWhisperTranscriber:
            ``no_speech_prob`` exceeds :data:`NO_SPEECH_THRESHOLD` are
            dropped from the returned payload.
 
+        A video with no audio track at all is skipped before either guard
+        (``skip_reason`` ``no_audio_stream``): there is nothing to screen or
+        transcribe, and the keyframe stage still runs over its pictures.
+
         Before the request the upload is re-encoded to 16 kHz mono FLAC
         (see :func:`nextext.core.audio.normalize_for_transcription`) so
         libsndfile-only Whisper servers can decode any source format; an
@@ -307,6 +311,11 @@ class ExternalWhisperTranscriber:
         set (:mod:`nextext.core.inference_trace`).
         """
         self.skip_reason = None
+        if video_without_audio(self.file_path):
+            logger.info("The upload is a video with no audio track; skipping transcription and the /vad request.")
+            self.transcription_result = {"segments": [], "words": []}
+            self.skip_reason = "no_audio_stream"
+            return
         if not has_speech(self.file_path):
             logger.warning(
                 "VAD service reported no speech in {}; skipping external transcription request.",

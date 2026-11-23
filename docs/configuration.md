@@ -503,7 +503,7 @@ typed codes only — never a filename, owner id, or transcript text:
 | Metric | Labels | What it counts |
 |--------|--------|----------------|
 | `nextext_jobs_total` | `outcome` = `completed` \| `skipped` \| `failed` \| `cancelled` | Every job that reached a terminal state; `cancelled` is a job deleted while it ran (or cut short by shutdown), stopped at its next check point. |
-| `nextext_jobs_skipped_total` | `reason` = `vad_no_speech` \| `asr_empty_transcript` \| `asr_all_segments_filtered` \| `unknown` | Jobs that completed without a transcript. |
+| `nextext_jobs_skipped_total` | `reason` = `vad_no_speech` \| `asr_empty_transcript` \| `asr_all_segments_filtered` \| `no_audio_stream` \| `unknown` | Jobs that completed without a transcript. |
 | `nextext_jobs_failed_total` | `code` = `undecodable_media` \| `internal` | Failed jobs, by typed cause. |
 
 A rising `nextext_jobs_skipped_total{reason="vad_no_speech"}` usually means the

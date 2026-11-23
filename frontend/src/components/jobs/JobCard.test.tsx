@@ -126,6 +126,7 @@ describe('JobCard skipped message', () => {
     ['vad_no_speech', 'Skipped — no speech detected in the audio'],
     ['asr_empty_transcript', 'Skipped — transcription returned no text'],
     ['asr_all_segments_filtered', 'Skipped — only non-speech audio was detected'],
+    ['no_audio_stream', 'Skipped — the file has no audio track'],
   ] as const)('names the reason for %s', (code, text) => {
     useJobProgressStore.getState().setJobProgress('j1', {
       status: 'completed',

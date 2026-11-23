@@ -13,12 +13,14 @@ import pandas as pd
 import pytest
 
 from nextext.core import audio, transcription
+from nextext.core.audio import AudioDecodeError
 from nextext.core.transcription import (
     ExternalWhisperTranscriber,
     _ends_with_punctuation,
     _merge_transcriptions_by_sentence,
     _seconds_to_time,
 )
+from tests.media_factory import make_clip, make_with_cover_art
 
 
 @contextmanager
@@ -737,6 +739,82 @@ def test_external_transcriber_skip_reason_is_vad_no_speech(
     transcriber.transcription()
 
     assert transcriber.skip_reason == "vad_no_speech"
+
+
+def _vad_must_not_be_asked(_path: Path) -> bool:
+    """Stand-in for ``has_speech`` that fails the test if the VAD guard is reached.
+
+    Args:
+        _path (Path): Ignored.
+
+    Raises:
+        AssertionError: Always.
+    """
+    raise AssertionError("the /vad service must not be asked about a file without audio")
+
+
+def test_external_transcriber_skips_a_video_without_audio_before_the_vad_upload(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A video with no audio stream records ``no_audio_stream`` and uploads nothing.
+
+    Neither the VAD guard nor the normalizer nor the Whisper client is reached.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Makes ``has_speech`` and the client fail if used.
+        tmp_path (Path): Pytest temporary directory fixture.
+    """
+    transcriber = _make_external_transcriber()
+    transcriber.file_path = make_clip(tmp_path / "screen.mp4", seconds=2, fps=8)
+    monkeypatch.setattr(transcription, "has_speech", _vad_must_not_be_asked)
+
+    def _client_must_not_be_built(_self: Any) -> Any:
+        raise AssertionError("external API must not be contacted for a file without audio")
+
+    monkeypatch.setattr(type(transcriber), "_get_client", property(_client_must_not_be_built))
+
+    transcriber.transcription()
+
+    assert transcriber.skip_reason == "no_audio_stream"
+    assert transcriber.transcription_result == {"segments": [], "words": []}
+    assert transcriber.transcript_output().empty
+
+
+def test_external_transcriber_still_asks_the_vad_guard_about_a_silent_audio_track(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A video with an audio stream, however silent, keeps the ``vad_no_speech`` path.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Overrides ``has_speech``.
+        tmp_path (Path): Pytest temporary directory fixture.
+    """
+    transcriber = _make_external_transcriber()
+    transcriber.file_path = make_clip(tmp_path / "quiet.mp4", seconds=2, fps=8, audio=True)
+    monkeypatch.setattr(transcription, "has_speech", lambda _path: False)
+
+    transcriber.transcription()
+
+    assert transcriber.skip_reason == "vad_no_speech"
+
+
+def test_external_transcriber_fails_a_cover_art_only_file_as_undecodable(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A file whose only picture is cover art is no video: it still reaches the normalizer and fails.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Lets the VAD guard pass.
+        tmp_path (Path): Pytest temporary directory fixture.
+    """
+    transcriber = _make_external_transcriber()
+    transcriber.file_path = make_with_cover_art(tmp_path / "cover.mp4")
+    monkeypatch.setattr(transcription, "has_speech", lambda _path: True)
+
+    with pytest.raises(AudioDecodeError):
+        transcriber.transcription()
+
+    assert transcriber.skip_reason is None
 
 
 def test_external_transcriber_skip_reason_is_asr_empty_transcript(

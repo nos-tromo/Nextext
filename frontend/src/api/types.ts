@@ -70,7 +70,11 @@ export interface HateSpeechFinding {
 }
 
 /** Why a completed job produced no transcript. Mirrors nextext/core/outcomes.py. */
-export type SkipReason = 'vad_no_speech' | 'asr_empty_transcript' | 'asr_all_segments_filtered'
+export type SkipReason =
+  | 'vad_no_speech'
+  | 'asr_empty_transcript'
+  | 'asr_all_segments_filtered'
+  | 'no_audio_stream'
 
 /** Why a job failed. `internal` is everything the user cannot act on. */
 export type FailureCode = 'undecodable_media' | 'internal'

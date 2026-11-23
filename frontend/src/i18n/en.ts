@@ -113,6 +113,8 @@ export const en = {
     'Transcription returned no text for this file, so there was nothing to analyze.',
   'results.skipped_asr_filtered':
     'Only non-speech audio (music, noise or silence) was detected, so the transcribed text was discarded.',
+  'results.skipped_no_audio':
+    'This file has no audio track, so there was nothing to transcribe or analyze.',
   'results.no_transcript': 'No transcript segments were produced for this job.',
   'results.no_word_counts': 'No word counts available for this job.',
   'results.col_word': 'Word',
@@ -176,6 +178,7 @@ export const en = {
   'jobs.skipped_vad_no_speech': 'Skipped — no speech detected in the audio',
   'jobs.skipped_asr_empty': 'Skipped — transcription returned no text',
   'jobs.skipped_asr_filtered': 'Skipped — only non-speech audio was detected',
+  'jobs.skipped_no_audio': 'Skipped — the file has no audio track',
   'jobs.error_undecodable': 'File could not be decoded — is it a valid audio or video file?',
   'jobs.waiting': 'Waiting…',
   'jobs.done': 'Done',

@@ -7,6 +7,7 @@ describe('jobSkipMessageKey', () => {
     expect(jobSkipMessageKey('vad_no_speech')).toBe('jobs.skipped_vad_no_speech')
     expect(jobSkipMessageKey('asr_empty_transcript')).toBe('jobs.skipped_asr_empty')
     expect(jobSkipMessageKey('asr_all_segments_filtered')).toBe('jobs.skipped_asr_filtered')
+    expect(jobSkipMessageKey('no_audio_stream')).toBe('jobs.skipped_no_audio')
   })
 
   it('falls back to the generic message for a missing or unknown code', () => {
@@ -21,6 +22,7 @@ describe('resultSkipMessageKey', () => {
     expect(resultSkipMessageKey('vad_no_speech')).toBe('results.skipped_vad_no_speech')
     expect(resultSkipMessageKey('asr_empty_transcript')).toBe('results.skipped_asr_empty')
     expect(resultSkipMessageKey('asr_all_segments_filtered')).toBe('results.skipped_asr_filtered')
+    expect(resultSkipMessageKey('no_audio_stream')).toBe('results.skipped_no_audio')
     expect(resultSkipMessageKey(null)).toBe('results.skipped')
   })
 })
@@ -47,10 +49,12 @@ describe('message catalog', () => {
       jobSkipMessageKey('vad_no_speech'),
       jobSkipMessageKey('asr_empty_transcript'),
       jobSkipMessageKey('asr_all_segments_filtered'),
+      jobSkipMessageKey('no_audio_stream'),
       jobSkipMessageKey(null),
       resultSkipMessageKey('vad_no_speech'),
       resultSkipMessageKey('asr_empty_transcript'),
       resultSkipMessageKey('asr_all_segments_filtered'),
+      resultSkipMessageKey('no_audio_stream'),
       resultSkipMessageKey(null),
       failureMessageKey('undecodable_media', false),
       failureMessageKey('internal', false),

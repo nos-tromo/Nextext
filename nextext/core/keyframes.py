@@ -45,6 +45,7 @@ __all__ = [
     "keyframe_manifest",
     "sample_frames",
     "subsample",
+    "video_stream",
 ]
 
 # Keyframes at most this many intervals apart are dense enough to sample from
@@ -143,7 +144,7 @@ def extract_keyframe_samples(file_path: Path, *, per_minute: int = 4, max_frames
     try:
         with av.open(str(file_path)) as container:
             # Cover art (an audio file's attached picture) is no video to frame.
-            stream = _video_stream(container)
+            stream = video_stream(container)
             if stream is None:
                 logger.info("No video stream in '{}'; keyframe sampling skipped.", file_path.name)
                 return []
@@ -300,7 +301,7 @@ def _upright_image(frame: av.VideoFrame, max_side: int) -> tuple[Image.Image, fl
     return image, scale
 
 
-def _video_stream(container: av.container.InputContainer) -> av.VideoStream | None:
+def video_stream(container: av.container.InputContainer) -> av.VideoStream | None:
     """Pick the video stream to sample: the first that is not an attached picture.
 
     Audio files carry cover art as a video stream flagged ``attached_pic``
@@ -335,7 +336,7 @@ def _keyframe_times(file_path: Path) -> tuple[list[float], float] | None:
             when the file has no video stream besides cover art.
     """
     with av.open(str(file_path)) as container:
-        stream = _video_stream(container)
+        stream = video_stream(container)
         if stream is None:
             return None
         time_base = stream.time_base
@@ -427,7 +428,7 @@ def sample_frames(
             effective_interval = max(interval_s, duration_sec / max_frames)
         mode = _decode_mode(keyframe_times, effective_interval)
         with av.open(str(file_path)) as container:
-            stream = _video_stream(container)
+            stream = video_stream(container)
             if stream is None:
                 return
             codec_context = stream.codec_context

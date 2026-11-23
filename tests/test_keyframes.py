@@ -263,7 +263,7 @@ def test_extract_keyframe_samples_picks_its_stream_past_cover_art(
     def no_video(container: Any) -> None:
         picked.append(container)
 
-    monkeypatch.setattr(kf, "_video_stream", no_video)
+    monkeypatch.setattr(kf, "video_stream", no_video)
 
     assert extract_keyframe_samples(video, per_minute=60, max_frames=6) == []
     assert len(picked) == 1
