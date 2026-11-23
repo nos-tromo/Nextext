@@ -25,6 +25,7 @@ from fastapi.testclient import TestClient
 from nextext.api import main as main_module
 from nextext.api.main import create_app
 from nextext.api.readiness import (
+    NOT_CONFIGURED_HINT,
     PROBE_TIMEOUT_S,
     READY_CACHE_TTL_S,
     TranscriptionReadiness,
@@ -268,6 +269,38 @@ async def test_concurrent_requests_share_one_probe(app: FastAPI, monkeypatch: py
     assert [response.status_code for response in responses] == [200] * 8
 
 
+@pytest.mark.asyncio
+async def test_a_cancelled_request_neither_stops_the_probe_nor_lets_a_second_one_start(
+    app: FastAPI, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The first request gives up mid-probe; the next within the window still shares the one probe."""
+    release = threading.Event()
+    probe = _Probe(hold=release)
+    _arrange(app, monkeypatch, probe=probe)
+    transport = httpx.ASGITransport(app=app)
+
+    try:
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            first = asyncio.create_task(client.get("/api/v1/ready"))
+            assert await asyncio.to_thread(probe.started.wait, 5.0), "no probe started"
+            first.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await first
+
+            second = asyncio.create_task(client.get("/api/v1/ready"))
+            await asyncio.sleep(0.2)
+            assert probe.calls == 1, "a second probe started after the first request gave up"
+            release.set()
+            answered = await second
+            third = await client.get("/api/v1/ready")
+    finally:
+        release.set()
+
+    assert answered.status_code == 200
+    assert third.status_code == 200
+    assert probe.calls == 1, "the result of the probe the cancelled request started was lost"
+
+
 def test_ready_needs_neither_identity_nor_purpose_and_is_not_audited(
     monkeypatch: pytest.MonkeyPatch, audit_capture: AuditCapture
 ) -> None:
@@ -452,8 +485,19 @@ def test_probe_is_not_recorded_as_an_inference_call(monkeypatch: pytest.MonkeyPa
 
 
 @pytest.mark.asyncio
-async def test_a_configuration_that_cannot_work_is_not_ready(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Ollama without a Whisper endpoint raises ``RuntimeError`` in the probe, which reads as not ready."""
+async def test_a_configuration_that_cannot_work_is_not_ready_and_logs_a_fixed_hint_once(
+    monkeypatch: pytest.MonkeyPatch, log_lines: list[str]
+) -> None:
+    """Ollama without a Whisper endpoint is not ready; the log names the settings, never the exception's text."""
     _whisper_env(monkeypatch, INFERENCE_PROVIDER="ollama")
+    clock = _Clock()
+    readiness = TranscriptionReadiness(clock=clock)
 
-    assert await TranscriptionReadiness().is_ready() is False
+    assert await readiness.is_ready() is False
+    clock.now += READY_CACHE_TTL_S
+    assert await readiness.is_ready() is False
+
+    logged = "\n".join(log_lines)
+    assert logged.count(f"Transcription readiness probe failed: {NOT_CONFIGURED_HINT}") == 1
+    assert "WHISPER_API_BASE and WHISPER_MODEL" in NOT_CONFIGURED_HINT
+    assert "OpenAI-compatible transcription service" not in logged

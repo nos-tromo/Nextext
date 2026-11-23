@@ -45,7 +45,7 @@ def _inference_reachable() -> bool:
     """
     try:
         return InferencePipeline().get_health()
-    except Exception as exc:  # pragma: no cover - defensive; never want /health or /ready to 500
+    except Exception as exc:  # defensive: never let the check make /health or /ready answer 500
         logger.error("Inference health check raised unexpectedly: {}\n{}", error_label(exc), exception_frames(exc))
         return False
 

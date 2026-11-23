@@ -27,8 +27,8 @@ from nextext.utils.env_cfg import load_whisper_env
 from nextext.utils.log_cfg import error_label
 
 #: How long a probe result, good or bad, answers every ``/ready`` request. A
-#: caller that polls (Ghostwriter does) costs the Whisper endpoint at most one
-#: request per period, however many callers there are.
+#: caller that polls (Ghostwriter 0.6.1 and later) costs the Whisper endpoint at
+#: most one request per period, however many callers there are.
 READY_CACHE_TTL_S: float = 30.0
 
 #: Seconds the probe waits for the Whisper endpoint, with no retries: a slow
@@ -62,6 +62,10 @@ def silence_wav(seconds: float = PROBE_SECONDS, sample_rate: int = PROBE_SAMPLE_
 _PROBE_AUDIO: bytes = silence_wav()
 
 
+class WhisperNotConfigured(Exception):
+    """The Whisper settings cannot work (Ollama without a Whisper endpoint)."""
+
+
 def probe_transcription() -> None:
     """Send half a second of synthetic silence to the Whisper endpoint.
 
@@ -70,11 +74,15 @@ def probe_transcription() -> None:
     (``json``), a :data:`PROBE_TIMEOUT_S` timeout and no retries.
 
     Raises:
-        Exception: Whatever the request raised — a connection error, an HTTP
-            status error, or the ``RuntimeError`` of a configuration that
-            cannot work (Ollama without ``WHISPER_API_BASE``).
+        WhisperNotConfigured: The settings cannot work, which
+            ``load_whisper_env`` reports as a ``RuntimeError``.
+        Exception: Whatever the request raised — a connection error or an
+            HTTP status error.
     """
-    cfg = load_whisper_env()
+    try:
+        cfg = load_whisper_env()
+    except RuntimeError as exc:
+        raise WhisperNotConfigured from exc
     with build_whisper_client(cfg, timeout=PROBE_TIMEOUT_S, max_retries=0) as client:
         client.audio.transcriptions.create(
             model=cfg.model,
@@ -83,14 +91,25 @@ def probe_transcription() -> None:
         )
 
 
+#: What the log says for a configuration that cannot work. Fixed text: the
+#: probe never logs an exception's message.
+NOT_CONFIGURED_HINT: str = (
+    "Whisper is not configured (INFERENCE_PROVIDER=ollama needs WHISPER_API_BASE and WHISPER_MODEL)"
+)
+
+
 class TranscriptionReadiness:
     """The cached, single-flight answer to "does Whisper transcribe?".
 
-    A result holds for ``ttl_s`` seconds. Requests that arrive while a probe is
-    running wait for it and share its result instead of starting their own, and
-    the blocking probe runs on a worker thread, so the event loop stays free.
-    A failure is logged once per change of state, by exception class and HTTP
-    status only (never a response body), and the recovery once as well.
+    A result holds for ``ttl_s`` seconds. The probe in flight is one
+    :class:`asyncio.Task` that every waiting request awaits through
+    :func:`asyncio.shield`, so requests that arrive during a probe share its
+    result instead of starting their own, and a request that is cancelled
+    (a disconnect, a shutdown) neither stops the probe nor lets the next
+    request start a second one. The blocking probe runs on a worker thread, so
+    the event loop stays free. A failure is logged once per change of state,
+    by exception class and HTTP status only (never a response body), and the
+    recovery once as well.
     """
 
     def __init__(
@@ -111,9 +130,9 @@ class TranscriptionReadiness:
         self._probe = probe
         self._clock = clock
         self._ttl_s = ttl_s
-        self._lock = asyncio.Lock()
         self._checked_at = 0.0
         self._ready: bool | None = None
+        self._in_flight: asyncio.Task[bool] | None = None
 
     async def is_ready(self) -> bool:
         """Report whether the Whisper endpoint transcribes, probing when stale.
@@ -122,24 +141,39 @@ class TranscriptionReadiness:
             bool: ``True`` when the last probe, at most ``ttl_s`` seconds old,
                 succeeded.
         """
-        async with self._lock:
-            if self._ready is not None and self._clock() - self._checked_at < self._ttl_s:
-                return self._ready
+        if self._ready is not None and self._clock() - self._checked_at < self._ttl_s:
+            return self._ready
+        if self._in_flight is None:
+            self._in_flight = asyncio.create_task(self._probe_and_store())
+        return await asyncio.shield(self._in_flight)
+
+    async def _probe_and_store(self) -> bool:
+        """Probe once, keep the result and clear the probe in flight.
+
+        Returns:
+            bool: Whether the endpoint transcribed.
+        """
+        try:
             failure = await asyncio.to_thread(self._run_probe)
             self._checked_at = self._clock()
             self._note(failure)
             self._ready = failure is None
             return self._ready
+        finally:
+            self._in_flight = None
 
     def _run_probe(self) -> str | None:
         """Run the probe once, on a worker thread.
 
         Returns:
-            str | None: ``None`` on success, else the failure named by class
-                and HTTP status.
+            str | None: ``None`` on success, else the failure: a fixed hint for
+                a configuration that cannot work, otherwise the exception named
+                by class and HTTP status.
         """
         try:
             self._probe()
+        except WhisperNotConfigured:
+            return NOT_CONFIGURED_HINT
         except Exception as exc:
             return error_label(exc)
         return None

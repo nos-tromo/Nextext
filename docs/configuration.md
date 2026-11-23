@@ -49,13 +49,17 @@ key and model a job uses (`WHISPER_API_BASE` / `WHISPER_API_KEY` /
 `WHISPER_MODEL`, else the central pair), a 10 s timeout and no retries. It
 answers `200` with `{"status": "ready", "inference": true, "transcription":
 true, "version": …}`, or `503` with `"status": "unavailable"` and the failing
-field `false`. A caller that offers transcription only while it works (Ghostwriter
-does) polls this route, and keeps `/health` for liveness.
+field `false`. A caller that offers transcription only while it works should poll
+this route and keep `/health` for liveness. Ghostwriter 0.6.1 and later do; older
+versions probe `/health`.
 
 The probe's result, good or bad, holds for 30 s, and requests that arrive while
 a probe runs share it, so any number of callers cost the Whisper endpoint at
-most one request per 30 s. A failure is logged once, as a warning by exception
-class and HTTP status, and its recovery once at info. Like `/health`, the route
+most one request per 30 s, even when a caller gives up on its request while
+the probe runs. A failure is logged once, as a warning by exception class and
+HTTP status (a configuration that cannot work, such as `INFERENCE_PROVIDER=ollama`
+without `WHISPER_API_BASE` and `WHISPER_MODEL`, by a fixed hint naming them), and
+its recovery once at info. Like `/health`, the route
 needs no identity and no stated purpose, is not [audited](audit.md), and the
 probe is never recorded as a job's inference call. The container healthcheck
 and compose's `service_healthy` stay on `/health`.
