@@ -61,3 +61,8 @@ def record_failed(code: FailureCode) -> None:
     """
     JOBS_TOTAL.labels(outcome="failed").inc()
     JOBS_FAILED_TOTAL.labels(code=code).inc()
+
+
+def record_cancelled() -> None:
+    """Count a job that stopped at a check point because it was deleted or the backend shut down."""
+    JOBS_TOTAL.labels(outcome="cancelled").inc()

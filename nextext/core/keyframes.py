@@ -33,6 +33,7 @@ from av.stream import Disposition
 from loguru import logger
 from PIL import Image
 
+from nextext.core.cancel import check
 from nextext.utils.env_cfg import load_job_concurrency
 from nextext.utils.log_cfg import error_label
 
@@ -44,6 +45,7 @@ __all__ = [
     "keyframe_manifest",
     "sample_frames",
     "subsample",
+    "video_stream",
 ]
 
 # Keyframes at most this many intervals apart are dense enough to sample from
@@ -120,9 +122,11 @@ def extract_keyframe_samples(file_path: Path, *, per_minute: int = 4, max_frames
     Runs two passes over the container: a cheap demux pass collects every
     keyframe's presentation timestamp (no decoding), then ``target`` timestamps
     are chosen evenly across the whole duration and each is seeked and decoded
-    to a JPEG. This frames the entire clip rather than only its opening
-    minutes. Any decode/seek/parse error is logged and the frames gathered so
-    far are returned — the function never raises.
+    to a full-size JPEG, turned upright by its display rotation (a portrait
+    phone video comes out portrait). This frames the entire clip rather than
+    only its opening minutes. Any decode/seek/parse error is logged and the frames gathered so
+    far are returned — the function never raises, except ``JobCancelled`` for a
+    job cancelled meanwhile (:mod:`nextext.core.cancel`).
 
     Args:
         file_path (Path): Path to the media file.
@@ -141,7 +145,7 @@ def extract_keyframe_samples(file_path: Path, *, per_minute: int = 4, max_frames
     try:
         with av.open(str(file_path)) as container:
             # Cover art (an audio file's attached picture) is no video to frame.
-            stream = _video_stream(container)
+            stream = video_stream(container)
             if stream is None:
                 logger.info("No video stream in '{}'; keyframe sampling skipped.", file_path.name)
                 return []
@@ -150,9 +154,11 @@ def extract_keyframe_samples(file_path: Path, *, per_minute: int = 4, max_frames
             target = min(max_frames, max(1, round(duration_sec / 60.0 * per_minute)))
             # Pass 1 — cheap, no decoding: gather keyframe timestamps across the
             # whole file.
-            keyframe_pts = [
-                packet.pts for packet in container.demux(stream) if packet.is_keyframe and packet.pts is not None
-            ]
+            keyframe_pts: list[int] = []
+            for packet in container.demux(stream):
+                check()
+                if packet.is_keyframe and packet.pts is not None:
+                    keyframe_pts.append(packet.pts)
             if not keyframe_pts:
                 logger.info("No keyframes found in '{}'.", file_path.name)
                 return []
@@ -160,10 +166,11 @@ def extract_keyframe_samples(file_path: Path, *, per_minute: int = 4, max_frames
             selected = subsample(sorted(keyframe_pts), target)
             # Pass 2 — decode only the selected keyframes by seeking to each.
             for pts in selected:
+                check()
                 container.seek(pts, stream=stream)
                 for frame in container.decode(stream):
                     buffer = io.BytesIO()
-                    frame.to_image().save(buffer, format="JPEG")
+                    _turn_upright(frame.to_image(), frame.rotation).save(buffer, format="JPEG")
                     frames.append(Keyframe(time_sec=_frame_time(frame, pts, stream), jpeg=buffer.getvalue()))
                     break
             logger.info(
@@ -265,6 +272,30 @@ def _sample_time(frame: av.VideoFrame, packet_index: int, average_rate: float | 
     return None
 
 
+def _turn_upright(image: Image.Image, rotation: float) -> Image.Image:
+    """Turn a stored frame by its display rotation so a portrait phone video comes out portrait.
+
+    Only quarter turns are applied (the rotation is rounded to the nearest
+    one); flips are not.
+
+    Args:
+        image: The frame as stored.
+        rotation: The frame's display rotation in counter-clockwise degrees, as
+            PyAV reports it (``VideoFrame.rotation``).
+
+    Returns:
+        Image.Image: ``image`` itself when no turn is due, else a turned copy.
+    """
+    quarter_turns = round(rotation / 90) % 4
+    if quarter_turns == 1:
+        return image.transpose(Image.Transpose.ROTATE_90)
+    if quarter_turns == 2:
+        return image.transpose(Image.Transpose.ROTATE_180)
+    if quarter_turns == 3:
+        return image.transpose(Image.Transpose.ROTATE_270)
+    return image
+
+
 def _upright_image(frame: av.VideoFrame, max_side: int) -> tuple[Image.Image, float]:
     """Convert a frame to an upright RGB image whose long side is at most ``max_side``.
 
@@ -285,17 +316,10 @@ def _upright_image(frame: av.VideoFrame, max_side: int) -> tuple[Image.Image, fl
     width = max(1, round(frame.width * scale))
     height = max(1, round(frame.height * scale))
     image = frame.reformat(width=width, height=height, format="rgb24").to_image()
-    quarter_turns = round(frame.rotation / 90) % 4
-    if quarter_turns == 1:
-        return image.transpose(Image.Transpose.ROTATE_90), scale
-    if quarter_turns == 2:
-        return image.transpose(Image.Transpose.ROTATE_180), scale
-    if quarter_turns == 3:
-        return image.transpose(Image.Transpose.ROTATE_270), scale
-    return image, scale
+    return _turn_upright(image, frame.rotation), scale
 
 
-def _video_stream(container: av.container.InputContainer) -> av.VideoStream | None:
+def video_stream(container: av.container.InputContainer) -> av.VideoStream | None:
     """Pick the video stream to sample: the first that is not an attached picture.
 
     Audio files carry cover art as a video stream flagged ``attached_pic``
@@ -330,7 +354,7 @@ def _keyframe_times(file_path: Path) -> tuple[list[float], float] | None:
             when the file has no video stream besides cover art.
     """
     with av.open(str(file_path)) as container:
-        stream = _video_stream(container)
+        stream = video_stream(container)
         if stream is None:
             return None
         time_base = stream.time_base
@@ -422,7 +446,7 @@ def sample_frames(
             effective_interval = max(interval_s, duration_sec / max_frames)
         mode = _decode_mode(keyframe_times, effective_interval)
         with av.open(str(file_path)) as container:
-            stream = _video_stream(container)
+            stream = video_stream(container)
             if stream is None:
                 return
             codec_context = stream.codec_context

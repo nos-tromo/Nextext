@@ -115,6 +115,8 @@ export const de: Strings = {
     'Die Transkription hat für diese Datei keinen Text geliefert, daher gab es nichts zu analysieren.',
   'results.skipped_asr_filtered':
     'Es wurde ausschließlich Nicht-Sprache (Musik, Geräusche oder Stille) erkannt, daher wurde der transkribierte Text verworfen.',
+  'results.skipped_no_audio':
+    'Diese Datei enthält keine Tonspur, daher gab es nichts zu transkribieren oder zu analysieren.',
   'results.no_transcript': 'Für diesen Auftrag wurden keine Transkriptsegmente erzeugt.',
   'results.no_word_counts': 'Keine Worthäufigkeiten für diesen Auftrag verfügbar.',
   'results.col_word': 'Wort',
@@ -178,7 +180,10 @@ export const de: Strings = {
   'jobs.skipped_vad_no_speech': 'Übersprungen — keine Sprache im Audio erkannt',
   'jobs.skipped_asr_empty': 'Übersprungen — Transkription lieferte keinen Text',
   'jobs.skipped_asr_filtered': 'Übersprungen — nur Nicht-Sprache erkannt',
+  'jobs.skipped_no_audio': 'Übersprungen — die Datei enthält keine Tonspur',
   'jobs.error_undecodable': 'Datei konnte nicht dekodiert werden — ist es eine gültige Audio- oder Videodatei?',
+  'jobs.error_inference_unavailable':
+    'Ein Modelldienst (Inferenz) war nicht erreichbar. Bitte versuchen Sie es später erneut.',
   'jobs.waiting': 'Wartet…',
   'jobs.done': 'Fertig',
   'jobs.stage_progress': '{stage} ({pct}%)',

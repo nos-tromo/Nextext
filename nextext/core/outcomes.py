@@ -1,8 +1,8 @@
 """Typed outcome vocabulary shared by the pipeline, the API, and the CLI.
 
-A run can end without a transcript for three distinct reasons, and a job can
+A run can end without a transcript for four distinct reasons, and a job can
 fail for reasons the user can act on (an undecodable upload) or cannot (an
-inference outage). Both used to collapse into one string — a single hardcoded
+inference outage, a bug). Both used to collapse into one string — a single hardcoded
 ``"No speech detected in audio file."`` and a generic ``"Job failed."`` — so
 neither the user nor the logs could tell the cases apart.
 
@@ -20,12 +20,17 @@ SkipReason = Literal[
     "vad_no_speech",
     "asr_empty_transcript",
     "asr_all_segments_filtered",
+    "no_audio_stream",
 ]
 
-#: Why a job failed. ``internal`` covers everything the user cannot act on
-#: (inference outage, bug); its detail stays in the logs, never in a response.
+#: Why a job failed. ``undecodable_media`` is the upload's to fix and
+#: ``inference_unavailable`` an outage of the inference services (a connection
+#: failure, HTTP 429 or 5xx), which a later try may not meet; ``internal`` is
+#: everything else the user cannot act on (a bug, a rejected request). Detail
+#: stays in the logs, never in a response.
 FailureCode = Literal[
     "undecodable_media",
+    "inference_unavailable",
     "internal",
 ]
 
@@ -36,6 +41,7 @@ _SKIP_REASON_TEXT: dict[str, str] = {
     "vad_no_speech": "No speech detected in the audio.",
     "asr_empty_transcript": "Transcription returned no text for this file.",
     "asr_all_segments_filtered": "Only non-speech audio was detected; all transcribed segments were discarded.",
+    "no_audio_stream": "The file has no audio track.",
 }
 
 

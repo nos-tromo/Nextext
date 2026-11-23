@@ -126,6 +126,7 @@ describe('JobCard skipped message', () => {
     ['vad_no_speech', 'Skipped — no speech detected in the audio'],
     ['asr_empty_transcript', 'Skipped — transcription returned no text'],
     ['asr_all_segments_filtered', 'Skipped — only non-speech audio was detected'],
+    ['no_audio_stream', 'Skipped — the file has no audio track'],
   ] as const)('names the reason for %s', (code, text) => {
     useJobProgressStore.getState().setJobProgress('j1', {
       status: 'completed',
@@ -163,5 +164,11 @@ describe('JobCard skipped message', () => {
   it('explains an undecodable upload instead of calling it an unknown error', () => {
     renderCard(<JobCard job={{ ...mkJob('j1', 'failed'), error_code: 'undecodable_media' }} />)
     expect(screen.getByText(/could not be decoded/)).toBeInTheDocument()
+  })
+
+  it('says a model service was unavailable, not an unknown error', () => {
+    renderCard(<JobCard job={{ ...mkJob('j1', 'failed'), error_code: 'inference_unavailable' }} />)
+    expect(screen.getByText('A model service (inference) was not available. Please try again later.')).toBeInTheDocument()
+    expect(screen.queryByText('Unknown error')).not.toBeInTheDocument()
   })
 })

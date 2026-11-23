@@ -8,7 +8,7 @@ endpoints, `edge-net` for the production gateway).
 
 The stack brings up two containers:
 
-- **Backend** (`backend`) — FastAPI on port 8000 (internal). Owns the pipeline, the HTTP inference clients, and the in-memory job store. Exposes `/api/v1/health`, `/api/v1/languages`, `/api/v1/jobs/*`. Not published to the host by default.
+- **Backend** (`backend`) — FastAPI on port 8000 (internal). Owns the pipeline, the HTTP inference clients, and the in-memory job store. Exposes `/api/v1/health` (liveness: `200` while the process lives, with whether the central inference endpoint answers), `/api/v1/ready` (readiness: `200` only while Whisper transcribes a probe of synthetic silence too, else `503`), `/api/v1/languages`, `/api/v1/jobs/*`. Not published to the host by default.
 - **Frontend** (`frontend`) — React SPA served by nginx on port 8080 (internal). nginx proxies `/api/v1` to the backend same-origin, so browser uploads stream through nginx without buffering whole files in Python.
 
 Both images run non-root with read-only root filesystems (deploy ADR 0001):
@@ -32,6 +32,11 @@ path — one request per frame — producing the `keyframes.zip` archive, the
 `[mm:ss] caption` block behind `visual_context.txt`, and the SPA's Visual
 context tab.
 
+Frames come out upright: a video stored sideways with a display rotation (a
+portrait phone video) is turned by it, so the archive, the captions' images and
+the CLI's keyframe folder all show it the way a player does. Frames keep their
+full size.
+
 The archive carries a `manifest.json` naming each frame's `file`, `index` and
 `time_sec`, so a consumer can place a frame in the clip without downloading the
 captions. It is omitted when the sampling times are unknown, never guessed.
@@ -46,7 +51,8 @@ budgeted payload, so the summary covers slides, scenes and legible on-screen
 text alongside what was said.
 
 Because the stage runs before the no-speech short-circuit, a video whose audio
-held nothing still yields its frames and their descriptions — and, if a summary
+held nothing — or that has no audio track at all, such as a screen recording
+(`no_audio_stream`) — still yields its frames and their descriptions — and, if a summary
 was requested, one written from those descriptions alone. Such a job is still
 reported as `skipped` with its typed code: that flag means "no transcript",
 not "no result".
@@ -190,15 +196,19 @@ tmpfs and withhold bytes the player wants immediately.
 
 ## Jobs and identity
 
-Jobs live only in memory — there is no durable storage and no TTL, so a long-running job is never cut off and is retained until you delete it or the backend restarts. Each upload's directory also holds a small owner record, so the uploads a crashed backend leaves behind are removed at the next startup and the removal is attributed to their owners (see [audit.md](audit.md#the-owner-record)). Without the edge gateway, identity is anonymous: the frontend mints a per-browser id and stamps it into the URL (`?owner=<id>`) on first visit, sending it to the backend as the trusted identity header (`X-Auth-User` by default) to scope your jobs. Because that id survives a refresh, reloading the page mid-run re-discovers your jobs and resumes the live progress view; closing the tab and reopening the bare host starts a fresh identity. Developers calling the API directly can skip the header and set `NEXTEXT_DEFAULT_IDENTITY` instead; it applies only while no edge secret is set. Behind the gateway, the header carries the signed-in user. With `NEXTEXT_EDGE_SECRET` set, the backend believes the header only on requests carrying the gateway's `X-Edge-Secret`; without it, it believes whoever can reach the backend. Services that call the API directly, such as docint, authenticate with a token of their own (`NEXTEXT_SERVICE_TOKENS`) and act only as themselves, under a `service:` principal no user can claim — see [configuration.md § Identity](configuration.md#identity).
+Jobs live only in memory — there is no durable storage and no TTL, so a long-running job is never cut off and is retained until you delete it or the backend restarts. Deleting a job that is still running also stops it: its pipeline ends at its next check point, so its worker slot frees at once instead of after the rest of the run. Each upload's directory also holds a small owner record, so the uploads a crashed backend leaves behind are removed at the next startup and the removal is attributed to their owners (see [audit.md](audit.md#the-owner-record)). Without the edge gateway, identity is anonymous: the frontend mints a per-browser id and stamps it into the URL (`?owner=<id>`) on first visit, sending it to the backend as the trusted identity header (`X-Auth-User` by default) to scope your jobs. Because that id survives a refresh, reloading the page mid-run re-discovers your jobs and resumes the live progress view; closing the tab and reopening the bare host starts a fresh identity. Developers calling the API directly can skip the header and set `NEXTEXT_DEFAULT_IDENTITY` instead; it applies only while no edge secret is set. Behind the gateway, the header carries the signed-in user. With `NEXTEXT_EDGE_SECRET` set, the backend believes the header only on requests carrying the gateway's `X-Edge-Secret`; without it, it believes whoever can reach the backend. Services that call the API directly, such as docint, authenticate with a token of their own (`NEXTEXT_SERVICE_TOKENS`) and act only as themselves, under a `service:` principal no user can claim — see [configuration.md § Identity](configuration.md#identity).
 
 A job whose file held no processable speech still **completes** — it is a
 result, not a failure — and carries `skipped: true` with a typed
 `skip_reason_code` (`vad_no_speech`, `asr_empty_transcript`,
-`asr_all_segments_filtered`) on the snapshot, the job list, and the
+`asr_all_segments_filtered`, `no_audio_stream`) on the snapshot, the job list, and the
 `job_completed` event. Failures carry a typed `error_code`
-(`undecodable_media`, `internal`) beside the static `"Job failed."` message.
-The SPA localizes these codes; the backend logs one warning per outcome and
+(`undecodable_media`; `inference_unavailable`, when a model call of any stage that does not
+degrade on it (transcription, translation, the provider check ahead of a
+chat-model stage) met a connection failure or HTTP 429/5xx, whether raised
+directly or wrapped by a stage; else `internal`) beside the static `"Job failed."` message.
+The SPA localizes these codes; the backend logs one warning per outcome (an
+internal failure is an error with its traceback frames) and
 counts them in `/metrics` (see
 [configuration.md](configuration.md#metrics)).
 

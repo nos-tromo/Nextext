@@ -37,6 +37,72 @@ NER issues a request only when a job asks for entities, so it needs no off switc
 
 Speaker diarization runs out-of-process against an HTTP `/diarize` service. It uses the central endpoint by default, or set `DIARIZE_API_BASE` to a dedicated service root; the gated-model agreements and any Hugging Face token live on the service side, not in Nextext.
 
+## Readiness
+
+`GET /api/v1/health` is liveness: it answers `200` while the process lives,
+and its `inference` field says whether the central endpoint's `GET /models`
+answers. A router answers that while one of its backends is down, so it cannot
+tell a caller whether a clip will transcribe. `GET /api/v1/ready` can: it
+reports `inference` the same way, and `transcription` from a real probe — half
+a second of synthetic silence sent to the Whisper endpoint with the same base,
+key and model a job uses (`WHISPER_API_BASE` / `WHISPER_API_KEY` /
+`WHISPER_MODEL`, else the central pair), a 60 s timeout and no retries. It
+answers `200` with `{"status": "ready", "inference": true, "transcription":
+true, "version": …}`, or `503` with `"status": "unavailable"` and the failing
+field `false`. A caller that offers transcription only while it works should poll
+this route and keep `/health` for liveness. Ghostwriter 0.6.1 and later do; older
+versions probe `/health`.
+
+Whisper pads every input to a 30 s window, so even the 0.5 s probe costs one
+full encoder pass: about 10-20 s on a CPU backend (large-v3-turbo), well under a
+second on a GPU. That is why the timeout is 60 s. An uncached `/ready` can
+therefore take up to a minute on CPU, and a caller should wait longer than that
+(Ghostwriter 0.6.1 waits 75 s).
+
+The probe's result, good or bad, holds for 30 s, and requests that arrive while
+a probe runs share it, so any number of callers cost the Whisper endpoint at
+most one request per 30 s, even when a caller gives up on its request while
+the probe runs. That is also the whole cost: Ghostwriter probes at start and
+again only after a failure, with backoff, so `/ready` costs one Whisper call
+per 30 s only while someone asks it, not around the clock.
+
+A Whisper that is serving Nextext's own call is not probed. A CPU Whisper
+serves one request at a time, and a probe that gives up client-side still runs
+there, queued ahead of the job's own request and delaying it; probes piling up
+around a long file pushed it past the transcriber's timeout. So while this
+process has a Whisper request in flight, `/ready` answers from the stored
+answer if it is good and no job has invalidated it, however old, and without
+refreshing its age: the first request after the call ends probes again. With no
+live good answer (none yet, a failure, an invalidated one) it probes as usual.
+
+A busy Whisper is not a down one, either. Whisper pads every input to a 30 s
+window, and a CPU backend queues the 0.5 s probe behind a long upload. Nextext
+counts its own Whisper requests in flight; a probe that started before a job's
+call and times out while that count is above zero keeps the last good answer (a
+debug line says so), and `/ready` stays `200`. With no good answer yet, with
+nothing of this process's in flight, or after a failure, a timeout is
+`unavailable`, and so is a refused connection, an HTTP error status or a
+configuration that cannot work, whatever is in flight. Only this process's own
+requests are counted: a Whisper that another caller keeps busy still reads
+`unavailable` when the probe times out. A timeout while the connection itself was
+never made (a connect timeout) is no busy Whisper either. A job that fails
+`inference_unavailable` makes the next `/ready` probe afresh, instead of
+answering from a cached `200`, and invalidates the earlier good answer: it is
+not served unprobed, and a busy timeout does not keep it, so `/ready` reads
+`unavailable` until a probe answers, even while another job's upload runs.
+
+Known limit: the transcriber's own Whisper request keeps the SDK defaults (a
+600 s timeout, 2 retries). On a CPU Whisper a long file can therefore fail as
+`inference_unavailable`, and each retry transcribes the whole file again.
+
+A failure is logged once, as a warning by exception class and HTTP status (a
+configuration that cannot work, such as `INFERENCE_PROVIDER=ollama` without
+`WHISPER_API_BASE` and `WHISPER_MODEL`, by a fixed hint naming them), and its
+recovery once at info. Like `/health`, the route needs no identity and no
+stated purpose, is not [audited](audit.md), and the probe is never recorded as
+a job's inference call. The container healthcheck and compose's
+`service_healthy` stay on `/health`.
+
 ## Provider setup
 
 The Nextext compose services join an external Docker network (`inference-net`) so they can reach whichever inference container you deploy on that network. **Create the network and start your inference provider before running the compose stack.**
@@ -119,8 +185,12 @@ CPU (PyAV decode per job) and the external inference services' capacity.
 Unparseable / `<1` values clamp to `1`. Resolved by `load_job_concurrency` in
 `nextext/utils/env_cfg.py`.
 
-At `1`, Ghostwriter's clips wait behind docint's ingest, and the wait counts
-against Ghostwriter's `NEXTEXT_TIMEOUT`.
+A job deleted while it runs gives its slot back at its next check point — a
+stage boundary, an inference request, a step of the audio or video decode —
+not when the pipeline would have ended, so the next job is not held up for the
+rest of the run (a clip a user took back mid-transcription, say, and the
+service that submitted it deleted). A call already in flight finishes first:
+one Whisper upload, one `/diarize`, `/vad` or faces request.
 
 ## Sentence restoration
 
@@ -516,14 +586,18 @@ typed codes only — never a filename, owner id, or transcript text:
 
 | Metric | Labels | What it counts |
 |--------|--------|----------------|
-| `nextext_jobs_total` | `outcome` = `completed` \| `skipped` \| `failed` | Every job that reached a terminal state. |
-| `nextext_jobs_skipped_total` | `reason` = `vad_no_speech` \| `asr_empty_transcript` \| `asr_all_segments_filtered` \| `unknown` | Jobs that completed without a transcript. |
-| `nextext_jobs_failed_total` | `code` = `undecodable_media` \| `internal` | Failed jobs, by typed cause. |
+| `nextext_jobs_total` | `outcome` = `completed` \| `skipped` \| `failed` \| `cancelled` | Every job that reached a terminal state; `cancelled` is a job deleted while it ran (or cut short by shutdown), stopped at its next check point. |
+| `nextext_jobs_skipped_total` | `reason` = `vad_no_speech` \| `asr_empty_transcript` \| `asr_all_segments_filtered` \| `no_audio_stream` \| `unknown` | Jobs that completed without a transcript. |
+| `nextext_jobs_failed_total` | `code` = `undecodable_media` \| `inference_unavailable` \| `internal` | Failed jobs, by typed cause. |
 
 A rising `nextext_jobs_skipped_total{reason="vad_no_speech"}` usually means the
 `/vad` endpoint is over-reporting silence; a rising
 `nextext_jobs_failed_total{code="undecodable_media"}` means users are uploading
-containers PyAV cannot decode. Both are visible without reading logs.
+containers PyAV cannot decode, and a rising
+`nextext_jobs_failed_total{code="inference_unavailable"}` means jobs are finding
+a model endpoint (transcription, translation or the chat provider) down or
+overloaded — a connection failure, HTTP 429 or 5xx — and `GET /api/v1/ready`
+says whether the central endpoint and Whisper answer now. Each is visible without reading logs.
 
 ## Logs
 

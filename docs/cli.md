@@ -61,7 +61,7 @@ feature (`faces=true`, gated by `NEXTEXT_FACES`, see
 | `0`  | The run produced a transcript. |
 | `1`  | The run failed (unhandled error, e.g. an undecodable file or an unreachable endpoint). |
 | `2`  | Command-line usage error — argparse's own code (unknown flag, missing `-f`) — or a refusal before any processing: a malformed `AUDIT_*` setting, or a stated purpose that `AUDIT_REQUIRE_PURPOSE` requires and the run lacks. Not a pipeline outcome. |
-| `3`  | The file held no processable speech: nothing was transcribed and the text analysis stages were skipped. An empty transcript is still written, and the warning names which of the three causes fired (`vad_no_speech`, `asr_empty_transcript`, `asr_all_segments_filtered`). `-kf` still runs, so a silent video still yields its keyframes and their descriptions, plus a summary written from them with `-sum` and hate-speech findings judged from them with `-hs`. |
+| `3`  | The file held no processable speech: nothing was transcribed and the text analysis stages were skipped. An empty transcript is still written, and the warning names which of the four causes fired (`vad_no_speech`, `asr_empty_transcript`, `asr_all_segments_filtered`, `no_audio_stream`, the last for a video with no audio track at all). `-kf` still runs, so a silent video, or one with no audio track, still yields its keyframes and their descriptions, plus a summary written from them with `-sum` and hate-speech findings judged from them with `-hs`. |
 
 Exit `3` is what lets a batch loop tell "nothing to transcribe" apart from a
 successful run — kept distinct from argparse's `2` so a mistyped flag is never

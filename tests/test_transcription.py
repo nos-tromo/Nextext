@@ -13,12 +13,14 @@ import pandas as pd
 import pytest
 
 from nextext.core import audio, transcription
+from nextext.core.audio import AudioDecodeError
 from nextext.core.transcription import (
     ExternalWhisperTranscriber,
     _ends_with_punctuation,
     _merge_transcriptions_by_sentence,
     _seconds_to_time,
 )
+from tests.media_factory import make_clip, make_still_image, make_with_cover_art
 
 
 @contextmanager
@@ -739,6 +741,103 @@ def test_external_transcriber_skip_reason_is_vad_no_speech(
     assert transcriber.skip_reason == "vad_no_speech"
 
 
+def _vad_must_not_be_asked(_path: Path) -> bool:
+    """Stand-in for ``has_speech`` that fails the test if the VAD guard is reached.
+
+    Args:
+        _path (Path): Ignored.
+
+    Raises:
+        AssertionError: Always.
+    """
+    raise AssertionError("the /vad service must not be asked about a file without audio")
+
+
+def test_external_transcriber_skips_a_video_without_audio_before_the_vad_upload(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A video with no audio stream records ``no_audio_stream`` and uploads nothing.
+
+    Neither the VAD guard nor the normalizer nor the Whisper client is reached.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Makes ``has_speech`` and the client fail if used.
+        tmp_path (Path): Pytest temporary directory fixture.
+    """
+    transcriber = _make_external_transcriber()
+    transcriber.file_path = make_clip(tmp_path / "screen.mp4", seconds=2, fps=8)
+    monkeypatch.setattr(transcription, "has_speech", _vad_must_not_be_asked)
+
+    def _client_must_not_be_built(_self: Any) -> Any:
+        raise AssertionError("external API must not be contacted for a file without audio")
+
+    monkeypatch.setattr(type(transcriber), "_get_client", property(_client_must_not_be_built))
+
+    transcriber.transcription()
+
+    assert transcriber.skip_reason == "no_audio_stream"
+    assert transcriber.transcription_result == {"segments": [], "words": []}
+    assert transcriber.transcript_output().empty
+
+
+def test_external_transcriber_still_asks_the_vad_guard_about_a_silent_audio_track(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A video with an audio stream, however silent, keeps the ``vad_no_speech`` path.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Overrides ``has_speech``.
+        tmp_path (Path): Pytest temporary directory fixture.
+    """
+    transcriber = _make_external_transcriber()
+    transcriber.file_path = make_clip(tmp_path / "quiet.mp4", seconds=2, fps=8, audio=True)
+    monkeypatch.setattr(transcription, "has_speech", lambda _path: False)
+
+    transcriber.transcription()
+
+    assert transcriber.skip_reason == "vad_no_speech"
+
+
+def test_external_transcriber_fails_a_cover_art_only_file_as_undecodable(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A file whose only picture is cover art is no video: it still reaches the normalizer and fails.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Lets the VAD guard pass.
+        tmp_path (Path): Pytest temporary directory fixture.
+    """
+    transcriber = _make_external_transcriber()
+    transcriber.file_path = make_with_cover_art(tmp_path / "cover.mp4")
+    monkeypatch.setattr(transcription, "has_speech", lambda _path: True)
+
+    with pytest.raises(AudioDecodeError):
+        transcriber.transcription()
+
+    assert transcriber.skip_reason is None
+
+
+@pytest.mark.parametrize("suffix", [".png", ".jpg", ".webp"])
+def test_external_transcriber_does_not_skip_a_still_image_as_a_silent_video(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, suffix: str
+) -> None:
+    """A still image keeps its old outcome: it reaches the normalizer and fails, never ``no_audio_stream``.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Lets the VAD guard pass, as it fails open.
+        tmp_path (Path): Pytest temporary directory fixture.
+        suffix (str): The image format's suffix.
+    """
+    transcriber = _make_external_transcriber()
+    transcriber.file_path = make_still_image(tmp_path / f"picture{suffix}")
+    monkeypatch.setattr(transcription, "has_speech", lambda _path: True)
+
+    with pytest.raises(AudioDecodeError):
+        transcriber.transcription()
+
+    assert transcriber.skip_reason is None
+
+
 def test_external_transcriber_skip_reason_is_asr_empty_transcript(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -853,3 +952,71 @@ def test_transcription_logs_a_whisper_rejection_by_class_and_status(
     logged = "\n".join(log_lines)
     assert "External Whisper API error: BadRequestError (HTTP 400)" in logged
     assert echoed not in logged
+
+
+# ---------------------------------------------------------------------------
+# The count of Whisper requests in flight
+# ---------------------------------------------------------------------------
+
+
+def _transcriber_with(fake_client: MagicMock, task: str, monkeypatch: pytest.MonkeyPatch) -> ExternalWhisperTranscriber:
+    """Build a transcriber over ``fake_client`` with the guards stubbed.
+
+    Args:
+        fake_client (MagicMock): The Whisper client.
+        task (str): ``"transcribe"`` or ``"translate"``.
+        monkeypatch (pytest.MonkeyPatch): Stubs the client, the VAD guard and the normalizer.
+
+    Returns:
+        ExternalWhisperTranscriber: A transcriber ready to run.
+    """
+    transcriber = ExternalWhisperTranscriber.__new__(ExternalWhisperTranscriber)
+    transcriber.file_path = transcription.Path(__file__)
+    transcriber.src_lang = "en"
+    transcriber.task = task
+    transcriber._model_id = "whisper-1"
+    transcriber._client = None
+    transcriber.scratch_dir = None
+    transcriber.transcription_result = None
+    transcriber.skip_reason = None
+    monkeypatch.setattr(type(transcriber), "_get_client", property(lambda self: fake_client))
+    monkeypatch.setattr(transcription, "has_speech", lambda _path: True)
+    monkeypatch.setattr(transcription, "normalize_for_transcription", _passthrough_normalize)
+    return transcriber
+
+
+@pytest.mark.parametrize("task", ["transcribe", "translate"])
+def test_a_whisper_request_is_counted_in_flight_while_it_runs_and_not_after(
+    monkeypatch: pytest.MonkeyPatch, task: str
+) -> None:
+    """The readiness probe's busy count covers the transcription and the translation request."""
+    seen: list[int] = []
+    seg = SimpleNamespace(start=0.0, end=1.0, text="Hello.", no_speech_prob=0.1)
+    response = SimpleNamespace(segments=[seg], words=[], language="en")
+
+    def create(**kwargs: Any) -> SimpleNamespace:
+        seen.append(transcription.whisper_calls_in_flight())
+        return response
+
+    fake_client = MagicMock()
+    fake_client.audio.transcriptions.create.side_effect = create
+    fake_client.audio.translations.create.side_effect = create
+    assert transcription.whisper_calls_in_flight() == 0
+
+    _transcriber_with(fake_client, task, monkeypatch).transcription()
+
+    assert seen == [1]
+    assert transcription.whisper_calls_in_flight() == 0
+
+
+def test_a_failed_whisper_request_is_no_longer_counted_in_flight(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The count falls back when the request raises, so a dead endpoint never reads as busy."""
+    fake_client = MagicMock()
+    fake_client.audio.transcriptions.create.side_effect = openai.APIConnectionError(
+        request=httpx2.Request("POST", "http://whisper.invalid/v1/audio/transcriptions")
+    )
+
+    with pytest.raises(openai.APIConnectionError):
+        _transcriber_with(fake_client, "transcribe", monkeypatch).transcription()
+
+    assert transcription.whisper_calls_in_flight() == 0

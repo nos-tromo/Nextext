@@ -2,16 +2,19 @@
 
 from __future__ import annotations
 
+import asyncio
 from importlib.metadata import PackageNotFoundError, version
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Request, Response, status
 from loguru import logger
+from starlette.concurrency import run_in_threadpool
 
 from nextext.api.schemas import (
     ConfigResponse,
     HealthResponse,
     LanguageEntry,
     LanguagesResponse,
+    ReadyResponse,
     VersionResponse,
 )
 from nextext.core.openai_cfg import InferencePipeline
@@ -34,20 +37,68 @@ def _package_version() -> str:
         return "unknown"
 
 
+def _inference_reachable() -> bool:
+    """Ask the central inference endpoint whether it answers, never raising.
+
+    Returns:
+        bool: ``InferencePipeline().get_health()``; ``False`` when the check
+            itself raised.
+    """
+    try:
+        return InferencePipeline().get_health()
+    except Exception as exc:  # defensive: never let the check make /health or /ready answer 500
+        logger.error("Inference health check raised unexpectedly: {}\n{}", error_label(exc), exception_frames(exc))
+        return False
+
+
 @router.get("/health", response_model=HealthResponse)
 def get_health() -> HealthResponse:
-    """Report API health and inference-provider reachability.
+    """Report API liveness and inference-provider reachability.
+
+    Answers ``200`` while the process lives, whatever ``inference`` says: the
+    container healthcheck and compose's ``service_healthy`` depend on it. Whether
+    Whisper transcribes is ``GET /ready``'s question.
 
     Returns:
         HealthResponse: Status payload with ``inference`` set to whether the
             configured OpenAI-compatible endpoint responds.
     """
-    try:
-        inference_ok = InferencePipeline().get_health()
-    except Exception as exc:  # pragma: no cover - defensive; never want /health to 500
-        logger.error("Inference health check raised unexpectedly: {}\n{}", error_label(exc), exception_frames(exc))
-        inference_ok = False
-    return HealthResponse(inference=inference_ok, version=_package_version())
+    return HealthResponse(inference=_inference_reachable(), version=_package_version())
+
+
+@router.get(
+    "/ready",
+    response_model=ReadyResponse,
+    responses={503: {"model": ReadyResponse, "description": "Inference or transcription is not available."}},
+)
+async def get_ready(request: Request, response: Response) -> ReadyResponse:
+    """Report whether the service can transcribe now. Unauthenticated and not audited, like /health.
+
+    ``transcription`` is a real probe of the Whisper endpoint with synthetic
+    silence (:mod:`nextext.api.readiness`), cached for 30 s and shared by
+    concurrent requests; ``inference`` is the same check ``/health`` reports.
+
+    Args:
+        request: The incoming request, for the app's readiness probe.
+        response: Set to ``503`` while either check fails.
+
+    Returns:
+        ReadyResponse: ``ready`` with both checks true, else ``unavailable``
+            (answered ``503``).
+    """
+    inference_ok, transcription_ok = await asyncio.gather(
+        run_in_threadpool(_inference_reachable),
+        request.app.state.readiness.is_ready(),
+    )
+    ready = inference_ok and transcription_ok
+    if not ready:
+        response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+    return ReadyResponse(
+        status="ready" if ready else "unavailable",
+        inference=inference_ok,
+        transcription=transcription_ok,
+        version=_package_version(),
+    )
 
 
 @router.get("/version", response_model=VersionResponse)

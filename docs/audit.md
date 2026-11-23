@@ -48,7 +48,7 @@ Not recorded, because they carry no personal data or touch none:
 
 | Endpoint or case | Why |
 |---|---|
-| `GET /api/v1/health`, `/version`, `/config`, `/languages`; `GET /metrics` | health, configuration, static mappings, aggregate counters |
+| `GET /api/v1/health`, `/ready`, `/version`, `/config`, `/languages`; `GET /metrics` | health, readiness, configuration, static mappings, aggregate counters; `/ready`'s probe sends synthetic silence, carries no user data, and is no job's inference call |
 | `GET /api/v1/whoami` | echoes the caller's own identity |
 | `GET /api/v1/jobs/events`, `GET /api/v1/jobs/{id}/events` | progress streams: stage names, progress, counts and typed codes |
 | `POST /api/v1/jobs/{id}/media-grant` answered `201` | the grant hands out no personal data; each stream it opens is recorded when it is played |
@@ -372,10 +372,17 @@ many services may call as themselves — a count, never a name or token),
 
 ## Limits
 
-- A job deleted while it runs is recorded at once; its upload is removed when
-  the pipeline step holding it returns.
-- A pipeline step still running at shutdown cannot write after the chain's
-  end: its job fails instead.
+- A job deleted while it runs is recorded at once; its pipeline stops at its
+  next check point (a stage boundary, an inference request, a step of the audio
+  or video decode), and its upload is removed then. A call already in flight —
+  one Whisper upload, one `/diarize` request — finishes first, so the upload
+  can outlive the record by that long.
+- The stage a job was in when it was deleted still ends, and its `ai_call`
+  events (the model requests it made) are written when it does, so they land in
+  the chain after the job's `job.delete` event, not before it.
+- A pipeline step still running at shutdown is cancelled, and cannot write
+  after the chain's end: its job stops at its next check point, or fails when
+  the record of the stage it is in is refused first.
 - A multipart upload is buffered by the web framework before the route sees
   it; a backend that dies during that upload leaves the partial buffer in the
   system temp directory, outside any job directory, and the startup sweep does

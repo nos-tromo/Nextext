@@ -29,6 +29,7 @@ from nextext.core.hate_speech import (
     next_window,
     render_window_prompt,
 )
+from nextext.core.inference_errors import is_transient_inference_error
 from nextext.core.ner import extract_entities
 from nextext.core.openai_cfg import InferencePipeline
 from nextext.core.outcomes import SkipReason
@@ -525,28 +526,6 @@ def _is_context_length_error(exc: Exception) -> bool:
     return any(marker in message for marker in _CONTEXT_LENGTH_ERROR_MARKERS)
 
 
-def _is_transient_inference_error(exc: Exception) -> bool:
-    """Report whether an exception is a transient inference-service failure.
-
-    Transient means the request itself was well-formed but the service could
-    not serve it right now: client-side connection failures (including
-    timeouts) and retryable server statuses (HTTP 429 and 5xx, e.g. a router
-    that cannot reach its upstream model). Configuration-shaped errors
-    (4xx such as 401/404) are not transient and must surface loudly.
-
-    Args:
-        exc (Exception): The exception raised by an inference call.
-
-    Returns:
-        bool: ``True`` when the failure is transient and safe to degrade on.
-    """
-    if isinstance(exc, openai.APIConnectionError):
-        return True
-    if isinstance(exc, openai.APIStatusError):
-        return exc.status_code == 429 or exc.status_code >= 500
-    return False
-
-
 def summarization_pipeline(
     text: str,
     inference_pipeline: InferencePipeline,
@@ -616,7 +595,7 @@ def summarization_pipeline(
             return _summarize_within_budget(text, inference_pipeline, char_budget, depth=0)
         except Exception as exc:  # overflows retry smaller; transient outages fail-soft; else re-raise
             if not _is_context_length_error(exc):
-                if _is_transient_inference_error(exc):
+                if is_transient_inference_error(exc):
                     logger.warning(
                         "Summarization request failed with a transient inference error; "
                         "returning an empty summary instead of failing the job: {}",
@@ -859,7 +838,7 @@ def hate_speech_pipeline(
                     "The inference endpoint rejected response_format; continuing without it: {}", error_label(exc)
                 )
                 continue
-            if not _is_transient_inference_error(exc):
+            if not is_transient_inference_error(exc):
                 raise
             unclassified += len(lines) - window.core_start
             logger.warning(
@@ -982,7 +961,7 @@ def frame_hate_speech_pipeline(
                     "The inference endpoint rejected response_format; continuing without it: {}", error_label(exc)
                 )
                 continue
-            if not _is_transient_inference_error(exc):
+            if not is_transient_inference_error(exc):
                 raise
             unclassified += len(captions) - position
             logger.warning(

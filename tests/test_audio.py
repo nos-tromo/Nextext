@@ -1,5 +1,6 @@
 """Tests for the audio-normalization agent (nextext.core.audio)."""
 
+import threading
 import wave
 from pathlib import Path
 from typing import cast
@@ -9,6 +10,8 @@ import numpy as np
 import pytest
 
 from nextext.core import audio
+from nextext.core.cancel import JobCancelled, bind_cancel
+from tests.media_factory import make_animated_gif, make_clip, make_still_image, make_with_cover_art
 
 
 def _write_stereo_wav(path: Path, *, seconds: float = 0.4, rate: int = 44100) -> None:
@@ -145,3 +148,77 @@ def test_normalize_writes_its_copy_into_the_scratch_dir(tmp_path: Path) -> None:
         assert flac_path.parent == scratch
         assert flac_path.exists()
     assert list(scratch.iterdir()) == []
+
+
+def test_normalize_stops_a_cancelled_job_and_leaves_no_copy(tmp_path: Path) -> None:
+    """The per-packet loop is a check point; the partial FLAC is removed on the way out.
+
+    Args:
+        tmp_path (Path): Pytest temporary directory fixture.
+    """
+    src = tmp_path / "upload.wav"
+    _write_stereo_wav(src)
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    event = threading.Event()
+    event.set()
+
+    with bind_cancel(event), pytest.raises(JobCancelled):
+        with audio.normalize_for_transcription(src, scratch):
+            pass
+
+    assert list(scratch.iterdir()) == []
+
+
+def test_video_without_audio_is_true_for_a_clip_with_pictures_only(tmp_path: Path) -> None:
+    """A clip with a video stream and no audio stream at all is the case the job skips and frames."""
+    clip = make_clip(tmp_path / "screen.mp4", seconds=2, fps=8)
+
+    assert audio.video_without_audio(clip) is True
+
+
+def test_video_without_audio_is_false_when_the_clip_has_an_audio_stream(tmp_path: Path) -> None:
+    """A clip with a (here silent) audio track reaches the normal path; the VAD guard judges its sound."""
+    clip = make_clip(tmp_path / "talk.mp4", seconds=2, fps=8, audio=True)
+
+    assert audio.video_without_audio(clip) is False
+
+
+def test_video_without_audio_is_false_for_audio_only_and_for_cover_art_only(tmp_path: Path) -> None:
+    """No video stream, or one that is only cover art, is no video: the file is left to the normalizer."""
+    wav = tmp_path / "tone.wav"
+    _write_stereo_wav(wav)
+    cover = make_with_cover_art(tmp_path / "cover.mp4")
+
+    assert audio.video_without_audio(wav) is False
+    assert audio.video_without_audio(cover) is False
+
+
+def test_video_without_audio_is_false_for_a_file_that_is_not_media_or_is_missing(tmp_path: Path) -> None:
+    """It decides only on a positive finding: any error opening the file answers no."""
+    not_media = tmp_path / "notes.bin"
+    not_media.write_bytes(b"\x00\x01\x02not media")
+
+    assert audio.video_without_audio(not_media) is False
+    assert audio.video_without_audio(Path(__file__)) is False
+    assert audio.video_without_audio(tmp_path / "missing.mp4") is False
+
+
+@pytest.mark.parametrize("suffix", [".png", ".jpg", ".webp"])
+def test_video_without_audio_is_false_for_a_still_image(tmp_path: Path, suffix: str) -> None:
+    """PyAV shows a still image as a one-frame video, but an image demuxer opened it: it is no video.
+
+    Args:
+        tmp_path (Path): Pytest temporary directory fixture.
+        suffix (str): The image format's suffix.
+    """
+    picture = make_still_image(tmp_path / f"picture{suffix}")
+
+    assert audio.video_without_audio(picture) is False
+
+
+def test_video_without_audio_is_true_for_an_animated_gif(tmp_path: Path) -> None:
+    """An animated GIF is opened by the ``gif`` demuxer, not an image one, so it counts as a silent video."""
+    animation = make_animated_gif(tmp_path / "loop.gif", frames=4)
+
+    assert audio.video_without_audio(animation) is True

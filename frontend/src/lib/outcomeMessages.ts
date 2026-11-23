@@ -17,16 +17,19 @@ const JOB_SKIP_KEYS: Record<SkipReason, keyof Strings> = {
   vad_no_speech: 'jobs.skipped_vad_no_speech',
   asr_empty_transcript: 'jobs.skipped_asr_empty',
   asr_all_segments_filtered: 'jobs.skipped_asr_filtered',
+  no_audio_stream: 'jobs.skipped_no_audio',
 }
 
 const RESULT_SKIP_KEYS: Record<SkipReason, keyof Strings> = {
   vad_no_speech: 'results.skipped_vad_no_speech',
   asr_empty_transcript: 'results.skipped_asr_empty',
   asr_all_segments_filtered: 'results.skipped_asr_filtered',
+  no_audio_stream: 'results.skipped_no_audio',
 }
 
 const FAILURE_KEYS: Record<FailureCode, keyof Strings> = {
   undecodable_media: 'jobs.error_undecodable',
+  inference_unavailable: 'jobs.error_inference_unavailable',
   internal: 'jobs.unknown_error',
 }
 

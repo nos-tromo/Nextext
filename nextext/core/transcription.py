@@ -6,6 +6,7 @@ diarization is handled separately by the pipeline (see
 :mod:`nextext.core.diarization`), not by this module.
 """
 
+import threading
 from datetime import timedelta
 from pathlib import Path as Path  # re-exported for tests that monkeypatch nextext.core.transcription.Path
 from typing import Any
@@ -14,11 +15,11 @@ import pandas as pd
 from loguru import logger
 from openai import APIStatusError, OpenAI
 
-from nextext.core.audio import normalize_for_transcription
+from nextext.core.audio import normalize_for_transcription, video_without_audio
 from nextext.core.inference_trace import correlation_headers, record_inference, reply_usage
 from nextext.core.outcomes import SkipReason
 from nextext.core.vad import has_speech
-from nextext.utils.env_cfg import load_inference_env, load_whisper_env
+from nextext.utils.env_cfg import WhisperClientConfig, load_inference_env, load_whisper_env
 from nextext.utils.log_cfg import error_label
 from nextext.utils.mappings_loader import load_mappings
 
@@ -29,6 +30,78 @@ OPENAI_WHISPER_MAX_UPLOAD_BYTES: int = 25 * 1024 * 1024
 # ``avg_logprob``, which lets confident hallucinations on silent audio slip
 # through.  Filtering on ``no_speech_prob`` alone catches them.
 NO_SPEECH_THRESHOLD: float = 0.6
+
+
+class _WhisperCalls:
+    """A thread-safe count of this process's Whisper requests in flight.
+
+    Entered around each transcription or translation request, so the readiness
+    probe (:mod:`nextext.api.readiness`) can tell a Whisper that is busy with a
+    job's upload from one that is down. The count is the process's own: a
+    second Nextext, or any other caller of the same endpoint, is not seen.
+    """
+
+    def __init__(self) -> None:
+        """Start with nothing in flight."""
+        self._lock = threading.Lock()
+        self._count = 0
+
+    def __enter__(self) -> None:
+        """Count one more request in flight."""
+        with self._lock:
+            self._count += 1
+
+    def __exit__(self, *_exc: object) -> None:
+        """Count one fewer, whether the request answered or raised."""
+        with self._lock:
+            self._count -= 1
+
+    @property
+    def in_flight(self) -> int:
+        """Return how many requests are in flight now.
+
+        Returns:
+            int: The count, ``0`` when Whisper is idle as far as this process knows.
+        """
+        with self._lock:
+            return self._count
+
+
+#: Wrap a Whisper request: ``with whisper_call: client.audio...create(...)``.
+whisper_call = _WhisperCalls()
+
+
+def whisper_calls_in_flight() -> int:
+    """Return how many Whisper requests this process has in flight.
+
+    Returns:
+        int: The count from :data:`whisper_call`.
+    """
+    return whisper_call.in_flight
+
+
+def build_whisper_client(cfg: WhisperClientConfig, **options: Any) -> OpenAI:
+    """Build the OpenAI-compatible client for the Whisper endpoint.
+
+    The one place the endpoint's base URL and key become a client, so the
+    transcriber and the readiness probe (:mod:`nextext.api.readiness`) always
+    reach the same endpoint the same way.
+
+    Args:
+        cfg (WhisperClientConfig): The endpoint, key and model from
+            :func:`nextext.utils.env_cfg.load_whisper_env`. An empty base URL
+            leaves the SDK's built-in default.
+        **options: Further ``OpenAI`` constructor options (``timeout``,
+            ``max_retries``).
+
+    Returns:
+        OpenAI: A new client; the caller owns it.
+    """
+    client_kwargs: dict[str, Any] = {"api_key": cfg.api_key, **options}
+    base_url = cfg.api_base.rstrip("/")
+    if base_url:
+        client_kwargs["base_url"] = base_url
+    return OpenAI(**client_kwargs)
 
 
 def _normalize_whisper_language(value: str | None) -> str | None:
@@ -269,12 +342,7 @@ class ExternalWhisperTranscriber:
             Any: The cached OpenAI client instance.
         """
         if self._client is None:
-            cfg = load_whisper_env()
-            client_kwargs: dict[str, Any] = {"api_key": cfg.api_key}
-            base_url = cfg.api_base.rstrip("/")
-            if base_url:
-                client_kwargs["base_url"] = base_url
-            self._client = OpenAI(**client_kwargs)
+            self._client = build_whisper_client(load_whisper_env())
         return self._client
 
     def transcription(self) -> None:
@@ -290,6 +358,10 @@ class ExternalWhisperTranscriber:
         2. **no_speech_prob post-filter** — segments whose
            ``no_speech_prob`` exceeds :data:`NO_SPEECH_THRESHOLD` are
            dropped from the returned payload.
+
+        A video with no audio track at all is skipped before either guard
+        (``skip_reason`` ``no_audio_stream``): there is nothing to screen or
+        transcribe, and the keyframe stage still runs over its pictures.
 
         Before the request the upload is re-encoded to 16 kHz mono FLAC
         (see :func:`nextext.core.audio.normalize_for_transcription`) so
@@ -307,6 +379,11 @@ class ExternalWhisperTranscriber:
         set (:mod:`nextext.core.inference_trace`).
         """
         self.skip_reason = None
+        if video_without_audio(self.file_path):
+            logger.info("The upload is a video with no audio track; skipping transcription and the /vad request.")
+            self.transcription_result = {"segments": [], "words": []}
+            self.skip_reason = "no_audio_stream"
+            return
         if not has_speech(self.file_path):
             logger.warning(
                 "VAD service reported no speech in {}; skipping external transcription request.",
@@ -351,7 +428,8 @@ class ExternalWhisperTranscriber:
                         }
                         if headers:
                             translate_kwargs["extra_headers"] = headers
-                        response = client.audio.translations.create(**translate_kwargs)
+                        with whisper_call:
+                            response = client.audio.translations.create(**translate_kwargs)
                     else:
                         kwargs: dict[str, Any] = {
                             "model": self._model_id,
@@ -363,7 +441,8 @@ class ExternalWhisperTranscriber:
                             kwargs["language"] = self.src_lang
                         if headers:
                             kwargs["extra_headers"] = headers
-                        response = client.audio.transcriptions.create(**kwargs)
+                        with whisper_call:
+                            response = client.audio.transcriptions.create(**kwargs)
                 except APIStatusError as exc:
                     record_inference("asr", self._model_id, ok=False)
                     logger.error("External Whisper API error: {}", error_label(exc))

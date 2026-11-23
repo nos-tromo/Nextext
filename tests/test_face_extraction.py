@@ -8,6 +8,7 @@ planned positions. No real face, photo or video is involved.
 from __future__ import annotations
 
 import io
+import threading
 from collections.abc import Callable, Iterator, Sequence
 from pathlib import Path
 from typing import Any, Literal
@@ -18,6 +19,7 @@ from PIL import Image
 
 from nextext import pipeline
 from nextext.core import face_extraction, faces
+from nextext.core.cancel import JobCancelled, bind_cancel
 from nextext.core.face_extraction import FacesResult, extract_faces
 from nextext.core.face_tracks import Box, frontality
 from nextext.core.faces import DetectedFace, GroupTrack
@@ -816,3 +818,22 @@ def test_track_cap_at_the_end_truncates(monkeypatch: pytest.MonkeyPatch) -> None
 
     assert len(result.entries) == 500
     assert result.truncated is True
+
+
+def test_a_cancelled_job_stops_the_batch_loop(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Each sampled frame is a check point: no further frame is taken, and no batch is sent past it."""
+    fakes = _Fakes([DARK] * 20, [[] for _ in range(20)]).install(monkeypatch)
+    event = threading.Event()
+    real_detect = fakes.detect_faces
+
+    def detect_then_cancel(images: Sequence[bytes], **kwargs: Any) -> list[list[faces.DetectedFace] | None] | None:
+        event.set()  # the owner deletes the job while the first batch is at the service
+        return real_detect(images, **kwargs)
+
+    monkeypatch.setattr(face_extraction, "detect_faces", detect_then_cancel)
+
+    with bind_cancel(event), pytest.raises(JobCancelled):
+        extract_faces(Path("synthetic.mp4"), mode="detect", interval_s=1.0, max_frames=600)
+
+    assert len(fakes.batches) == 1
+    assert fakes.yielded == 9  # the batch of eight, and the frame at which the loop stopped

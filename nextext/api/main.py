@@ -18,6 +18,7 @@ from nextext.api import cli_files
 from nextext.api.errors import install_error_handlers
 from nextext.api.identity import check_principal_config
 from nextext.api.jobs import JobManager, JobState, PushEvent
+from nextext.api.readiness import TranscriptionReadiness
 from nextext.api.routes import router as api_router
 from nextext.audit import build_emitter, emit_config_event, service_version
 from nextext.cli_clean import legacy_inputs
@@ -170,7 +171,14 @@ def _lifespan(
                     "faces": faces_mode,
                 },
             )
-            job_manager = JobManager(pipeline_runner=pipeline_runner, emitter=emitter, faces_mode=faces_mode)
+            job_manager = JobManager(
+                pipeline_runner=pipeline_runner,
+                emitter=emitter,
+                faces_mode=faces_mode,
+                # A job that found inference down says the cached /ready may be
+                # wrong; resolved at call time, so a replaced probe is reached.
+                on_inference_unavailable=lambda: app.state.readiness.invalidate(),
+            )
             await job_manager.start()
             cli_sweep: asyncio.Task[None] | None = None
             try:
@@ -235,6 +243,9 @@ def create_app(
         lifespan=_lifespan(audit_emitter_factory, pipeline_runner),
     )
     install_error_handlers(application)
+    # ``GET /ready``'s cached probe of the Whisper endpoint; per app, so a test
+    # that builds an app gets a fresh one.
+    application.state.readiness = TranscriptionReadiness()
     application.include_router(api_router)
     # Aggregate request/latency counters only — no transcript or user data is
     # ever recorded in a metric label or value. Unauthenticated by design:

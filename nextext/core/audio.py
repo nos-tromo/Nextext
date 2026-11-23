@@ -30,7 +30,10 @@ import av
 from av.error import FFmpegError
 from loguru import logger
 
-__all__ = ["AudioDecodeError", "normalize_for_transcription"]
+from nextext.core.cancel import check
+from nextext.core.keyframes import video_stream
+
+__all__ = ["AudioDecodeError", "normalize_for_transcription", "video_without_audio"]
 
 TARGET_SAMPLE_RATE = 16000
 TARGET_LAYOUT = "mono"
@@ -39,6 +42,51 @@ TARGET_SAMPLE_FORMAT = "s16"
 
 class AudioDecodeError(ValueError):
     """Raised when an upload cannot be decoded into Whisper-ready audio."""
+
+
+def _is_still_image(container: av.container.InputContainer) -> bool:
+    """Tell whether a container was opened by an image demuxer (a PNG, JPEG, WebP, ...).
+
+    PyAV presents a still image as a one-frame video stream; the demuxer that
+    opened it gives it away: ``image2``/``image2pipe`` or one of the per-format
+    ``*_pipe`` demuxers (``png_pipe``, ``jpeg_pipe``, ``webp_pipe``, ...). An
+    animated GIF is opened by the ``gif`` demuxer and counts as a video.
+
+    Args:
+        container (av.container.InputContainer): The opened file.
+
+    Returns:
+        bool: ``True`` for a still image.
+    """
+    names = container.format.name.split(",")
+    return any(name.startswith("image2") or name.endswith("_pipe") for name in names)
+
+
+def video_without_audio(path: Path) -> bool:
+    """Tell whether a file is a video that has no audio track at all.
+
+    A screen recording, say, has pictures and nothing to transcribe. It is
+    not undecodable: the job skips its transcript and still yields its frames.
+    The answer is yes only on a positive finding -- the file opens, holds no
+    audio stream, and holds a video stream beyond cover art -- so a file that
+    will not open, one with no streams, and an audio file with only cover art
+    all answer no and are left to :func:`normalize_for_transcription`. So is a
+    still image (opened by an image demuxer), which is no video at all.
+
+    Args:
+        path (Path): The upload.
+
+    Returns:
+        bool: ``True`` for a video with no audio stream; ``False`` for anything
+        else, including any error opening or probing the file.
+    """
+    try:
+        with av.open(str(path)) as container:
+            return (
+                not container.streams.audio and video_stream(container) is not None and not _is_still_image(container)
+            )
+    except Exception:
+        return False
 
 
 def _transcode_to_flac(src: Path, dst: Path) -> None:
@@ -84,6 +132,7 @@ def _transcode_to_flac(src: Path, dst: Path) -> None:
 
             packets = in_container.demux(in_stream)
             while True:
+                check()
                 try:
                     packet = next(packets)
                 except StopIteration:
