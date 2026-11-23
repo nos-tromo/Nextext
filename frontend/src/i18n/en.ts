@@ -180,6 +180,7 @@ export const en = {
   'jobs.skipped_asr_filtered': 'Skipped — only non-speech audio was detected',
   'jobs.skipped_no_audio': 'Skipped — the file has no audio track',
   'jobs.error_undecodable': 'File could not be decoded — is it a valid audio or video file?',
+  'jobs.error_inference_unavailable': 'The transcription service was not available. Please try again later.',
   'jobs.waiting': 'Waiting…',
   'jobs.done': 'Done',
   'jobs.stage_progress': '{stage} ({pct}%)',

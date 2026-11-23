@@ -29,6 +29,7 @@ const RESULT_SKIP_KEYS: Record<SkipReason, keyof Strings> = {
 
 const FAILURE_KEYS: Record<FailureCode, keyof Strings> = {
   undecodable_media: 'jobs.error_undecodable',
+  inference_unavailable: 'jobs.error_inference_unavailable',
   internal: 'jobs.unknown_error',
 }
 

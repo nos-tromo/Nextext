@@ -527,12 +527,15 @@ typed codes only — never a filename, owner id, or transcript text:
 |--------|--------|----------------|
 | `nextext_jobs_total` | `outcome` = `completed` \| `skipped` \| `failed` \| `cancelled` | Every job that reached a terminal state; `cancelled` is a job deleted while it ran (or cut short by shutdown), stopped at its next check point. |
 | `nextext_jobs_skipped_total` | `reason` = `vad_no_speech` \| `asr_empty_transcript` \| `asr_all_segments_filtered` \| `no_audio_stream` \| `unknown` | Jobs that completed without a transcript. |
-| `nextext_jobs_failed_total` | `code` = `undecodable_media` \| `internal` | Failed jobs, by typed cause. |
+| `nextext_jobs_failed_total` | `code` = `undecodable_media` \| `inference_unavailable` \| `internal` | Failed jobs, by typed cause. |
 
 A rising `nextext_jobs_skipped_total{reason="vad_no_speech"}` usually means the
 `/vad` endpoint is over-reporting silence; a rising
 `nextext_jobs_failed_total{code="undecodable_media"}` means users are uploading
-containers PyAV cannot decode. Both are visible without reading logs.
+containers PyAV cannot decode, and a rising
+`nextext_jobs_failed_total{code="inference_unavailable"}` means jobs are finding
+an inference endpoint down or overloaded (a connection failure, HTTP 429 or
+5xx) — `GET /api/v1/ready` says which one. Each is visible without reading logs.
 
 ## Logs
 

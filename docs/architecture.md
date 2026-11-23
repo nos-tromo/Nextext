@@ -203,8 +203,11 @@ result, not a failure — and carries `skipped: true` with a typed
 `skip_reason_code` (`vad_no_speech`, `asr_empty_transcript`,
 `asr_all_segments_filtered`, `no_audio_stream`) on the snapshot, the job list, and the
 `job_completed` event. Failures carry a typed `error_code`
-(`undecodable_media`, `internal`) beside the static `"Job failed."` message.
-The SPA localizes these codes; the backend logs one warning per outcome and
+(`undecodable_media`; `inference_unavailable`, when a model call met a connection
+failure or HTTP 429/5xx, whether raised directly or wrapped by a stage; else
+`internal`) beside the static `"Job failed."` message.
+The SPA localizes these codes; the backend logs one warning per outcome (an
+internal failure is an error with its traceback frames) and
 counts them in `/metrics` (see
 [configuration.md](configuration.md#metrics)).
 

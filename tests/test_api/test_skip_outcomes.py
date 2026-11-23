@@ -10,18 +10,22 @@ human-readable detail stays in the logs.
 
 from __future__ import annotations
 
+import contextlib
 import io
 import json
 import time
 import zipfile
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
 
+import httpx2
+import openai
 import pandas as pd
 import pytest
 from fastapi.testclient import TestClient
 from loguru import logger
+from prometheus_client import REGISTRY
 
 from nextext.api import jobs as jobs_module
 from nextext.api import main as main_module
@@ -436,6 +440,213 @@ def test_metrics_count_failed_jobs_by_code(
 
     assert 'nextext_jobs_total{outcome="failed"}' in body
     assert 'nextext_jobs_failed_total{code="undecodable_media"}' in body
+
+
+# ---------------------------------------------------------------------------
+# Typed failure code for an inference outage
+# ---------------------------------------------------------------------------
+
+ECHOED = "invented upstream detail 0427"
+_INFERENCE_REQUEST = httpx2.Request("POST", "http://router.invalid/v1/audio/transcriptions")
+
+
+def _status_error(status_code: int) -> openai.APIStatusError:
+    """Build the SDK error for an HTTP error status whose message echoes a body.
+
+    Args:
+        status_code (int): The response status.
+
+    Returns:
+        openai.APIStatusError: A status error quoting ``ECHOED``.
+    """
+    response = httpx2.Response(status_code, request=_INFERENCE_REQUEST, text=f"rejected: {ECHOED}")
+    return openai.APIStatusError(f"Error code: {status_code} - {ECHOED}", response=response, body={"error": ECHOED})
+
+
+def _connection_refused_runner(state: JobState, push: PushEvent) -> dict[str, Any]:
+    """Fail as a Whisper call does when the endpoint cannot be reached.
+
+    Args:
+        state (JobState): The job being processed.
+        push (PushEvent): Event sink for SSE delivery (unused).
+
+    Raises:
+        openai.APIConnectionError: Always.
+    """
+    raise openai.APIConnectionError(request=_INFERENCE_REQUEST)
+
+
+def _wrapped_503_runner(state: JobState, push: PushEvent) -> dict[str, Any]:
+    """Fail as a stage does that wraps the SDK's 503 in an error of its own.
+
+    Args:
+        state (JobState): The job being processed.
+        push (PushEvent): Event sink for SSE delivery (unused).
+
+    Raises:
+        RuntimeError: Always, ``from`` a 503 ``APIStatusError``.
+    """
+    try:
+        raise _status_error(503)
+    except openai.APIStatusError as exc:
+        raise RuntimeError("the stage failed") from exc
+
+
+def _handled_503_runner(state: JobState, push: PushEvent) -> dict[str, Any]:
+    """Fail with an error raised while handling a 503, with no explicit cause.
+
+    Args:
+        state (JobState): The job being processed.
+        push (PushEvent): Event sink for SSE delivery (unused).
+
+    Raises:
+        RuntimeError: Always; the 503 is its ``__context__``.
+    """
+    try:
+        raise _status_error(503)
+    except openai.APIStatusError:
+        raise RuntimeError("the stage failed")  # noqa: B904 - the implicit context is the point
+
+
+def _unrelated_runner(state: JobState, push: PushEvent) -> dict[str, Any]:
+    """Fail on a 503 that the raised error declares is not its cause (``from None``).
+
+    Args:
+        state (JobState): The job being processed.
+        push (PushEvent): Event sink for SSE delivery (unused).
+
+    Raises:
+        RuntimeError: Always.
+    """
+    try:
+        raise _status_error(503)
+    except openai.APIStatusError:
+        raise RuntimeError("the stage failed") from None
+
+
+def _raising(exc_factory: Callable[[], BaseException]) -> Callable[[JobState, PushEvent], dict[str, Any]]:
+    """Make a pipeline stand-in that raises what ``exc_factory`` builds.
+
+    Args:
+        exc_factory (Callable[[], BaseException]): Builds the failure.
+
+    Returns:
+        Callable[[JobState, PushEvent], dict[str, Any]]: The stand-in.
+    """
+
+    def runner(state: JobState, push: PushEvent) -> dict[str, Any]:
+        raise exc_factory()
+
+    return runner
+
+
+@contextlib.contextmanager
+def _client_running(runner: Any) -> Iterator[tuple[TestClient, list[str]]]:
+    """Run ``with`` a client whose job manager uses ``runner``, plus captured logs.
+
+    Args:
+        runner (Any): Pipeline stand-in invoked by the job worker.
+
+    Yields:
+        tuple[TestClient, list[str]]: The HTTP client and log records.
+    """
+    yield from _app_client_with_runner(runner)
+
+
+def _failed_count(code: str) -> float:
+    """Read ``nextext_jobs_failed_total{code=...}`` from the default registry.
+
+    Args:
+        code (str): The ``code`` label value.
+
+    Returns:
+        float: The counter's value, ``0.0`` while the series does not exist.
+    """
+    return REGISTRY.get_sample_value("nextext_jobs_failed_total", {"code": code}) or 0.0
+
+
+_FAILURE_CASES = [
+    pytest.param(_connection_refused_runner, "inference_unavailable", id="connection-error"),
+    pytest.param(
+        _raising(lambda: openai.APITimeoutError(request=_INFERENCE_REQUEST)), "inference_unavailable", id="timeout"
+    ),
+    pytest.param(_raising(lambda: _status_error(503)), "inference_unavailable", id="http-503"),
+    pytest.param(_raising(lambda: _status_error(429)), "inference_unavailable", id="http-429"),
+    pytest.param(_wrapped_503_runner, "inference_unavailable", id="wrapped-503-cause"),
+    pytest.param(_handled_503_runner, "inference_unavailable", id="wrapped-503-context"),
+    pytest.param(
+        _raising(lambda: ConnectionError("The configured inference provider is not reachable.")),
+        "inference_unavailable",
+        id="unreachable-provider",
+    ),
+    pytest.param(_raising(lambda: _status_error(400)), "internal", id="http-400"),
+    pytest.param(_raising(lambda: _status_error(401)), "internal", id="http-401"),
+    pytest.param(_raising(lambda: RuntimeError(f"bug {ECHOED}")), "internal", id="runtime-error"),
+    pytest.param(_unrelated_runner, "internal", id="suppressed-context"),
+    pytest.param(_decode_failure_runner, "undecodable_media", id="undecodable"),
+]
+
+
+@pytest.mark.parametrize(("runner", "expected_code"), _FAILURE_CASES)
+def test_a_failed_job_carries_the_typed_cause_and_counts_it(runner: Any, expected_code: str) -> None:
+    """Inference down is ``inference_unavailable``, a decode failure ``undecodable_media``, the rest ``internal``.
+
+    Args:
+        runner (Any): The failing pipeline stand-in.
+        expected_code (str): The code the job should fail with.
+    """
+    before = _failed_count(expected_code)
+    with _client_running(runner) as (client, _records):
+        job_id = _post_job(client)
+        snapshot = _wait_for_status(client, job_id, "failed")
+        item = next(job for job in client.get("/api/v1/jobs").json()["jobs"] if job["job_id"] == job_id)
+        body = client.get("/metrics").text
+
+    assert snapshot["error"] == "Job failed."
+    assert snapshot["error_code"] == expected_code
+    assert item["error_code"] == expected_code
+    assert _failed_count(expected_code) == before + 1
+    assert f'nextext_jobs_failed_total{{code="{expected_code}"}}' in body
+    assert ECHOED not in json.dumps(snapshot)
+
+
+def test_an_inference_outage_is_logged_as_a_warning_by_class_and_status_without_frames() -> None:
+    """The outage's warning names the wrapped error's class and status, not its message or a traceback."""
+    with _client_running(_wrapped_503_runner) as (client, records):
+        job_id = _post_job(client)
+        _wait_for_status(client, job_id, "failed")
+
+    logged = "\n".join(records)
+    assert "failed: inference was not available (APIStatusError (HTTP 503))" in logged
+    assert ECHOED not in logged
+    assert "Traceback" not in logged and "_wrapped_503_runner" not in logged
+
+
+def test_an_internal_failure_still_logs_its_frames_but_not_its_message() -> None:
+    """A failure that is not an outage keeps the error-level log with frames only."""
+    with _client_running(_raising(lambda: RuntimeError(f"bug {ECHOED}"))) as (client, records):
+        job_id = _post_job(client)
+        _wait_for_status(client, job_id, "failed")
+
+    logged = "\n".join(records)
+    assert "failed: RuntimeError" in logged
+    assert ECHOED not in logged
+    assert "inference was not available" not in logged
+
+
+def test_the_failed_event_carries_the_inference_code() -> None:
+    """The ``job_failed`` frame names ``inference_unavailable``."""
+    with _client_running(_connection_refused_runner) as (client, _records):
+        job_id = _post_job(client)
+        _wait_for_status(client, job_id, "failed")
+        with client.stream("GET", f"/api/v1/jobs/{job_id}/events") as events:
+            body = ""
+            for chunk in events.iter_text():
+                body += chunk
+                if "job_failed" in body:
+                    break
+
+    assert '"error_code": "inference_unavailable"' in body
 
 
 # ---------------------------------------------------------------------------

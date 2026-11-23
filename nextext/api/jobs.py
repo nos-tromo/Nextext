@@ -80,6 +80,7 @@ from nextext.core.audio import AudioDecodeError
 from nextext.core.cancel import JobCancelled, bind_cancel, check
 from nextext.core.docint_transcript import parse_hhmmss_to_seconds
 from nextext.core.face_extraction import FacesResult
+from nextext.core.inference_errors import find_inference_outage
 from nextext.core.inference_trace import cache_scope, correlate
 from nextext.core.keyframes import extract_keyframe_samples
 from nextext.core.outcomes import FailureCode, SkipReason, skip_reason_text
@@ -1605,13 +1606,20 @@ class JobManager:
                     },
                 )
             except Exception as exc:
-                # An undecodable upload is the user's to fix, so it earns a
-                # typed code and a warning; everything else is ours and keeps
-                # its traceback frames, but not its message, which can quote
-                # an upstream reply. Neither leaks detail past ``error``.
+                # An undecodable upload is the user's to fix and an inference
+                # outage a later try may not meet, so each earns a typed code
+                # and a warning; everything else is ours and keeps its
+                # traceback frames, but not its message, which can quote an
+                # upstream reply. None of it leaks detail past ``error``.
+                outage = find_inference_outage(exc)
                 if isinstance(exc, AudioDecodeError):
                     failure_code: FailureCode = "undecodable_media"
                     logger.warning("Job {} failed: media could not be decoded ({}).", state.job_id, exc)
+                elif outage is not None:
+                    failure_code = "inference_unavailable"
+                    logger.warning(
+                        "Job {} failed: inference was not available ({}).", state.job_id, error_label(outage)
+                    )
                 else:
                     failure_code = "internal"
                     logger.error("Job {} failed: {}\n{}", state.job_id, error_label(exc), exception_frames(exc))

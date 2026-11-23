@@ -165,4 +165,10 @@ describe('JobCard skipped message', () => {
     renderCard(<JobCard job={{ ...mkJob('j1', 'failed'), error_code: 'undecodable_media' }} />)
     expect(screen.getByText(/could not be decoded/)).toBeInTheDocument()
   })
+
+  it('says the transcription service was unavailable, not an unknown error', () => {
+    renderCard(<JobCard job={{ ...mkJob('j1', 'failed'), error_code: 'inference_unavailable' }} />)
+    expect(screen.getByText('The transcription service was not available. Please try again later.')).toBeInTheDocument()
+    expect(screen.queryByText('Unknown error')).not.toBeInTheDocument()
+  })
 })

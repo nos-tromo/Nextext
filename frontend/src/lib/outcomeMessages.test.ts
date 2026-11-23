@@ -32,6 +32,10 @@ describe('failureMessageKey', () => {
     expect(failureMessageKey('undecodable_media', false)).toBe('jobs.error_undecodable')
   })
 
+  it('says the service was unavailable for an inference outage, which a later try may not meet', () => {
+    expect(failureMessageKey('inference_unavailable', false)).toBe('jobs.error_inference_unavailable')
+  })
+
   it('keeps the generic message for internal failures and unknown codes', () => {
     expect(failureMessageKey('internal', false)).toBe('jobs.unknown_error')
     expect(failureMessageKey(null, false)).toBe('jobs.unknown_error')
@@ -39,6 +43,7 @@ describe('failureMessageKey', () => {
 
   it('prefers the interrupted message, which describes the job not the cause', () => {
     expect(failureMessageKey('undecodable_media', true)).toBe('jobs.interrupted')
+    expect(failureMessageKey('inference_unavailable', true)).toBe('jobs.interrupted')
     expect(failureMessageKey(null, true)).toBe('jobs.interrupted')
   })
 })
@@ -57,6 +62,7 @@ describe('message catalog', () => {
       resultSkipMessageKey('no_audio_stream'),
       resultSkipMessageKey(null),
       failureMessageKey('undecodable_media', false),
+      failureMessageKey('inference_unavailable', false),
       failureMessageKey('internal', false),
       failureMessageKey(null, true),
     ]

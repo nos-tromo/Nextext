@@ -2,7 +2,7 @@
 
 A run can end without a transcript for four distinct reasons, and a job can
 fail for reasons the user can act on (an undecodable upload) or cannot (an
-inference outage). Both used to collapse into one string — a single hardcoded
+inference outage, a bug). Both used to collapse into one string — a single hardcoded
 ``"No speech detected in audio file."`` and a generic ``"Job failed."`` — so
 neither the user nor the logs could tell the cases apart.
 
@@ -23,10 +23,14 @@ SkipReason = Literal[
     "no_audio_stream",
 ]
 
-#: Why a job failed. ``internal`` covers everything the user cannot act on
-#: (inference outage, bug); its detail stays in the logs, never in a response.
+#: Why a job failed. ``undecodable_media`` is the upload's to fix and
+#: ``inference_unavailable`` an outage of the inference services (a connection
+#: failure, HTTP 429 or 5xx), which a later try may not meet; ``internal`` is
+#: everything else the user cannot act on (a bug, a rejected request). Detail
+#: stays in the logs, never in a response.
 FailureCode = Literal[
     "undecodable_media",
+    "inference_unavailable",
     "internal",
 ]
 
