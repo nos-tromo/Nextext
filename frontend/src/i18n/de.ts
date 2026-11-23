@@ -183,7 +183,7 @@ export const de: Strings = {
   'jobs.skipped_no_audio': 'Übersprungen — die Datei enthält keine Tonspur',
   'jobs.error_undecodable': 'Datei konnte nicht dekodiert werden — ist es eine gültige Audio- oder Videodatei?',
   'jobs.error_inference_unavailable':
-    'Der Transkriptionsdienst war nicht erreichbar. Bitte versuchen Sie es später erneut.',
+    'Ein Modelldienst (Inferenz) war nicht erreichbar. Bitte versuchen Sie es später erneut.',
   'jobs.waiting': 'Wartet…',
   'jobs.done': 'Fertig',
   'jobs.stage_progress': '{stage} ({pct}%)',

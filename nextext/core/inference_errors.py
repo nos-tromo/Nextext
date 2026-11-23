@@ -8,6 +8,17 @@ answer lives here, once.
 import openai
 
 
+class InferenceUnreachable(ConnectionError):
+    """The configured inference provider did not answer its health check.
+
+    Raised by the job worker at the start of a stage that needs the chat
+    provider. It is a :class:`ConnectionError` for callers that catch that, but
+    only this class counts as an outage in :func:`find_inference_outage`: the
+    builtin family also holds a ``BrokenPipeError`` from a closed output
+    stream, which is the audit chain's failure and no inference outage.
+    """
+
+
 def is_transient_inference_error(exc: BaseException) -> bool:
     """Report whether an exception is a transient inference-service failure.
 
@@ -36,9 +47,10 @@ def find_inference_outage(exc: BaseException) -> BaseException | None:
     A stage often wraps the SDK's error in its own (``raise RuntimeError(...)
     from exc``), so the exception, its ``__cause__`` and its ``__context__``
     (unless ``raise ... from None`` suppressed it) are all asked. An outage is
-    a transient inference failure (:func:`is_transient_inference_error`) or a
-    :class:`ConnectionError`, which is what the job worker raises when the
-    configured provider is unreachable at the start of a stage.
+    a transient inference failure (:func:`is_transient_inference_error`) or
+    :class:`InferenceUnreachable`, which is what the job worker raises when the
+    configured provider is unreachable at the start of a stage. Any other
+    :class:`ConnectionError` is not one.
 
     Args:
         exc (BaseException): The failure to classify.
@@ -56,7 +68,7 @@ def find_inference_outage(exc: BaseException) -> BaseException | None:
         if id(current) in seen:
             continue
         seen.add(id(current))
-        if isinstance(current, ConnectionError) or is_transient_inference_error(current):
+        if isinstance(current, InferenceUnreachable) or is_transient_inference_error(current):
             return current
         if current.__cause__ is not None:
             pending.append(current.__cause__)

@@ -34,7 +34,10 @@ from nextext.api.main import create_app
 from nextext.api.schemas import JobOptions, JobStatus
 from nextext.core import transcription as transcription_module
 from nextext.core.audio import AudioDecodeError
+from nextext.core.inference_errors import InferenceUnreachable
+from nextext.core.openai_cfg import InferencePipeline
 from nextext.pipeline import TranscriptionOutcome
+from nextext.utils.audit_event import AuditWriteError
 from tests.audit_helpers import AuditCapture, job_audit
 from tests.media_factory import make_clip, make_with_cover_art
 
@@ -508,6 +511,25 @@ def _handled_503_runner(state: JobState, push: PushEvent) -> dict[str, Any]:
         raise RuntimeError("the stage failed")  # noqa: B904 - the implicit context is the point
 
 
+def _audit_write_failure_runner(state: JobState, push: PushEvent) -> dict[str, Any]:
+    """Fail as the audit chain does when the container's stdout is a broken pipe.
+
+    The vendored emitter wraps the stream's ``OSError`` in ``AuditWriteError``;
+    ``BrokenPipeError`` is a ``ConnectionError``, but no inference outage.
+
+    Args:
+        state (JobState): The job being processed.
+        push (PushEvent): Event sink for SSE delivery (unused).
+
+    Raises:
+        AuditWriteError: Always, ``from`` a ``BrokenPipeError``.
+    """
+    try:
+        raise BrokenPipeError
+    except BrokenPipeError as exc:
+        raise AuditWriteError("audit event could not be written") from exc
+
+
 def _unrelated_runner(state: JobState, push: PushEvent) -> dict[str, Any]:
     """Fail on a 503 that the raised error declares is not its cause (``from None``).
 
@@ -575,10 +597,13 @@ _FAILURE_CASES = [
     pytest.param(_wrapped_503_runner, "inference_unavailable", id="wrapped-503-cause"),
     pytest.param(_handled_503_runner, "inference_unavailable", id="wrapped-503-context"),
     pytest.param(
-        _raising(lambda: ConnectionError("The configured inference provider is not reachable.")),
+        _raising(lambda: InferenceUnreachable("The configured inference provider is not reachable.")),
         "inference_unavailable",
         id="unreachable-provider",
     ),
+    pytest.param(_raising(lambda: ConnectionError("not an inference call")), "internal", id="plain-connection-error"),
+    pytest.param(_raising(BrokenPipeError), "internal", id="broken-pipe"),
+    pytest.param(_audit_write_failure_runner, "internal", id="audit-write-failure"),
     pytest.param(_raising(lambda: _status_error(400)), "internal", id="http-400"),
     pytest.param(_raising(lambda: _status_error(401)), "internal", id="http-401"),
     pytest.param(_raising(lambda: RuntimeError(f"bug {ECHOED}")), "internal", id="runtime-error"),
@@ -632,6 +657,48 @@ def test_an_internal_failure_still_logs_its_frames_but_not_its_message() -> None
     assert "failed: RuntimeError" in logged
     assert ECHOED not in logged
     assert "inference was not available" not in logged
+
+
+def test_an_audit_write_failure_is_logged_as_an_error_with_frames_not_as_an_outage() -> None:
+    """A broken audit stream is the audit chain's failure: an error with frames, no outage warning."""
+    with _client_running(_audit_write_failure_runner) as (client, records):
+        job_id = _post_job(client)
+        _wait_for_status(client, job_id, "failed")
+
+    logged = "\n".join(records)
+    assert "failed: AuditWriteError" in logged
+    assert "_audit_write_failure_runner" in logged
+    assert "inference was not available" not in logged
+
+
+def test_an_unreachable_provider_at_the_start_of_a_stage_fails_the_job_as_an_outage(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The real worker's provider check raises ``InferenceUnreachable``, which is an outage.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Fakes the transcript and the provider's health check.
+    """
+    transcript = pd.DataFrame({"start": ["00:00:00"], "end": ["00:00:02"], "speaker": ["S1"], "text": ["Hello."]})
+    monkeypatch.setattr(
+        "nextext.pipeline.transcription_pipeline",
+        lambda **kwargs: TranscriptionOutcome(transcript=transcript, src_lang="en", skip_reason=None),
+    )
+    monkeypatch.setattr(InferencePipeline, "get_health", lambda self: False)
+    before = _failed_count("inference_unavailable")
+
+    with _client_running(None) as (client, records):
+        response = client.post(
+            "/api/v1/jobs",
+            files={"file": ("clip.wav", io.BytesIO(b"audio-bytes"), "audio/wav")},
+            data={"options": json.dumps({**_options_payload(), "task": "translate", "trg_lang": "de"})},
+        )
+        assert response.status_code == 201
+        snapshot = _wait_for_status(client, str(response.json()["job_id"]), "failed")
+
+    assert snapshot["error_code"] == "inference_unavailable"
+    assert _failed_count("inference_unavailable") == before + 1
+    assert "failed: inference was not available (InferenceUnreachable)" in "\n".join(records)
 
 
 def test_the_failed_event_carries_the_inference_code() -> None:

@@ -166,9 +166,9 @@ describe('JobCard skipped message', () => {
     expect(screen.getByText(/could not be decoded/)).toBeInTheDocument()
   })
 
-  it('says the transcription service was unavailable, not an unknown error', () => {
+  it('says a model service was unavailable, not an unknown error', () => {
     renderCard(<JobCard job={{ ...mkJob('j1', 'failed'), error_code: 'inference_unavailable' }} />)
-    expect(screen.getByText('The transcription service was not available. Please try again later.')).toBeInTheDocument()
+    expect(screen.getByText('A model service (inference) was not available. Please try again later.')).toBeInTheDocument()
     expect(screen.queryByText('Unknown error')).not.toBeInTheDocument()
   })
 })

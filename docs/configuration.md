@@ -534,8 +534,9 @@ A rising `nextext_jobs_skipped_total{reason="vad_no_speech"}` usually means the
 `nextext_jobs_failed_total{code="undecodable_media"}` means users are uploading
 containers PyAV cannot decode, and a rising
 `nextext_jobs_failed_total{code="inference_unavailable"}` means jobs are finding
-an inference endpoint down or overloaded (a connection failure, HTTP 429 or
-5xx) — `GET /api/v1/ready` says which one. Each is visible without reading logs.
+a model endpoint (transcription, translation or the chat provider) down or
+overloaded — a connection failure, HTTP 429 or 5xx — and `GET /api/v1/ready`
+says whether the central endpoint and Whisper answer now. Each is visible without reading logs.
 
 ## Logs
 

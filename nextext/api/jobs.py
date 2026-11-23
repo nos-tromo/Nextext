@@ -80,7 +80,7 @@ from nextext.core.audio import AudioDecodeError
 from nextext.core.cancel import JobCancelled, bind_cancel, check
 from nextext.core.docint_transcript import parse_hhmmss_to_seconds
 from nextext.core.face_extraction import FacesResult
-from nextext.core.inference_errors import find_inference_outage
+from nextext.core.inference_errors import InferenceUnreachable, find_inference_outage
 from nextext.core.inference_trace import cache_scope, correlate
 from nextext.core.keyframes import extract_keyframe_samples
 from nextext.core.outcomes import FailureCode, SkipReason, skip_reason_text
@@ -573,7 +573,8 @@ def _run_pipeline_blocking(state: JobState, push_event: PushEvent) -> dict[str, 
         dict[str, Any]: In-memory result payload for the completed job.
 
     Raises:
-        ConnectionError: If the configured inference provider is unreachable.
+        InferenceUnreachable: If the configured inference provider is unreachable
+            (a ``ConnectionError``).
         JobCancelled: If the job was cancelled and this is its next check point.
     """
     # Local imports keep test stubs and import-time module reloads predictable.
@@ -658,13 +659,14 @@ def _run_pipeline_blocking(state: JobState, push_event: PushEvent) -> dict[str, 
             InferencePipeline: The shared pipeline for this job.
 
         Raises:
-            ConnectionError: If the configured provider is unreachable.
+            InferenceUnreachable: If the configured provider is unreachable
+                (a ``ConnectionError``).
         """
         nonlocal inference_pipeline
         if inference_pipeline is None:
             candidate = InferencePipeline()
             if not candidate.get_health():
-                raise ConnectionError(
+                raise InferenceUnreachable(
                     "The configured inference provider is not reachable. Please ensure it is running and accessible."
                 )
             inference_pipeline = candidate

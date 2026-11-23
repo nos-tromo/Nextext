@@ -6,7 +6,7 @@ import httpx2
 import openai
 import pytest
 
-from nextext.core.inference_errors import find_inference_outage, is_transient_inference_error
+from nextext.core.inference_errors import InferenceUnreachable, find_inference_outage, is_transient_inference_error
 
 _REQUEST = httpx2.Request("POST", "http://router.invalid/v1/chat/completions")
 
@@ -52,8 +52,33 @@ def test_the_outage_is_returned_whether_raised_directly_or_further_down_the_chai
     except RuntimeError as wrapped:
         assert find_inference_outage(wrapped) is outage
 
-    unreachable = ConnectionError("provider unreachable")
+    unreachable = InferenceUnreachable("provider unreachable")
     assert find_inference_outage(unreachable) is unreachable
+    assert isinstance(unreachable, ConnectionError)
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        ConnectionError("plain"),
+        BrokenPipeError(),
+        ConnectionResetError(),
+        ConnectionRefusedError(),
+        ConnectionAbortedError(),
+    ],
+    ids=lambda failure: type(failure).__name__,
+)
+def test_the_builtin_connection_errors_are_no_outage(failure: ConnectionError) -> None:
+    """Only the dedicated class counts: a closed stream or a reset socket may be anything's."""
+    assert find_inference_outage(failure) is None
+
+    try:
+        try:
+            raise failure
+        except ConnectionError as caught:
+            raise RuntimeError("wrapped") from caught
+    except RuntimeError as wrapped:
+        assert find_inference_outage(wrapped) is None
 
 
 def test_no_outage_in_the_chain_returns_none() -> None:
