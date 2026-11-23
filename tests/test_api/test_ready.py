@@ -29,6 +29,7 @@ from nextext.api.readiness import (
     PROBE_TIMEOUT_S,
     READY_CACHE_TTL_S,
     TranscriptionReadiness,
+    WhisperNotConfigured,
     probe_transcription,
     silence_wav,
 )
@@ -320,6 +321,147 @@ def test_ready_needs_neither_identity_nor_purpose_and_is_not_audited(
     assert response.status_code == 200
     assert after == before
     audit_capture.assert_chain_ok()
+
+
+# ---------------------------------------------------------------------------
+# A busy Whisper is not a down one
+# ---------------------------------------------------------------------------
+
+
+def _timeout() -> openai.APITimeoutError:
+    """Build the error the SDK raises when the probe's request times out.
+
+    Returns:
+        openai.APITimeoutError: A timeout.
+    """
+    return openai.APITimeoutError(request=httpx2.Request("POST", f"{WHISPER_URL}/audio/transcriptions"))
+
+
+def _after_a_good_answer(
+    app: FastAPI, monkeypatch: pytest.MonkeyPatch, second: Exception | None, *, busy: int, good_first: bool = True
+) -> tuple[Any, Any]:
+    """Run two probes past the cache window: a first, then ``second``, with ``busy`` calls in flight.
+
+    Args:
+        app: The app under test.
+        monkeypatch: Pytest patcher.
+        second: What the second probe raises (``None`` succeeds).
+        busy: The number of this process's Whisper requests in flight.
+        good_first: Whether the first probe succeeds; otherwise it fails with a connection error.
+
+    Returns:
+        tuple[Any, Any]: The first and the second response of ``GET /ready``.
+    """
+    clock = _Clock()
+    probe = _Probe(None if good_first else _connection_error(), second)
+    monkeypatch.setattr(health_module, "InferencePipeline", lambda: _Pipeline(True))
+    app.state.readiness = TranscriptionReadiness(probe=probe, clock=clock, calls_in_flight=lambda: busy)
+    with TestClient(app) as client:
+        first = client.get("/api/v1/ready")
+        clock.now += READY_CACHE_TTL_S
+        answered = client.get("/api/v1/ready")
+    assert probe.calls == 2
+    return first, answered
+
+
+def test_a_timeout_while_a_job_transcribes_keeps_the_last_good_answer(
+    app: FastAPI, monkeypatch: pytest.MonkeyPatch, log_lines: list[str]
+) -> None:
+    """The probe queued behind this process's own upload and timed out: still ready, said at debug."""
+    first, answered = _after_a_good_answer(app, monkeypatch, _timeout(), busy=1)
+
+    assert (first.status_code, answered.status_code) == (200, 200)
+    assert answered.json()["transcription"] is True
+    assert any("keeping the last answer" in line for line in log_lines)
+    assert not any("readiness probe failed" in line for line in log_lines)
+
+
+def test_a_timeout_while_busy_with_no_good_answer_yet_is_not_ready(
+    app: FastAPI, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With nothing good to keep, a timeout is not ready even while a job transcribes."""
+    clock = _Clock()
+    probe = _Probe(_timeout())
+    monkeypatch.setattr(health_module, "InferencePipeline", lambda: _Pipeline(True))
+    app.state.readiness = TranscriptionReadiness(probe=probe, clock=clock, calls_in_flight=lambda: 2)
+
+    with TestClient(app) as client:
+        response = client.get("/api/v1/ready")
+
+    assert response.status_code == 503
+    assert response.json()["transcription"] is False
+
+
+def test_a_timeout_after_a_failure_while_busy_stays_not_ready(app: FastAPI, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Only a good answer is kept: after a failure, a busy timeout does not make Whisper ready."""
+    first, answered = _after_a_good_answer(app, monkeypatch, _timeout(), busy=1, good_first=False)
+
+    assert (first.status_code, answered.status_code) == (503, 503)
+
+
+def test_a_timeout_with_nothing_in_flight_is_not_ready(app: FastAPI, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A Whisper that is idle as far as this process knows and does not answer is down."""
+    first, answered = _after_a_good_answer(app, monkeypatch, _timeout(), busy=0)
+
+    assert first.status_code == 200
+    assert answered.status_code == 503
+    assert answered.json()["transcription"] is False
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [_connection_error(), _status_error(503), _status_error(429), RuntimeError("a bug")],
+    ids=["connection", "http-503", "http-429", "other"],
+)
+def test_anything_but_a_timeout_is_not_ready_whatever_is_in_flight(
+    app: FastAPI, monkeypatch: pytest.MonkeyPatch, failure: Exception
+) -> None:
+    """A refused connection or an error status is an outage, busy or not."""
+    first, answered = _after_a_good_answer(app, monkeypatch, failure, busy=3)
+
+    assert first.status_code == 200
+    assert answered.status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_a_configuration_that_cannot_work_is_not_ready_whatever_is_in_flight(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A bad configuration after a good answer is not ready, busy or not."""
+    clock = _Clock()
+    outcomes: list[Exception | None] = [None, WhisperNotConfigured()]
+    calls = 0
+
+    def probe() -> None:
+        nonlocal calls
+        calls += 1
+        outcome = outcomes[calls - 1]
+        if outcome is not None:
+            raise outcome
+
+    readiness = TranscriptionReadiness(probe=probe, clock=clock, calls_in_flight=lambda: 1)
+
+    assert await readiness.is_ready() is True
+    clock.now += READY_CACHE_TTL_S
+    assert await readiness.is_ready() is False
+
+
+@pytest.mark.asyncio
+async def test_a_busy_timeout_extends_the_good_answer_only_for_one_window() -> None:
+    """The kept answer is re-probed after the next window, and a probe that then answers wins."""
+    clock = _Clock()
+    probe = _Probe(None, _timeout(), None)
+    readiness = TranscriptionReadiness(probe=probe, clock=clock, calls_in_flight=lambda: 1)
+
+    assert await readiness.is_ready() is True
+    clock.now += READY_CACHE_TTL_S
+    assert await readiness.is_ready() is True
+    assert probe.calls == 2
+    assert await readiness.is_ready() is True
+    assert probe.calls == 2, "the kept answer holds for its window"
+    clock.now += READY_CACHE_TTL_S
+    assert await readiness.is_ready() is True
+    assert probe.calls == 3
 
 
 # ---------------------------------------------------------------------------

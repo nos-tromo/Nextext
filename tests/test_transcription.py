@@ -952,3 +952,71 @@ def test_transcription_logs_a_whisper_rejection_by_class_and_status(
     logged = "\n".join(log_lines)
     assert "External Whisper API error: BadRequestError (HTTP 400)" in logged
     assert echoed not in logged
+
+
+# ---------------------------------------------------------------------------
+# The count of Whisper requests in flight
+# ---------------------------------------------------------------------------
+
+
+def _transcriber_with(fake_client: MagicMock, task: str, monkeypatch: pytest.MonkeyPatch) -> ExternalWhisperTranscriber:
+    """Build a transcriber over ``fake_client`` with the guards stubbed.
+
+    Args:
+        fake_client (MagicMock): The Whisper client.
+        task (str): ``"transcribe"`` or ``"translate"``.
+        monkeypatch (pytest.MonkeyPatch): Stubs the client, the VAD guard and the normalizer.
+
+    Returns:
+        ExternalWhisperTranscriber: A transcriber ready to run.
+    """
+    transcriber = ExternalWhisperTranscriber.__new__(ExternalWhisperTranscriber)
+    transcriber.file_path = transcription.Path(__file__)
+    transcriber.src_lang = "en"
+    transcriber.task = task
+    transcriber._model_id = "whisper-1"
+    transcriber._client = None
+    transcriber.scratch_dir = None
+    transcriber.transcription_result = None
+    transcriber.skip_reason = None
+    monkeypatch.setattr(type(transcriber), "_get_client", property(lambda self: fake_client))
+    monkeypatch.setattr(transcription, "has_speech", lambda _path: True)
+    monkeypatch.setattr(transcription, "normalize_for_transcription", _passthrough_normalize)
+    return transcriber
+
+
+@pytest.mark.parametrize("task", ["transcribe", "translate"])
+def test_a_whisper_request_is_counted_in_flight_while_it_runs_and_not_after(
+    monkeypatch: pytest.MonkeyPatch, task: str
+) -> None:
+    """The readiness probe's busy count covers the transcription and the translation request."""
+    seen: list[int] = []
+    seg = SimpleNamespace(start=0.0, end=1.0, text="Hello.", no_speech_prob=0.1)
+    response = SimpleNamespace(segments=[seg], words=[], language="en")
+
+    def create(**kwargs: Any) -> SimpleNamespace:
+        seen.append(transcription.whisper_calls_in_flight())
+        return response
+
+    fake_client = MagicMock()
+    fake_client.audio.transcriptions.create.side_effect = create
+    fake_client.audio.translations.create.side_effect = create
+    assert transcription.whisper_calls_in_flight() == 0
+
+    _transcriber_with(fake_client, task, monkeypatch).transcription()
+
+    assert seen == [1]
+    assert transcription.whisper_calls_in_flight() == 0
+
+
+def test_a_failed_whisper_request_is_no_longer_counted_in_flight(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The count falls back when the request raises, so a dead endpoint never reads as busy."""
+    fake_client = MagicMock()
+    fake_client.audio.transcriptions.create.side_effect = openai.APIConnectionError(
+        request=httpx2.Request("POST", "http://whisper.invalid/v1/audio/transcriptions")
+    )
+
+    with pytest.raises(openai.APIConnectionError):
+        _transcriber_with(fake_client, "transcribe", monkeypatch).transcription()
+
+    assert transcription.whisper_calls_in_flight() == 0

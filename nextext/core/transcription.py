@@ -6,6 +6,7 @@ diarization is handled separately by the pipeline (see
 :mod:`nextext.core.diarization`), not by this module.
 """
 
+import threading
 from datetime import timedelta
 from pathlib import Path as Path  # re-exported for tests that monkeypatch nextext.core.transcription.Path
 from typing import Any
@@ -29,6 +30,54 @@ OPENAI_WHISPER_MAX_UPLOAD_BYTES: int = 25 * 1024 * 1024
 # ``avg_logprob``, which lets confident hallucinations on silent audio slip
 # through.  Filtering on ``no_speech_prob`` alone catches them.
 NO_SPEECH_THRESHOLD: float = 0.6
+
+
+class _WhisperCalls:
+    """A thread-safe count of this process's Whisper requests in flight.
+
+    Entered around each transcription or translation request, so the readiness
+    probe (:mod:`nextext.api.readiness`) can tell a Whisper that is busy with a
+    job's upload from one that is down. The count is the process's own: a
+    second Nextext, or any other caller of the same endpoint, is not seen.
+    """
+
+    def __init__(self) -> None:
+        """Start with nothing in flight."""
+        self._lock = threading.Lock()
+        self._count = 0
+
+    def __enter__(self) -> None:
+        """Count one more request in flight."""
+        with self._lock:
+            self._count += 1
+
+    def __exit__(self, *_exc: object) -> None:
+        """Count one fewer, whether the request answered or raised."""
+        with self._lock:
+            self._count -= 1
+
+    @property
+    def in_flight(self) -> int:
+        """Return how many requests are in flight now.
+
+        Returns:
+            int: The count, ``0`` when Whisper is idle as far as this process knows.
+        """
+        with self._lock:
+            return self._count
+
+
+#: Wrap a Whisper request: ``with whisper_call: client.audio...create(...)``.
+whisper_call = _WhisperCalls()
+
+
+def whisper_calls_in_flight() -> int:
+    """Return how many Whisper requests this process has in flight.
+
+    Returns:
+        int: The count from :data:`whisper_call`.
+    """
+    return whisper_call.in_flight
 
 
 def build_whisper_client(cfg: WhisperClientConfig, **options: Any) -> OpenAI:
@@ -379,7 +428,8 @@ class ExternalWhisperTranscriber:
                         }
                         if headers:
                             translate_kwargs["extra_headers"] = headers
-                        response = client.audio.translations.create(**translate_kwargs)
+                        with whisper_call:
+                            response = client.audio.translations.create(**translate_kwargs)
                     else:
                         kwargs: dict[str, Any] = {
                             "model": self._model_id,
@@ -391,7 +441,8 @@ class ExternalWhisperTranscriber:
                             kwargs["language"] = self.src_lang
                         if headers:
                             kwargs["extra_headers"] = headers
-                        response = client.audio.transcriptions.create(**kwargs)
+                        with whisper_call:
+                            response = client.audio.transcriptions.create(**kwargs)
                 except APIStatusError as exc:
                     record_inference("asr", self._model_id, ok=False)
                     logger.error("External Whisper API error: {}", error_label(exc))

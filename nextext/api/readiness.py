@@ -19,10 +19,12 @@ import io
 import time
 import wave
 from collections.abc import Callable
+from dataclasses import dataclass
 
+import openai
 from loguru import logger
 
-from nextext.core.transcription import build_whisper_client
+from nextext.core.transcription import build_whisper_client, whisper_calls_in_flight
 from nextext.utils.env_cfg import load_whisper_env
 from nextext.utils.log_cfg import error_label
 
@@ -98,6 +100,20 @@ NOT_CONFIGURED_HINT: str = (
 )
 
 
+@dataclass(frozen=True)
+class _ProbeResult:
+    """What one probe found.
+
+    Attributes:
+        failure: ``None`` when Whisper transcribed, else what to log.
+        busy: The probe timed out while this process had a Whisper request in
+            flight, so the timeout may be the queue and not an outage.
+    """
+
+    failure: str | None
+    busy: bool = False
+
+
 class TranscriptionReadiness:
     """The cached, single-flight answer to "does Whisper transcribe?".
 
@@ -110,6 +126,18 @@ class TranscriptionReadiness:
     the event loop stays free. A failure is logged once per change of state,
     by exception class and HTTP status only (never a response body), and the
     recovery once as well.
+
+    A busy Whisper is not a down one. A probe that **times out** while this
+    process has a Whisper request of its own in flight (a job's upload, which
+    on a CPU backend can queue the probe behind minutes of audio) keeps the
+    last good answer, and says so at debug. A timeout with nothing of ours in
+    flight, or with no good answer yet, is not ready; a connection error, an
+    HTTP error status or a configuration that cannot work is not ready
+    whatever is in flight.
+
+    :meth:`invalidate` marks the answer stale, so the next request probes
+    afresh: a job that found inference down is evidence the cached ``200``
+    is wrong.
     """
 
     def __init__(
@@ -118,6 +146,7 @@ class TranscriptionReadiness:
         probe: Callable[[], None] = probe_transcription,
         clock: Callable[[], float] = time.monotonic,
         ttl_s: float = READY_CACHE_TTL_S,
+        calls_in_flight: Callable[[], int] = whisper_calls_in_flight,
     ) -> None:
         """Set up an empty cache.
 
@@ -126,22 +155,43 @@ class TranscriptionReadiness:
                 transcribe; the real probe unless a test injects one.
             clock (Callable[[], float]): Monotonic seconds, injectable for tests.
             ttl_s (float): How long a result holds.
+            calls_in_flight (Callable[[], int]): How many Whisper requests this
+                process has in flight; the transcriber's own count unless a
+                test injects one.
         """
         self._probe = probe
         self._clock = clock
         self._ttl_s = ttl_s
+        self._calls_in_flight = calls_in_flight
         self._checked_at = 0.0
         self._ready: bool | None = None
         self._in_flight: asyncio.Task[bool] | None = None
+        # Bumped by ``invalidate``; an answer counts only under the generation
+        # it was stored in, which also stops a pre-invalidation good answer
+        # from being kept while Whisper is busy.
+        self._generation = 0
+        self._stored_in = 0
+
+    def invalidate(self) -> None:
+        """Mark the answer stale: the next request probes afresh.
+
+        A probe already in flight still answers the requests waiting on it, but
+        its result is stored stale too, so the request after it probes again.
+        """
+        self._generation += 1
 
     async def is_ready(self) -> bool:
         """Report whether the Whisper endpoint transcribes, probing when stale.
 
         Returns:
             bool: ``True`` when the last probe, at most ``ttl_s`` seconds old,
-                succeeded.
+                succeeded (or timed out while Whisper was busy with a job).
         """
-        if self._ready is not None and self._clock() - self._checked_at < self._ttl_s:
+        if (
+            self._ready is not None
+            and self._stored_in == self._generation
+            and self._clock() - self._checked_at < self._ttl_s
+        ):
             return self._ready
         if self._in_flight is None:
             self._in_flight = asyncio.create_task(self._probe_and_store())
@@ -151,32 +201,41 @@ class TranscriptionReadiness:
         """Probe once, keep the result and clear the probe in flight.
 
         Returns:
-            bool: Whether the endpoint transcribed.
+            bool: Whether the endpoint transcribed (or was busy, after a good answer).
         """
+        generation = self._generation
         try:
-            failure = await asyncio.to_thread(self._run_probe)
+            result = await asyncio.to_thread(self._run_probe)
+            failure = result.failure
+            if result.busy and self._ready is True and self._stored_in == generation:
+                logger.debug("Transcription readiness probe timed out while Whisper is busy; keeping the last answer.")
+                failure = None
             self._checked_at = self._clock()
             self._note(failure)
             self._ready = failure is None
+            self._stored_in = generation
             return self._ready
         finally:
             self._in_flight = None
 
-    def _run_probe(self) -> str | None:
+    def _run_probe(self) -> _ProbeResult:
         """Run the probe once, on a worker thread.
 
         Returns:
-            str | None: ``None`` on success, else the failure: a fixed hint for
-                a configuration that cannot work, otherwise the exception named
-                by class and HTTP status.
+            _ProbeResult: ``failure`` is ``None`` on success, else a fixed hint
+                for a configuration that cannot work, otherwise the exception
+                named by class and HTTP status; ``busy`` is true for a timeout
+                while this process has a Whisper request in flight.
         """
         try:
             self._probe()
         except WhisperNotConfigured:
-            return NOT_CONFIGURED_HINT
+            return _ProbeResult(NOT_CONFIGURED_HINT)
+        except openai.APITimeoutError as exc:
+            return _ProbeResult(error_label(exc), busy=self._calls_in_flight() > 0)
         except Exception as exc:
-            return error_label(exc)
-        return None
+            return _ProbeResult(error_label(exc))
+        return _ProbeResult(None)
 
     def _note(self, failure: str | None) -> None:
         """Log a change of state: a failure once, and its recovery once.
