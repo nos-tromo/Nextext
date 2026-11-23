@@ -7,6 +7,7 @@ from importlib.metadata import PackageNotFoundError, version
 
 from fastapi import APIRouter, Request, Response, status
 from loguru import logger
+from starlette.concurrency import run_in_threadpool
 
 from nextext.api.schemas import (
     ConfigResponse,
@@ -86,7 +87,7 @@ async def get_ready(request: Request, response: Response) -> ReadyResponse:
             (answered ``503``).
     """
     inference_ok, transcription_ok = await asyncio.gather(
-        asyncio.to_thread(_inference_reachable),
+        run_in_threadpool(_inference_reachable),
         request.app.state.readiness.is_ready(),
     )
     ready = inference_ok and transcription_ok

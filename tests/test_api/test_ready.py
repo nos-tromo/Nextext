@@ -219,6 +219,32 @@ def test_ready_answers_503_when_inference_is_down(app: FastAPI, monkeypatch: pyt
     assert (body["status"], body["inference"], body["transcription"]) == ("unavailable", False, True)
 
 
+def test_ready_runs_the_inference_check_on_the_pool_health_uses(app: FastAPI, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The uncached check goes to anyio's pool, as sync ``/health`` does, not the loop's default executor.
+
+    The default executor is the one the job worker starts its pipeline threads
+    on, so a burst of ``/ready`` against a dead router must not queue there.
+    """
+    threads: dict[str, str] = {}
+
+    def stub(route: str) -> Callable[[], _Pipeline]:
+        def build() -> _Pipeline:
+            threads[route] = threading.current_thread().name
+            return _Pipeline(True)
+
+        return build
+
+    _arrange(app, monkeypatch, probe=_Probe())
+    with TestClient(app) as client:
+        monkeypatch.setattr(health_module, "InferencePipeline", stub("health"))
+        client.get("/api/v1/health")
+        monkeypatch.setattr(health_module, "InferencePipeline", stub("ready"))
+        client.get("/api/v1/ready")
+
+    assert threads["ready"] == threads["health"]
+    assert not threads["ready"].startswith("asyncio_")
+
+
 def test_ready_survives_an_inference_check_that_raises(app: FastAPI, monkeypatch: pytest.MonkeyPatch) -> None:
     """The route never 500s because the inference check raised."""
 
