@@ -151,14 +151,22 @@ class TranscriptionReadiness:
     by exception class and HTTP status only (never a response body), and the
     recovery once as well.
 
-    A busy Whisper is not a down one. A probe that **times out** while this
-    process has a Whisper request of its own in flight (a job's upload, which
-    on a CPU backend can queue the probe behind minutes of audio) keeps the
-    last good answer, and says so at debug. A timeout with nothing of ours in
-    flight, with no good answer yet, or while the answer is stale (invalidated
-    since the probe started) is not ready, nor is a connect timeout; a
-    connection error, an HTTP error status or a configuration that cannot work
-    is not ready whatever is in flight.
+    A busy Whisper is not probed. While this process has a Whisper request of
+    its own in flight (a job's upload), a good answer that no :meth:`invalidate`
+    has made stale is served as it is, however old and without refreshing its
+    age, so the first request after the call ends probes again. A CPU Whisper
+    serves one request at a time, and a probe that gives up client-side still
+    runs there, queued ahead of and delaying the job's own request. With no
+    live good answer (none yet, a failure, an invalidated one) the probe runs
+    as usual.
+
+    A busy Whisper is not a down one, either. A probe that started before a
+    job's call and **times out** while this process has a Whisper request in
+    flight keeps the last good answer, and says so at debug. A timeout with
+    nothing of ours in flight, with no good answer yet, or while the answer is
+    stale (invalidated since the probe started) is not ready, nor is a connect
+    timeout; a connection error, an HTTP error status or a configuration that
+    cannot work is not ready whatever is in flight.
 
     :meth:`invalidate` marks the answer stale, so the next request probes
     afresh: a job that found inference down is evidence the cached ``200``
@@ -210,14 +218,17 @@ class TranscriptionReadiness:
 
         Returns:
             bool: ``True`` when the last probe, at most ``ttl_s`` seconds old,
-                succeeded (or timed out while Whisper was busy with a job).
+                succeeded (or timed out while Whisper was busy with a job), or
+                when it succeeded and a Whisper request of this process is in
+                flight now.
         """
-        if (
-            self._ready is not None
-            and self._stored_in == self._generation
-            and self._clock() - self._checked_at < self._ttl_s
-        ):
-            return self._ready
+        live = self._ready is not None and self._stored_in == self._generation
+        if live and self._clock() - self._checked_at < self._ttl_s:
+            return bool(self._ready)
+        if live and self._ready is True and self._calls_in_flight() > 0:
+            # No probe, and ``_checked_at`` stays: the first request after the
+            # call ends is stale and probes.
+            return True
         if self._in_flight is None:
             self._in_flight = asyncio.create_task(self._probe_and_store())
         return await asyncio.shield(self._in_flight)

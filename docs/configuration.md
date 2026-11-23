@@ -66,21 +66,34 @@ the probe runs. That is also the whole cost: Ghostwriter probes at start and
 again only after a failure, with backoff, so `/ready` costs one Whisper call
 per 30 s only while someone asks it, not around the clock.
 
-A busy Whisper is not a down one. Whisper pads every input to a 30 s window,
-and a CPU backend queues the 0.5 s probe behind a long upload, so a probe sent
-while a clip transcribes can time out. Nextext counts its own Whisper requests
-in flight; a probe that times out while that count is above zero keeps the last
-good answer (a debug line says so), and `/ready` stays `200`. With no good
-answer yet, with nothing of this process's in flight, or after a failure, a
-timeout is `unavailable`, and so is a refused connection, an HTTP error status
-or a configuration that cannot work, whatever is in flight. Only this process's
-own requests are counted: a Whisper that another caller keeps busy still reads
+A Whisper that is serving Nextext's own call is not probed. A CPU Whisper
+serves one request at a time, and a probe that gives up client-side still runs
+there, queued ahead of the job's own request and delaying it; probes piling up
+around a long file pushed it past the transcriber's timeout. So while this
+process has a Whisper request in flight, `/ready` answers from the stored
+answer if it is good and no job has invalidated it, however old, and without
+refreshing its age: the first request after the call ends probes again. With no
+live good answer (none yet, a failure, an invalidated one) it probes as usual.
+
+A busy Whisper is not a down one, either. Whisper pads every input to a 30 s
+window, and a CPU backend queues the 0.5 s probe behind a long upload. Nextext
+counts its own Whisper requests in flight; a probe that started before a job's
+call and times out while that count is above zero keeps the last good answer (a
+debug line says so), and `/ready` stays `200`. With no good answer yet, with
+nothing of this process's in flight, or after a failure, a timeout is
+`unavailable`, and so is a refused connection, an HTTP error status or a
+configuration that cannot work, whatever is in flight. Only this process's own
+requests are counted: a Whisper that another caller keeps busy still reads
 `unavailable` when the probe times out. A timeout while the connection itself was
 never made (a connect timeout) is no busy Whisper either. A job that fails
 `inference_unavailable` makes the next `/ready` probe afresh, instead of
-answering from a cached `200`, and invalidates the earlier good answer: a busy
-timeout does not keep it, so `/ready` reads `unavailable` until a probe
-answers, even while another job's upload runs.
+answering from a cached `200`, and invalidates the earlier good answer: it is
+not served unprobed, and a busy timeout does not keep it, so `/ready` reads
+`unavailable` until a probe answers, even while another job's upload runs.
+
+Known limit: the transcriber's own Whisper request keeps the SDK defaults (a
+600 s timeout, 2 retries). On a CPU Whisper a long file can therefore fail as
+`inference_unavailable`, and each retry transcribes the whole file again.
 
 A failure is logged once, as a warning by exception class and HTTP status (a
 configuration that cannot work, such as `INFERENCE_PROVIDER=ollama` without

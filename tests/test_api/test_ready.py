@@ -119,6 +119,52 @@ class _Probe:
             raise outcome
 
 
+class _Calls:
+    """A settable count of this process's Whisper requests in flight."""
+
+    def __init__(self, n: int = 0) -> None:
+        """Set the count.
+
+        Args:
+            n: Requests in flight.
+        """
+        self.n = n
+
+    def __call__(self) -> int:
+        """Return the count.
+
+        Returns:
+            int: Requests in flight.
+        """
+        return self.n
+
+
+def _job_call_starts_during_probe(probe: Callable[[], None], calls: _Calls, busy: int) -> Callable[[], None]:
+    """Wrap ``probe`` so a job's Whisper call is in flight from the second probe on.
+
+    A probe that finds a call in flight is never sent, so the busy-timeout rule
+    is for a probe that started before the call: the call begins while it runs.
+
+    Args:
+        probe: The probe to run.
+        calls: The in-flight count the readiness cache reads.
+        busy: The count to set when the second probe starts.
+
+    Returns:
+        Callable[[], None]: The wrapped probe.
+    """
+    attempts = 0
+
+    def wrapped() -> None:
+        nonlocal attempts
+        attempts += 1
+        if attempts >= 2:
+            calls.n = busy
+        probe()
+
+    return wrapped
+
+
 class _Pipeline:
     """Stand-in for ``InferencePipeline`` with a fixed health answer."""
 
@@ -377,7 +423,7 @@ def _timeout() -> openai.APITimeoutError:
 def _after_a_good_answer(
     app: FastAPI, monkeypatch: pytest.MonkeyPatch, second: Exception | None, *, busy: int, good_first: bool = True
 ) -> tuple[Any, Any]:
-    """Run two probes past the cache window: a first, then ``second``, with ``busy`` calls in flight.
+    """Run two probes past the cache window: a first, then ``second`` with ``busy`` calls starting during it.
 
     Args:
         app: The app under test.
@@ -390,9 +436,12 @@ def _after_a_good_answer(
         tuple[Any, Any]: The first and the second response of ``GET /ready``.
     """
     clock = _Clock()
+    calls = _Calls()
     probe = _Probe(None if good_first else _connection_error(), second)
     monkeypatch.setattr(health_module, "InferencePipeline", lambda: _Pipeline(True))
-    app.state.readiness = TranscriptionReadiness(probe=probe, clock=clock, calls_in_flight=lambda: busy)
+    app.state.readiness = TranscriptionReadiness(
+        probe=_job_call_starts_during_probe(probe, calls, busy), clock=clock, calls_in_flight=calls
+    )
     with TestClient(app) as client:
         first = client.get("/api/v1/ready")
         clock.now += READY_CACHE_TTL_S
@@ -467,16 +516,19 @@ async def test_a_configuration_that_cannot_work_is_not_ready_whatever_is_in_flig
     """A bad configuration after a good answer is not ready, busy or not."""
     clock = _Clock()
     outcomes: list[Exception | None] = [None, WhisperNotConfigured()]
-    calls = 0
+    attempts = 0
 
     def probe() -> None:
-        nonlocal calls
-        calls += 1
-        outcome = outcomes[calls - 1]
+        nonlocal attempts
+        attempts += 1
+        outcome = outcomes[attempts - 1]
         if outcome is not None:
             raise outcome
 
-    readiness = TranscriptionReadiness(probe=probe, clock=clock, calls_in_flight=lambda: 1)
+    in_flight = _Calls()
+    readiness = TranscriptionReadiness(
+        probe=_job_call_starts_during_probe(probe, in_flight, 1), clock=clock, calls_in_flight=in_flight
+    )
 
     assert await readiness.is_ready() is True
     clock.now += READY_CACHE_TTL_S
@@ -484,11 +536,14 @@ async def test_a_configuration_that_cannot_work_is_not_ready_whatever_is_in_flig
 
 
 @pytest.mark.asyncio
-async def test_a_busy_timeout_extends_the_good_answer_only_for_one_window() -> None:
-    """The kept answer is re-probed after the next window, and a probe that then answers wins."""
+async def test_a_kept_answer_is_served_while_the_call_runs_and_probed_again_once_it_ends() -> None:
+    """After a busy timeout, the answer is served unprobed for as long as the job's call runs, then re-probed."""
     clock = _Clock()
+    calls = _Calls()
     probe = _Probe(None, _timeout(), None)
-    readiness = TranscriptionReadiness(probe=probe, clock=clock, calls_in_flight=lambda: 1)
+    readiness = TranscriptionReadiness(
+        probe=_job_call_starts_during_probe(probe, calls, 1), clock=clock, calls_in_flight=calls
+    )
 
     assert await readiness.is_ready() is True
     clock.now += READY_CACHE_TTL_S
@@ -497,6 +552,9 @@ async def test_a_busy_timeout_extends_the_good_answer_only_for_one_window() -> N
     assert await readiness.is_ready() is True
     assert probe.calls == 2, "the kept answer holds for its window"
     clock.now += READY_CACHE_TTL_S
+    assert await readiness.is_ready() is True
+    assert probe.calls == 2, "no probe goes to a Whisper that is serving this process's own call"
+    calls.n = 0
     assert await readiness.is_ready() is True
     assert probe.calls == 3
 
@@ -518,12 +576,14 @@ async def test_a_busy_timeout_of_a_probe_started_before_an_invalidation_is_not_r
         assert release.wait(timeout=5.0), "the probe was never released"
         raise _timeout()
 
-    readiness = TranscriptionReadiness(probe=probe, clock=clock, calls_in_flight=lambda: 1)
+    calls_in_flight = _Calls()
+    readiness = TranscriptionReadiness(probe=probe, clock=clock, calls_in_flight=calls_in_flight)
     assert await readiness.is_ready() is True
 
     clock.now += READY_CACHE_TTL_S
     waiting = asyncio.create_task(readiness.is_ready())
     assert await asyncio.to_thread(started.wait, 5.0)
+    calls_in_flight.n = 1
     readiness.invalidate()
     release.set()
 
@@ -532,13 +592,16 @@ async def test_a_busy_timeout_of_a_probe_started_before_an_invalidation_is_not_r
 
 
 def _probe_http_answering(
-    monkeypatch: pytest.MonkeyPatch, *outcomes: httpx2.Response | Exception
+    monkeypatch: pytest.MonkeyPatch,
+    *outcomes: httpx2.Response | Exception,
+    on_request: Callable[[], None] = lambda: None,
 ) -> list[httpx2.Request]:
     """Fake the Whisper endpoint under the real probe: each request gets the next outcome, the last repeats.
 
     Args:
         monkeypatch: Pytest patcher.
         *outcomes: A response to return or an exception to raise.
+        on_request: Called as each request arrives, before it is answered.
 
     Returns:
         list[httpx2.Request]: Every request the endpoint saw.
@@ -548,6 +611,7 @@ def _probe_http_answering(
     last: list[httpx2.Response | Exception] = []
 
     def handler(request: httpx2.Request) -> httpx2.Response:
+        on_request()
         outcome = next(answered, last[0] if last else outcomes[-1])
         last[:] = [outcome]
         if isinstance(outcome, Exception):
@@ -564,14 +628,21 @@ async def test_a_read_timeout_while_busy_keeps_the_answer_but_a_connect_timeout_
     """Through the real probe: the SDK's timeout is busy only once the connection was made."""
     request = httpx2.Request("POST", f"{WHISPER_URL}/audio/transcriptions")
     ok = httpx2.Response(200, json={"text": ""})
+    calls = _Calls()
     seen = _probe_http_answering(
-        monkeypatch, ok, httpx2.ReadTimeout("slow", request=request), ok, httpx2.ConnectTimeout("none", request=request)
+        monkeypatch,
+        ok,
+        httpx2.ReadTimeout("slow", request=request),
+        ok,
+        httpx2.ConnectTimeout("none", request=request),
+        on_request=lambda: setattr(calls, "n", 1),  # a job's call begins while the probe is on its way
     )
     clock = _Clock()
-    readiness = TranscriptionReadiness(clock=clock, calls_in_flight=lambda: 1)
+    readiness = TranscriptionReadiness(clock=clock, calls_in_flight=calls)
 
     answers = []
     for _ in range(4):
+        calls.n = 0
         answers.append(await readiness.is_ready())
         clock.now += READY_CACHE_TTL_S
 
@@ -591,6 +662,103 @@ def test_the_sdk_turns_an_http_timeout_into_an_api_timeout_whose_cause_names_the
 
     assert type(raised.value.__cause__) is type(cause)
     assert _is_connect_timeout(raised.value) is isinstance(cause, httpx2.ConnectTimeout)
+
+
+# ---------------------------------------------------------------------------
+# A Whisper serving this process's own call is not probed
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_a_live_good_answer_is_served_unprobed_while_a_call_is_in_flight_however_old() -> None:
+    """A CPU Whisper serves one request at a time: a probe would queue ahead of the job's own request.
+
+    The served answer does not refresh its age, so the first request after the
+    call ends probes again.
+    """
+    clock = _Clock()
+    calls = _Calls()
+    probe = _Probe()
+    readiness = TranscriptionReadiness(probe=probe, clock=clock, calls_in_flight=calls)
+    assert await readiness.is_ready() is True
+    assert probe.calls == 1
+
+    calls.n = 1
+    for _ in range(3):
+        clock.now += 10 * READY_CACHE_TTL_S
+        assert await readiness.is_ready() is True
+    assert probe.calls == 1, "a probe was sent while this process's own call was in flight"
+
+    calls.n = 0
+    assert await readiness.is_ready() is True
+    assert probe.calls == 2, "the answer served during the call was taken for a fresh one"
+
+
+@pytest.mark.asyncio
+async def test_an_invalidated_answer_is_probed_even_while_a_call_is_in_flight() -> None:
+    """After a job's ``inference_unavailable`` there is no live good answer to serve."""
+    clock = _Clock()
+    calls = _Calls()
+    probe = _Probe()
+    readiness = TranscriptionReadiness(probe=probe, clock=clock, calls_in_flight=calls)
+    assert await readiness.is_ready() is True
+
+    calls.n = 1
+    readiness.invalidate()
+    clock.now += 10 * READY_CACHE_TTL_S
+    assert await readiness.is_ready() is True
+
+    assert probe.calls == 2
+
+
+@pytest.mark.asyncio
+async def test_without_a_good_answer_a_call_in_flight_does_not_stop_the_probe() -> None:
+    """With no answer yet, or a failure, there is nothing to serve: the probe runs as usual."""
+    clock = _Clock()
+    calls = _Calls(1)
+    probe = _Probe(_connection_error(), None)
+    readiness = TranscriptionReadiness(probe=probe, clock=clock, calls_in_flight=calls)
+
+    assert await readiness.is_ready() is False
+    assert probe.calls == 1
+    clock.now += READY_CACHE_TTL_S
+    assert await readiness.is_ready() is True
+    assert probe.calls == 2
+
+
+@pytest.mark.asyncio
+async def test_with_nothing_in_flight_a_stale_answer_is_probed() -> None:
+    """Past the window, an idle Whisper is asked."""
+    clock = _Clock()
+    probe = _Probe()
+    readiness = TranscriptionReadiness(probe=probe, clock=clock, calls_in_flight=_Calls())
+
+    assert await readiness.is_ready() is True
+    clock.now += READY_CACHE_TTL_S
+    assert await readiness.is_ready() is True
+
+    assert probe.calls == 2
+
+
+def test_ready_does_not_probe_while_the_transcriber_has_a_call_in_flight(
+    app: FastAPI, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Through the route and the transcriber's own counter: no probe during a Whisper call, one right after."""
+    clock = _Clock()
+    probe = _Probe()
+    _arrange(app, monkeypatch, probe=probe, clock=clock)
+
+    with TestClient(app) as client:
+        assert client.get("/api/v1/ready").status_code == 200
+        with transcription_module.whisper_call:
+            clock.now += 10 * READY_CACHE_TTL_S
+            during = client.get("/api/v1/ready")
+            assert probe.calls == 1
+        after = client.get("/api/v1/ready")
+
+    assert during.status_code == 200
+    assert after.status_code == 200
+    assert probe.calls == 2
 
 
 # ---------------------------------------------------------------------------
