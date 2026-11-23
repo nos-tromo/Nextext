@@ -372,10 +372,14 @@ many services may call as themselves — a count, never a name or token),
 
 ## Limits
 
-- A job deleted while it runs is recorded at once; its upload is removed when
-  the pipeline step holding it returns.
-- A pipeline step still running at shutdown cannot write after the chain's
-  end: its job fails instead.
+- A job deleted while it runs is recorded at once; its pipeline stops at its
+  next check point (a stage boundary, an inference request, a step of the audio
+  or video decode), and its upload is removed then. A call already in flight —
+  one Whisper upload, one `/diarize` request — finishes first, so the upload
+  can outlive the record by that long.
+- A pipeline step still running at shutdown is cancelled, and cannot write
+  after the chain's end: its job stops at its next check point, or fails when
+  the record of the stage it is in is refused first.
 - A multipart upload is buffered by the web framework before the route sees
   it; a backend that dies during that upload leaves the partial buffer in the
   system temp directory, outside any job directory, and the startup sweep does

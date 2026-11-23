@@ -119,6 +119,13 @@ CPU (PyAV decode per job) and the external inference services' capacity.
 Unparseable / `<1` values clamp to `1`. Resolved by `load_job_concurrency` in
 `nextext/utils/env_cfg.py`.
 
+A job deleted while it runs gives its slot back at its next check point — a
+stage boundary, an inference request, a step of the audio or video decode —
+not when the pipeline would have ended, so the next job (a clip a user took
+back mid-transcription, say, deleted by the service that submitted it) is not
+held up for the rest of the run. A call already in flight finishes first: one
+Whisper upload, one `/diarize`, `/vad` or faces request.
+
 ## Sentence restoration
 
 `NEXTEXT_SENTENCE_RESTORE` / `SENTENCE_RESTORE_MIN_PUNCT_RATIO` (backend + CLI) —
@@ -495,7 +502,7 @@ typed codes only — never a filename, owner id, or transcript text:
 
 | Metric | Labels | What it counts |
 |--------|--------|----------------|
-| `nextext_jobs_total` | `outcome` = `completed` \| `skipped` \| `failed` | Every job that reached a terminal state. |
+| `nextext_jobs_total` | `outcome` = `completed` \| `skipped` \| `failed` \| `cancelled` | Every job that reached a terminal state; `cancelled` is a job deleted while it ran (or cut short by shutdown), stopped at its next check point. |
 | `nextext_jobs_skipped_total` | `reason` = `vad_no_speech` \| `asr_empty_transcript` \| `asr_all_segments_filtered` \| `unknown` | Jobs that completed without a transcript. |
 | `nextext_jobs_failed_total` | `code` = `undecodable_media` \| `internal` | Failed jobs, by typed cause. |
 

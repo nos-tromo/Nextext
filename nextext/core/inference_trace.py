@@ -39,6 +39,8 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import Any
 
+from nextext.core.cancel import check
+
 __all__ = [
     "InferenceTrace",
     "TaskTally",
@@ -197,6 +199,9 @@ def record_inference(
 ) -> None:
     """Report one inference request to the open trace, if there is one.
 
+    Every client reports each request here, so this is also where a cancelled
+    job stops after a request: the request that happened is recorded first.
+
     Args:
         task: The inference task, e.g. ``asr`` or ``chat``.
         model: The model name the request asked for.
@@ -204,6 +209,10 @@ def record_inference(
         input_tokens: Prompt tokens the reply reported.
         output_tokens: Completion tokens the reply reported.
         served_model: The model the endpoint reported serving.
+
+    Raises:
+        JobCancelled: If the job was cancelled (:mod:`nextext.core.cancel`),
+            after the request was recorded.
     """
     trace = _TRACE.get()
     if trace is not None:
@@ -215,6 +224,7 @@ def record_inference(
             output_tokens=output_tokens,
             served_model=served_model,
         )
+    check()
 
 
 @contextmanager

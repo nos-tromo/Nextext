@@ -30,6 +30,8 @@ import av
 from av.error import FFmpegError
 from loguru import logger
 
+from nextext.core.cancel import check
+
 __all__ = ["AudioDecodeError", "normalize_for_transcription"]
 
 TARGET_SAMPLE_RATE = 16000
@@ -84,6 +86,7 @@ def _transcode_to_flac(src: Path, dst: Path) -> None:
 
             packets = in_container.demux(in_stream)
             while True:
+                check()
                 try:
                     packet = next(packets)
                 except StopIteration:

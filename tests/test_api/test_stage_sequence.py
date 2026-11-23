@@ -25,6 +25,7 @@ from nextext.api.jobs import (
     _run_pipeline_blocking,
 )
 from nextext.api.schemas import JobOptions, JobStatus
+from nextext.core.cancel import JobCancelled, bind_cancel
 from nextext.pipeline import TranscriptionOutcome
 from tests.audit_helpers import job_audit
 
@@ -134,3 +135,44 @@ def test_stage_constants_name_their_labels() -> None:
     assert PIPELINE_STAGE_LABELS[STAGE_WORDS] == "Running word-level analysis"
     assert PIPELINE_STAGE_LABELS[STAGE_SUMMARY] == "Summarizing"
     assert PIPELINE_STAGE_LABELS[STAGE_HATE_SPEECH] == "Detecting hate speech"
+
+
+def test_a_job_cancelled_before_it_starts_stops_at_its_first_stage(stubbed: None, tmp_path: Path) -> None:
+    """The first stage announcement is a check point: nothing runs for a cancelled job."""
+    events: list[tuple[str, dict[str, Any]]] = []
+    state = _job(tmp_path)
+    state.cancel.set()
+
+    with bind_cancel(state.cancel), pytest.raises(JobCancelled):
+        _run_pipeline_blocking(state, lambda name, payload: events.append((name, payload)))
+
+    assert events == []
+
+
+def test_a_job_cancelled_mid_stage_stops_where_the_stage_ends(
+    stubbed: None, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A stage that finishes after the cancel is not announced, and the next one never starts."""
+    events: list[tuple[str, dict[str, Any]]] = []
+    state = _job(tmp_path)
+
+    def transcription(**kwargs: Any) -> TranscriptionOutcome:
+        state.cancel.set()  # the owner deletes the job while Whisper is working
+        return TranscriptionOutcome(transcript=TRANSCRIPT.copy(), src_lang="en")
+
+    monkeypatch.setattr("nextext.pipeline.transcription_pipeline", transcription)
+
+    with bind_cancel(state.cancel), pytest.raises(JobCancelled):
+        _run_pipeline_blocking(state, lambda name, payload: events.append((name, payload)))
+
+    assert [(name, payload["stage_index"]) for name, payload in events] == [("stage_started", STAGE_TRANSCRIBE)]
+
+
+def test_a_job_without_a_bound_event_ignores_its_cancel_flag(stubbed: None, tmp_path: Path) -> None:
+    """Only the manager binds the event: a direct run is never stopped by it."""
+    state = _job(tmp_path)
+    state.cancel.set()
+
+    result = _run_pipeline_blocking(state, lambda name, payload: None)
+
+    assert result["transcript"] is not None

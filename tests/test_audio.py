@@ -1,5 +1,6 @@
 """Tests for the audio-normalization agent (nextext.core.audio)."""
 
+import threading
 import wave
 from pathlib import Path
 from typing import cast
@@ -9,6 +10,7 @@ import numpy as np
 import pytest
 
 from nextext.core import audio
+from nextext.core.cancel import JobCancelled, bind_cancel
 
 
 def _write_stereo_wav(path: Path, *, seconds: float = 0.4, rate: int = 44100) -> None:
@@ -144,4 +146,24 @@ def test_normalize_writes_its_copy_into_the_scratch_dir(tmp_path: Path) -> None:
     with audio.normalize_for_transcription(src, scratch_dir=scratch) as flac_path:
         assert flac_path.parent == scratch
         assert flac_path.exists()
+    assert list(scratch.iterdir()) == []
+
+
+def test_normalize_stops_a_cancelled_job_and_leaves_no_copy(tmp_path: Path) -> None:
+    """The per-packet loop is a check point; the partial FLAC is removed on the way out.
+
+    Args:
+        tmp_path (Path): Pytest temporary directory fixture.
+    """
+    src = tmp_path / "upload.wav"
+    _write_stereo_wav(src)
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    event = threading.Event()
+    event.set()
+
+    with bind_cancel(event), pytest.raises(JobCancelled):
+        with audio.normalize_for_transcription(src, scratch):
+            pass
+
     assert list(scratch.iterdir()) == []

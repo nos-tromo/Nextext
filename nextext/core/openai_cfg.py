@@ -11,6 +11,7 @@ import requests
 from dotenv import load_dotenv
 from loguru import logger
 
+from nextext.core.cancel import check
 from nextext.core.inference_trace import cache_scope_headers, correlation_headers, record_inference, reply_usage
 from nextext.utils.env_cfg import (
     DEFAULT_PROMPT_LANGUAGE,
@@ -448,7 +449,10 @@ class InferencePipeline:
         Raises:
             RuntimeError: If the provider is unreachable, the ``openai`` package
                 is missing, or no model can be resolved.
+            JobCancelled: If the job was cancelled before the request is sent
+                (:mod:`nextext.core.cancel`).
         """
+        check()
         if not self.get_health():
             raise RuntimeError("Inference provider is not reachable. Please check your configuration.")
 

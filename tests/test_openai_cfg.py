@@ -1,11 +1,13 @@
 """Tests for the inference client configuration helpers."""
 
 import io
+import threading
 from typing import Any, ClassVar, override
 
 import pytest
 
 from nextext.core import openai_cfg
+from nextext.core.cancel import JobCancelled, bind_cancel
 from nextext.core.openai_cfg import InferencePipeline
 from nextext.utils.env_cfg import load_inference_env
 
@@ -818,3 +820,19 @@ def test_get_health_logs_a_connection_failure_by_class_only(
     logged = "\n".join(log_lines)
     assert "Inference health check failed: ConnectionError" in logged
     assert detail not in logged
+
+
+def test_a_cancelled_job_sends_no_chat_request(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Each chat request is a check point: a cancelled job's next one never goes out."""
+    monkeypatch.setenv("TEXT_MODEL", "llama3.1:8b")
+    pipeline = InferencePipeline()
+    completions = _install_recording_client(monkeypatch, pipeline)
+    event = threading.Event()
+
+    with bind_cancel(event):
+        pipeline.call_model(prompt="first")
+        event.set()
+        with pytest.raises(JobCancelled):
+            pipeline.call_model(prompt="second")
+
+    assert [call["messages"][-1]["content"] for call in completions.calls] == ["first"]

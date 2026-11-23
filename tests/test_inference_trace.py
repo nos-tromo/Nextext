@@ -8,6 +8,7 @@ and forwards the work's ``X-Request-ID`` — and nothing else about the caller.
 from __future__ import annotations
 
 import json
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -17,6 +18,7 @@ import httpx
 import pytest
 
 from nextext.core import diarization, faces, ner, transcription, vad
+from nextext.core.cancel import JobCancelled, bind_cancel
 from nextext.core.inference_trace import (
     CACHE_SCOPE_HEADER,
     REQUEST_ID_HEADER,
@@ -349,3 +351,14 @@ def test_service_clients_send_no_correlation_header_outside_correlate(
     vad.has_speech(media)
     assert sent == [{"Authorization": "Bearer sk-test"}]
     assert json.dumps(sent).count(REQUEST_ID) == 0
+
+
+def test_a_cancelled_job_stops_after_its_request_is_recorded() -> None:
+    """The report of a request is a check point, reached after the request is written to the trace."""
+    event = threading.Event()
+    with trace_inference() as trace, bind_cancel(event):
+        record_inference("chat", "chat-model", ok=True)
+        event.set()
+        with pytest.raises(JobCancelled):
+            record_inference("chat", "chat-model", ok=True, input_tokens=4, output_tokens=1)
+    assert trace.tallies[0].requests == 2

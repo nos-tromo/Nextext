@@ -31,6 +31,7 @@ import os
 import secrets
 import shutil
 import tempfile
+import threading
 import uuid
 from collections.abc import AsyncIterator, Callable, Hashable
 from dataclasses import dataclass, field
@@ -44,7 +45,7 @@ from matplotlib.figure import Figure
 
 from nextext.api.job_record import JobRecord, read_job_record, write_job_record
 from nextext.api.media_grants import MediaGrant, MediaGrants
-from nextext.api.metrics import record_completed, record_failed, record_skipped
+from nextext.api.metrics import record_cancelled, record_completed, record_failed, record_skipped
 from nextext.api.schemas import (
     FaceAppearanceOut,
     FaceEntryOut,
@@ -76,6 +77,7 @@ from nextext.audit import (
     joined_analyses,
 )
 from nextext.core.audio import AudioDecodeError
+from nextext.core.cancel import JobCancelled, bind_cancel, check
 from nextext.core.docint_transcript import parse_hhmmss_to_seconds
 from nextext.core.face_extraction import FacesResult
 from nextext.core.inference_trace import cache_scope, correlate
@@ -177,6 +179,10 @@ class JobState:
     # owns the tempdir cleanup (in its finally block) and suppresses further
     # event dispatch for the no-longer-listed job.
     deleted: bool = False
+    # Set by delete() on a running job and by stop(): the pipeline thread
+    # raises JobCancelled at its next check point (nextext.core.cancel) and the
+    # worker slot frees, instead of the pipeline running on to its end.
+    cancel: threading.Event = field(default_factory=threading.Event, repr=False)
     # The operator switch (``NEXTEXT_FACES``) the job runs under, handed down
     # by the manager that read it at startup.
     faces_mode: FacesMode = "off"
@@ -554,7 +560,9 @@ def _run_pipeline_blocking(state: JobState, push_event: PushEvent) -> dict[str, 
     """Run the full Nextext pipeline for one job, emitting SSE events.
 
     Stage transitions are published through ``push_event`` so SSE subscribers
-    see the same progression as the job advances through the pipeline.
+    see the same progression as the job advances through the pipeline. Every
+    stage boundary is a check point of the job's cancellation
+    (:mod:`nextext.core.cancel`).
 
     Args:
         state: The job to process.
@@ -565,6 +573,7 @@ def _run_pipeline_blocking(state: JobState, push_event: PushEvent) -> dict[str, 
 
     Raises:
         ConnectionError: If the configured inference provider is unreachable.
+        JobCancelled: If the job was cancelled and this is its next check point.
     """
     # Local imports keep test stubs and import-time module reloads predictable.
     from nextext.core.openai_cfg import InferencePipeline
@@ -604,6 +613,7 @@ def _run_pipeline_blocking(state: JobState, push_event: PushEvent) -> dict[str, 
         Args:
             stage_index: Zero-based pipeline stage index.
         """
+        check()
         push_event(
             "stage_started",
             {
@@ -622,6 +632,7 @@ def _run_pipeline_blocking(state: JobState, push_event: PushEvent) -> dict[str, 
             delta: Optional JSON-friendly fragment of the result to surface
                 to subscribers (e.g. ``{"transcript": [...]}``).
         """
+        check()
         push_event(
             "stage_completed",
             {
@@ -931,6 +942,13 @@ def _run_pipeline_blocking(state: JobState, push_event: PushEvent) -> dict[str, 
     return result
 
 
+class _Cancelled:
+    """What a job's pipeline thread returns when it stopped at a check point."""
+
+
+_CANCELLED: Final[_Cancelled] = _Cancelled()
+
+
 class JobManager:
     """In-memory job store and worker dispatcher.
 
@@ -1021,13 +1039,17 @@ class JobManager:
     async def stop(self) -> None:
         """Remove every job and its upload, record it, and close owner streams.
 
-        Job events are refused from here on (a pipeline thread still running
-        fails its job instead of writing past the chain's end); the deletion
-        of the remaining jobs is recorded as one ``delete`` / ``job.purge``
-        per owner, by the system.
+        Every running job is cancelled first, so its pipeline thread stops at
+        its next check point instead of running over a removed upload. Job
+        events are refused from here on (a pipeline thread still running fails
+        its job instead of writing past the chain's end); the deletion of the
+        remaining jobs is recorded as one ``delete`` / ``job.purge`` per owner,
+        by the system.
         """
-        self._sink.seal()
         states = list(self._jobs.values())
+        for state in states:
+            state.cancel.set()
+        self._sink.seal()
         self._jobs.clear()
         self.media_grants.clear()
         for state in states:
@@ -1290,8 +1312,10 @@ class JobManager:
 
         The erasure is recorded (``delete`` / ``job.delete``) once the job is
         gone from memory and its upload removed — or, for a running job, once
-        its removal is handed to the worker, which removes the upload when the
-        pipeline step that holds it returns.
+        its removal is handed to the worker. A running job is also cancelled:
+        its pipeline thread stops at its next check point
+        (:mod:`nextext.core.cancel`) — a call already in flight finishes first
+        — and the worker then removes the upload and frees its slot.
 
         Args:
             job_id: Job identifier.
@@ -1321,8 +1345,10 @@ class JobManager:
                 await task
         if state.status is JobStatus.RUNNING:
             # The blocking pipeline thread may still be reading the upload.
-            # Close subscribers now; the worker's finally block removes the
-            # tempdir once the thread has finished.
+            # Tell it to stop at its next check point, close subscribers now;
+            # the worker's finally block removes the tempdir once the thread
+            # has returned.
+            state.cancel.set()
             for queue in list(state.subscribers):
                 queue.put_nowait(None)
             state.subscribers.clear()
@@ -1463,6 +1489,28 @@ class JobManager:
                 if queues is not None and not queues:
                     del self._owner_subscribers[owner_id]
 
+    def _run_pipeline_thread(self, state: JobState, push_event: PushEvent) -> dict[str, Any] | _Cancelled:
+        """Run the pipeline on the worker thread with the job's cancel event bound.
+
+        ``JobCancelled`` is caught here, on the thread, and turned into a
+        return value, so no ``BaseException`` ever crosses into asyncio. An
+        injected runner observes the cancellation through
+        :func:`nextext.core.cancel.check` like the real pipeline does.
+
+        Args:
+            state: The job to process.
+            push_event: Thread-safe callable for emitting SSE events.
+
+        Returns:
+            dict[str, Any] | _Cancelled: The pipeline's result, or the sentinel
+                when the job stopped at a check point.
+        """
+        try:
+            with bind_cancel(state.cancel):
+                return self._pipeline_runner(state, push_event)
+        except JobCancelled:
+            return _CANCELLED
+
     async def _worker(self, state: JobState) -> None:
         """Run the pipeline for ``state`` once a worker slot is available.
 
@@ -1521,7 +1569,16 @@ class JobManager:
                 # request the job makes (X-Request-ID), for correlation; its
                 # chat calls carry the owner's cache scope (X-Cache-Scope).
                 with correlate(state.audit.origin.request_id), cache_scope(state.owner_id):
-                    result = await asyncio.to_thread(self._pipeline_runner, state, _push)
+                    result = await asyncio.to_thread(self._run_pipeline_thread, state, _push)
+                if isinstance(result, _Cancelled):
+                    # Deleted (or shut down) mid-run: nothing is joined, nothing
+                    # is announced — its owner and the chain already know — and
+                    # leaving the semaphore frees the slot for the next job.
+                    record_cancelled()
+                    state.status = JobStatus.CANCELLED
+                    state.finished_at = _utcnow()
+                    logger.info("Job {} stopped at a check point: it was cancelled.", state.job_id)
+                    return
                 if not state.deleted:
                     # A job deleted mid-run discards its result instead of
                     # storing the joined analyses; its transfers are recorded.

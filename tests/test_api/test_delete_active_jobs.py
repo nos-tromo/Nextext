@@ -6,7 +6,9 @@ queued job's worker would later acquire the semaphore and run the pipeline
 against the vanished upload, failing with ``FileNotFoundError`` →
 ``AudioDecodeError``. These tests drive ``JobManager`` directly to pin the
 fixed semantics: a deleted queued job never runs its pipeline, and deleting a
-running job defers tempdir removal until the pipeline thread has finished.
+running job defers tempdir removal until its pipeline thread has stopped — at
+its next check point (:mod:`nextext.core.cancel`), which also frees the
+worker slot instead of holding it until the pipeline would have ended.
 """
 
 from __future__ import annotations
@@ -18,9 +20,11 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from prometheus_client import REGISTRY
 
 from nextext.api.jobs import JobManager, JobState, PushEvent
 from nextext.api.schemas import JobOptions, JobStatus
+from nextext.core.cancel import check
 from tests.audit_helpers import AuditCapture, edge_origin
 
 from .conftest import ALICE_OWNER_ID
@@ -107,17 +111,30 @@ async def test_delete_queued_job_never_runs_its_pipeline(tmp_path: Path) -> None
         await manager.stop()
 
 
+def _outcome_count(outcome: str) -> float:
+    """Read ``nextext_jobs_total{outcome=...}`` from the default registry.
+
+    Args:
+        outcome: The ``outcome`` label value.
+
+    Returns:
+        float: The counter's value, ``0.0`` while the series does not exist.
+    """
+    return REGISTRY.get_sample_value("nextext_jobs_total", {"outcome": outcome}) or 0.0
+
+
 @pytest.mark.asyncio
-async def test_delete_running_job_defers_dir_cleanup_until_worker_finishes(
+async def test_delete_running_job_keeps_the_upload_until_its_next_check_point(
     tmp_path: Path,
 ) -> None:
-    """Deleting a running job keeps its upload alive for the pipeline thread."""
+    """Deleting a running job leaves the upload to the pipeline thread, which stops at its next check point."""
     job_started = threading.Event()
     release_job = threading.Event()
+    ran_past_check_point = threading.Event()
     pipeline_errors: list[BaseException] = []
 
     def runner(state: JobState, push: PushEvent) -> dict[str, Any]:
-        """Block mid-pipeline, then re-read the upload after the delete."""
+        """Block mid-call, re-read the upload after the delete, then reach a check point."""
         job_started.set()
         assert release_job.wait(timeout=5.0)
         try:
@@ -125,6 +142,8 @@ async def test_delete_running_job_defers_dir_cleanup_until_worker_finishes(
         except OSError as exc:  # pragma: no cover — the bug being pinned
             pipeline_errors.append(exc)
             raise
+        check()
+        ran_past_check_point.set()
         return {}
 
     manager = JobManager(pipeline_runner=runner, concurrency=1, emitter=AuditCapture().started())
@@ -136,10 +155,130 @@ async def test_delete_running_job_defers_dir_cleanup_until_worker_finishes(
         assert await manager.delete(job.job_id, origin=edge_origin(ALICE_OWNER_ID)) is True
         # The upload must survive while the pipeline thread still uses it.
         assert job.file_path.exists()
+        assert job.cancel.is_set()
 
         release_job.set()
         await _wait_for(lambda: not job.file_path.parent.exists())
         assert pipeline_errors == []
+        assert not ran_past_check_point.is_set()
+        assert job.status is JobStatus.CANCELLED
+        assert job.finished_at is not None
     finally:
         release_job.set()
         await manager.stop()
+
+
+@pytest.mark.asyncio
+async def test_delete_running_job_frees_its_worker_slot_at_the_next_check_point(
+    tmp_path: Path,
+) -> None:
+    """A job created after the delete starts before the deleted job's pipeline would have ended."""
+    first_started = threading.Event()
+    in_flight_call_returns = threading.Event()
+    ran_past_check_point = threading.Event()
+    rest_of_pipeline = threading.Event()  # never set: the work the deleted job must not do
+    second_started = threading.Event()
+
+    def runner(state: JobState, push: PushEvent) -> dict[str, Any]:
+        """Run the first job as a long pipeline; the second returns at once."""
+        if state.file_name != "first.mp4":
+            second_started.set()
+            return {}
+        first_started.set()
+        assert in_flight_call_returns.wait(timeout=5.0)
+        check()
+        ran_past_check_point.set()
+        rest_of_pipeline.wait(timeout=5.0)
+        return {}
+
+    cancelled_before = _outcome_count("cancelled")
+    failed_before = _outcome_count("failed")
+    completed_before = _outcome_count("completed")
+    manager = JobManager(pipeline_runner=runner, concurrency=1, emitter=AuditCapture().started())
+    try:
+        first = await _create_job(manager, tmp_path, "first")
+        await asyncio.to_thread(first_started.wait, 5.0)
+        assert await manager.delete(first.job_id, origin=edge_origin(ALICE_OWNER_ID)) is True
+
+        second = await _create_job(manager, tmp_path, "second")
+        assert second.status is JobStatus.QUEUED
+        assert not second_started.is_set()
+
+        in_flight_call_returns.set()
+        assert await asyncio.to_thread(second_started.wait, 2.0), "the deleted job still holds the worker slot"
+        await _wait_for(lambda: second.status is JobStatus.COMPLETED)
+
+        assert not ran_past_check_point.is_set()
+        assert first.status is JobStatus.CANCELLED
+        assert not first.file_path.parent.exists()
+        assert _outcome_count("cancelled") == cancelled_before + 1
+        assert _outcome_count("failed") == failed_before
+        assert _outcome_count("completed") == completed_before + 1
+    finally:
+        in_flight_call_returns.set()
+        rest_of_pipeline.set()
+        await manager.stop()
+
+
+@pytest.mark.asyncio
+async def test_a_cancelled_job_pushes_no_terminal_event_and_records_no_combine(tmp_path: Path) -> None:
+    """The cancelled job's owner has already been told: no frame, no joined analyses."""
+    job_started = threading.Event()
+    release_job = threading.Event()
+
+    def runner(state: JobState, push: PushEvent) -> dict[str, Any]:
+        job_started.set()
+        assert release_job.wait(timeout=5.0)
+        check()
+        return {}  # pragma: no cover — cancelled at the check point
+
+    capture = AuditCapture()
+    manager = JobManager(pipeline_runner=runner, concurrency=1, emitter=capture.started())
+    try:
+        job = await _create_job(manager, tmp_path, "cancelled")
+        await asyncio.to_thread(job_started.wait, 5.0)
+        await manager.delete(job.job_id, origin=edge_origin(ALICE_OWNER_ID))
+        release_job.set()
+        assert job.task is not None
+        await job.task
+
+        assert job.status is JobStatus.CANCELLED
+        assert job.error is None
+        assert job.error_code is None
+        assert [name for name, _ in job.event_history] == []
+        assert capture.of("combine") == []
+    finally:
+        release_job.set()
+        await manager.stop()
+
+
+@pytest.mark.asyncio
+async def test_stop_cancels_a_running_job(tmp_path: Path) -> None:
+    """Shutdown sets the cancel event, so the pipeline thread exits instead of running over removed uploads."""
+    job_started = threading.Event()
+    release_job = threading.Event()
+    ran_past_check_point = threading.Event()
+
+    def runner(state: JobState, push: PushEvent) -> dict[str, Any]:
+        job_started.set()
+        assert release_job.wait(timeout=5.0)
+        check()
+        ran_past_check_point.set()  # pragma: no cover — cancelled at the check point
+        return {}
+
+    manager = JobManager(pipeline_runner=runner, concurrency=1, emitter=AuditCapture().started())
+    job = await _create_job(manager, tmp_path, "stopping")
+    try:
+        await asyncio.to_thread(job_started.wait, 5.0)
+        assert not job.cancel.is_set()
+
+        await manager.stop()
+        assert job.cancel.is_set()
+
+        release_job.set()
+        assert job.task is not None
+        await job.task
+        assert not ran_past_check_point.is_set()
+        assert job.status is JobStatus.CANCELLED
+    finally:
+        release_job.set()

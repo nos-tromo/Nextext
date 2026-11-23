@@ -33,6 +33,7 @@ from av.stream import Disposition
 from loguru import logger
 from PIL import Image
 
+from nextext.core.cancel import check
 from nextext.utils.env_cfg import load_job_concurrency
 from nextext.utils.log_cfg import error_label
 
@@ -122,7 +123,8 @@ def extract_keyframe_samples(file_path: Path, *, per_minute: int = 4, max_frames
     are chosen evenly across the whole duration and each is seeked and decoded
     to a JPEG. This frames the entire clip rather than only its opening
     minutes. Any decode/seek/parse error is logged and the frames gathered so
-    far are returned — the function never raises.
+    far are returned — the function never raises, except ``JobCancelled`` for a
+    job cancelled meanwhile (:mod:`nextext.core.cancel`).
 
     Args:
         file_path (Path): Path to the media file.
@@ -150,9 +152,11 @@ def extract_keyframe_samples(file_path: Path, *, per_minute: int = 4, max_frames
             target = min(max_frames, max(1, round(duration_sec / 60.0 * per_minute)))
             # Pass 1 — cheap, no decoding: gather keyframe timestamps across the
             # whole file.
-            keyframe_pts = [
-                packet.pts for packet in container.demux(stream) if packet.is_keyframe and packet.pts is not None
-            ]
+            keyframe_pts: list[int] = []
+            for packet in container.demux(stream):
+                check()
+                if packet.is_keyframe and packet.pts is not None:
+                    keyframe_pts.append(packet.pts)
             if not keyframe_pts:
                 logger.info("No keyframes found in '{}'.", file_path.name)
                 return []
@@ -160,6 +164,7 @@ def extract_keyframe_samples(file_path: Path, *, per_minute: int = 4, max_frames
             selected = subsample(sorted(keyframe_pts), target)
             # Pass 2 — decode only the selected keyframes by seeking to each.
             for pts in selected:
+                check()
                 container.seek(pts, stream=stream)
                 for frame in container.decode(stream):
                     buffer = io.BytesIO()

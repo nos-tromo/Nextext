@@ -36,6 +36,7 @@ from loguru import logger
 from PIL import Image
 
 from nextext.core import faces as faces_api
+from nextext.core.cancel import check
 from nextext.core.face_tracks import (
     Box,
     Detection,
@@ -746,6 +747,7 @@ def extract_faces(
     batch_bytes = 0
     with contextlib.closing(sample_frames(file_path, interval_s=interval_s, max_frames=max_frames)) as frames:
         for frame in frames:
+            check()
             size = _source_bytes(frame)
             if batch and batch_bytes + size > SOURCE_BATCH_BYTES:
                 extraction.process(batch)

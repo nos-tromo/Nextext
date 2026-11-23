@@ -1,6 +1,7 @@
 """Tests for keyframe extraction and even subsampling."""
 
 import io
+import threading
 import wave
 from fractions import Fraction
 from pathlib import Path
@@ -10,6 +11,7 @@ import av
 import pytest
 from PIL import Image, ImageStat
 
+from nextext.core.cancel import JobCancelled, bind_cancel
 from nextext.core.keyframes import extract_keyframe_samples, extract_keyframes, subsample
 
 
@@ -265,3 +267,35 @@ def test_extract_keyframe_samples_picks_its_stream_past_cover_art(
 
     assert extract_keyframe_samples(video, per_minute=60, max_frames=6) == []
     assert len(picked) == 1
+
+
+def test_extract_keyframe_samples_stops_a_cancelled_job(tmp_path: Path) -> None:
+    """Both passes over the container are check points; the fail-soft guard lets the stop through."""
+    video = tmp_path / "ramp.mkv"
+    _make_mjpeg_ramp(video, n_frames=30, fps=1)
+    event = threading.Event()
+    event.set()
+
+    with bind_cancel(event), pytest.raises(JobCancelled):
+        extract_keyframe_samples(video, per_minute=60, max_frames=6)
+
+
+def test_extract_keyframe_samples_stops_between_decodes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A job cancelled while frames are being decoded takes no further frame."""
+    video = tmp_path / "ramp.mkv"
+    _make_mjpeg_ramp(video, n_frames=30, fps=1)
+    event = threading.Event()
+    decoded: list[int] = []
+    real_to_image = av.VideoFrame.to_image
+
+    def to_image_then_cancel(frame: av.VideoFrame, *args: Any, **kwargs: Any) -> Image.Image:
+        decoded.append(1)
+        event.set()  # the owner deletes the job after the first frame
+        return real_to_image(frame, *args, **kwargs)
+
+    monkeypatch.setattr(av.VideoFrame, "to_image", to_image_then_cancel)
+
+    with bind_cancel(event), pytest.raises(JobCancelled):
+        extract_keyframe_samples(video, per_minute=60, max_frames=6)
+
+    assert decoded == [1]
