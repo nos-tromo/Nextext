@@ -12,6 +12,7 @@ from dotenv import load_dotenv
 from loguru import logger
 
 from nextext.core.cancel import check
+from nextext.core.inference_errors import InferenceUnreachable
 from nextext.core.inference_trace import cache_scope_headers, correlation_headers, record_inference, reply_usage
 from nextext.utils.env_cfg import (
     DEFAULT_PROMPT_LANGUAGE,
@@ -454,7 +455,11 @@ class InferencePipeline:
         """
         check()
         if not self.get_health():
-            raise RuntimeError("Inference provider is not reachable. Please check your configuration.")
+            message = "Inference provider is not reachable. Please check your configuration."
+            # A RuntimeError for the callers that catch it, with the outage as
+            # its cause, so a router that drops between two requests of one job
+            # fails the job inference_unavailable (find_inference_outage).
+            raise RuntimeError(message) from InferenceUnreachable(message)
 
         messages: list[dict[str, Any]] = []
         if include_system_prompt:

@@ -8,6 +8,7 @@ import pytest
 
 from nextext.core import openai_cfg
 from nextext.core.cancel import JobCancelled, bind_cancel
+from nextext.core.inference_errors import InferenceUnreachable, find_inference_outage
 from nextext.core.openai_cfg import InferencePipeline
 from nextext.utils.env_cfg import load_inference_env
 
@@ -723,6 +724,26 @@ def test_call_vision_raises_when_provider_unreachable(monkeypatch: pytest.Monkey
 
     with pytest.raises(RuntimeError):
         pipeline.call_vision(prompt="p", images=[b"x"])
+
+
+def test_a_provider_that_drops_between_two_requests_is_an_inference_outage(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``_chat`` re-checks health before each request; its failure still reads as an outage to the worker.
+
+    The error stays a ``RuntimeError`` for callers that catch that, with an
+    ``InferenceUnreachable`` as its cause, so a job whose router drops between
+    two chat calls fails ``inference_unavailable`` and not ``internal``.
+    """
+    monkeypatch.setenv("OPENAI_API_KEY", "k")
+    monkeypatch.setenv("TEXT_MODEL", "chat-model")
+    pipeline = InferencePipeline()
+    _install_recording_client(monkeypatch, pipeline)
+    monkeypatch.setattr(pipeline, "get_health", lambda: False)
+
+    with pytest.raises(RuntimeError) as raised:
+        pipeline.call_model(prompt="p")
+
+    assert isinstance(raised.value.__cause__, InferenceUnreachable)
+    assert find_inference_outage(raised.value) is raised.value.__cause__
 
 
 # ---------------------------------------------------------------------------
