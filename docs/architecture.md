@@ -32,6 +32,11 @@ path — one request per frame — producing the `keyframes.zip` archive, the
 `[mm:ss] caption` block behind `visual_context.txt`, and the SPA's Visual
 context tab.
 
+Frames come out upright: a video stored sideways with a display rotation (a
+portrait phone video) is turned by it, so the archive, the captions' images and
+the CLI's keyframe folder all show it the way a player does. Frames keep their
+full size.
+
 The archive carries a `manifest.json` naming each frame's `file`, `index` and
 `time_sec`, so a consumer can place a frame in the clip without downloading the
 captions. It is omitted when the sampling times are unknown, never guessed.

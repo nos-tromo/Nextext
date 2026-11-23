@@ -13,6 +13,7 @@ from PIL import Image, ImageStat
 
 from nextext.core.cancel import JobCancelled, bind_cancel
 from nextext.core.keyframes import extract_keyframe_samples, extract_keyframes, subsample
+from tests.media_factory import make_clip
 
 
 def test_subsample_evenly_picks_target() -> None:
@@ -299,3 +300,73 @@ def test_extract_keyframe_samples_stops_between_decodes(tmp_path: Path, monkeypa
         extract_keyframe_samples(video, per_minute=60, max_frames=6)
 
     assert decoded == [1]
+
+
+def _decode(jpeg: bytes) -> Image.Image:
+    """Open a keyframe's JPEG payload as an RGB image.
+
+    Args:
+        jpeg (bytes): JPEG-encoded image bytes.
+
+    Returns:
+        Image.Image: The decoded image, converted to RGB.
+    """
+    with Image.open(io.BytesIO(jpeg)) as image:
+        return image.convert("RGB")
+
+
+@pytest.mark.parametrize(
+    ("rotation", "red_end"),
+    [(90, "bottom"), (-90, "top")],
+)
+def test_extract_keyframe_samples_turns_a_rotated_video_upright(tmp_path: Path, rotation: int, red_end: str) -> None:
+    """A clip stored landscape with a display rotation yields portrait keyframes, at full size.
+
+    The stored frames are red on the left and blue on the right, so which end
+    the red lands on shows which way the frame was turned: 90 degrees
+    counter-clockwise puts it at the bottom, -90 (the usual phone tag) on top.
+
+    Args:
+        tmp_path (Path): Pytest temporary directory fixture.
+        rotation (int): Display rotation in degrees counter-clockwise.
+        red_end (str): Where the stored left half ends up once upright.
+    """
+    clip = make_clip(tmp_path / "portrait.mp4", seconds=4, fps=8, width=64, height=32, gop_size=8, rotation=rotation)
+
+    samples = extract_keyframe_samples(clip, per_minute=60, max_frames=4)
+
+    assert samples
+    for sample in samples:
+        image = _decode(sample.jpeg)
+        assert image.size == (32, 64)
+        top, bottom = image.getpixel((16, 8)), image.getpixel((16, 56))
+        assert isinstance(top, tuple) and isinstance(bottom, tuple)
+        red, blue = (bottom, top) if red_end == "bottom" else (top, bottom)
+        assert red[0] > 200 and red[2] < 60
+        assert blue[2] > 200 and blue[0] < 60
+
+
+def test_extract_keyframes_bytes_wrapper_comes_out_upright_too(tmp_path: Path) -> None:
+    """The bytes-only wrapper the ``keyframes.zip`` artifact reads gives the same upright frames."""
+    clip = make_clip(tmp_path / "portrait.mp4", seconds=4, fps=8, width=64, height=32, gop_size=8, rotation=90)
+
+    frames = extract_keyframes(clip, per_minute=60, max_frames=4)
+
+    assert frames
+    assert all(_decode(jpeg).size == (32, 64) for jpeg in frames)
+
+
+def test_extract_keyframe_samples_leaves_an_unrotated_video_as_stored(tmp_path: Path) -> None:
+    """Without a display rotation the frame is untouched: landscape stays landscape, red on the left."""
+    clip = make_clip(tmp_path / "landscape.mp4", seconds=4, fps=8, width=64, height=32, gop_size=8)
+
+    samples = extract_keyframe_samples(clip, per_minute=60, max_frames=4)
+
+    assert samples
+    for sample in samples:
+        image = _decode(sample.jpeg)
+        assert image.size == (64, 32)
+        left, right = image.getpixel((8, 16)), image.getpixel((56, 16))
+        assert isinstance(left, tuple) and isinstance(right, tuple)
+        assert left[0] > 200 and left[2] < 60
+        assert right[2] > 200 and right[0] < 60

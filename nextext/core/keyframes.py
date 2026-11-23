@@ -122,8 +122,9 @@ def extract_keyframe_samples(file_path: Path, *, per_minute: int = 4, max_frames
     Runs two passes over the container: a cheap demux pass collects every
     keyframe's presentation timestamp (no decoding), then ``target`` timestamps
     are chosen evenly across the whole duration and each is seeked and decoded
-    to a JPEG. This frames the entire clip rather than only its opening
-    minutes. Any decode/seek/parse error is logged and the frames gathered so
+    to a full-size JPEG, turned upright by its display rotation (a portrait
+    phone video comes out portrait). This frames the entire clip rather than
+    only its opening minutes. Any decode/seek/parse error is logged and the frames gathered so
     far are returned — the function never raises, except ``JobCancelled`` for a
     job cancelled meanwhile (:mod:`nextext.core.cancel`).
 
@@ -169,7 +170,7 @@ def extract_keyframe_samples(file_path: Path, *, per_minute: int = 4, max_frames
                 container.seek(pts, stream=stream)
                 for frame in container.decode(stream):
                     buffer = io.BytesIO()
-                    frame.to_image().save(buffer, format="JPEG")
+                    _turn_upright(frame.to_image(), frame.rotation).save(buffer, format="JPEG")
                     frames.append(Keyframe(time_sec=_frame_time(frame, pts, stream), jpeg=buffer.getvalue()))
                     break
             logger.info(
@@ -271,6 +272,30 @@ def _sample_time(frame: av.VideoFrame, packet_index: int, average_rate: float | 
     return None
 
 
+def _turn_upright(image: Image.Image, rotation: float) -> Image.Image:
+    """Turn a stored frame by its display rotation so a portrait phone video comes out portrait.
+
+    Only quarter turns are applied (the rotation is rounded to the nearest
+    one); flips are not.
+
+    Args:
+        image: The frame as stored.
+        rotation: The frame's display rotation in counter-clockwise degrees, as
+            PyAV reports it (``VideoFrame.rotation``).
+
+    Returns:
+        Image.Image: ``image`` itself when no turn is due, else a turned copy.
+    """
+    quarter_turns = round(rotation / 90) % 4
+    if quarter_turns == 1:
+        return image.transpose(Image.Transpose.ROTATE_90)
+    if quarter_turns == 2:
+        return image.transpose(Image.Transpose.ROTATE_180)
+    if quarter_turns == 3:
+        return image.transpose(Image.Transpose.ROTATE_270)
+    return image
+
+
 def _upright_image(frame: av.VideoFrame, max_side: int) -> tuple[Image.Image, float]:
     """Convert a frame to an upright RGB image whose long side is at most ``max_side``.
 
@@ -291,14 +316,7 @@ def _upright_image(frame: av.VideoFrame, max_side: int) -> tuple[Image.Image, fl
     width = max(1, round(frame.width * scale))
     height = max(1, round(frame.height * scale))
     image = frame.reformat(width=width, height=height, format="rgb24").to_image()
-    quarter_turns = round(frame.rotation / 90) % 4
-    if quarter_turns == 1:
-        return image.transpose(Image.Transpose.ROTATE_90), scale
-    if quarter_turns == 2:
-        return image.transpose(Image.Transpose.ROTATE_180), scale
-    if quarter_turns == 3:
-        return image.transpose(Image.Transpose.ROTATE_270), scale
-    return image, scale
+    return _turn_upright(image, frame.rotation), scale
 
 
 def video_stream(container: av.container.InputContainer) -> av.VideoStream | None:

@@ -168,7 +168,9 @@ Identity is resolved per request by `resolve_principal`, in order: a service tok
   returns timestamped `Keyframe` objects spanning the clip's full duration;
   `extract_keyframes` is the bytes-only wrapper the `keyframes.zip` artifact
   uses, and `keyframe_manifest` renders the frame/time index both the artifact
-  and the CLI write. `sample_frames` is the face stage's time-based sampler
+  and the CLI write. Both samplers turn a frame upright by its display
+  rotation (`_turn_upright`, quarter turns only, no flips); keyframes stay
+  full size. `sample_frames` is the face stage's time-based sampler
   (`SampledFrame`: index, time, upright RGB image, its `scale` against the
   source, the clip's measured duration); `video_stream` skips cover art.
 - `nextext/core/faces.py` — faces agent: HTTP client for the out-of-process
