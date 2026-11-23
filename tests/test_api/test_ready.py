@@ -13,6 +13,7 @@ import threading
 import time
 import wave
 from collections.abc import Callable
+from types import SimpleNamespace
 from typing import Any
 
 import httpx
@@ -37,6 +38,15 @@ from nextext.api.routes import health as health_module
 from nextext.core import transcription as transcription_module
 from nextext.core.inference_trace import trace_inference
 from tests.audit_helpers import AuditCapture
+from tests.test_api.test_skip_outcomes import (
+    OWNER_HEADER,
+    OWNER_ID,
+    _connection_refused_runner,
+    _decode_failure_runner,
+    _post_job,
+    _raising,
+    _wait_for_status,
+)
 
 WHISPER_URL = "http://whisper.invalid/v1"
 ECHOED = "invented upstream detail 0427"
@@ -462,6 +472,117 @@ async def test_a_busy_timeout_extends_the_good_answer_only_for_one_window() -> N
     clock.now += READY_CACHE_TTL_S
     assert await readiness.is_ready() is True
     assert probe.calls == 3
+
+
+# ---------------------------------------------------------------------------
+# A job that finds inference down says the cached answer may be wrong
+# ---------------------------------------------------------------------------
+
+
+def _ready_after_a_job_failed_with(
+    runner: Any, monkeypatch: pytest.MonkeyPatch, audit_capture: AuditCapture
+) -> tuple[int, int, int]:
+    """Cache a good ``/ready``, fail one job with ``runner``, ask again, and count the probes.
+
+    Args:
+        runner: The pipeline stand-in the job runs.
+        monkeypatch: Pytest patcher.
+        audit_capture: Where the app's audit events go.
+
+    Returns:
+        tuple[int, int, int]: The probe's calls after the first ``/ready``, after a second one
+            from the cache, and after the third one asked once the job had failed.
+    """
+    monkeypatch.setattr(main_module, "setup_logging", lambda: None)
+    app = create_app(audit_emitter_factory=audit_capture.factory, pipeline_runner=runner)
+    probe = _Probe()
+    _arrange(app, monkeypatch, probe=probe)
+    client = TestClient(app)
+    client.headers[OWNER_HEADER] = OWNER_ID
+    with client:
+        assert client.get("/api/v1/ready").status_code == 200
+        first = probe.calls
+        assert client.get("/api/v1/ready").status_code == 200
+        cached = probe.calls
+        _wait_for_status(client, _post_job(client), "failed")
+        assert client.get("/api/v1/ready").status_code == 200
+        return first, cached, probe.calls
+
+
+def test_a_job_that_fails_inference_unavailable_makes_the_next_ready_probe_again(
+    monkeypatch: pytest.MonkeyPatch, audit_capture: AuditCapture
+) -> None:
+    """A cached ``200`` is not served after a job found inference down."""
+    assert _ready_after_a_job_failed_with(_connection_refused_runner, monkeypatch, audit_capture) == (1, 1, 2)
+
+
+def test_a_job_that_fails_for_another_reason_leaves_the_cached_answer_alone(
+    monkeypatch: pytest.MonkeyPatch, audit_capture: AuditCapture
+) -> None:
+    """A bug, a rejected request or a bad upload says nothing about Whisper."""
+    for runner in (_raising(lambda: RuntimeError("a bug")), _decode_failure_runner):
+        assert _ready_after_a_job_failed_with(runner, monkeypatch, audit_capture) == (1, 1, 1)
+
+
+def test_a_failing_hook_does_not_fail_the_jobs_bookkeeping(
+    monkeypatch: pytest.MonkeyPatch, audit_capture: AuditCapture, log_lines: list[str]
+) -> None:
+    """The job still ends ``failed`` with its code if the hook raises, and the hook's failure is logged."""
+    monkeypatch.setattr(main_module, "setup_logging", lambda: None)
+    app = create_app(audit_emitter_factory=audit_capture.factory, pipeline_runner=_connection_refused_runner)
+
+    def broken() -> None:
+        raise RuntimeError(ECHOED)
+
+    app.state.readiness = SimpleNamespace(invalidate=broken)
+    client = TestClient(app)
+    client.headers[OWNER_HEADER] = OWNER_ID
+    with client:
+        snapshot = _wait_for_status(client, _post_job(client), "failed")
+
+    assert snapshot["error_code"] == "inference_unavailable"
+    logged = "\n".join(log_lines)
+    assert "The inference-unavailable hook failed: RuntimeError" in logged
+    assert ECHOED not in logged
+
+
+@pytest.mark.asyncio
+async def test_invalidate_makes_the_answer_stale_and_a_busy_timeout_cannot_keep_it() -> None:
+    """After ``invalidate`` the next request probes, and the invalidated good answer is not kept for a busy timeout."""
+    clock = _Clock()
+    probe = _Probe(None, None, _timeout())
+    readiness = TranscriptionReadiness(probe=probe, clock=clock, calls_in_flight=lambda: 1)
+
+    assert await readiness.is_ready() is True
+    assert await readiness.is_ready() is True
+    assert probe.calls == 1
+
+    readiness.invalidate()
+    assert await readiness.is_ready() is True
+    assert probe.calls == 2
+
+    readiness.invalidate()
+    clock.now += READY_CACHE_TTL_S
+    assert await readiness.is_ready() is False, "a good answer invalidated since must not be kept while busy"
+    assert probe.calls == 3
+
+
+@pytest.mark.asyncio
+async def test_a_probe_in_flight_when_invalidated_is_stored_stale() -> None:
+    """The request after a probe that started before the invalidation probes again."""
+    release = threading.Event()
+    probe = _Probe(hold=release)
+    readiness = TranscriptionReadiness(probe=probe, clock=_Clock())
+
+    waiting = asyncio.create_task(readiness.is_ready())
+    assert await asyncio.to_thread(probe.started.wait, 5.0)
+    readiness.invalidate()
+    release.set()
+    assert await waiting is True
+    assert probe.calls == 1
+
+    assert await readiness.is_ready() is True
+    assert probe.calls == 2
 
 
 # ---------------------------------------------------------------------------

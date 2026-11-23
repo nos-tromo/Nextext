@@ -981,6 +981,7 @@ class JobManager:
         *,
         emitter: AuditEmitter,
         faces_mode: FacesMode = "off",
+        on_inference_unavailable: Callable[[], None] | None = None,
     ) -> None:
         """Initialize the manager.
 
@@ -997,6 +998,10 @@ class JobManager:
             faces_mode: The operator switch ``NEXTEXT_FACES``, read once at
                 startup; every job runs under it, and ``off`` refuses jobs
                 that ask for faces.
+            on_inference_unavailable: Called, on the event loop, after a job
+                has failed ``inference_unavailable``; the app passes the
+                readiness cache's ``invalidate``, so the next ``GET /ready``
+                probes afresh instead of answering from a stale ``200``.
         """
         resolved = concurrency if concurrency is not None else load_job_concurrency()
         self._jobs: dict[str, JobState] = {}
@@ -1020,6 +1025,7 @@ class JobManager:
         # jobs, revoked with them.
         self.media_grants = MediaGrants(load_media_grant_ttl())
         self.faces_mode: FacesMode = faces_mode
+        self._on_inference_unavailable = on_inference_unavailable
 
     async def start(self) -> None:
         """Take the job directory and remove what a previous process left in it.
@@ -1639,11 +1645,22 @@ class JobManager:
                         "timestamp": _utcnow().isoformat(),
                     },
                 )
+                if failure_code == "inference_unavailable":
+                    self._tell_inference_unavailable()
             finally:
                 if state.deleted:
                     # delete() ran while the pipeline thread was still using
                     # the upload and deferred the tempdir cleanup to us.
                     await asyncio.to_thread(self._unlink_job_dir, state.file_path)
+
+    def _tell_inference_unavailable(self) -> None:
+        """Run the ``on_inference_unavailable`` hook, which must never fail a job's bookkeeping."""
+        if self._on_inference_unavailable is None:
+            return
+        try:
+            self._on_inference_unavailable()
+        except Exception as exc:
+            logger.error("The inference-unavailable hook failed: {}\n{}", error_label(exc), exception_frames(exc))
 
     def _dispatch_event(
         self,

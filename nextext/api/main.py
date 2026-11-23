@@ -171,7 +171,14 @@ def _lifespan(
                     "faces": faces_mode,
                 },
             )
-            job_manager = JobManager(pipeline_runner=pipeline_runner, emitter=emitter, faces_mode=faces_mode)
+            job_manager = JobManager(
+                pipeline_runner=pipeline_runner,
+                emitter=emitter,
+                faces_mode=faces_mode,
+                # A job that found inference down says the cached /ready may be
+                # wrong; resolved at call time, so a replaced probe is reached.
+                on_inference_unavailable=lambda: app.state.readiness.invalidate(),
+            )
             await job_manager.start()
             cli_sweep: asyncio.Task[None] | None = None
             try:
