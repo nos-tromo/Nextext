@@ -770,7 +770,7 @@ wheels = [
 
 [[package]]
 name = "nextext"
-version = "1.21.0"
+version = "1.22.0"
 source = { editable = "." }
 dependencies = [
     { name = "anyio" },
