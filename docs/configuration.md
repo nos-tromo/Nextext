@@ -56,7 +56,21 @@ versions probe `/health`.
 The probe's result, good or bad, holds for 30 s, and requests that arrive while
 a probe runs share it, so any number of callers cost the Whisper endpoint at
 most one request per 30 s, even when a caller gives up on its request while
-the probe runs. A failure is logged once, as a warning by exception class and
+the probe runs. That is also the whole cost: Ghostwriter probes at start and
+again only after a failure, with backoff, so `/ready` costs one Whisper call
+per 30 s only while someone asks it, not around the clock.
+
+A busy Whisper is not a down one. Whisper pads every input to a 30 s window,
+and a CPU backend queues the 0.5 s probe behind a long upload, so a probe sent
+while a clip transcribes can time out. Nextext counts its own Whisper requests
+in flight; a probe that times out while that count is above zero keeps the last
+good answer (a debug line says so), and `/ready` stays `200`. With no good
+answer yet, with nothing of this process's in flight, or after a failure, a
+timeout is `unavailable`, and so is a refused connection, an HTTP error status
+or a configuration that cannot work, whatever is in flight. Only this process's
+own requests are counted: a Whisper that another caller keeps busy still reads
+`unavailable` when the probe times out. A job that fails `inference_unavailable`
+makes the next `/ready` probe afresh, instead of answering from a cached `200`. A failure is logged once, as a warning by exception class and
 HTTP status (a configuration that cannot work, such as `INFERENCE_PROVIDER=ollama`
 without `WHISPER_API_BASE` and `WHISPER_MODEL`, by a fixed hint naming them), and
 its recovery once at info. Like `/health`, the route
@@ -148,10 +162,10 @@ Unparseable / `<1` values clamp to `1`. Resolved by `load_job_concurrency` in
 
 A job deleted while it runs gives its slot back at its next check point — a
 stage boundary, an inference request, a step of the audio or video decode —
-not when the pipeline would have ended, so the next job (a clip a user took
-back mid-transcription, say, deleted by the service that submitted it) is not
-held up for the rest of the run. A call already in flight finishes first: one
-Whisper upload, one `/diarize`, `/vad` or faces request.
+not when the pipeline would have ended, so the next job is not held up for the
+rest of the run (a clip a user took back mid-transcription, say, and the
+service that submitted it deleted). A call already in flight finishes first:
+one Whisper upload, one `/diarize`, `/vad` or faces request.
 
 ## Sentence restoration
 

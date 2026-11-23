@@ -377,6 +377,9 @@ many services may call as themselves — a count, never a name or token),
   or video decode), and its upload is removed then. A call already in flight —
   one Whisper upload, one `/diarize` request — finishes first, so the upload
   can outlive the record by that long.
+- The stage a job was in when it was deleted still ends, and its `ai_call`
+  events (the model requests it made) are written when it does, so they land in
+  the chain after the job's `job.delete` event, not before it.
 - A pipeline step still running at shutdown is cancelled, and cannot write
   after the chain's end: its job stops at its next check point, or fails when
   the record of the stage it is in is refused first.

@@ -1050,10 +1050,11 @@ class JobManager:
 
         Every running job is cancelled first, so its pipeline thread stops at
         its next check point instead of running over a removed upload. Job
-        events are refused from here on (a pipeline thread still running fails
-        its job instead of writing past the chain's end); the deletion of the
-        remaining jobs is recorded as one ``delete`` / ``job.purge`` per owner,
-        by the system.
+        events are refused from here on: a pipeline thread still running ends
+        cancelled at that check point, and fails its job only when the record
+        of the stage it is in is refused first, instead of writing past the
+        chain's end. The deletion of the remaining jobs is recorded as one
+        ``delete`` / ``job.purge`` per owner, by the system.
         """
         states = list(self._jobs.values())
         for state in states:
