@@ -46,12 +46,18 @@ tell a caller whether a clip will transcribe. `GET /api/v1/ready` can: it
 reports `inference` the same way, and `transcription` from a real probe — half
 a second of synthetic silence sent to the Whisper endpoint with the same base,
 key and model a job uses (`WHISPER_API_BASE` / `WHISPER_API_KEY` /
-`WHISPER_MODEL`, else the central pair), a 10 s timeout and no retries. It
+`WHISPER_MODEL`, else the central pair), a 60 s timeout and no retries. It
 answers `200` with `{"status": "ready", "inference": true, "transcription":
 true, "version": …}`, or `503` with `"status": "unavailable"` and the failing
 field `false`. A caller that offers transcription only while it works should poll
 this route and keep `/health` for liveness. Ghostwriter 0.6.1 and later do; older
 versions probe `/health`.
+
+Whisper pads every input to a 30 s window, so even the 0.5 s probe costs one
+full encoder pass: about 10-20 s on a CPU backend (large-v3-turbo), well under a
+second on a GPU. That is why the timeout is 60 s. An uncached `/ready` can
+therefore take up to a minute on CPU, and a caller should wait longer than that
+(Ghostwriter 0.6.1 waits 75 s).
 
 The probe's result, good or bad, holds for 30 s, and requests that arrive while
 a probe runs share it, so any number of callers cost the Whisper endpoint at

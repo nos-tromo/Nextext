@@ -33,10 +33,14 @@ from nextext.utils.log_cfg import error_label
 #: most one request per period, however many callers there are.
 READY_CACHE_TTL_S: float = 30.0
 
-#: Seconds the probe waits for the Whisper endpoint, with no retries: a slow
-#: or hung endpoint is not ready, and the answer must come back before the
-#: callers' own timeouts.
-PROBE_TIMEOUT_S: float = 10.0
+#: Seconds the probe waits for the Whisper endpoint, with no retries. Whisper
+#: pads every input to a 30 s window, so even half a second of silence costs one
+#: full encoder pass: about 10-20 s on a CPU backend (measured with
+#: large-v3-turbo), well under a second on a GPU. A shorter timeout never read
+#: ready on CPU. A hung endpoint is still not ready once this passes, so an
+#: uncached ``/ready`` can take up to this long and callers must allow more
+#: (Ghostwriter 0.6.1 waits 75 s).
+PROBE_TIMEOUT_S: float = 60.0
 
 PROBE_SECONDS: float = 0.5
 PROBE_SAMPLE_RATE: int = 16_000

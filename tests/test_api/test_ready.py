@@ -716,6 +716,7 @@ def test_probe_sends_silence_with_the_transcribers_endpoint_key_and_model(monkey
     assert request.method == "POST"
     assert str(request.url) == "http://dedicated.invalid/v1/audio/transcriptions"
     assert request.headers["authorization"] == "Bearer whisper-key"
+    assert PROBE_TIMEOUT_S == 60.0, "a CPU Whisper needs 10-20 s for even this probe"
     assert request.extensions["timeout"]["read"] == PROBE_TIMEOUT_S
     body = request.content
     assert b'name="model"' in body and b"invented/whisper-model" in body
