@@ -20,7 +20,7 @@ from nextext.core.transcription import (
     _merge_transcriptions_by_sentence,
     _seconds_to_time,
 )
-from tests.media_factory import make_clip, make_with_cover_art
+from tests.media_factory import make_clip, make_still_image, make_with_cover_art
 
 
 @contextmanager
@@ -809,6 +809,27 @@ def test_external_transcriber_fails_a_cover_art_only_file_as_undecodable(
     """
     transcriber = _make_external_transcriber()
     transcriber.file_path = make_with_cover_art(tmp_path / "cover.mp4")
+    monkeypatch.setattr(transcription, "has_speech", lambda _path: True)
+
+    with pytest.raises(AudioDecodeError):
+        transcriber.transcription()
+
+    assert transcriber.skip_reason is None
+
+
+@pytest.mark.parametrize("suffix", [".png", ".jpg", ".webp"])
+def test_external_transcriber_does_not_skip_a_still_image_as_a_silent_video(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, suffix: str
+) -> None:
+    """A still image keeps its old outcome: it reaches the normalizer and fails, never ``no_audio_stream``.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Lets the VAD guard pass, as it fails open.
+        tmp_path (Path): Pytest temporary directory fixture.
+        suffix (str): The image format's suffix.
+    """
+    transcriber = _make_external_transcriber()
+    transcriber.file_path = make_still_image(tmp_path / f"picture{suffix}")
     monkeypatch.setattr(transcription, "has_speech", lambda _path: True)
 
     with pytest.raises(AudioDecodeError):

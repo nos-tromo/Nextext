@@ -11,7 +11,7 @@ import pytest
 
 from nextext.core import audio
 from nextext.core.cancel import JobCancelled, bind_cancel
-from tests.media_factory import make_clip, make_with_cover_art
+from tests.media_factory import make_animated_gif, make_clip, make_still_image, make_with_cover_art
 
 
 def _write_stereo_wav(path: Path, *, seconds: float = 0.4, rate: int = 44100) -> None:
@@ -202,3 +202,23 @@ def test_video_without_audio_is_false_for_a_file_that_is_not_media_or_is_missing
     assert audio.video_without_audio(not_media) is False
     assert audio.video_without_audio(Path(__file__)) is False
     assert audio.video_without_audio(tmp_path / "missing.mp4") is False
+
+
+@pytest.mark.parametrize("suffix", [".png", ".jpg", ".webp"])
+def test_video_without_audio_is_false_for_a_still_image(tmp_path: Path, suffix: str) -> None:
+    """PyAV shows a still image as a one-frame video, but an image demuxer opened it: it is no video.
+
+    Args:
+        tmp_path (Path): Pytest temporary directory fixture.
+        suffix (str): The image format's suffix.
+    """
+    picture = make_still_image(tmp_path / f"picture{suffix}")
+
+    assert audio.video_without_audio(picture) is False
+
+
+def test_video_without_audio_is_true_for_an_animated_gif(tmp_path: Path) -> None:
+    """An animated GIF is opened by the ``gif`` demuxer, not an image one, so it counts as a silent video."""
+    animation = make_animated_gif(tmp_path / "loop.gif", frames=4)
+
+    assert audio.video_without_audio(animation) is True

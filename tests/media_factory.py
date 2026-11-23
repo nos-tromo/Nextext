@@ -122,3 +122,31 @@ def make_with_cover_art(path: Path, *, video_seconds: int = 0) -> Path:
             for packet in video.encode():
                 container.mux(packet)
     return path
+
+
+def make_still_image(path: Path) -> Path:
+    """Write a one-picture image file; PIL picks the format from the suffix.
+
+    Args:
+        path: Destination file, e.g. ``.png``, ``.jpg`` or ``.webp``.
+
+    Returns:
+        Path: ``path``.
+    """
+    Image.new("RGB", (32, 32), (200, 0, 0)).save(path)
+    return path
+
+
+def make_animated_gif(path: Path, *, frames: int = 4) -> Path:
+    """Write an animated GIF of solid-colour frames, a (silent) video as far as PyAV is concerned.
+
+    Args:
+        path: Destination ``.gif`` file.
+        frames: Number of frames.
+
+    Returns:
+        Path: ``path``.
+    """
+    pictures = [Image.new("RGB", (32, 32), (index * 40, 0, 200)) for index in range(frames)]
+    pictures[0].save(path, save_all=True, append_images=pictures[1:], duration=100, loop=0)
+    return path
