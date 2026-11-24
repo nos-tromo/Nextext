@@ -3,20 +3,25 @@
 @plugin '@tailwindcss/typography';
 @source '../../node_modules/@infra/ui/dist';
 
-/* Nextext's accent is violet, the colour of its favicon tile. Used as text
-   (e.g. JobCard links), the light value reaches ~5.7:1 on the light
-   palette's white background and the dark value ~5.5:1 on the dark one,
-   both above WCAG AA (4.5:1). Mirrors theme.css's own attribute/media
-   cascade so the accent tracks whichever palette is actually resolved. */
+/* Nextext's accent is ochre, the colour of its favicon tile. Used as text
+   (e.g. JobCard links), the light value reaches ~5.2:1 on the light
+   palette's white background and the dark value ~9.7:1 on the dark one,
+   both above WCAG AA (4.5:1). White on the dark value is only ~1.9:1, so in
+   dark mode what sits on the accent (the Run button, the active result tab)
+   is the dark background's ink instead. Mirrors theme.css's own
+   attribute/media cascade so the accent tracks whichever palette is
+   actually resolved. */
 :root {
-  --app-accent: hsl(262 83% 58%);
+  --app-accent: hsl(40 90% 30%);
 }
 :root[data-theme='dark'] {
-  --app-accent: hsl(262 83% 70%);
+  --app-accent: hsl(40 90% 55%);
+  --color-primary-foreground: hsl(240 6% 8%);
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme]) {
-    --app-accent: hsl(262 83% 70%);
+    --app-accent: hsl(40 90% 55%);
+    --color-primary-foreground: hsl(240 6% 8%);
   }
 }
 
