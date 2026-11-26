@@ -78,6 +78,7 @@
 !.dockerignore
 !.env.example
 !.gitignore
+!.grype.yaml
 !.pre-commit-config.yaml
 !AGENTS.md
 !CLAUDE.md

@@ -1,0 +1,30 @@
+# Accepted findings for the CI image scan (nos-tromo/.github docs/workflows.md,
+# "Accepting a finding"). Each rule names one CVE in one package version at one
+# location, so it stops matching on the next bump and cannot hide a new finding.
+ignore:
+  - vulnerability: CVE-2026-135736
+    package:
+      name: ffmpeg
+      version: 9.0.2
+      type: binary
+      location: "**/site-packages/av.libs/**"
+    reason: >-
+      libavfilter deband filter, reached only through runtime filter commands
+      (sendcmd, zmq). This ffmpeg is the build bundled in the av (PyAV) wheel.
+      Nextext builds no filter graph of its own; av.AudioResampler's is fixed
+      (abuffer, aresample, aformat, abuffersink), and the build has no zmq filter.
+      No av release bundles FFmpeg 9.1 yet (2026-11-26). Remove this rule when
+      av ships FFmpeg 9.1 or later.
+  - vulnerability: CVE-2026-135743
+    package:
+      name: ffmpeg
+      version: 9.0.2
+      type: binary
+      location: "**/site-packages/av.libs/**"
+    reason: >-
+      libavfilter dynaudnorm filter, reached only through runtime filter commands
+      (asendcmd, azmq). This ffmpeg is the build bundled in the av (PyAV) wheel.
+      Nextext builds no filter graph of its own; av.AudioResampler's is fixed
+      (abuffer, aresample, aformat, abuffersink), and the build has no zmq filter.
+      No av release bundles FFmpeg 9.1 yet (2026-11-26). Remove this rule when
+      av ships FFmpeg 9.1 or later.
